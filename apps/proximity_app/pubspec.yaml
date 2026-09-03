@@ -1,0 +1,41 @@
+name: proximity_app
+description: Proximity — Campus Attendance System. Single app, Prof + Student modes.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.5.1
+  proximity_protocol:
+    path: ../../packages/protocol
+  proximity_ble:
+    path: ../../packages/ble
+  proximity_face:
+    path: ../../packages/face
+  proximity_transport:
+    path: ../../packages/transport
+  proximity_storage:
+    path: ../../packages/storage
+  # Firebase via FlutterFire (project: proximity-attendence).
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.0
+  google_sign_in: ^6.2.2
+  ed25519_edwards: ^0.3.1
+  camera: ^0.12.0
+  proximity_face_detect:
+    path: ../../packages/face_detect
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  test: ^1.25.0
+
+flutter:
+  uses-material-design: true

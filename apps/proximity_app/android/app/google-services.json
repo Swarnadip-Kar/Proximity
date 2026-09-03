@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "355638335271",
+    "project_id": "proximity-attendence",
+    "storage_bucket": "proximity-attendence.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:355638335271:android:23a2e7c8dd958e36d0fb02",
+        "android_client_info": {
+          "package_name": "org.iitbhilai.proximity"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "355638335271-im3db3lnocimghunht2rp8ps01gigrv6.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "org.iitbhilai.proximity",
+            "certificate_hash": "79473a08b33d54d78e4856fb8c300b0d312ddf3d"
+          }
+        },
+        {
+          "client_id": "355638335271-usathpg8rk3cqrnquu0nklmqfe12mki5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDD9p7bO5rGzEyH6n2RRZBrMy0G67rMcrk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "355638335271-usathpg8rk3cqrnquu0nklmqfe12mki5.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "355638335271-1i6fn5ojeto16oog6vtstqpsu9vvgpb3.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.proximityAttendance"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

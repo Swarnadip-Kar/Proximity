@@ -1,0 +1,41 @@
+rules_version = '2';
+// Proximity — Campus Attendance System (project: proximity-attendence).
+//
+// Identity is the Gmail account itself — no roster collection, no
+// institute-ID matching. `rosterKeys/{lowercased-email}`:
+// {pk, name, email, faceHash, modelVer, sig, updatedAt} — one doc per
+// email; create/update only when the doc email equals the caller's auth
+// email (one-device-per-email is additionally enforced client-side by
+// rejecting a different PK; full Ed25519 verification stays in-app, §5.3).
+// `crl/{key}`: {pk} — admin-written, clients read.
+// `auditExports/{id}`: metadata only — any signed-in host may append.
+// Face photos/templates are NEVER written here — only faceHash = H(template).
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function ownEmail(data) {
+      return signedIn() && data.email == request.auth.token.email;
+    }
+
+    match /rosterKeys/{id} {
+      allow read: if signedIn();
+      allow create: if ownEmail(request.resource.data);
+      allow update: if ownEmail(resource.data)
+        && ownEmail(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /crl/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /auditExports/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if false;
+    }
+  }
+}

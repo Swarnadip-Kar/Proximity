@@ -1,0 +1,4 @@
+Android client for org.iitbhilai.proximity (auto created by Google Service): 355638335271-im3db3lnocimghunht2rp8ps01gigrv6.apps.googleusercontent.com
+
+
+iOS client for org.iitbhilai.proximity (auto created by Google Service): 355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd.apps.googleusercontent.com
