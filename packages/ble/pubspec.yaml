@@ -10,6 +10,7 @@ dependencies:
   proximity_protocol:
     path: ../protocol
   meta: ^1.12.0
+  dbus: ^0.7.15
 
 dev_dependencies:
   test: ^1.25.0

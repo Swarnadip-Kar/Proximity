@@ -1,4 +1,5 @@
 // Two-device window (fakes) proving end-to-end mark + export signature verify.
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -72,6 +73,7 @@ void main() {
     // Professor verifies POST + BLE sighting (direct, -55 dBm).
     final once = SingleUseTracker();
     final now = DateTime.now().toUtc();
+    final tlsFp = ProxCrypto.sha256Sync(utf8.encode('test-cert'));
     final body = buildProveBody(
       id: studentId,
       windowId: window.windowId,
@@ -80,6 +82,16 @@ void main() {
       sigS: sigS,
       faceScore: 0.85,
       peerW: peerW,
+      name: 'Aarav S',
+      roll: '12342210',
+      tlsFp: tlsFp,
+      sigBind: ProxCrypto.sign(
+          stuKeys.privateKey,
+          bindPreimage(
+              sessionId: window.sessionId,
+              windowId: window.windowId,
+              j: j,
+              tlsFingerprint: tlsFp)),
     );
     expect(body['ID'], studentId);
     final outcome = verifyProve(

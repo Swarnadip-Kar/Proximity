@@ -13,6 +13,8 @@
 // A [BlePlatformDelegate] injects the actual radio; fakes drive P0 tests.
 library proximity_ble;
 
+export 'src/bluez.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -47,8 +49,10 @@ abstract class BlePlatformDelegate {
   Future<void> stopAdvertising();
   Future<void> startScanning(void Function(BleSighting s) onSight);
   Future<void> stopScanning();
-  Future<Uint8List?> gattRead(String serviceUuid, String charUuid);
-  Future<void> gattWrite(String serviceUuid, String charUuid, Uint8List value);
+  Future<Uint8List?> gattRead(
+      String deviceId, String serviceUuid, String charUuid);
+  Future<void> gattWrite(String deviceId, String serviceUuid,
+      String charUuid, Uint8List value);
   String get platformName;
 }
 
@@ -81,12 +85,13 @@ class FakeBleRadio implements BlePlatformDelegate {
   Future<void> stopScanning() async => _onSight = null;
 
   @override
-  Future<Uint8List?> gattRead(String serviceUuid, String charUuid) async =>
+  Future<Uint8List?> gattRead(
+          String deviceId, String serviceUuid, String charUuid) async =>
       null;
 
   @override
-  Future<void> gattWrite(
-          String serviceUuid, String charUuid, Uint8List value) async =>
+  Future<void> gattWrite(String deviceId, String serviceUuid,
+          String charUuid, Uint8List value) async =>
       gattWrites.add((serviceUuid, charUuid, value));
 }
 
@@ -103,6 +108,14 @@ class ProxBleEngine {
   int currentJ = 0;
   bool dense = false;
 
+  /// Front-row relay switch. The student driver enables it while listening;
+  /// professors never relay (they originate), and it is off otherwise so
+  /// re-advertising strictly extends coverage during open windows.
+  bool relayEnabled = false;
+  final Set<String> _relayed = {}; // UUIDs already re-advertised (storm guard)
+  String? _ownAdvertising; // split-horizon: never relay what we advertise
+  bool _halted = false;
+
   ProxBleEngine({
     required this.radio,
     FloodController? flood,
@@ -111,10 +124,14 @@ class ProxBleEngine {
     this.onRelayBroadcast,
   }) : flood = flood ?? FloodController();
 
-  Future<void> startScanning() =>
-      radio.startScanning(handleSighting);
+  Future<void> startScanning() {
+    _halted = false;
+    return radio.startScanning(handleSighting);
+  }
 
   Future<void> stop() async {
+    _halted = true;
+    _relayed.clear();
     _rotTimer?.cancel();
     await radio.stopAdvertising();
     await radio.stopScanning();
@@ -147,9 +164,10 @@ class ProxBleEngine {
   Future<void> advertiseStudentResponse(
       String studentId, Uint8List challenge, int j, Uint8List peerW) async {
     final rid = ProxCrypto.responseToken(challenge, studentId);
+    final uuid = UuidCodec.packResponse(rid);
+    _ownAdvertising = uuid;
     await radio.stopAdvertising();
-    await radio.startAdvertising(kProxSvc, UuidCodec.packResponse(rid),
-        scanResponse: peerW);
+    await radio.startAdvertising(kProxSvc, uuid, scanResponse: peerW);
   }
 
   /// Incoming sighting: log RSSI, fire callbacks, relay challenges w/ flood controls.
@@ -157,16 +175,60 @@ class ProxBleEngine {
     sightings.add(s);
     if (s.isChallenge) {
       onChallengeHeard?.call(s);
-      // Relay path needs full PDU; UUID-only fast path re-advertises same
-      // UUID_P with TTL-1 after jitter (caller resolves PDU via GATT if needed).
-      // Admission pre-check on RSSI here; full dedup in transport layer.
-      if (s.ttl > 0 && s.rssiDbm > kRssiRelayMinDbm) {
-        // Note: actual re-advertise scheduled by holder with jitter +
-        // split-horizon via FloodController.shouldRelayBroadcast.
+      for (final w in _challengeWaiters.toList()) {
+        if (!w.isCompleted) w.complete(Uint8List.fromList(UuidCodec.lo8Of(s.uuid)));
       }
+      _challengeWaiters.clear();
+      unawaited(_maybeRelay(s));
     } else if (s.isResponse) {
       onResponseHeard?.call(s);
     }
+  }
+
+  /// Front-row re-advertise of professor challenges (controlled flood,
+  /// §6.2): unseen UUID_P + TTL left + strong signal + jitter, never what
+  /// we already advertise (split horizon), never responses (no flooding).
+  /// Responses travel direct (or directed GATT write) only.
+  Future<void> _maybeRelay(BleSighting s) async {
+    if (!relayEnabled) return;
+    final uuid = UuidCodec.normalize(s.uuid);
+    if (s.ttl <= 0) return;
+    if (s.rssiDbm <= kRssiRelayMinDbm) return;
+    if (uuid == _ownAdvertising) return;
+    if (!_relayed.add(uuid)) return; // unseen only (storm guard)
+    if (_relayed.length > 64) _relayed.remove(_relayed.first);
+    await Future.delayed(
+        FloodController.relayJitter(dense: dense));
+    if (_halted) return;
+    try {
+      await radio.startAdvertising(kProxSvc, uuid);
+      _ownAdvertising = uuid;
+    } catch (_) {}
+  }
+
+  final List<Completer<Uint8List?>> _challengeWaiters = [];
+
+  /// Resolves with the next challenge's C_j heard over radio, or null on
+  /// [timeout] (the window elapsed without signal → honest noSignal).
+  /// Already-heard fresh challenges (≤7s old) resolve immediately so slow
+  /// pollers never miss a rotation.
+  Future<Uint8List?> nextChallenge(
+      {Duration timeout = const Duration(seconds: 31)}) {
+    final now = DateTime.now().toUtc();
+    for (var i = sightings.length - 1; i >= 0; i--) {
+      final s = sightings[i];
+      if (s.isChallenge &&
+          now.difference(s.at.toUtc()).abs() < kFreshness) {
+        return Future.value(Uint8List.fromList(UuidCodec.lo8Of(s.uuid)));
+      }
+    }
+    final c = Completer<Uint8List?>();
+    _challengeWaiters.add(c);
+    Future.delayed(timeout).then((_) {
+      if (!c.isCompleted) c.complete(null);
+      _challengeWaiters.remove(c);
+    });
+    return c.future;
   }
 
   /// Strongest-first ordering for nearby-class list UI.

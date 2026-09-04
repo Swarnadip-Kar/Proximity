@@ -19,6 +19,24 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Force JVM 17 for plugins shipping stale toolchains (tflite_flutter).
+// Runs after all projects are evaluated so our values win.
+gradle.projectsEvaluated {
+    rootProject.subprojects {
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>()
+            .configureEach {
+                compilerOptions {
+                    jvmTarget.set(
+                        org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
+            }
+        tasks.withType<JavaCompile>().configureEach {
+            sourceCompatibility = JavaVersion.VERSION_17.toString()
+            targetCompatibility = JavaVersion.VERSION_17.toString()
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

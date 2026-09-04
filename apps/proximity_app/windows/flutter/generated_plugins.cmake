@@ -6,9 +6,16 @@ list(APPEND FLUTTER_PLUGIN_LIST
   cloud_firestore
   firebase_auth
   firebase_core
+  flutter_secure_storage_windows
+  permission_handler_windows
+  share_plus
+  universal_ble
+  url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  jni
+  tflite_flutter
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

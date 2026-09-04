@@ -212,10 +212,11 @@ class PresentTicker extends StatelessWidget {
   }
 }
 
-/// Success spring: ✓ Marked with scale-in.
+/// Success spring: ✓ Marked (or custom [title], e.g. Late) with scale-in.
 class MarkedBadge extends StatefulWidget {
   final String detail;
-  const MarkedBadge({super.key, required this.detail});
+  final String title;
+  const MarkedBadge({super.key, required this.detail, this.title = '✓ Marked'});
 
   @override
   State<MarkedBadge> createState() => _MarkedBadgeState();
@@ -247,7 +248,7 @@ class _MarkedBadgeState extends State<MarkedBadge>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('✓ Marked', style: TextStyle(fontSize: 28)),
+          Text(widget.title, style: const TextStyle(fontSize: 28)),
           const SizedBox(height: 4),
           Text(widget.detail),
         ],

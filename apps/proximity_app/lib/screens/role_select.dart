@@ -39,15 +39,13 @@ class RoleSelectScreen extends ConsumerWidget {
                 FilledButton.icon(
                   icon: const Icon(Icons.school),
                   label: const Text('Continue as Student'),
-                  onPressed: () => ref.read(appModeProvider.notifier).state =
-                      AppMode.student,
+                  onPressed: () => setMode(ref, AppMode.student),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.present_to_all),
                   label: const Text('Continue as Professor (host)'),
-                  onPressed: () => ref.read(appModeProvider.notifier).state =
-                      AppMode.prof,
+                  onPressed: () => setMode(ref, AppMode.prof),
                 ),
                 const SizedBox(height: 12),
                 TextButton.icon(

@@ -8,8 +8,11 @@
 // Face photos/templates are NEVER uploaded — only faceHash = H(embedding).
 library;
 
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class RosterKeyRecord {
   final String pkHex; // Ed25519 public key, 32B hex
@@ -52,6 +55,24 @@ class RosterKeyRecord {
         sigHex: j['sig'] as String,
         updatedAt: (j['updatedAt'] as Timestamp).toDate(),
       );
+
+  /// Cache encoding (Firestore Timestamp is not JSON-encodable).
+  Map<String, dynamic> toCacheJson() => {
+        ...toJson(),
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+
+  factory RosterKeyRecord.fromCacheJson(Map<String, dynamic> j) =>
+      RosterKeyRecord(
+        pkHex: j['pk'] as String,
+        name: j['name'] as String? ?? '',
+        email: j['email'] as String,
+        roll: j['roll'] as String? ?? '',
+        faceHashHex: j['faceHash'] as String,
+        modelVer: j['modelVer'] as String,
+        sigHex: j['sig'] as String,
+        updatedAt: DateTime.parse(j['updatedAt'] as String),
+      );
 }
 
 abstract class RosterRepository {
@@ -59,9 +80,17 @@ abstract class RosterRepository {
   Future<Set<String>> fetchCrl(); // revoked pk hex set
   Future<RosterKeyRecord?> fetchKey(String email);
   Future<void> uploadKey(String email, RosterKeyRecord record);
+
+  /// Offline-first variants: network first, SharedPreferences cache
+  /// fallback so a cached class works with zero connectivity. Defaults
+  /// delegate to the live calls (fakes).
+  Future<Map<String, RosterKeyRecord>> fetchKeysCached() => fetchKeys();
+  Future<Set<String>> fetchCrlCached() => fetchCrl();
 }
 
 class FirestoreRosterRepository implements RosterRepository {
+  static const _kKeysCache = 'prox.keysCache.v1';
+  static const _kCrlCache = 'prox.crlCache.v1';
   final FirebaseFirestore _db;
   FirestoreRosterRepository({FirebaseFirestore? db})
       : _db = db ?? FirebaseFirestore.instance;
@@ -89,6 +118,52 @@ class FirestoreRosterRepository implements RosterRepository {
   @override
   Future<void> uploadKey(String email, RosterKeyRecord record) =>
       _db.collection('rosterKeys').doc(docId(email)).set(record.toJson());
+
+  @override
+  Future<Map<String, RosterKeyRecord>> fetchKeysCached() async {
+    try {
+      final live = await fetchKeys();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kKeysCache,
+          jsonEncode(live.map((k, v) => MapEntry(k, v.toCacheJson()))));
+      return live;
+    } catch (_) {
+      return _readKeysCache();
+    }
+  }
+
+  Future<Map<String, RosterKeyRecord>> _readKeysCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kKeysCache);
+      if (raw == null) return {};
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      return {
+        for (final e in map.entries)
+          e.key: RosterKeyRecord.fromCacheJson(
+              Map<String, dynamic>.from(e.value as Map))
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  @override
+  Future<Set<String>> fetchCrlCached() async {
+    try {
+      final live = await fetchCrl();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_kCrlCache, live.toList());
+      return live;
+    } catch (_) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        return (prefs.getStringList(_kCrlCache) ?? <String>[]).toSet();
+      } catch (_) {
+        return {};
+      }
+    }
+  }
 }
 
 /// In-memory fake. Offline-capable by design.
@@ -111,6 +186,13 @@ class FakeRosterRepository implements RosterRepository {
   Future<void> uploadKey(String email, RosterKeyRecord record) async {
     keys[FirestoreRosterRepository.docId(email)] = record;
   }
+
+  @override
+  Future<Map<String, RosterKeyRecord>> fetchKeysCached() async =>
+      Map.of(keys);
+
+  @override
+  Future<Set<String>> fetchCrlCached() async => Set.of(revoked);
 }
 
 final rosterRepositoryProvider = Provider<RosterRepository>((ref) {

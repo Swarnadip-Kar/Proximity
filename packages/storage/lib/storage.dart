@@ -104,4 +104,86 @@ class TallyStore {
 
   int get size => _rows.length;
   void clear() => _rows.clear();
+
+  ClassRecord toClassRecord(
+          {required String courseId,
+          required String classLabel,
+          required String dateIso}) =>
+      ClassRecord(
+        courseId: courseId,
+        classLabel: classLabel,
+        dateIso: dateIso,
+        w1: windowMap(1),
+        w2: windowMap(2),
+        names: nameMap(),
+        rolls: rollMap(),
+      );
+}
+
+/// One saved class session (professor device history). Exportable.
+/// Belongs to a [Course] via [courseId] (the course name; records saved
+/// before courses existed carry '' and group under their class label).
+class ClassRecord {
+  final String courseId;
+  final String classLabel;
+  final String dateIso; // yyyy-MM-dd
+  final Map<String, bool> w1; // email -> present
+  final Map<String, bool> w2;
+  final Map<String, String> names; // email -> name
+  final Map<String, String> rolls; // email -> ID number
+  const ClassRecord({
+    this.courseId = '',
+    required this.classLabel,
+    required this.dateIso,
+    required this.w1,
+    required this.w2,
+    required this.names,
+    required this.rolls,
+  });
+
+  int get w1Count => w1.values.where((v) => v).length;
+  int get w2Count => w2.values.where((v) => v).length;
+
+  String toCsv({bool lenientOneOfTwo = false}) => buildAttendanceCsv(
+        classLabel: classLabel,
+        dateIso: dateIso,
+        w1: w1,
+        w2: w2,
+        names: names,
+        rolls: rolls,
+        lenientOneOfTwo: lenientOneOfTwo,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'courseId': courseId,
+        'classLabel': classLabel,
+        'dateIso': dateIso,
+        'w1': w1,
+        'w2': w2,
+        'names': names,
+        'rolls': rolls,
+      };
+
+  factory ClassRecord.fromJson(Map<String, dynamic> j) => ClassRecord(
+        courseId: j['courseId'] as String? ?? '',
+        classLabel: j['classLabel'] as String,
+        dateIso: j['dateIso'] as String,
+        w1: Map<String, bool>.from(j['w1'] as Map),
+        w2: Map<String, bool>.from(j['w2'] as Map),
+        names: Map<String, String>.from(j['names'] as Map),
+        rolls: Map<String, String>.from(j['rolls'] as Map? ?? {}),
+      );
+}
+
+/// A professor's course (subject). Sessions ([ClassRecord]s with matching
+/// [courseId]) group under it, most recent first.
+class Course {
+  final String name;
+  final String createdAt; // ISO date
+  const Course({required this.name, required this.createdAt});
+
+  Map<String, dynamic> toJson() => {'name': name, 'createdAt': createdAt};
+
+  factory Course.fromJson(Map<String, dynamic> j) =>
+      Course(name: j['name'] as String, createdAt: j['createdAt'] as String? ?? '');
 }

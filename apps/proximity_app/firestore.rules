@@ -22,8 +22,11 @@ service cloud.firestore {
     match /rosterKeys/{id} {
       allow read: if signedIn();
       allow create: if ownEmail(request.resource.data);
+      // Re-login (new device key) at most once per 24h, measured on the
+      // server doc timestamp so the limit holds across devices.
       allow update: if ownEmail(resource.data)
-        && ownEmail(request.resource.data);
+        && ownEmail(request.resource.data)
+        && (request.time - resource.data.updatedAt) >= duration.value(24, 'h');
       allow delete: if false;
     }
 
