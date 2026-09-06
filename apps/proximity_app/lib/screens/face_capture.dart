@@ -39,6 +39,7 @@ import '../core/enrollment.dart' show kEnrollSectionScoreMin;
 import '../core/face_camera.dart';
 import '../core/face_detect.dart';
 import '../core/student_driver.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import 'package:proximity_face/face.dart';
 import 'package:proximity_protocol/protocol.dart';
@@ -596,22 +597,6 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
         ),
       );
 
-  /// Centered action card over the preview (error/timeout states): same
-  /// overlay principle — appearing actions never push the preview around.
-  Widget _overlayCard(List<Widget> kids) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 32),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.72),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: kids,
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
     final total = widget.sectionTargets.length;
@@ -633,9 +618,7 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            child: LinearProgressIndicator(
-              value: progress.clamp(0.0, 1.0),
-            ),
+            child: _AnimatedScanProgress(value: progress.clamp(0.0, 1.0)),
           ),
           // The preview owns all remaining space at a FIXED size: every
           // instruction lives as an overlay on the camera module, never in
@@ -650,6 +633,19 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
               fit: StackFit.expand,
               children: [
                 _camera.buildPreview(),
+                // Pose-guidance oval: thin outline only (no dimming, glow,
+                // or filtering — capture uses raw stills). Progress sweeps
+                // the ring; a slow breathing scale coaches "hold still".
+                // Overlay-only and pointer-transparent: never moves layout,
+                // never intercepts taps.
+                IgnorePointer(
+                  child: Center(
+                    child: _PoseOval(
+                      progress: progress.clamp(0.0, 1.0),
+                      active: _running && _error == null && !_timedOut,
+                    ),
+                  ),
+                ),
                 Positioned(
                   top: 8,
                   left: 12,
@@ -686,28 +682,15 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
                 ),
                 if (_error != null)
                   Center(
-                    child: _overlayCard([
-                      Text(_error!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.red)),
-                      const SizedBox(height: 8),
-                      OutlinedButton(
-                        onPressed: () => Navigator.of(context)
-                            .pop<List<Uint8List>>([_demoBytes()]),
-                        child:
-                            const Text('Continue without camera (demo)'),
-                      ),
-                    ]),
+                    child: _ErrorCard(
+                      message: _error!,
+                      onDemo: () => Navigator.of(context)
+                          .pop<List<Uint8List>>([_demoBytes()]),
+                    ),
                   )
                 else if (_timedOut)
                   Center(
-                    child: _overlayCard([
-                      FilledButton.icon(
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Try again'),
-                        onPressed: _retry,
-                      ),
-                    ]),
+                    child: _TimeoutCard(onRetry: _retry),
                   ),
               ],
             ),
@@ -733,3 +716,290 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
 /// photo: downstream decode + embedding reject them (fail-closed), so the
 /// demo path can exercise error UI but never a pass.
 Uint8List _demoBytes() => Uint8List.fromList(const [7, 7, 7, 7]);
+
+/// Animated scan progress: sweeps toward the new value over
+/// [ProxDurations.medium] instead of jumping per analyzed still.
+class _AnimatedScanProgress extends StatelessWidget {
+  final double value;
+  const _AnimatedScanProgress({required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    if (ProxMotion.reduced(context)) {
+      return LinearProgressIndicator(value: value);
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: value),
+      duration: ProxDurations.medium,
+      curve: ProxCurves.standard,
+      builder: (context, v, _) => LinearProgressIndicator(value: v),
+    );
+  }
+}
+
+/// Pose-guidance oval: thin outline + progress sweep, drawn with
+/// CustomPainter + a slow breathing scale (pure Flutter, no assets).
+/// Outline only — never dims, glows, or filters the preview beneath.
+class _PoseOval extends StatefulWidget {
+  final double progress;
+  final bool active;
+  const _PoseOval({required this.progress, required this.active});
+
+  @override
+  State<_PoseOval> createState() => _PoseOvalState();
+}
+
+class _PoseOvalState extends State<_PoseOval>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _breath;
+
+  @override
+  void initState() {
+    super.initState();
+    _breath = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+    if (widget.active) _breath.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_PoseOval old) {
+    super.didUpdateWidget(old);
+    if (widget.active && !_breath.isAnimating) {
+      _breath.repeat(reverse: true);
+    } else if (!widget.active && _breath.isAnimating) {
+      _breath.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _breath.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ring = Theme.of(context).colorScheme.primary;
+    final child = SizedBox(
+      width: 220,
+      height: 280,
+      child: CustomPaint(
+        painter: _OvalRingPainter(progress: widget.progress, color: ring),
+      ),
+    );
+    if (ProxMotion.reduced(context) || !widget.active) return child;
+    return AnimatedBuilder(
+      animation: _breath,
+      builder: (context, c) {
+        final s = 1.0 + _breath.value * 0.025;
+        return Transform.scale(scale: s, child: c);
+      },
+      child: child,
+    );
+  }
+}
+
+class _OvalRingPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  _OvalRingPainter({required this.progress, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: size.width - 16,
+      height: size.height - 16,
+    );
+    // Base outline: thin white, readable over any preview.
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.85),
+    );
+    // Progress sweep in the theme ring color.
+    if (progress > 0.005) {
+      canvas.drawArc(
+        rect,
+        -3.141592653589793 / 2,
+        2 * 3.141592653589793 * progress.clamp(0.0, 1.0),
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4
+          ..strokeCap = StrokeCap.round
+          ..color = color,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_OvalRingPainter old) =>
+      old.progress != progress || old.color != color;
+}
+
+/// Camera error card: red, one short shake — reads as "session failed",
+/// unmistakable from the amber timeout slide below.
+class _ErrorCard extends StatefulWidget {
+  final String message;
+  final VoidCallback onDemo;
+  const _ErrorCard({required this.message, required this.onDemo});
+
+  @override
+  State<_ErrorCard> createState() => _ErrorCardState();
+}
+
+class _ErrorCardState extends State<_ErrorCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: ProxDurations.small)
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      margin: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.error_outline, size: 18, color: Colors.red),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(widget.message,
+                    style: const TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: widget.onDemo,
+            child: const Text('Continue without camera (demo)'),
+          ),
+        ],
+      ),
+    );
+    if (ProxMotion.reduced(context)) return card;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) {
+        final t = _c.value.clamp(0.0, 1.0);
+        final dx = t < 1.0 ? (1 - t) * 8 * _sin(t * 3 * 6.28318530718) : 0.0;
+        return Transform.translate(
+          offset: Offset(dx, 0),
+          child: Opacity(opacity: t < 0.25 ? t / 0.25 : 1, child: child),
+        );
+      },
+      child: card,
+    );
+  }
+
+  double _sin(double x) {
+    var n = x % 6.283185307179586;
+    if (n > 3.141592653589793) n -= 6.283185307179586;
+    if (n < -3.141592653589793) n += 6.283185307179586;
+    final x2 = n * n;
+    return n * (1 - x2 / 6 + x2 * x2 / 120);
+  }
+}
+
+/// Timeout card: amber, slides up gently — reads as "retry this scan",
+/// distinct from the red error shake above.
+class _TimeoutCard extends StatefulWidget {
+  final VoidCallback onRetry;
+  const _TimeoutCard({required this.onRetry});
+
+  @override
+  State<_TimeoutCard> createState() => _TimeoutCardState();
+}
+
+class _TimeoutCardState extends State<_TimeoutCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: ProxDurations.medium)
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      margin: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.refresh, size: 18, color: Colors.amber),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Could not get a clear scan — try again in better light.',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            icon: const Icon(Icons.refresh),
+            label: const Text('Try again'),
+            onPressed: widget.onRetry,
+          ),
+        ],
+      ),
+    );
+    if (ProxMotion.reduced(context)) return card;
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: _c, curve: ProxCurves.standard),
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.3),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: _c, curve: ProxCurves.standard)),
+        child: card,
+      ),
+    );
+  }
+}

@@ -9,8 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/enrollment.dart';
 import '../core/face_detect.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import '../mode.dart';
+import '../widgets/prox_buttons.dart';
+import '../widgets/prox_motion.dart';
 import 'face_capture.dart';
 
 class EnrollmentScreen extends ConsumerStatefulWidget {
@@ -99,9 +102,18 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
                           // a weak angle never pops partial. Completed
                           // angles are never re-captured: resume passes ONLY
                           // the missing slots, mapped back by index.
-                          LinearProgressIndicator(
-                            value: st.angleSlots.where((d) => d).length /
-                                enrollSlotNames.length,
+                          //
+                          // Reassurance (not an error): good scans often take
+                          // a few tries — holders should not feel they failed
+                          // on retry two or three.
+                          const Text(
+                            'Getting a good scan sometimes takes 3–4 tries, no worries 🙂',
+                            style: TextStyle(fontStyle: FontStyle.italic),
+                          ),
+                          const SizedBox(height: 8),
+                          _AnimatedEnrollProgress(
+                            done: st.angleSlots.where((d) => d).length,
+                            total: enrollSlotNames.length,
                           ),
                           const SizedBox(height: 4),
                           Text(
@@ -112,27 +124,13 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
                           for (var i = 0;
                               i < enrollSlotNames.length;
                               i++)
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 2),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    st.angleSlots[i]
-                                        ? Icons.check_circle
-                                        : Icons.circle_outlined,
-                                    color: st.angleSlots[i]
-                                        ? Colors.green
-                                        : null,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      '${enrollSlotNames[i]} — ${enrollSlotHints[i]}',
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            _AngleRow(
+                              done: st.angleSlots[i],
+                              label:
+                                  '${enrollSlotNames[i]} — ${enrollSlotHints[i]}',
+                              delay: Duration(
+                                  milliseconds: (i * 40)
+                                      .clamp(0, 400)),
                             ),
                           const SizedBox(height: 8),
                           FilledButton.icon(
@@ -295,12 +293,16 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
             ],
             if (st.message.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Text(st.message, style: const TextStyle(color: Colors.red)),
+              _EnrollNotice(
+                message: st.message,
+                isError: st.phase == EnrollPhase.error,
+              ),
               const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: ctl.dismissError,
-                child: Text(
+              ProxSecondaryButton(
+                label: Text(
                     st.phase == EnrollPhase.error ? 'Try again' : 'Dismiss'),
+                onPressed: ctl.dismissError,
+                expanded: false,
               ),
             ],
           ],
@@ -323,5 +325,191 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
         ],
       ),
     );
+  }
+}
+
+/// Animated enrollment progress: sweeps toward the new fraction over
+/// [ProxDurations.medium] instead of jumping. Pure presentation — the
+/// angle state underneath is unchanged.
+class _AnimatedEnrollProgress extends StatelessWidget {
+  final int done;
+  final int total;
+  const _AnimatedEnrollProgress({required this.done, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    final target = total == 0 ? 0.0 : done / total;
+    if (ProxMotion.reduced(context)) {
+      return LinearProgressIndicator(value: target);
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: target),
+      duration: ProxDurations.medium,
+      curve: ProxCurves.standard,
+      builder: (context, value, _) =>
+          LinearProgressIndicator(value: value),
+    );
+  }
+}
+
+/// One angle row. When [done] flips false → true the check pops with a
+/// short spring so "angle complete" reads as confirmation, distinct from
+/// the error shake in [_EnrollNotice].
+class _AngleRow extends StatelessWidget {
+  final bool done;
+  final String label;
+  final Duration delay;
+  const _AngleRow({
+    required this.done,
+    required this.label,
+    this.delay = Duration.zero,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = Theme.of(context).colorScheme.primary;
+    return ProxFadeSlideIn(
+      delay: delay,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            AnimatedSwitcher(
+              duration: ProxMotion.effective(context, ProxDurations.small),
+              switchInCurve: ProxCurves.spring,
+              transitionBuilder: (child, anim) => ScaleTransition(
+                scale: anim,
+                child: child,
+              ),
+              child: Icon(
+                done ? Icons.check_circle : Icons.circle_outlined,
+                key: ValueKey<bool>(done),
+                color: done ? ok : null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Enrollment notice with two motion signatures, distinguishable before
+/// reading a word:
+/// - targeted rescan ("retry this angle": message names a rescan/retry of
+///   an angle) → amber, gentle slide+fade in place.
+/// - session failure (anything else at error phase) → error color, one
+///   short horizontal shake.
+class _EnrollNotice extends StatefulWidget {
+  final String message;
+  final bool isError;
+  const _EnrollNotice({required this.message, required this.isError});
+
+  @override
+  State<_EnrollNotice> createState() => _EnrollNoticeState();
+}
+
+class _EnrollNoticeState extends State<_EnrollNotice>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  bool get _targeted {
+    final m = widget.message.toLowerCase();
+    return m.contains('rescan') ||
+        m.contains('retry') ||
+        m.contains('angle') ||
+        m.contains('weakest');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: _targeted ? ProxDurations.medium : ProxDurations.small,
+    )..forward();
+  }
+
+  @override
+  void didUpdateWidget(_EnrollNotice old) {
+    super.didUpdateWidget(old);
+    if (old.message != widget.message) {
+      _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final targeted = _targeted;
+    final color = targeted ? ProxStateColors.of(context, ProxState.waiting) : scheme.error;
+    final icon = targeted ? Icons.refresh : Icons.error_outline;
+    if (ProxMotion.reduced(context)) {
+      return _row(context, color, icon);
+    }
+    if (targeted) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: _c, curve: ProxCurves.standard),
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.3),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: _c, curve: ProxCurves.standard)),
+          child: _row(context, color, icon),
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) {
+        final t = _c.value.clamp(0.0, 1.0);
+        final dx =
+            t < 1.0 ? (1 - t) * 8 * _ShakeSin.impl(t * 3 * 6.28318530718) : 0.0;
+        return Transform.translate(
+          offset: Offset(dx, 0),
+          child: Opacity(opacity: t < 0.25 ? t / 0.25 : 1, child: child),
+        );
+      },
+      child: _row(context, color, icon),
+    );
+  }
+
+  Widget _row(BuildContext context, Color color, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(ProxSpacing.md),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(ProxRadii.md),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: ProxSpacing.sm),
+          Expanded(
+            child: Text(widget.message, style: TextStyle(color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShakeSin {
+  static double impl(double x) {
+    var n = x % 6.283185307179586;
+    if (n > 3.141592653589793) n -= 6.283185307179586;
+    if (n < -3.141592653589793) n += 6.283185307179586;
+    final x2 = n * n;
+    return n * (1 - x2 / 6 + x2 * x2 / 120);
   }
 }
