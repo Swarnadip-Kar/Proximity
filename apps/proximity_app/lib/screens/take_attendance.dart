@@ -23,12 +23,16 @@ import '../core/ble_radio.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/host_driver.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/animated.dart';
 import '../widgets/ble_log_view.dart';
 import '../widgets/clock.dart';
 import '../widgets/manual_add.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_motion.dart';
+import '../widgets/prox_states.dart';
 
 class TakeAttendanceScreen extends ConsumerStatefulWidget {
   final String courseName;
@@ -860,30 +864,79 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               ),
             ],
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _elapsedLabel(),
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                    const SizedBox(height: 2),
-                    const Text('LIVE', style: TextStyle(letterSpacing: 3)),
-                  ],
+            // Live header: elapsed clock + pulsing on-air dot + counters.
+            // The dot is the only repeating motion here — everything else
+            // updates in place so the 1s elapsed tick never replays
+            // entrances (rows are keyed; see waiting/present lists below).
+            AnimatedContainer(
+              duration: ProxDurations.small,
+              curve: ProxCurves.standard,
+              padding: const EdgeInsets.all(ProxSpacing.md),
+              decoration: BoxDecoration(
+                color: live
+                    ? Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: 0.45)
+                    : Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.35),
+                borderRadius: ProxRadii.cardRadius,
+                border: Border.all(
+                  color: live
+                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
+                      : Theme.of(context)
+                          .colorScheme
+                          .outlineVariant
+                          .withValues(alpha: 0.5),
                 ),
+              ),
+              child: Row(
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _elapsedLabel(),
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ProxDot(
+                            color: live
+                                ? ProxStateColors.of(
+                                    context, ProxState.active)
+                                : ProxStateColors.of(
+                                    context, ProxState.neutral),
+                            pulse: live,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            live ? 'LIVE' : 'IDLE',
+                            style: const TextStyle(letterSpacing: 3),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       PresentTicker(present: present, total: denom),
-                      Text(
-                        windowsTaken <= 1
-                            ? 'Window 1 · $present present / $denom waiting'
-                            : 'Windows 1–$_windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
-                        style: Theme.of(context).textTheme.bodySmall,
+                      ProxSwitcher(
+                        child: Text(
+                          windowsTaken <= 1
+                              ? 'Window 1 · $present present / $denom waiting'
+                              : 'Windows 1–$_windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
+                          key: ValueKey<String>(
+                              '$windowsTaken-$_windowNo-$present-$denom'),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ),
                       if (linked != null)
                         Padding(
@@ -893,9 +946,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                               style: Theme.of(context).textTheme.bodySmall),
                         ),
                       const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                      // Start ⇄ Stop control cluster cross-fades (continuation,
+                      // not a hard swap) — the single most "alive" moment in
+                      // the app. Actions fire immediately; only the visuals
+                      // transition.
+                      ProxSwitcher(
+                        child: Wrap(
+                          key: ValueKey<bool>(live),
+                          spacing: 8,
+                          runSpacing: 8,
                         children: [
                           if (live) ...[
                             FilledButton(
@@ -941,10 +1000,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                           ],
                         ],
                       ),
+                      ),
                     ],
                   ),
                 ),
               ],
+              ),
             ),
             const SizedBox(height: 12),
             // Toggleable terminal: BLE RX → sighting match → tally → ACK.
@@ -954,48 +1015,48 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               onToggle: () => setState(() => _showLog = !_showLog),
             ),
             const SizedBox(height: 16),
-            Text('Waiting area ($waiting)',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ProxSectionHeader(title: 'Waiting area ($waiting)'),
             if (waitingRows.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 4),
                 child: Text('No students in the waiting area yet.'),
               )
             else
+              // Keyed entrances: a join fades/slides its row in; the 1s
+              // elapsed tick rebuilds with stable keys so nothing replays.
               for (final w in waitingRows)
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.hourglass_top, size: 20),
-                  title: Text(w.name.isNotEmpty ? w.name : w.email),
-                  subtitle: Text(
-                      [if (w.roll.isNotEmpty) w.roll, w.email].join(' · ')),
+                ProxFadeSlideIn(
+                  key: ValueKey<String>('waiting-${w.email}'),
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.hourglass_top, size: 20),
+                    title: Text(w.name.isNotEmpty ? w.name : w.email),
+                    subtitle: Text(
+                        [if (w.roll.isNotEmpty) w.roll, w.email].join(' · ')),
+                  ),
                 ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Text('Manual requests (${manualPending.length})',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                if (manualPending.isNotEmpty)
-                  TextButton(
-                    onPressed: () => setState(() {
-                      if (_manualSelected.length == manualPending.length) {
-                        _manualSelected.clear();
-                      } else {
-                        _manualSelected
-                          ..clear()
-                          ..addAll(
-                              manualPending.map((m) => m.email.toLowerCase()));
-                      }
-                    }),
-                    child: Text(_manualSelected.length ==
-                            manualPending.length
-                        ? 'Clear all'
-                        : 'Select all'),
-                  ),
-              ],
+            ProxSectionHeader(
+              title: 'Manual requests (${manualPending.length})',
+              padding: EdgeInsets.zero,
+              trailing: manualPending.isEmpty
+                  ? null
+                  : TextButton(
+                      onPressed: () => setState(() {
+                        if (_manualSelected.length == manualPending.length) {
+                          _manualSelected.clear();
+                        } else {
+                          _manualSelected
+                            ..clear()
+                            ..addAll(manualPending
+                                .map((m) => m.email.toLowerCase()));
+                        }
+                      }),
+                      child: Text(_manualSelected.length ==
+                              manualPending.length
+                          ? 'Clear all'
+                          : 'Select all'),
+                    ),
             ),
             if (manualPending.isEmpty)
               const Padding(
@@ -1004,9 +1065,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               )
             else ...[
               for (final m in manualPending)
-                CheckboxListTile(
-                  dense: true,
-                  value: _manualSelected.contains(m.email.toLowerCase()),
+                ProxFadeSlideIn(
+                  key: ValueKey<String>('manual-${m.email}'),
+                  child: CheckboxListTile(
+                    dense: true,
+                    value: _manualSelected.contains(m.email.toLowerCase()),
                   onChanged: (v) => setState(() {
                     if (v == true) {
                       _manualSelected.add(m.email.toLowerCase());
@@ -1032,6 +1095,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                       ),
                     ],
                   ),
+                  ),
                 ),
               Row(
                 children: [
@@ -1052,8 +1116,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               ),
             ],
             const SizedBox(height: 8),
-            const Text('Direct manual entry',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ProxSectionHeader(
+              title: 'Direct manual entry',
+              padding: EdgeInsets.zero,
+            ),
             ManualAddForm(
               fieldPrefix: 'direct',
               course: widget.courseName,
@@ -1073,10 +1139,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               onChanged: (v) => setState(() => search = v),
             ),
             const SizedBox(height: 8),
-            Text(
-                'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ProxSectionHeader(
+              title:
+                  'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
+              padding: EdgeInsets.zero,
+            ),
             if (confirmedRows.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 4),
@@ -1085,32 +1152,35 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               )
             else
               for (var i = 0; i < confirmedRows.length; i++)
-                AnimatedContainer(
-                  duration: Duration(milliseconds: 200 + i * 40),
-                  curve: Curves.easeOut,
-                  child: ListTile(
-                    leading:
-                        const Icon(Icons.check_circle, color: Colors.green),
-                    title: Text(confirmedRows[i].name),
-                    subtitle: Text([
-                      ticksFor(confirmedRows[i].wins),
-                      if (confirmedRows[i].roll.isNotEmpty)
-                        confirmedRows[i].roll,
-                      confirmedRows[i].email,
-                      if (confirmedRows[i].late) 'late',
-                    ].join(' · ')),
+                ProxListTile(
+                  title: confirmedRows[i].name,
+                  subtitle: [
+                    ticksFor(confirmedRows[i].wins),
+                    if (confirmedRows[i].roll.isNotEmpty)
+                      confirmedRows[i].roll,
+                    confirmedRows[i].email,
+                    if (confirmedRows[i].late) 'late',
+                  ].join(' · '),
+                  staggerIndex: i,
+                  leading: Icon(
+                    Icons.check_circle,
+                    color: ProxStateColors.of(context, ProxState.marked),
                   ),
                 ),
             if (partialRows.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text('Partial — some rounds (${partialRows.length})',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
+              ProxSectionHeader(
+                title: 'Partial — some rounds (${partialRows.length})',
+                padding: EdgeInsets.zero,
+              ),
               for (final r in partialRows)
                 ListTile(
+                  key: ValueKey<String>('partial-${r.email}'),
                   dense: true,
-                  leading:
-                      const Icon(Icons.timelapse, color: Colors.orange),
+                  leading: Icon(
+                    Icons.timelapse,
+                    color: ProxStateColors.of(context, ProxState.late),
+                  ),
                   title: Text(r.name),
                   subtitle: Text([
                     ticksFor(r.wins),

@@ -3,6 +3,8 @@
 // with bespoke padding, shape, or entrance timing.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
@@ -89,6 +91,10 @@ class ProxListTile extends StatelessWidget {
 /// Small colored dot for live/presence indication. Pulses only when
 /// [pulse] is true (professor LIVE, student BLE-active) — static otherwise
 /// so idle lists stay calm and cheap.
+///
+/// Implementation note: the pulse is timer-driven (periodic toggle +
+/// implicit fade), never an infinite ticker — so widget tests using
+/// `pumpAndSettle` still settle and the dot costs ~1 rebuild per 800ms.
 class ProxDot extends StatefulWidget {
   final Color color;
   final bool pulse;
@@ -105,54 +111,55 @@ class ProxDot extends StatefulWidget {
   State<ProxDot> createState() => _ProxDotState();
 }
 
-class _ProxDotState extends State<ProxDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
+class _ProxDotState extends State<ProxDot> {
+  static const _period = Duration(milliseconds: 800);
+  Timer? _timer;
+  var _dim = false;
 
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    );
-    if (widget.pulse) _c.repeat(reverse: true);
+    _arm();
   }
 
   @override
   void didUpdateWidget(ProxDot old) {
     super.didUpdateWidget(old);
-    if (widget.pulse && !_c.isAnimating) {
-      _c.repeat(reverse: true);
-    } else if (!widget.pulse && _c.isAnimating) {
-      _c.stop();
+    if (widget.pulse != old.pulse) {
+      _timer?.cancel();
+      _timer = null;
+      _dim = false;
+      _arm();
     }
+  }
+
+  void _arm() {
+    if (!widget.pulse) return;
+    _timer = Timer.periodic(_period, (_) {
+      if (!mounted) return;
+      setState(() => _dim = !_dim);
+    });
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.pulse || ProxMotion.reduced(context)) {
-      return Container(
-        width: widget.size,
-        height: widget.size,
-        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-      );
-    }
-    return FadeTransition(
-      opacity: Tween<double>(begin: 1, end: 0.35).animate(
-        CurvedAnimation(parent: _c, curve: Curves.easeInOut),
-      ),
-      child: Container(
-        width: widget.size,
-        height: widget.size,
-        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-      ),
+    final dot = Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+    );
+    if (!widget.pulse || ProxMotion.reduced(context)) return dot;
+    return AnimatedOpacity(
+      duration: _period,
+      curve: Curves.easeInOut,
+      opacity: _dim ? 0.35 : 1.0,
+      child: dot,
     );
   }
 }

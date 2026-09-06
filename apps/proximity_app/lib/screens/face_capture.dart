@@ -740,6 +740,7 @@ class _AnimatedScanProgress extends StatelessWidget {
 /// Pose-guidance oval: thin outline + progress sweep, drawn with
 /// CustomPainter + a slow breathing scale (pure Flutter, no assets).
 /// Outline only — never dims, glows, or filters the preview beneath.
+/// The breathing is timer-driven (no infinite ticker) so tests settle.
 class _PoseOval extends StatefulWidget {
   final double progress;
   final bool active;
@@ -749,33 +750,39 @@ class _PoseOval extends StatefulWidget {
   State<_PoseOval> createState() => _PoseOvalState();
 }
 
-class _PoseOvalState extends State<_PoseOval>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _breath;
+class _PoseOvalState extends State<_PoseOval> {
+  static const _period = Duration(milliseconds: 900);
+  Timer? _timer;
+  var _big = false;
 
   @override
   void initState() {
     super.initState();
-    _breath = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    );
-    if (widget.active) _breath.repeat(reverse: true);
+    _arm();
   }
 
   @override
   void didUpdateWidget(_PoseOval old) {
     super.didUpdateWidget(old);
-    if (widget.active && !_breath.isAnimating) {
-      _breath.repeat(reverse: true);
-    } else if (!widget.active && _breath.isAnimating) {
-      _breath.stop();
+    if (widget.active != old.active) {
+      _timer?.cancel();
+      _timer = null;
+      _big = false;
+      _arm();
     }
+  }
+
+  void _arm() {
+    if (!widget.active) return;
+    _timer = Timer.periodic(_period, (_) {
+      if (!mounted) return;
+      setState(() => _big = !_big);
+    });
   }
 
   @override
   void dispose() {
-    _breath.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -790,12 +797,10 @@ class _PoseOvalState extends State<_PoseOval>
       ),
     );
     if (ProxMotion.reduced(context) || !widget.active) return child;
-    return AnimatedBuilder(
-      animation: _breath,
-      builder: (context, c) {
-        final s = 1.0 + _breath.value * 0.025;
-        return Transform.scale(scale: s, child: c);
-      },
+    return AnimatedScale(
+      scale: _big ? 1.025 : 1.0,
+      duration: _period,
+      curve: Curves.easeInOut,
       child: child,
     );
   }

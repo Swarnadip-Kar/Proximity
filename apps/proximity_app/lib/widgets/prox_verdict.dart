@@ -3,12 +3,15 @@
 //
 //   marked    → spring scale-in (celebratory pop, verdictSpring/450ms)
 //   late      → rise + fade (arrived, but after the fact — no overshoot)
-//   no-signal → slow breathing fade (absence, not failure — calm loop)
+//   no-signal → slow breathing fade (absence, not failure — calm loop,
+//               timer-driven so tests still settle)
 //   error     → short horizontal shake (something is wrong — sharp, once)
 //
 // Icon + label always carry the meaning; motion only reinforces it, so
 // reduced-motion still reads correctly as a plain fade-in.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -50,28 +53,36 @@ class ProxVerdictBadge extends StatefulWidget {
 
 class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
+  AnimationController? _c;
+  Timer? _breath;
+  var _dim = false;
+
+  static const _breathPeriod = Duration(milliseconds: 1200);
 
   @override
   void initState() {
     super.initState();
+    if (widget.kind == ProxVerdictKind.noSignal) {
+      // Calm loop, timer-driven (no infinite ticker — tests settle).
+      _breath = Timer.periodic(_breathPeriod, (_) {
+        if (!mounted) return;
+        setState(() => _dim = !_dim);
+      });
+      return;
+    }
     final duration = switch (widget.kind) {
       ProxVerdictKind.marked => const Duration(milliseconds: 450),
       ProxVerdictKind.late => ProxDurations.medium,
-      ProxVerdictKind.noSignal => const Duration(milliseconds: 1200),
+      ProxVerdictKind.noSignal => _breathPeriod,
       ProxVerdictKind.error => const Duration(milliseconds: 500),
     };
-    _c = AnimationController(vsync: this, duration: duration);
-    if (widget.kind == ProxVerdictKind.noSignal) {
-      _c.repeat(reverse: true);
-    } else {
-      _c.forward();
-    }
+    _c = AnimationController(vsync: this, duration: duration)..forward();
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _c?.dispose();
+    _breath?.cancel();
     super.dispose();
   }
 
@@ -94,33 +105,40 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
     final color = ProxStateColors.of(context, _state);
     if (ProxMotion.reduced(context)) return _content(color);
 
+    // noSignal never creates [_c] (timer-driven loop instead).
+    final c = _c;
+    if (widget.kind == ProxVerdictKind.noSignal) {
+      return AnimatedOpacity(
+        duration: _breathPeriod,
+        curve: Curves.easeInOut,
+        opacity: _dim ? 0.55 : 1.0,
+        child: _content(color),
+      );
+    }
+    if (c == null) return _content(color);
+
     return switch (widget.kind) {
       ProxVerdictKind.marked => ScaleTransition(
-          scale: CurvedAnimation(parent: _c, curve: ProxCurves.verdictSpring),
+          scale: CurvedAnimation(parent: c, curve: ProxCurves.verdictSpring),
           child: _content(color),
         ),
       ProxVerdictKind.late => FadeTransition(
-          opacity: CurvedAnimation(parent: _c, curve: ProxCurves.standard),
+          opacity: CurvedAnimation(parent: c, curve: ProxCurves.standard),
           child: SlideTransition(
             position: Tween<Offset>(
               begin: const Offset(0, 0.3),
               end: Offset.zero,
             ).animate(
-                CurvedAnimation(parent: _c, curve: ProxCurves.standard)),
+                CurvedAnimation(parent: c, curve: ProxCurves.standard)),
             child: _content(color),
           ),
         ),
-      ProxVerdictKind.noSignal => FadeTransition(
-          opacity: Tween<double>(begin: 1, end: 0.55).animate(
-            CurvedAnimation(parent: _c, curve: Curves.easeInOut),
-          ),
-          child: _content(color),
-        ),
+      ProxVerdictKind.noSignal => _content(color),
       ProxVerdictKind.error => AnimatedBuilder(
-          animation: _c,
+          animation: c,
           builder: (context, child) {
             // One damped shake: 3 oscillations decaying to rest.
-            final t = _c.value.clamp(0.0, 1.0);
+            final t = c.value.clamp(0.0, 1.0);
             final dx = t < 1.0
                 ? (1 - t) * 10 * _shake(t * 3 * 2 * 3.1415926535)
                 : 0.0;

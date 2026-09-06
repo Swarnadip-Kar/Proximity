@@ -641,8 +641,9 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
 }
 
 /// Hero moment: proximity rings emanating from a classroom mark.
-/// Pure Flutter (CustomPainter + one repeating controller, ~3 stroked
-/// circles — cheap on mid-range phones). Static when reduced motion is on.
+/// Pure Flutter (CustomPainter + a 50ms progress timer — no assets, no
+/// infinite ticker so `pumpAndSettle`-based tests still settle). Static
+/// when reduced motion is on.
 class _LandingHero extends StatefulWidget {
   const _LandingHero();
 
@@ -650,22 +651,32 @@ class _LandingHero extends StatefulWidget {
   State<_LandingHero> createState() => _LandingHeroState();
 }
 
-class _LandingHeroState extends State<_LandingHero>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
+class _LandingHeroState extends State<_LandingHero> {
+  static const _loop = Duration(milliseconds: 2400);
+  static const _tick = Duration(milliseconds: 50);
+  Timer? _timer;
+  var _progress = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat();
+    // One-shot inherited read: MediaQuery is above us (MaterialApp), and
+    // the reduced-motion setting cannot change without a full relaunch
+    // carrying a new route anyway.
+    if (!ProxMotion.reduced(context)) {
+      _timer = Timer.periodic(_tick, (_) {
+        if (!mounted) return;
+        setState(
+            () => _progress = (_progress + _tick.inMilliseconds / _loop.inMilliseconds) % 1.0);
+      });
+    } else {
+      _progress = 0.35;
+    }
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -677,27 +688,14 @@ class _LandingHeroState extends State<_LandingHero>
       child: Stack(
         alignment: Alignment.center,
         children: [
-          if (!ProxMotion.reduced(context))
-            AnimatedBuilder(
-              animation: _c,
-              builder: (context, _) => CustomPaint(
-                size: const Size(220, 148),
-                painter: _RingsPainter(
-                  progress: _c.value,
-                  primary: scheme.primary,
-                  secondary: scheme.secondary,
-                ),
-              ),
-            )
-          else
-            CustomPaint(
-              size: const Size(220, 148),
-              painter: _RingsPainter(
-                progress: 0.35,
-                primary: scheme.primary,
-                secondary: scheme.secondary,
-              ),
+          CustomPaint(
+            size: const Size(220, 148),
+            painter: _RingsPainter(
+              progress: _progress,
+              primary: scheme.primary,
+              secondary: scheme.secondary,
             ),
+          ),
           Container(
             width: 72,
             height: 72,

@@ -13,12 +13,17 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../core/ble_radio.dart';
 import '../core/device_store.dart';
 import '../core/student_driver.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/animated.dart';
 import '../widgets/ble_log_view.dart';
 import '../widgets/ip_join.dart';
 import '../widgets/clock.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_motion.dart';
+import '../widgets/prox_states.dart';
+import '../widgets/prox_verdict.dart';
 import 'enrollment.dart';
 import 'face_capture.dart';
 import 'my_attendance.dart';
@@ -1075,8 +1080,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('Live on this WiFi',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          child: ProxSectionHeader(
+            title: 'Live on this WiFi',
+            padding: EdgeInsets.zero,
+          ),
         ),
         if (_live.isEmpty)
           const Padding(
@@ -1085,46 +1092,51 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 'No live classes heard yet. Stay on the classroom WiFi — professors appear here when they start hosting. If nothing appears, type the IP shown on the professor\u2019s screen above, or join the professor\u2019s hotspot instead.'),
           )
         else
-          for (final c in _live)
-            ListTile(
-              leading: Icon(
-                c.last.windowOpen ? Icons.radio : Icons.radio_button_checked,
-                color: c.last.windowOpen ? Colors.green : null,
+          for (var i = 0; i < _live.length; i++)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+              child: ProxListTile(
+                title: _live[i].last.classLabel,
+                subtitle: [
+                  if (_live[i].last.prof.isNotEmpty) _live[i].last.prof,
+                  _live[i].last.host,
+                  if (_live[i].last.display.isNotEmpty)
+                    'Code ${_live[i].last.display}',
+                ].join(' · '),
+                staggerIndex: i,
+                leading: ProxDot(
+                  color: _live[i].last.windowOpen
+                      ? ProxStateColors.of(context, ProxState.marked)
+                      : ProxStateColors.of(context, ProxState.neutral),
+                  pulse: _live[i].last.windowOpen,
+                  size: 12,
+                ),
+                trailing: _live[i].last.windowOpen
+                    ? const Icon(Icons.chevron_right)
+                    : const Text('idle'),
+                onTap: () {
+                  final c = _live[i];
+                  final target = ClassBeacon(
+                    classLabel: c.last.classLabel,
+                    host: c.last.host,
+                    port: c.last.port,
+                    rssiDbm: 0,
+                    displayCode: c.last.display,
+                  );
+                  final hp = '${c.last.host}:${c.last.port}';
+                  setState(() {
+                    _fieldInitial = hp;
+                    _fieldNonce++;
+                    _typedHostPort = hp;
+                  });
+                  _roundMarks.clear();
+                  if (c.last.windowOpen) {
+                    _joinBeacon(target);
+                  } else {
+                    _enterWaitingRoom(target, immediateProbe: false);
+                  }
+                },
               ),
-                    title: Text(c.last.classLabel),
-                    subtitle: Text(
-                      [
-                        if (c.last.prof.isNotEmpty) c.last.prof,
-                        c.last.host,
-                        if (c.last.display.isNotEmpty)
-                          'Code ${c.last.display}',
-                      ].join(' · '),
-                    ),
-              trailing: c.last.windowOpen
-                  ? const Icon(Icons.chevron_right)
-                  : const Text('idle'),
-              enabled: true,
-                    onTap: () {
-                      final target = ClassBeacon(
-                        classLabel: c.last.classLabel,
-                        host: c.last.host,
-                        port: c.last.port,
-                        rssiDbm: 0,
-                        displayCode: c.last.display,
-                      );
-                      final hp = '${c.last.host}:${c.last.port}';
-                      setState(() {
-                        _fieldInitial = hp;
-                        _fieldNonce++;
-                        _typedHostPort = hp;
-                      });
-                      _roundMarks.clear();
-                      if (c.last.windowOpen) {
-                        _joinBeacon(target);
-                      } else {
-                        _enterWaitingRoom(target, immediateProbe: false);
-                      }
-                    },
             ),
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1180,34 +1192,30 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           StudentPhase.waiting => Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
-                child: Column(
+                child: ProxFadeSlideIn(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.hourglass_top, size: 48),
+                    ProxSwitcher(
+                      child: ProxStateBadge(
+                        key: ValueKey<bool>(_connected),
+                        state: _connected
+                            ? ProxState.active
+                            : ProxState.waiting,
+                        label: _connected ? 'Connected' : 'Not connected',
+                        pulse: _connected,
+                      ),
+                    ),
                     const SizedBox(height: 12),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _connected ? Icons.wifi : Icons.wifi_off,
-                          color: _connected ? Colors.green : Colors.red,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        // Flexible: the status line must wrap on narrow
-                        // phones instead of overflowing the row (42px
-                        // overflow caught on-device).
-                        Flexible(
-                          child: Text(
-                            _connected
-                                ? 'Connected — waiting for professor to start marking'
-                                : 'Not connected — check WiFi / IP',
-                            style:
-                                Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
+                    ProxSwitcher(
+                      child: Text(
+                        _connected
+                            ? 'Connected — waiting for professor to start marking'
+                            : 'Not connected — check WiFi / IP',
+                        key: ValueKey<bool>(_connected),
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -1244,6 +1252,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     const SizedBox(height: 12),
                     BleLogView(visible: _showLog, onToggle: _toggleLog),
                   ],
+                  ),
                 ),
               ),
             ),
@@ -1298,9 +1307,41 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     const SizedBox(height: 8),
                   const Text(
                       'Professor started marking — look at the camera, scanning starts by itself.'),
+                  // Ambient BLE indicator: the radio keeps listening under
+                  // the camera UI. One small pulsing dot + caption — visible
+                  // without distracting from the scan.
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ProxDot(
+                        color: ProxStateColors.of(context, ProxState.active),
+                        pulse: true,
+                        size: 8,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'BLE listening',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
                   if (faceNotice.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(faceNotice, textAlign: TextAlign.center),
+                    ProxSwitcher(
+                      child: Text(
+                        faceNotice,
+                        key: ValueKey<String>(faceNotice),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   ],
                   const SizedBox(height: 8),
                     FilledButton.icon(
@@ -1326,7 +1367,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                   children: [
                     const CircularProgressIndicator(),
                     const SizedBox(height: 12),
-                    Text(listenStatus),
+                    ProxSwitcher(
+                      child: Text(
+                        listenStatus,
+                        key: ValueKey<String>(listenStatus),
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     BleLogView(visible: _showLog, onToggle: _toggleLog),
                   ],
@@ -1339,7 +1385,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    MarkedBadge(detail: ackDetail),
+                    ProxVerdictBadge.marked(detail: ackDetail),
                     if (_roundMarks.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(
@@ -1365,7 +1411,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    MarkedBadge(detail: ackDetail, title: 'Late'),
+                    ProxVerdictBadge.late(detail: ackDetail),
                     if (_roundMarks.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(
@@ -1381,7 +1427,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               ),
             ),
           StudentPhase.needsReview => Center(
-              child: Column(
+              child: ProxFadeSlideIn(
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
@@ -1418,6 +1465,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     child: const Text('Back'),
                   ),
                 ],
+                ),
               ),
             ),
           StudentPhase.noSignal => Center(
@@ -1426,11 +1474,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.bluetooth_disabled, size: 48),
-                    const SizedBox(height: 12),
-                    Text(
-                      infoDetail.isNotEmpty ? infoDetail : ackDetail,
-                      textAlign: TextAlign.center,
+                    ProxVerdictBadge(
+                      kind: ProxVerdictKind.noSignal,
+                      title: 'No signal',
+                      detail: infoDetail.isNotEmpty ? infoDetail : ackDetail,
                     ),
                     const SizedBox(height: 12),
                     FilledButton(

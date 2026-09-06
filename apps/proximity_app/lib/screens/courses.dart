@@ -11,9 +11,13 @@ import 'package:proximity_storage/storage.dart';
 import '../core/auth.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/clock.dart';
+import '../widgets/prox_buttons.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 import 'course_detail.dart';
 
@@ -251,12 +255,7 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
               children: [
                 const ClockHeader(),
                 const WebRecordsBanner(),
-                if (_syncMsg != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(_syncMsg!,
-                        style: const TextStyle(color: Colors.grey)),
-                  ),
+                if (_syncMsg != null) ProxSyncNote(_syncMsg!),
                 if (linked != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -267,7 +266,7 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                 const SizedBox(height: 8),
                 // Course catalog edits are native-only (records view on web).
                 if (!kIsWeb)
-                  FilledButton.icon(
+                  ProxPrimaryButton(
                     icon: const Icon(Icons.add),
                     label: const Text('Register new course'),
                     onPressed: _register,
@@ -276,46 +275,58 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                 if (snap.connectionState == ConnectionState.waiting)
                   const Center(child: CircularProgressIndicator())
                 else if (rows.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 32),
-                    child: Text(
-                      kIsWeb
-                          ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
-                          : 'No courses yet. Register your first course above.',
-                      textAlign: TextAlign.center,
-                    ),
+                  ProxEmptyState(
+                    message: kIsWeb
+                        ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
+                        : 'No courses yet. Register your first course above.',
                   )
                 else
                   for (var i = 0; i < rows.length; i++)
-                    AnimatedContainer(
-                      duration: Duration(milliseconds: 200 + i * 40),
-                      curve: Curves.easeOut,
-                      child: Card(
-                        child: ListTile(
-                          title: Text(rows[i].name),
-                          subtitle: Text(
-                              '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (!kIsWeb)
-                                  IconButton(
-                                    icon: const Icon(Icons.delete_outline),
-                                    tooltip: 'Delete course',
-                                    onPressed: () => _deleteCourse(
-                                        context, rows[i].name, history),
-                                  ),
-                                const Icon(Icons.chevron_right),
-                              ],
-                            ),
-                          onTap: () => Navigator.of(context)
-                              .push(MaterialPageRoute(
-                                  builder: (_) => CourseDetailScreen(
-                                      courseName: rows[i].name)))
-                              .then((_) {
-                            if (mounted) setState(() {});
-                          }),
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(bottom: ProxSpacing.sm),
+                      child: ProxListTile(
+                        title: rows[i].name,
+                        subtitle:
+                            '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}',
+                        staggerIndex: i,
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primaryContainer,
+                            borderRadius:
+                                BorderRadius.circular(ProxRadii.md),
+                          ),
+                          child: Icon(
+                            Icons.folder_outlined,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onPrimaryContainer,
+                          ),
                         ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (!kIsWeb)
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'Delete course',
+                                onPressed: () => _deleteCourse(
+                                    context, rows[i].name, history),
+                              ),
+                            const Icon(Icons.chevron_right),
+                          ],
+                        ),
+                        onTap: () => Navigator.of(context)
+                            .push(MaterialPageRoute(
+                                builder: (_) => CourseDetailScreen(
+                                    courseName: rows[i].name)))
+                            .then((_) {
+                          if (mounted) setState(() {});
+                        }),
                       ),
                     ),
               ],
