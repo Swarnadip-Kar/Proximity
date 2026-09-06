@@ -110,7 +110,7 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
     if (widget.kind == ProxVerdictKind.noSignal) {
       return AnimatedOpacity(
         duration: _breathPeriod,
-        curve: Curves.easeInOut,
+        curve: ProxCurves.standard,
         opacity: _dim ? 0.55 : 1.0,
         child: _content(color),
       );

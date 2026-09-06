@@ -800,7 +800,7 @@ class _PoseOvalState extends State<_PoseOval> {
     return AnimatedScale(
       scale: _big ? 1.025 : 1.0,
       duration: _period,
-      curve: Curves.easeInOut,
+      curve: ProxCurves.standard,
       child: child,
     );
   }

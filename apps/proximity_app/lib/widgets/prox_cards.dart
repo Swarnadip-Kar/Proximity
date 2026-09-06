@@ -157,7 +157,7 @@ class _ProxDotState extends State<ProxDot> {
     if (!widget.pulse || ProxMotion.reduced(context)) return dot;
     return AnimatedOpacity(
       duration: _period,
-      curve: Curves.easeInOut,
+      curve: ProxCurves.standard,
       opacity: _dim ? 0.35 : 1.0,
       child: dot,
     );

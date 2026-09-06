@@ -850,7 +850,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             ],
             if (_resumed) ...[
               const SizedBox(height: 8),
-              Card(
+              ProxCard(
+                padding: EdgeInsets.zero,
                 child: ListTile(
                   leading: const Icon(Icons.history),
                   title: const Text('Resumed autosaved session'),

@@ -5,6 +5,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../design/tokens.dart';
+
 /// Press-scale wrapper: subtle 0.97 squeeze on tap-down, spring back on
 /// release. Visual only — [onPressed] fires immediately on tap-up.
 class _PressScale extends StatefulWidget {
@@ -29,8 +31,8 @@ class _PressScaleState extends State<_PressScale> {
       onPointerCancel: (_) => setState(() => _down = false),
       child: AnimatedScale(
         scale: _down ? 0.97 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
+        duration: ProxDurations.micro,
+        curve: ProxCurves.standard,
         child: widget.child,
       ),
     );

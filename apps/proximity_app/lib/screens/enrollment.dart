@@ -318,8 +318,10 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('$n. $title',
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Opacity(opacity: reached || n == 1 ? 1.0 : 0.45, child: child),
         ],

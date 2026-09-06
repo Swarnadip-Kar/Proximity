@@ -48,10 +48,16 @@ lib/
 8. **Performance:** no blur/shadow/particle parties on live screens
    (BLE + camera + networking are already hot). One pulsing dot max per
    row; lists rebuild only on data change.
-9. **Behavior is frozen:** flows, timing guarantees, and security properties
+9. **Ambient motion is timer-driven, never an infinite ticker.** Repeating
+   `AnimationController`s keep the frame scheduler busy forever and break
+   `pumpAndSettle`-based widget tests (caught in Phase 4+5). Pulses and
+   breathing use `Timer.periodic` + implicit animations (`AnimatedOpacity`,
+   `AnimatedScale`), which settle between fires. One-shot entrance
+   controllers (`ProxFadeSlideIn`, verdict pops/shakes) are fine.
+10. **Behavior is frozen:** flows, timing guarantees, and security properties
    per `PROXIMITY_DESIGN.md` §7. Refactor freely under that constraint;
    flag anything uncertain for review instead of guessing.
-10. **Tests are contracts:** `test/widget_test.dart` asserts on visible copy
+11. **Tests are contracts:** `test/widget_test.dart` asserts on visible copy
     (`Start`, `Join`, `✓ Marked`, …) and field keys (`ipfield`, `direct-*`,
     `edit-*`, `prof-search`). Keep those strings/keys stable.
 

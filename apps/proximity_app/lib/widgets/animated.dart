@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../design/tokens.dart';
+
 /// Face oval with progress ring (~1s check).
 class FaceOval extends StatelessWidget {
   final double progress; // 0..1
@@ -78,6 +80,8 @@ class _OvalPainter extends CustomPainter {
 }
 
 /// Animated present-count ticker (counts up, no jank: simple AnimatedSwitcher).
+/// Honors reduced motion (instant swap). Prefer [ProxAnimatedCount] in new
+/// code; kept for the take-attendance header contract.
 class PresentTicker extends StatelessWidget {
   final int present;
   final int total;
@@ -85,18 +89,22 @@ class PresentTicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final label = Text('$present/$total present',
+        key: ValueKey<int>(present),
+        style: Theme.of(context).textTheme.headlineSmall);
+    if (ProxMotion.reduced(context)) return label;
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 350),
+      duration: ProxDurations.medium,
       transitionBuilder: (child, anim) =>
           SlideTransition(position: Tween<Offset>(begin: const Offset(0, 0.6), end: Offset.zero).animate(anim), child: child),
-      child: Text('$present/$total present',
-          key: ValueKey<int>(present),
-          style: Theme.of(context).textTheme.headlineSmall),
+      child: label,
     );
   }
 }
 
 /// Success spring: ✓ Marked (or custom [title], e.g. Late) with scale-in.
+/// Honors reduced motion (plain content, no pop). Prefer [ProxVerdictBadge]
+/// in new code, which gives each verdict a distinct motion signature.
 class MarkedBadge extends StatefulWidget {
   final String detail;
   final String title;
@@ -115,7 +123,7 @@ class _MarkedBadgeState extends State<MarkedBadge>
     super.initState();
     _c = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 450));
-    _s = CurvedAnimation(parent: _c, curve: Curves.elasticOut);
+    _s = CurvedAnimation(parent: _c, curve: ProxCurves.verdictSpring);
     _c.forward();
   }
 
@@ -127,16 +135,18 @@ class _MarkedBadgeState extends State<MarkedBadge>
 
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(widget.title, style: const TextStyle(fontSize: 28)),
+        const SizedBox(height: 4),
+        Text(widget.detail),
+      ],
+    );
+    if (ProxMotion.reduced(context)) return content;
     return ScaleTransition(
       scale: _s,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(widget.title, style: const TextStyle(fontSize: 28)),
-          const SizedBox(height: 4),
-          Text(widget.detail),
-        ],
-      ),
+      child: content,
     );
   }
 }
