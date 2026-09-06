@@ -14,7 +14,7 @@ void main() {
     // Professor sets up window.
     final profKeys = ProxCrypto.generateEdKeypair();
     final stuKeys = ProxCrypto.generateEdKeypair();
-    const studentId = 'aarav@institute.ac.in'; // Gmail identity (no institute ID)
+    const studentId = 'student@example.com'; // Gmail identity (no institute ID)
     final window = WindowParams(
       sessionId: randBytes(16),
       windowId: randBytes(6),
@@ -25,22 +25,28 @@ void main() {
     const j = 0;
     final cj = window.challengeFor(j);
 
-    // BLE: prof advertises UUID_P, student hears it (fake radios).
+    // BLE: prof advertises air packet, student hears it (fake radios).
     final profRadio = FakeBleRadio();
     final stuRadio = FakeBleRadio();
     final profEngine = ProxBleEngine(radio: profRadio);
+    profEngine.setServerIp('10.50.19.107', 8443);
     Uint8List? heardCj;
     final stuEngine = ProxBleEngine(
       radio: stuRadio,
       onChallengeHeard: (s) {
-        heardCj = UuidCodec.lo8Of(s.uuid);
+        heardCj = Uint8List.fromList(s.token8);
       },
     );
     await profEngine.startProfRotation(window);
     await stuEngine.startScanning();
     // deliver advertisement prof → student
+    final airMfg = profRadio.advertisingMfg!;
+    final heard = unpackAir(airMfg)!;
     stuRadio.inject(BleSighting(
-      uuid: profRadio.advertisingUuid!,
+      type: heard.type,
+      token8: heard.token8,
+      ipHost: heard.host,
+      ipPort: heard.port,
       rssiDbm: -55,
       at: DateTime.now().toUtc(),
     ));
@@ -68,7 +74,7 @@ void main() {
       faceScore: 0.85,
     );
     await stuEngine.advertiseStudentResponse(studentId, cj, j, peerW);
-    expect(UuidCodec.isResponseUuid(stuRadio.advertisingUuid!), isTrue);
+    expect(unpackAir(stuRadio.advertisingMfg!)!.isResponse, isTrue);
 
     // Professor verifies POST + BLE sighting (direct, -55 dBm).
     final once = SingleUseTracker();
@@ -82,7 +88,7 @@ void main() {
       sigS: sigS,
       faceScore: 0.85,
       peerW: peerW,
-      name: 'Aarav S',
+      name: 'Student One',
       roll: '12342210',
       tlsFp: tlsFp,
       sigBind: ProxCrypto.sign(
@@ -92,6 +98,7 @@ void main() {
               windowId: window.windowId,
               j: j,
               tlsFingerprint: tlsFp)),
+      pkS: stuPk32,
     );
     expect(body['ID'], studentId);
     final outcome = verifyProve(
@@ -147,8 +154,8 @@ void main() {
 
     // Tally + export + detached sig verifies.
     final tally = TallyStore();
-    tally.mark(studentId, 'Aarav S', 1);
-    tally.mark(studentId, 'Aarav S', 2);
+    tally.mark(studentId, 'Student One', 1);
+    tally.mark(studentId, 'Student One', 2);
     final csv = tally.exportCsv(
         classLabel: 'CS201-Room301', dateIso: '2026-09-03');
     final csvSig = signExport(profKeys.privateKey, csv);

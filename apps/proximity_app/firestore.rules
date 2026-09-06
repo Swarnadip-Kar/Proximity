@@ -1,44 +1,190 @@
 rules_version = '2';
 // Proximity — Campus Attendance System (project: proximity-attendence).
 //
-// Identity is the Gmail account itself — no roster collection, no
-// institute-ID matching. `rosterKeys/{lowercased-email}`:
-// {pk, name, email, faceHash, modelVer, sig, updatedAt} — one doc per
-// email; create/update only when the doc email equals the caller's auth
-// email (one-device-per-email is additionally enforced client-side by
-// rejecting a different PK; full Ed25519 verification stays in-app, §5.3).
-// `crl/{key}`: {pk} — admin-written, clients read.
-// `auditExports/{id}`: metadata only — any signed-in host may append.
-// Face photos/templates are NEVER written here — only faceHash = H(template).
+// Identity is the Google account itself.
+//   users/{uid}: {email, name, roles[prof|student], displayName, lastMode,
+//     updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
+//     roles (professor on many devices, student on exactly one). lastMode
+//     is the last-used mode (landing + relaunch default). Gets (not lists)
+//     so a missing doc reads as not-found, never denied.
+//   studentDevices/{lowercased-email}: {email, uid, pkHex, installId, name,
+//     roll, modelVer, platform, createdAt/lastMoveAt/lastSeenAt/
+//     updatedAtMillis, moveCount} — one enrolled student device per Gmail.
+//     Same-install re-keys are always allowed; a move to a different
+//     install needs the 7-day cooldown (a bare pkHex match from another
+//     install is a move, not the same device)
+//     (request.time - lastMoveAtMillis > 7d) unless the doc predates
+//     timestamps (one migration move). Clients claim via a transaction so
+//     racing devices resolve to exactly one winner. Face photos/templates
+//     are NEVER written here — only the device public key + install id.
+//   deviceInstalls/{installId}: {email, pkHex, updatedAtMillis} — one
+//     student Gmail per app install. The installId lives in secure storage,
+//     so app clones / dual-app copies / work profiles get their own: the
+//     same phone can never hold two student enrollments. Deletes are never
+//     needed (a wipe generates a fresh installId).
+//   studentDirectory/{emailLower}: {email, name, roll, nameLower,
+//     updatedAtMillis} — minimal professor-searchable directory, maintained
+//     by the claim transaction. Professors (role-gated) prefix-search it to
+//     add students to records; students read only their own doc. NOTE: the
+//     prof gate is advisory until professor roles are institute-verified —
+//     any self-registered prof can list it (emails/names/rolls only).
+//   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
+//     profEmail, profName, dateIso, timestampIso, startIso, windows, names,
+//     rolls, studentEmails[], updatedAt} — professors own their sessions; a student
+//     reads only sessions listing their Gmail (array-contains). Queries use
+//     a single where clause and sort client-side, so no composite index is
+//     needed.
 service cloud.firestore {
   match /databases/{db}/documents {
     function signedIn() {
       return request.auth != null;
     }
-    function ownEmail(data) {
-      return signedIn() && data.email == request.auth.token.email;
+    function ownUid(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function tokenEmail() {
+      return request.auth.token.email;
+    }
+    // Gmail is case-insensitive but the token preserves case: every doc id
+    // and email comparison below lowercases both sides (was raw compare —
+    // a mixed-case Gmail denied its own docs / missed its sessions).
+    function tokenEmailLower() {
+      return tokenEmail().lower();
+    }
+    function validRoles(rs) {
+      return rs is list && rs.size() >= 1 && rs.size() <= 2 &&
+        rs.hasOnly(['prof', 'student']);
+    }
+    function validLastMode(m) {
+      return m == '' || m == 'prof' || m == 'student';
+    }
+    function callerIsProf() {
+      return signedIn() &&
+        exists(/databases/$(db)/documents/users/$(request.auth.uid)) &&
+        'prof' in get(/databases/$(db)/documents/users/$(request.auth.uid))
+          .data.get('roles', []);
     }
 
-    match /rosterKeys/{id} {
-      allow read: if signedIn();
-      allow create: if ownEmail(request.resource.data);
-      // Re-login (new device key) at most once per 24h, measured on the
-      // server doc timestamp so the limit holds across devices.
-      allow update: if ownEmail(resource.data)
-        && ownEmail(request.resource.data)
-        && (request.time - resource.data.updatedAt) >= duration.value(24, 'h');
+    match /users/{uid} {
+      allow get: if ownUid(uid);
+      allow list: if false;
+      allow create: if ownUid(uid)
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && validRoles(request.resource.data.roles)
+        && (!('lastMode' in request.resource.data) ||
+            validLastMode(request.resource.data.lastMode));
+      allow update: if ownUid(uid)
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && validRoles(request.resource.data.roles)
+        && (!('lastMode' in request.resource.data) ||
+            validLastMode(request.resource.data.lastMode));
       allow delete: if false;
     }
 
-    match /crl/{id} {
-      allow read: if signedIn();
-      allow write: if false;
+    // studentDevices helpers. Field-missing guards come first: reading a
+    // missing key errors (it does NOT yield false), so the legacy check
+    // must short-circuit before any timestamp comparison. The install is
+    // the device identity: a bare pkHex match from a different install is
+    // a move (backup/clone restore), not the same device — copying a
+    // public key must not bypass the cooldown. Legacy docs without an
+    // installId still honor a pk match (migration).
+    function isLegacyDevice() {
+      return !(resource.data.keys().hasAll(['lastMoveAtMillis'])) ||
+        resource.data.lastMoveAtMillis == 0;
+    }
+    function isSameDevice() {
+      return (request.resource.data.keys().hasAll(['installId']) &&
+         resource.data.keys().hasAll(['installId']) &&
+         request.resource.data.installId != '' &&
+         request.resource.data.installId == resource.data.installId) ||
+        (request.resource.data.pkHex == resource.data.pkHex &&
+         (!(resource.data.keys().hasAll(['installId'])) ||
+          resource.data.installId == ''));
+    }
+    function moveCooldownElapsed() {
+      return request.time.toMillis() - resource.data.lastMoveAtMillis >
+        7 * 24 * 60 * 60 * 1000;
     }
 
-    match /auditExports/{id} {
-      allow read: if signedIn();
-      allow create: if signedIn();
-      allow update, delete: if false;
+    match /studentDevices/{id} {
+      // Doc id IS the lowercased Gmail (client writes it so): the owner can
+      // always get their own binding — including the first check when no
+      // doc exists yet (get on a missing doc must allow, not deny).
+      allow get: if signedIn() && id == tokenEmailLower();
+      allow list: if false;
+      allow create: if signedIn()
+        && id == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower();
+      // Same-device re-key/heartbeat always allowed; a move to a different
+      // device needs the 7-day cooldown (server-enforced: clients cannot
+      // bypass it, even with a hand-built write). Pre-timestamp docs move
+      // once freely (migration), stamping lastMoveAtMillis as they go.
+      allow update: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed());
+      // No delete, for anyone: professor registration is self-asserted this
+      // phase, so any reset permission (even prof-gated) would let a student
+      // register as prof and self-reset around the cooldown. Genuine loss
+      // waits out the week; manual attendance covers the gap.
+      allow delete: if false;
+    }
+
+    match /deviceInstalls/{id} {
+      // Ids are unguessable 128-bit install UUIDs; the email-equality
+      // checks below bind every write to the signing-in Gmail.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.email.lower() == tokenEmailLower();
+      allow update: if signedIn()
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower();
+      allow delete: if false;
+    }
+
+    match /studentDirectory/{id} {
+      // Professors prefix-search enrolled students to add them to records
+      // (single-field range queries; client merges email/roll/name hits, so
+      // no composite index is needed). Owner reads their own row. The prof
+      // gate is advisory until professor roles are institute-verified.
+      allow get: if signedIn() &&
+        (id == tokenEmailLower() || callerIsProf());
+      allow list: if callerIsProf();
+      allow create: if signedIn()
+        && id == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower();
+      allow update: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower();
+      allow delete: if false;
+    }
+
+    match /classSessions/{id} {
+      // Per-document read gate. The two client queries each mirror one arm
+      // with a single filter (professors: where profUid == uid; students:
+      // where studentEmails arrayContains email) and sort client-side, so
+      // no composite index is needed and each query provably stays within
+      // readable docs.
+      allow read: if signedIn() && (
+        resource.data.profUid == request.auth.uid ||
+        tokenEmailLower() in resource.data.studentEmails
+      );
+      allow create: if signedIn()
+        && request.resource.data.profUid == request.auth.uid
+        && request.resource.data.profEmail.lower() == tokenEmailLower()
+        && request.resource.data.courseId is string
+        && request.resource.data.studentEmails is list
+        && request.resource.data.names is map
+        && request.resource.data.rolls is map;
+      allow update: if signedIn()
+        && resource.data.profUid == request.auth.uid
+        && request.resource.data.profUid == request.auth.uid;
+      allow delete: if signedIn()
+        && resource.data.profUid == request.auth.uid;
     }
   }
 }

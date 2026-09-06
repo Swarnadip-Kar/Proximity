@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -30,10 +27,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.macOS:
         return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -53,7 +47,6 @@ class DefaultFirebaseOptions {
     projectId: 'proximity-attendence',
     storageBucket: 'proximity-attendence.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyC42l8zJxFs1kAq718PXHN0aTY5jLgwUqs',
     appId: '1:355638335271:ios:5e50a33356af0fc9d0fb02',
@@ -64,7 +57,6 @@ class DefaultFirebaseOptions {
     iosClientId: '355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd.apps.googleusercontent.com',
     iosBundleId: 'org.iitbhilai.proximity',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyC42l8zJxFs1kAq718PXHN0aTY5jLgwUqs',
     appId: '1:355638335271:ios:5e50a33356af0fc9d0fb02',
@@ -74,5 +66,24 @@ class DefaultFirebaseOptions {
     androidClientId: '355638335271-im3db3lnocimghunht2rp8ps01gigrv6.apps.googleusercontent.com',
     iosClientId: '355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd.apps.googleusercontent.com',
     iosBundleId: 'org.iitbhilai.proximity',
+  );
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyDdyXEBevLJhysR8aTZy8PJldly9QKE_JA',
+    appId: '1:355638335271:web:195c00ce4bec187bd0fb02',
+    messagingSenderId: '355638335271',
+    projectId: 'proximity-attendence',
+    authDomain: 'proximity-attendence.firebaseapp.com',
+    storageBucket: 'proximity-attendence.firebasestorage.app',
+    measurementId: 'G-Q8CV0Y9V9E',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyDdyXEBevLJhysR8aTZy8PJldly9QKE_JA',
+    appId: '1:355638335271:web:06965246a81ca445d0fb02',
+    messagingSenderId: '355638335271',
+    projectId: 'proximity-attendence',
+    authDomain: 'proximity-attendence.firebaseapp.com',
+    storageBucket: 'proximity-attendence.firebasestorage.app',
+    measurementId: 'G-1Z7M5GE8WG',
   );
 }

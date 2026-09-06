@@ -101,138 +101,11 @@ void main() {
     });
   });
 
-  group('flood TTL / jitter / split-horizon', () {
-    MeshPdu challengePdu(int ttl) {
-      final kp = ProxCrypto.generateEdKeypair();
-      return MeshPdu.sign(
-          type: kPduTypeChallenge,
-          ttl: ttl,
-          ts: 1756900000,
-          sender8: Uint8List.fromList([1, 1, 1, 1, 1, 1, 1, 1]),
-          payload: Uint8List.fromList([2, 2, 2]),
-          sk: kp.privateKey);
-    }
-
-    test('TTL>0 + unseen + RSSI>-80 relays; else not', () {
-      final fc = FloodController();
-      final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      bool notIngress(String _) => false;
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: challengePdu(3),
-              rssiDbm: -60,
-              isIngressLink: notIngress,
-              now: now),
-          isTrue);
-      // TTL 0 exhausted
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: challengePdu(0),
-              rssiDbm: -60,
-              isIngressLink: notIngress,
-              now: now),
-          isFalse);
-      // weak RSSI
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: challengePdu(3),
-              rssiDbm: -85,
-              isIngressLink: notIngress,
-              now: now),
-          isFalse);
-      // boundary: -80 is NOT > -80
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: challengePdu(3),
-              rssiDbm: -80,
-              isIngressLink: notIngress,
-              now: now),
-          isFalse);
-    });
-
-    test('duplicate suppressed (storm control)', () {
-      final fc = FloodController();
-      final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      final pdu = challengePdu(3);
-      bool notIngress(String _) => false;
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: pdu, rssiDbm: -60, isIngressLink: notIngress, now: now),
-          isTrue);
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: pdu, rssiDbm: -60, isIngressLink: notIngress, now: now),
-          isFalse);
-    });
-
-    test('split-horizon: never back to ingress link', () {
-      final fc = FloodController();
-      final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      final pdu = challengePdu(3);
-      bool isIngress(String c) => c == 'link-A';
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: pdu,
-              rssiDbm: -60,
-              isIngressLink: isIngress,
-              candidateLink: 'link-A',
-              now: now),
-          isFalse);
-    });
-
-    test('only challenge PDUs flood; responses never broadcast', () {
-      final fc = FloodController();
-      final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      final kp = ProxCrypto.generateEdKeypair();
-      final resp = MeshPdu.sign(
-          type: kPduTypeResponseFwd,
-          ttl: 3,
-          ts: 1,
-          sender8: Uint8List(8),
-          payload: Uint8List.fromList([1]),
-          sk: kp.privateKey);
-      expect(
-          fc.shouldRelayBroadcast(
-              pdu: resp,
-              rssiDbm: -50,
-              isIngressLink: (_) => false,
-              now: now),
-          isFalse);
-    });
-
-    test('directed response-forward: hop<2 + GATT-connected only', () {
-      final fc = FloodController();
-      final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      MeshPdu resp() {
-        final kp = ProxCrypto.generateEdKeypair();
-        return MeshPdu.sign(
-            type: kPduTypeResponseFwd,
-            ttl: 2,
-            ts: 2,
-            sender8: Uint8List.fromList([5, 5, 5, 5, 5, 5, 5, 5]),
-            payload: Uint8List.fromList([3]),
-            sk: kp.privateKey);
-      }
-
-      expect(
-          fc.shouldForwardResponse(
-              pdu: resp(), hop: 1, profGattConnected: true, now: now),
-          isTrue);
-      expect(
-          fc.shouldForwardResponse(
-              pdu: resp(), hop: 2, profGattConnected: true, now: now),
-          isFalse);
-      expect(
-          fc.shouldForwardResponse(
-              pdu: resp(), hop: 1, profGattConnected: false, now: now),
-          isFalse);
-    });
-
-    test('originate TTL 3, dense cap 2', () {
-      expect(FloodController.effectiveOriginateTtl(dense: false), 3);
-      expect(FloodController.effectiveOriginateTtl(dense: true), 2);
-    });
-
+  // NOTE: FloodController.shouldRelayBroadcast / shouldForwardResponse /
+  // effectiveOriginateTtl / forwardJitter were deleted — the live relay
+  // path is ProxBleEngine._maybeRelay with inline admission, and these
+  // tested a parallel unwired design. Only relayJitter/postJitter ship.
+  group('flood jitter (production path)', () {
     test('jitter ranges: 10–220ms, dense upper-half, deterministic rng', () {
       final rng = Random(42);
       for (var i = 0; i < 200; i++) {
@@ -244,8 +117,6 @@ void main() {
         final j = FloodController.relayJitter(dense: true, rng: rng2);
         expect(j.inMilliseconds, inInclusiveRange(115, 220));
       }
-      final f = FloodController.forwardJitter(rng: Random(1));
-      expect(f.inMilliseconds, inInclusiveRange(10, 40));
       final p = FloodController.postJitter(rng: Random(1));
       expect(p.inMilliseconds, inInclusiveRange(0, 2000));
     });
@@ -254,7 +125,7 @@ void main() {
       final kp = ProxCrypto.generateEdKeypair();
       var pdu = MeshPdu.sign(
           type: kPduTypeChallenge,
-          ttl: FloodController.effectiveOriginateTtl(dense: false),
+          ttl: kTtlOriginate,
           ts: 100,
           sender8: Uint8List.fromList([0, 0, 0, 0, 0, 0, 0, 1]),
           payload: Uint8List.fromList([7, 7, 7]),

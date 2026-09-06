@@ -6,21 +6,30 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('advertisement props carry PROX_SVC + rotating UUID', () {
-    final cj = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
-    final rotating = UuidCodec.packChallenge(cj);
-    final props = advertisementProps(rotating);
+  test('advertisement props carry air SVC + manufacturer payload', () {
+    final mfg = packAir(
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
+      host: '10.50.19.107',
+      port: 8443,
+    )!;
+    final props = advertisementProps(kAirSvc, airMfg: mfg);
     expect((props['Type'] as DBusString).value, 'peripheral');
     final uuids =
         (props['ServiceUUIDs'] as DBusArray).children.map((e) => (e as DBusString).value).toList();
-    expect(uuids, [kProxSvc, rotating]);
+    expect(uuids, [kAirSvc]);
     expect((props['LocalName'] as DBusString).value, 'Proximity');
+    expect(props.containsKey('ManufacturerData'), isTrue);
   });
 
-  test('challenge/response UUIDs differ on the shim path', () {
-    final cj = Uint8List.fromList(List.filled(8, 9));
-    expect(shimChallengeUuid(cj), UuidCodec.packChallenge(cj));
-    expect(UuidCodec.isChallengeUuid(shimChallengeUuid(cj)), isTrue);
+  test('air roundtrip on the shim path', () {
+    final mfg = packAir(
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList(List.filled(8, 9)),
+      host: '10.50.19.107',
+      port: 8443,
+    )!;
+    expect(unpackAir(mfg)!.host, '10.50.19.107');
   });
 
   test('BluezAdvertiser starts idle', () {

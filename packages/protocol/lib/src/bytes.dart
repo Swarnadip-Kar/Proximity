@@ -7,12 +7,16 @@ import 'dart:typed_data';
 String hexEncode(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
+/// Strict hex decode: rejects non-hex input and odd lengths instead of
+/// silently stripping characters (which turned garbage into empty bytes
+/// and surfaced as misleading `bad-challenge`/`bad-sig` verdicts).
 Uint8List hexDecode(String hex) {
-  final clean = hex.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
-  assert(clean.length.isEven, 'hex length must be even');
-  final out = Uint8List(clean.length ~/ 2);
+  if (hex.length.isOdd || !RegExp(r'^[0-9a-fA-F]*$').hasMatch(hex)) {
+    throw FormatException('invalid hex string');
+  }
+  final out = Uint8List(hex.length ~/ 2);
   for (var i = 0; i < out.length; i++) {
-    out[i] = int.parse(clean.substring(i * 2, i * 2 + 2), radix: 16);
+    out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
   }
   return out;
 }

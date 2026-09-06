@@ -1,14 +1,20 @@
 // Professor main page: enlisted courses (subjects), most recent first.
 // Tap a course for its sessions; register new courses by name.
 // Back goes to the mode hub (never exits from here).
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_storage/storage.dart';
 
+import '../core/auth.dart';
+import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/clock.dart';
+import '../widgets/web_banner.dart';
 import 'course_detail.dart';
 
 class ProfCoursesScreen extends ConsumerStatefulWidget {
@@ -28,11 +34,65 @@ class _CourseRow {
 
 class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
   final _nameCtrl = TextEditingController();
+  String? _syncMsg;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_syncFromCloud);
+  }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  /// Pull-merge on open (first sign-in brings other devices' sessions here;
+  /// later opens converge). Offline keeps local data quietly.
+  Future<void> _syncFromCloud() async {
+    try {
+      final acct = ref.read(authServiceProvider).current;
+      Map<String, String>? role;
+      try {
+        role = await ref.read(deviceStoreProvider).readRole();
+      } catch (_) {}
+      String hostName = '';
+      try {
+        hostName = await ref.read(deviceStoreProvider).readHostName();
+      } catch (_) {}
+      final id = profPushIdentity(
+          authEmail: acct?.email,
+          authUid: acct?.uid,
+          authName: acct?.displayName,
+          role: role,
+          hostNameFallback: hostName);
+      if (id == null) return;
+      final cloud = ref.read(cloudSyncProvider);
+      if (!cloud.available) return;
+      var online = false;
+      try {
+        online = await cloud.isOnline().timeout(const Duration(seconds: 8));
+      } catch (_) {}
+      if (!online) {
+        if (mounted) setState(() => _syncMsg = 'Offline — this device only.');
+        return;
+      }
+      final store = ref.read(deviceStoreProvider);
+      final local = await store.readHistory();
+      final remote = await cloud.pullProfSessions(id.uid);
+      final merged = mergeHistories(local, remote);
+      await store.writeHistory(merged);
+      for (final r in merged) {
+        final course = r.courseId.isNotEmpty ? r.courseId : r.classLabel;
+        if (course.isNotEmpty) {
+          try {
+            await store.addCourse(course);
+          } catch (_) {}
+        }
+      }
+      if (mounted) setState(() => _syncMsg = 'Synced with cloud.');
+    } catch (_) {}
   }
 
   Future<void> _register() async {
@@ -67,6 +127,68 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
       if (mounted) setState(() {});
     }
   }
+
+  Future<void> _deleteCourse(
+      BuildContext context, String name, List<ClassRecord> history) async {
+    final sessions = history
+        .where((r) =>
+            r.courseId == name || (r.courseId.isEmpty && r.classLabel == name))
+        .toList();
+    final stats = deletionStats(sessions);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete course $name?'),
+        content: Text(
+            'This will delete attendance data of ${stats.students} students for ${stats.sessions} sessions. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    await ref.read(deviceStoreProvider).deleteCourse(name);
+    // Deleting a course deletes its cloud sessions too (same professor).
+    unawaited(_deleteCourseCloud(sessions.map((s) => s.id).toList()));
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _deleteCourseCloud(List<String> ids) async {
+    if (ids.isEmpty) return;
+    try {
+      final acct = ref.read(authServiceProvider).current;
+      Map<String, String>? role;
+      try {
+        role = await ref.read(deviceStoreProvider).readRole();
+      } catch (_) {}
+      String hostName = '';
+      try {
+        hostName = await ref.read(deviceStoreProvider).readHostName();
+      } catch (_) {}
+      final id = profPushIdentity(
+          authEmail: acct?.email,
+          authUid: acct?.uid,
+          authName: acct?.displayName,
+          role: role,
+          hostNameFallback: hostName);
+      if (id == null) return;
+      final cloud = ref.read(cloudSyncProvider);
+      if (!cloud.available || !(await cloud.isOnline())) return;
+      await cloud.deleteSessionsCloud(profUid: id.uid, ids: ids);
+    } catch (_) {}
+  }
+
+  /// Tight-row label: short weekday + day/month ('Fri, 4 Sep').
+  String _lastDateLabel(String lastDate) => lastDate.startsWith('no')
+      ? lastDate
+      : shortDayDateOf(lastDate);
 
   List<_CourseRow> _rows(List<Course> courses, List<ClassRecord> history) {
     final out = <_CourseRow>[];
@@ -128,6 +250,13 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 const ClockHeader(),
+                const WebRecordsBanner(),
+                if (_syncMsg != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(_syncMsg!,
+                        style: const TextStyle(color: Colors.grey)),
+                  ),
                 if (linked != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -136,19 +265,23 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                         style: Theme.of(context).textTheme.bodySmall),
                   ),
                 const SizedBox(height: 8),
-                FilledButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('Register new course'),
-                  onPressed: _register,
-                ),
-                const SizedBox(height: 8),
+                // Course catalog edits are native-only (records view on web).
+                if (!kIsWeb)
+                  FilledButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Register new course'),
+                    onPressed: _register,
+                  ),
+                if (!kIsWeb) const SizedBox(height: 8),
                 if (snap.connectionState == ConnectionState.waiting)
                   const Center(child: CircularProgressIndicator())
                 else if (rows.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
                     child: Text(
-                      'No courses yet. Register your first course above.',
+                      kIsWeb
+                          ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
+                          : 'No courses yet. Register your first course above.',
                       textAlign: TextAlign.center,
                     ),
                   )
@@ -161,8 +294,20 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                         child: ListTile(
                           title: Text(rows[i].name),
                           subtitle: Text(
-                              '${rows[i].sessions} sessions · ${rows[i].lastDate}'),
-                          trailing: const Icon(Icons.chevron_right),
+                              '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}'),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (!kIsWeb)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    tooltip: 'Delete course',
+                                    onPressed: () => _deleteCourse(
+                                        context, rows[i].name, history),
+                                  ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            ),
                           onTap: () => Navigator.of(context)
                               .push(MaterialPageRoute(
                                   builder: (_) => CourseDetailScreen(

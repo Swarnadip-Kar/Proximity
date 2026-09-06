@@ -3,28 +3,30 @@ import 'package:test/test.dart';
 
 void main() {
   group('window timer / rotation', () {
-    test('6 sub-epochs, 5s each, 30s total', () {
+    test('j grows unbounded (no clock expiry)', () {
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       final p = WindowParams.generate('CS201-Room301', t0: t0);
       expect(p.jForTime(t0), 0);
       expect(p.jForTime(t0.add(const Duration(seconds: 4, milliseconds: 999))), 0);
       expect(p.jForTime(t0.add(const Duration(seconds: 5))), 1);
       expect(p.jForTime(t0.add(const Duration(seconds: 29))), 5);
+      // No 30s expiry: the window closes only when the professor stops it.
       expect(p.jForTime(t0.add(const Duration(seconds: 30))), 6);
+      expect(p.jForTime(t0.add(const Duration(seconds: 122))), 24);
       expect(p.jForTime(t0.subtract(const Duration(seconds: 1))), -1);
     });
 
     test('rotation yields distinct C_j per j', () {
       final p = WindowParams.generate('CS201', t0: DateTime.now().toUtc());
-      final cs = List.generate(6, (j) => p.challengeFor(j));
-      for (var i = 0; i < 6; i++) {
-        for (var k = i + 1; k < 6; k++) {
+      final cs = List.generate(12, (j) => p.challengeFor(j));
+      for (var i = 0; i < 12; i++) {
+        for (var k = i + 1; k < 12; k++) {
           expect(cs[i], isNot(cs[k]), reason: 'C_$i == C_$k');
         }
       }
     });
 
-    test('freshness 7s window accepts drift, rejects stale', () {
+    test('freshness 7s window accepts drift, rejects stale (any j)', () {
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       final p = WindowParams.generate('CS201', t0: t0);
       // inside sub-epoch 0
@@ -33,9 +35,27 @@ void main() {
       expect(p.isFresh(0, t0.add(const Duration(seconds: 8))), isTrue);
       // far future stale
       expect(p.isFresh(0, t0.add(const Duration(seconds: 60))), isFalse);
-      // out-of-range j
-      expect(p.isFresh(6, t0), isFalse);
+      // late sub-epochs verify the same way (window still open)
+      expect(p.isFresh(24, t0.add(const Duration(seconds: 122))), isTrue);
+      expect(p.isFresh(24, t0.add(const Duration(seconds: 180))), isFalse);
+      // negative j never valid
       expect(p.isFresh(-1, t0), isFalse);
+    });
+
+    test('freshness is one-sided: future sub-epochs never fresh', () {
+      // A token cannot be pre-played before it airs: now < t_j rejects,
+      // even 1s early. (The old abs() window accepted j+1 up to 7s early.)
+      final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
+      final p = WindowParams.generate('CS201', t0: t0);
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 4))), isFalse);
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 4999, milliseconds: 999))),
+          isFalse);
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 5))), isTrue);
+      // Exact-rotation boundary: [0, 5s + 7s).
+      expect(p.isFresh(0, t0), isTrue);
+      expect(p.isFresh(0, t0.add(const Duration(seconds: 11, milliseconds: 999))),
+          isTrue);
+      expect(p.isFresh(0, t0.add(const Duration(seconds: 12))), isFalse);
     });
 
     test('(ID,j) single-use: replay rejected', () {
@@ -54,26 +74,6 @@ void main() {
       for (final c in p.displayCode.codeUnits) {
         expect(kDisplayAlphabet.codeUnits, contains(c));
       }
-    });
-
-    test('WindowTimer progress/state machine', () {
-      final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      final p = WindowParams(
-          sessionId: randBytes(16),
-          windowId: randBytes(6),
-          secret: randBytes(32),
-          t0: t0,
-          classLabel: 'CS201');
-      final timer = WindowTimer(p);
-      expect(timer.state(t0.subtract(const Duration(seconds: 1))),
-          WindowState.idle);
-      expect(timer.state(t0.add(const Duration(seconds: 10))), WindowState.live);
-      expect(timer.state(t0.add(const Duration(seconds: 31))), WindowState.closed);
-      expect(timer.remaining(t0.add(const Duration(seconds: 29))).inSeconds,
-          lessThanOrEqualTo(1));
-      expect(timer.progress(t0), 0.0);
-      expect(timer.progress(t0.add(const Duration(seconds: 15))), 0.5);
-      expect(timer.progress(t0.add(const Duration(seconds: 60))), 1.0);
     });
   });
 }

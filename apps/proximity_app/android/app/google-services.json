@@ -22,7 +22,7 @@
           }
         },
         {
-          "client_id": "355638335271-usathpg8rk3cqrnquu0nklmqfe12mki5.apps.googleusercontent.com",
+          "client_id": "355638335271-dajvagngvhrgn6c7i3lfiqntbosa024v.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
@@ -35,14 +35,14 @@
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "355638335271-usathpg8rk3cqrnquu0nklmqfe12mki5.apps.googleusercontent.com",
+              "client_id": "355638335271-dajvagngvhrgn6c7i3lfiqntbosa024v.apps.googleusercontent.com",
               "client_type": 3
             },
             {
-              "client_id": "355638335271-1i6fn5ojeto16oog6vtstqpsu9vvgpb3.apps.googleusercontent.com",
+              "client_id": "355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.example.proximityAttendance"
+                "bundle_id": "org.iitbhilai.proximity"
               }
             }
           ]

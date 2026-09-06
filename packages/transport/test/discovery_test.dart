@@ -1,10 +1,49 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('hint sessions outlive radio expiry while acked', () {
+    final now = DateTime.now().toUtc();
+    // Fresh sighting: alive regardless of acks.
+    expect(hintEntryAlive(now: now, lastSeen: now), isTrue);
+    expect(
+        hintEntryAlive(
+            now: now, lastSeen: now.subtract(kDiscoveryExpiry)),
+        isTrue);
+    // Stale sighting, never acked: dead (old 6s behavior).
+    expect(
+        hintEntryAlive(
+            now: now, lastSeen: now.subtract(const Duration(seconds: 30))),
+        isFalse);
+    // Stale sighting but recently TCP-acked (round over, host still up):
+    // stays listed so the student can join the waiting room.
+    expect(
+        hintEntryAlive(
+            now: now,
+            lastSeen: now.subtract(const Duration(seconds: 30)),
+            lastAck: now.subtract(const Duration(seconds: 10))),
+        isTrue);
+    // Ack older than the persist window: dead.
+    expect(
+        hintEntryAlive(
+            now: now,
+            lastSeen: now.subtract(const Duration(seconds: 30)),
+            lastAck: now.subtract(const Duration(seconds: 300))),
+        isFalse);
+    // Too many consecutive failed re-probes (professor left): dead.
+    expect(
+        hintEntryAlive(
+            now: now,
+            lastSeen: now.subtract(const Duration(seconds: 30)),
+            lastAck: now.subtract(const Duration(seconds: 10)),
+            fails: kSessionMaxFails),
+        isFalse);
+  });
+
   test('announce -> listen over loopback, expiry prunes', () async {
     // NOTE: binds a fixed test port to avoid clashing with a live advertiser.
     const testPort = 54599;
@@ -62,6 +101,65 @@ void main() {
     expect(decodeAnnouncement(Uint8List.fromList([1, 2, 3])), isNull);
     expect(
         ClassAnnouncement.fromJson({'v': 'NOPE', 'class': 'x'}), isNull);
+  });
+
+  test('directed broadcast guesses (/24 heuristic, validated)', () {
+    expect(directedBroadcastGuess('192.168.43.1'), '192.168.43.255');
+    expect(directedBroadcastGuess('10.50.37.76'), '10.50.37.255');
+    expect(directedBroadcastGuess('172.16.5.9'), '172.16.5.255');
+    expect(directedBroadcastGuess('8.8.8.8'), isNull); // public: skip
+    expect(directedBroadcastGuess('not-an-ip'), isNull);
+    expect(directedBroadcastGuess('127.0.0.1'), isNull); // loopback: skip
+  });
+
+  test('directed broadcast /16 guess covers /16../18 campuses', () {
+    // Live case: 10.50.19.107/18 broadcasts at 10.50.63.255, which the
+    // /24 guess (10.50.19.255) misses entirely.
+    expect(directedBroadcastGuess16('10.50.19.107'), '10.50.255.255');
+    expect(directedBroadcastGuess16('192.168.43.1'), '192.168.255.255');
+    expect(directedBroadcastGuess16('8.8.8.8'), isNull);
+    expect(directedBroadcastGuess16('127.0.0.1'), isNull);
+    expect(directedBroadcastGuess16('not-an-ip'), isNull);
+  });
+
+  test('lan candidates skip loopback/link-local; best is usable', () async {
+    final cands = await lanAddressCandidates();
+    for (final c in cands) {
+      expect(c.addr.startsWith('127.'), isFalse);
+      expect(c.addr.startsWith('169.254.'), isFalse);
+    }
+    final best = await bestLanAddress();
+    expect(best.isNotEmpty, isTrue);
+  });
+
+  test('single-host probe finds a loopback ProxServer', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'PROBE-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+    );
+    await server.start(port: 0);
+    final port = server.port;
+    expect(port, greaterThan(0));
+    try {
+      // 127.0.0.1 is loopback: probeHost hits the server directly.
+      final hit = await probeHost('127.0.0.1', port);
+      expect(hit, isNotNull);
+      expect(hit!.windowOpen, isFalse);
+      // Nobody home on an unroutable TEST-NET port.
+      final miss = await probeHost('127.0.0.1', 1,
+          timeout: const Duration(milliseconds: 300));
+      expect(miss, isNull);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('broadcast targets always include limited broadcast', () async {
+    final targets = await broadcastTargets();
+    expect(targets.map((e) => e.address), contains('255.255.255.255'));
   });
 
   test('announcer start/stop lifecycle', () async {

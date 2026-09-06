@@ -9,28 +9,27 @@ library;
 import 'dart:typed_data';
 
 /// 64-bit Proximity challenge prefix. Fixed, e.g. 9A3B7C1D4E5F6071 (§5.2).
-const int kBaseP64 = 0x9A3B7C1D4E5F6071;
+/// Built from 32-bit halves: a single >2^53 literal cannot compile to JS
+/// (web records builds), while halves stay exact on 64-bit native — where
+/// the radio crypto actually runs. Web never touches these (records only).
+int _u64(int hi, int lo) => (hi * 0x100000000) + lo;
+final int kBaseP64 = _u64(0x9A3B7C1D, 0x4E5F6071);
 
 /// 64-bit Proximity response prefix. MUST differ from [kBaseP64].
-const int kBaseS64 = 0xB7E4A9215C6D8093;
+final int kBaseS64 = _u64(0xB7E4A921, 0x5C6D8093);
 
-/// Fixed BLE service UUID advertised alongside rotating UUIDs for scan filtering.
-const String kProxSvc = '6b9e4f22-1c9a-4f8e-9d3a-2b5c7d8e9f01';
-
-/// GATT characteristic UUID exposing {windowID, j, C_j, Sig_p(j), TTL} fallback.
-const String kProxChr = '6b9e4f23-1c9a-4f8e-9d3a-2b5c7d8e9f01';
+/// 64-bit IP-hint prefix (legacy v1 server-address packet, Apple-safe
+/// single UUID). MUST differ from [kBaseP64] and [kBaseS64].
+/// Bytes read "IPHINT01".
+final int kBaseI64 = _u64(0x49504849, 0x4E543031);
 
 /// BLE advertise interval (ms). §6.1
 const int kAdvIntervalMs = 200;
 
-/// Rotation period per sub-epoch (s). 6 × 5s = 30s window.
+/// Rotation period per sub-epoch (s). Challenges rotate every 5s for as
+/// long as the window is open (unbounded j); the window closes only when
+/// the professor stops it.
 const int kSubEpochSeconds = 5;
-
-/// Sub-epochs per 30s window.
-const int kSubEpochsPerWindow = 6;
-
-/// Full attendance window (s).
-const int kWindowSeconds = 30;
 
 /// Freshness acceptance: |now - t_j| < 7s (5s + drift). §5.3
 const Duration kFreshness = Duration(seconds: 7);
@@ -55,18 +54,6 @@ const Duration kDedupExpiry = Duration(minutes: 5);
 /// Relay jitter window (ms): 10–220ms, wider when dense. §6.2.
 const int kJitterMinMs = 10;
 const int kJitterMaxMs = 220;
-
-/// MTU negotiated before GATT read/write. §6.1.
-const int kBleMtu = 517;
-
-/// GATT fallback fragment size. §5.2 / §10.
-const int kGattFragmentSize = 469;
-
-/// Reachability timeout covering window + tally. §6.2.
-const Duration kReachabilityTimeout = Duration(seconds: 60);
-
-/// Minimum seconds between Android scan restarts (rate-limit guard). §6.1.
-const int kMinScanRestartSeconds = 5;
 
 /// Face cosine threshold starting point. §4.
 const double kFaceThreshold = 0.60;
@@ -105,6 +92,9 @@ Uint8List u64be(int v) {
 }
 
 int u64beDecode(List<int> b, [int offset = 0]) {
+  if (offset < 0 || b.length < offset + 8) {
+    throw FormatException('u64beDecode out of range');
+  }
   return ByteData.sublistView(Uint8List.fromList(b), offset, offset + 8)
       .getUint64(0, Endian.big);
 }

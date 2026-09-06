@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
   flutter_riverpod: ^2.5.1
   proximity_protocol:
     path: ../../packages/protocol
@@ -22,29 +21,38 @@ dependencies:
   proximity_storage:
     path: ../../packages/storage
   # Firebase via FlutterFire (project: proximity-attendence).
+  # Auth + Firestore: sign-in on Android/iOS/macOS; Windows/Linux builds
+  # run offline-only (see AuthService.available + main fail-soft).
   firebase_core: ^3.8.0
   firebase_auth: ^5.3.3
   cloud_firestore: ^5.5.0
   google_sign_in: ^6.2.2
+  path_provider: ^2.1.4
   ed25519_edwards: ^0.3.1
   camera: ^0.12.0
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.2
-  proximity_face_detect:
-    path: ../../packages/face_detect
   universal_ble: ^2.2.0
   permission_handler: ^13.0.1
-  dbus: ^0.7.15
   tflite_flutter: ^0.12.1
   image: ^4.9.2
   share_plus: ^12.0.2
   wakelock_plus: ^1.5.2
+  # Web records build only (browser download for CSV exports).
+  web: ^1.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   test: ^1.25.0
+
+# macOS Google Sign-In keychain regression: native GoogleSignIn 7.1+ / 8.x
+# throws "keychain error" on macOS even with correct entitlements
+# (google/GoogleSignIn-iOS#165, #492 — 7.0.0 is the last good one).
+# Pin the iOS/macOS federated impl until upstream fixes it.
+dependency_overrides:
+  google_sign_in_ios: 5.7.5
 
 flutter:
   uses-material-design: true

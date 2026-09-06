@@ -1,5 +1,6 @@
-// Face package: EdgeFace-XS (TFLite Android / CoreML iOS), MLKit/Vision detect,
-// cosine 0.60, challenge-bound liveness, SK gate faceValid<5min. (§4)
+// Face package: BlazeFace detect + EdgeFace-XS embedding (vendored TFLites,
+// identical all OS), cosine 0.60, challenge-bound liveness, SK gate
+// faceValid<5min. (§4)
 //
 // Face templates never leave the phone (Keystore-wrapped AES-GCM).
 // Server receives only {matchScore, livenessPass} inside signed payload.

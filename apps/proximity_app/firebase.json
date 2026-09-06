@@ -1,5 +1,1 @@
-{
-  "firestore": {
-    "rules": "firestore.rules"
-  }
-}
+{"firestore":{"rules":"firestore.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"proximity-attendence","appId":"1:355638335271:android:23a2e7c8dd958e36d0fb02","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"proximity-attendence","appId":"1:355638335271:ios:5e50a33356af0fc9d0fb02","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"macos":{"default":{"projectId":"proximity-attendence","appId":"1:355638335271:ios:5e50a33356af0fc9d0fb02","uploadDebugSymbols":false,"fileOutput":"macos/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"proximity-attendence","configurations":{"android":"1:355638335271:android:23a2e7c8dd958e36d0fb02","ios":"1:355638335271:ios:5e50a33356af0fc9d0fb02","macos":"1:355638335271:ios:5e50a33356af0fc9d0fb02","web":"1:355638335271:web:195c00ce4bec187bd0fb02","windows":"1:355638335271:web:06965246a81ca445d0fb02"}}}}}}

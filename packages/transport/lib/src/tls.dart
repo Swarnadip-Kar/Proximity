@@ -47,11 +47,11 @@ WindowTls generateWindowTls() {
   return WindowTls(certPem: certPem, keyPem: keyPem, fingerprint: fp);
 }
 
-/// Channel-binding preimage: sessionID || windowID || j || tlsFingerprint.
+/// Channel-binding preimage: sessionID || windowID || j32 || tlsFingerprint.
 Uint8List bindPreimage({
   required Uint8List sessionId,
   required Uint8List windowId,
   required int j,
   required Uint8List tlsFingerprint,
 }) =>
-    concat([sessionId, windowId, [j], tlsFingerprint]);
+    concat([sessionId, windowId, ProxCrypto.j32(j), tlsFingerprint]);

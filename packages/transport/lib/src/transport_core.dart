@@ -21,24 +21,14 @@ class ClassBeacon {
   });
 }
 
-/// Strongest-RSSI-first ordering for student nearby-class list.
-List<ClassBeacon> sortBeaconsByRssi(List<ClassBeacon> beacons) {
-  final l = List<ClassBeacon>.of(beacons);
-  l.sort((a, b) => b.rssiDbm.compareTo(a.rssiDbm));
-  return l;
-}
-
-/// Constant-time pin comparison helper.
-bool checkTlsPin({
-  required Uint8List expected,
-  required Uint8List presented,
-}) =>
-    bytesEqual(expected, presented);
-
-/// Canonical POST /prove body (C_j is radio-only learned, never from /epoch).
-/// Identity auto-attaches from the linked Gmail account.
+/// Canonical POST /prove body (C_j is radio-only learned, never fetched).
+/// Identity auto-attaches from the linked Gmail account. Rosterless
+/// (offline-local phase): the student presents its device public key
+/// ([pkS], 32B) and the professor verifies both signatures against it —
+/// trust-on-first-use per class, no roster lookup. Radio freshness,
+/// single-use, face score, sighting and channel binding still gate.
 Map<String, dynamic> buildProveBody({
-  required String id, // Gmail address (identity key)
+  required String id, // Gmail address (identity key, self-asserted offline)
   required Uint8List windowId,
   required int j,
   required Uint8List challenge,
@@ -49,6 +39,7 @@ Map<String, dynamic> buildProveBody({
   String roll = '',
   required Uint8List tlsFp,
   required Uint8List sigBind,
+  required Uint8List pkS, // student device public key, 32B
 }) =>
     {
       'ID': id,
@@ -62,4 +53,5 @@ Map<String, dynamic> buildProveBody({
       'roll': roll,
       'tlsFp': hexEncode(tlsFp),
       'sigBind': hexEncode(sigBind),
+      'pkS': hexEncode(pkS),
     };

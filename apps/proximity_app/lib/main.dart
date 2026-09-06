@@ -2,27 +2,31 @@
 // Mobile devices switch modes; desktop runs Prof mode. Identical security all OS.
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_face/face.dart';
 
 import 'firebase_options.dart';
 import 'core/auth.dart';
 import 'core/ble_radio.dart';
+import 'core/cloud_sync.dart';
 import 'core/device_store.dart';
+import 'core/edgeface.dart';
 import 'core/enrollment.dart';
+import 'core/face_detect.dart';
 import 'core/face_camera.dart';
 import 'core/host_driver.dart';
-import 'core/roster_repo.dart';
 import 'core/student_driver.dart';
 import 'mode.dart';
 import 'screens/courses.dart';
 import 'screens/enrollment.dart';
-import 'screens/role_select.dart';
+import 'screens/landing.dart';
+import 'screens/my_attendance.dart';
 import 'screens/student_home.dart';
 import 'screens/take_attendance.dart';
 
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_face/face.dart';
 import 'package:proximity_storage/storage.dart';
 
 /// No-sign preview flags (simulator UI polish without taps/accounts):
@@ -38,28 +42,38 @@ Future<DeviceStore> _debugSeededStore() async {
     courseId: 'CS201',
     classLabel: 'CS201',
     dateIso: '2026-09-03',
-    w1: const {'aarav@x.in': true, 'diya@x.in': false},
-    w2: const {'aarav@x.in': true, 'diya@x.in': true},
-    names: const {'aarav@x.in': 'Aarav S', 'diya@x.in': 'Diya R'},
-    rolls: const {'aarav@x.in': '12342210', 'diya@x.in': '12342211'},
+    w1: const {'student1@example.com': true, 'student2@example.com': false},
+    w2: const {'student1@example.com': true, 'student2@example.com': true},
+    names: const {'student1@example.com': 'Student One', 'student2@example.com': 'Student Two'},
+    rolls: const {'student1@example.com': '12342210', 'student2@example.com': '12342211'},
   ));
   await store.appendHistory(ClassRecord(
     courseId: 'CS202',
     classLabel: 'CS202',
     dateIso: '2026-09-04',
-    w1: const {'aarav@x.in': true},
-    w2: const {'aarav@x.in': false},
-    names: const {'aarav@x.in': 'Aarav S'},
-    rolls: const {'aarav@x.in': '12342210'},
+    w1: const {'student1@example.com': true},
+    w2: const {'student1@example.com': false},
+    names: const {'student1@example.com': 'Student One'},
+    rolls: const {'student1@example.com': '12342210'},
   ));
   return store;
 }
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  // Firebase is Android/iOS/macOS only (firebase_options throws
+  // UnsupportedError on Windows/Linux/web). Fail-soft: the app still
+  // starts offline — professors can host locally; sign-in screens explain
+  // the platform limit instead of crashing on startup.
+  var firebaseReady = false;
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    firebaseReady = true;
+  } catch (_) {
+    firebaseReady = false;
+  }
   // Restore linked identity from secure device storage so sign-in state
   // (Firebase Auth) + identity survive restarts with zero taps.
   // Fail-open: secure storage may be unavailable (e.g. unsigned sim
@@ -75,57 +89,118 @@ Future<void> main() async {
   } catch (_) {
     stored = null;
   }
-  // Restore the saved profile mode (preview flag wins when given).
+  // Restore the last-used mode (preview flag wins when given).
+  // One Gmail may hold BOTH roles now: routing only checks that the cached
+  // roles belong to the currently signed-in account AND include the saved
+  // mode's role — never locks the user to a single mode. Offline professors
+  // (skipped sign-in) restore by mode.
   String? savedMode;
   try {
     savedMode = await store.readMode();
   } catch (_) {}
-  final AppMode? initialMode =
-      hasPreviewMode ? null : modeFromName(savedMode);
+  Map<String, String>? cachedRole;
+  try {
+    cachedRole = await store.readRole();
+  } catch (_) {}
+  final authService = FirebaseAuthService(available: firebaseReady);
+  SignedAccount? currentAcct;
+  try {
+    currentAcct = authService.current;
+  } catch (_) {}
+  AppMode? initialMode;
+  if (!hasPreviewMode) {
+    final m = modeFromName(savedMode);
+    if (m != null) {
+      if (currentAcct != null && cachedRole != null) {
+        final sameEmail =
+            (cachedRole['email'] ?? '').toLowerCase() ==
+                currentAcct.email.toLowerCase();
+        final wantRole = m == AppMode.prof ? 'prof' : 'student';
+        initialMode =
+            (sameEmail && roleHas(cachedRole, wantRole)) ? m : null;
+      } else if (currentAcct == null && cachedRole == null && m == AppMode.prof) {
+        initialMode = m; // offline professor who skipped sign-in
+      } else {
+        initialMode = null; // landing decides
+      }
+    }
+  }
   // One shared BLE engine (radio selected per OS at startup).
   final bleEngine = ProxBleEngine(radio: platformRadio());
+  // Radio-readiness gate: a scan started while Bluetooth is off defers
+  // instead of dying (engine restarts it when BT powers on). Only the
+  // certain off state defers — on/unavailable (desktop, sims, BlueZ
+  // shim) keep the old fail-fast semantics.
+  bleEngine.radioReady = () async {
+    try {
+      return await bluetoothState() != BtState.off;
+    } catch (_) {
+      return true;
+    }
+  };
+  // Real face stack, loaded once: BlazeFace detect+align feeding the
+  // vendored EdgeFace-XS TFLite. Fail-closed when a model file is missing
+  // (face checks throw FaceModelMissing; SK never signs) — never a mock
+  // pass in production. Web records builds never check faces: mock
+  // embedder + fake detector (no camera/BLE UI exists there).
+  final FaceEmbedder faceEmbedder;
+  final FaceDetector faceDetector;
+  if (kIsWeb) {
+    faceEmbedder = MockFaceEmbedder(
+      enrolled: const [1, 0, 0, 0],
+      probe: const [1, 0, 0, 0],
+    );
+    faceDetector = FakeFaceDetector();
+  } else {
+    final real = await loadFaceEmbedder();
+    faceEmbedder = real;
+    faceDetector = real.detector;
+  }
   final LinkedIdentity? initialLinked = stored == null
       ? null
       : LinkedIdentity(
           name: stored.name, gmail: stored.email, roll: stored.roll);
+  final im = initialMode;
+  // Preseed enrollment with the signed-in account so the enroll screen
+  // doesn't ask for Google twice after landing sign-in.
+  final preseed = currentAcct;
   runApp(
     ProviderScope(
       overrides: [
-        authServiceProvider.overrideWithValue(FirebaseAuthService()),
-        rosterRepositoryProvider
-            .overrideWithValue(FirestoreRosterRepository()),
+        authServiceProvider.overrideWithValue(authService),
+        cloudSyncProvider.overrideWithValue(
+            FirestoreCloudSync(available: firebaseReady)),
         deviceStoreProvider.overrideWithValue(store),
         faceCameraProvider.overrideWithValue(RealFaceCamera()),
-        hostDriverProvider.overrideWith((ref) => RealHostDriver(
-              store: ref.watch(deviceStoreProvider),
-              repo: ref.watch(rosterRepositoryProvider),
-              engine: bleEngine,
-            )),
-        studentDriverProvider.overrideWith((ref) => RealStudentDriver(
-              store: ref.watch(deviceStoreProvider),
-              // TODO(P1-face): EdgeFace-XS embedder; mock probe until then.
-              embedder: MockFaceEmbedder(
-                enrolled: const [1, 0, 0, 0],
-                probe: const [1, 0, 0, 0],
-              ),
-              engine: bleEngine,
-            )),
+        // Shared BlazeFace detector (loaded once with the embedder above;
+        // fake on web records builds).
+        faceDetectorProvider.overrideWithValue(faceDetector),
+        hostDriverProvider.overrideWith((ref) => kIsWeb
+            ? FakeHostDriver()
+            : RealHostDriver(
+                store: ref.watch(deviceStoreProvider),
+                engine: bleEngine,
+              )),
+        studentDriverProvider.overrideWith((ref) => kIsWeb
+            ? FakeStudentDriver()
+            : RealStudentDriver(
+                store: ref.watch(deviceStoreProvider),
+                // Real holder check: vendored EdgeFace-XS (loaded above).
+                embedder: faceEmbedder,
+                engine: bleEngine,
+              )),
         bleEngineProvider.overrideWithValue(bleEngine),
         if (initialLinked != null)
           linkedIdentityProvider.overrideWith((ref) => initialLinked),
-        if (initialMode != null)
-          appModeProvider.overrideWith((ref) => initialMode),
+        if (im != null) appModeProvider.overrideWith((ref) => im),
         enrollmentControllerProvider.overrideWith(
           (ref) => EnrollmentController(
             auth: ref.watch(authServiceProvider),
-            repo: ref.watch(rosterRepositoryProvider),
             store: ref.watch(deviceStoreProvider),
-            // TODO(P1-face): camera frames + EdgeFace-XS embedder. Mock
-            // returns a fixed probe so the flow is testable end-to-end.
-            embedder: MockFaceEmbedder(
-              enrolled: const [1, 0, 0, 0],
-              probe: const [1, 0, 0, 0],
-            ),
+            // Real enrollment embedding: vendored EdgeFace-XS (loaded above).
+            embedder: faceEmbedder,
+            preseed: preseed,
+            cloud: ref.watch(cloudSyncProvider),
           ),
         ),
       ],
@@ -155,8 +230,10 @@ class ProximityApp extends ConsumerWidget {
         brightness: Brightness.dark,
       ),
       home: switch (mode) {
-        AppMode.unset => const RoleSelectScreen(),
-        AppMode.student => const StudentHomeScreen(),
+        AppMode.unset => const LandingScreen(),
+        // Web records builds never mark: students land on records.
+        AppMode.student =>
+          kIsWeb ? const MyAttendanceScreen() : const StudentHomeScreen(),
         AppMode.prof => const ProfCoursesScreen(),
         AppMode.enroll => const EnrollmentScreen(),
         AppMode.take =>

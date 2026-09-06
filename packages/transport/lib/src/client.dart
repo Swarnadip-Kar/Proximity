@@ -76,62 +76,199 @@ class ProxClient {
   final String host;
   final int port;
   final HttpClient _http = HttpClient();
-  Uint8List? _pinnedFp; // captured from /window fetch
 
-  ProxClient({required this.host, required this.port});
+  ProxClient({required this.host, required this.port}) {
+    // Enterprise WiFi blackholes SYNs (no RST): an unbounded connect
+    // hangs FOREVER mid-prove with zero log lines. Bound it — the driver
+    // treats TimeoutException as transient and proves the next rotation.
+    // (TLS handshake has no separate knob: every getUrl/postUrl below is
+    // additionally wrapped in .timeout for the same reason.)
+    _http.connectionTimeout = const Duration(seconds: 6);
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri(scheme: 'https', host: host, port: port, path: path, queryParameters: query);
 
   void close() => _http.close(force: true);
 
+  /// Lightweight LAN probe for the waiting room: reachable + windowOpen,
+  /// without needing a radio challenge. Accepts the self-signed host cert.
+  Future<({bool reachable, bool windowOpen, String classLabel, int waiting, String display})>
+      probeWindow({Duration timeout = const Duration(seconds: 4)}) async {
+    try {
+      _http.badCertificateCallback = (cert, h, p) => true;
+      final req =
+          await _http.getUrl(_uri('/window')).timeout(timeout);
+      final resp = await req.close().timeout(timeout);
+      final body =
+          await resp.transform(utf8.decoder).join().timeout(timeout);
+      if (resp.statusCode != 200) {
+        return (
+          reachable: false,
+          windowOpen: false,
+          classLabel: '',
+          waiting: 0,
+          display: ''
+        );
+      }
+      final m = jsonDecode(body) as Map<String, dynamic>;
+      return (
+        reachable: true,
+        windowOpen: (m['windowOpen'] as bool?) ?? false,
+        classLabel: (m['class'] as String?) ?? '',
+        waiting: (m['waiting'] as num?)?.toInt() ?? 0,
+        display: (m['display'] as String?) ?? '',
+      );
+    } catch (_) {
+      return (
+        reachable: false,
+        windowOpen: false,
+        classLabel: '',
+        waiting: 0,
+        display: ''
+      );
+    }
+  }
+
+  Future<void> _postJson(String path, Map<String, dynamic> body) async {
+    _http.badCertificateCallback = (cert, h, p) => true;
+    final req =
+        await _http.postUrl(_uri(path)).timeout(const Duration(seconds: 8));
+    req.headers.contentType = ContentType.json;
+    req.write(jsonEncode(body));
+    final resp = await req.close().timeout(const Duration(seconds: 6));
+    await resp.transform(utf8.decoder).join();
+    if (resp.statusCode >= 400) {
+      throw StateError('$path failed: ${resp.statusCode}');
+    }
+  }
+
+  Future<void> postWaiting(
+          {required String email,
+          required String name,
+          String roll = ''}) =>
+      _postJson('/waiting', {'email': email, 'name': name, 'roll': roll});
+
+  /// Explicit waiting-room leave (best-effort: never throws; the prof UI
+  /// also converges because heartbeats stop with the room timers).
+  Future<void> postLeave({required String email}) async {
+    try {
+      await _postJson('/leave', {'email': email});
+    } catch (_) {}
+  }
+
+  Future<void> postManualRequest(
+          {required String email,
+          required String name,
+          String roll = ''}) =>
+      _postJson('/manual-request', {'email': email, 'name': name, 'roll': roll});
+
+  Future<String> fetchManualStatus(String email) async {
+    try {
+      _http.badCertificateCallback = (cert, h, p) => true;
+      final req = await _http
+          .getUrl(_uri('/manual-status', {'email': email}))
+          .timeout(const Duration(seconds: 4));
+      final resp =
+          await req.close().timeout(const Duration(seconds: 4));
+      final body =
+          await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 4));
+      final m = jsonDecode(body) as Map<String, dynamic>;
+      return (m['status'] as String?) ?? 'none';
+    } catch (_) {
+      return 'none';
+    }
+  }
+
   Future<(int, Map<String, dynamic>)> _get(String path) async {
-    _http.badCertificateCallback = (cert, h, p) {
-      _pinnedFp = Uint8List.fromList(
-          ProxCrypto.sha256Sync(cert.der));
-      return true; // TOFU: content is signature-verified below
-    };
-    final req = await _http.getUrl(_uri(path));
-    final resp = await req.close();
-    final body = await resp.transform(utf8.decoder).join();
+    // TOFU: the self-signed host cert is accepted here AND on POST, but
+    // content is signature-verified below (Sig_p over the radio challenge)
+    // and channel-bound at POST (sigBind over the live cert fingerprint,
+    // checked server-side). A MITM serves a cert whose fingerprint fails
+    // both gates, so no pin state is kept across calls.
+    _http.badCertificateCallback = (cert, h, p) => true;
+    final req =
+        await _http.getUrl(_uri(path)).timeout(const Duration(seconds: 8));
+    final resp = await req.close().timeout(const Duration(seconds: 8));
+    final body = await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     return (resp.statusCode, jsonDecode(body) as Map<String, dynamic>);
   }
 
   /// Fetches + verifies the window descriptor (Sig_p over the live C_j…
-  /// verified against the C_j the caller heard over BLE radio).
+  /// verified against the C_j the caller heard over BLE radio). The fetch
+  /// can land just after the 5s rotation tick, when the live challenge is
+  /// already C_{j} but the radio copy is C_{j-1}: the server ships the
+  /// previous signature too, and either token verifies (both stay fresh
+  /// for a full rotation + drift). Only a token matching NEITHER is a
+  /// genuine mismatch — stale air, or a fake professor.
   Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge) async {
-    final (status, j) = await _get('/window');
-    if (status != 200) throw StateError('window fetch: $j');
-    final sessionId = Uint8List.fromList(hexDecode(j['sessionID'] as String));
-    final windowId = Uint8List.fromList(hexDecode(j['windowID'] as String));
-    final jNow = j['j_now'] as int;
-    final profPk = ed.PublicKey(hexDecode(j['pkP'] as String));
-    final sigP = Uint8List.fromList(hexDecode(j['sigP'] as String));
+    final (status, body) = await _get('/window');
+    if (status == 429) throw StateError('window rate-limited, retry later');
+    if (status != 200) {
+      throw StateError(
+          'window fetch HTTP $status (${body['error'] ?? body['windowOpen'] ?? 'no body'})');
+    }
+    // Closed/idle window: no challenge material at all (the heard C_j is
+    // stale — e.g. relay lag, or a window that just closed).
+    // Throw a clean error instead of crashing on the missing keys below.
+    if (body['windowOpen'] == false) {
+      throw StateError('window closed on professor — try the next round');
+    }
+    for (final k in const [
+      'sessionID',
+      'windowID',
+      'j_now',
+      'pkP',
+      'sigP',
+      'tlsFp',
+      'class',
+      'display'
+    ]) {
+      if (body[k] == null) throw StateError('window descriptor missing $k');
+    }
+    final sessionId = Uint8List.fromList(hexDecode(body['sessionID'] as String));
+    final windowId = Uint8List.fromList(hexDecode(body['windowID'] as String));
+    final jNow = body['j_now'] as int;
+    final profPk = ed.PublicKey(hexDecode(body['pkP'] as String));
+    final sigP = Uint8List.fromList(hexDecode(body['sigP'] as String));
     // The descriptor never carries C_j (radio-only). The caller proves it
     // heard the live challenge by verifying Sig_p against its radio copy.
-    final ok = ProxCrypto.verifyProfChallenge(
-      profPk: profPk,
-      sessionId: sessionId,
-      windowId: windowId,
-      j: jNow,
-      challenge: radioChallenge,
-      sig: sigP,
-    );
-    if (!ok) throw StateError('prof signature mismatch (fake professor?)');
-    return WindowDescriptor(
-      classLabel: j['class'] as String,
-      sessionId: sessionId,
-      windowId: windowId,
-      jNow: jNow,
-      profPk: profPk,
-      sigP: sigP,
-      tlsFp: Uint8List.fromList(hexDecode(j['tlsFp'] as String)),
-      display: j['display'] as String,
-    );
+    WindowDescriptor descFor(int jj, Uint8List sig) => WindowDescriptor(
+          classLabel: body['class'] as String,
+          sessionId: sessionId,
+          windowId: windowId,
+          jNow: jj,
+          profPk: profPk,
+          sigP: sig,
+          tlsFp: Uint8List.fromList(hexDecode(body['tlsFp'] as String)),
+          display: body['display'] as String,
+        );
+    bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
+          profPk: profPk,
+          sessionId: sessionId,
+          windowId: windowId,
+          j: jj,
+          challenge: radioChallenge,
+          sig: sig,
+        );
+    if (verifies(jNow, sigP)) return descFor(jNow, sigP);
+    // Rotation-boundary fallback: the radio token is one tick behind.
+    final jPrev = body['j_prev'] as int?;
+    final sigPrevHex = body['sigP_prev'] as String?;
+    if (jPrev != null && sigPrevHex != null && jPrev >= 0) {
+      final sigPrev = Uint8List.fromList(hexDecode(sigPrevHex));
+      if (verifies(jPrev, sigPrev)) return descFor(jPrev, sigPrev);
+    }
+    throw StateError('prof signature mismatch (stale token or fake professor?)');
   }
 
   /// POSTs a signed proof with herd-spread jitter, up to 3 attempts.
-  /// [sign] builds (sigS, sigBind) for the attempt's sub-epoch.
+  /// [sign] builds (sigS, sigBind) for the attempt's sub-epoch. Only
+  /// TRANSPORT failures retry here — a decided verdict (confirmed / late /
+  /// invalid …) returns immediately, never re-POSTed: the rotation is 5s
+  /// and a same-j retry would only age the token (and burn single-use on
+  /// a retake). Each attempt carries its own budget so a hung POST can
+  /// never outlive the driver's dead-air cap.
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -141,6 +278,7 @@ class ProxClient {
     required Uint8List peerW,
     String name = '',
     String roll = '',
+    required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
     Random? rng,
@@ -161,9 +299,10 @@ class ProxClient {
           peerW: peerW,
           name: name,
           roll: roll,
+          pkS: pkS,
           sigSFor: sigSFor,
           sigBindFor: sigBindFor,
-        );
+        ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
       }
@@ -180,10 +319,14 @@ class ProxClient {
     required Uint8List peerW,
     required String name,
     required String roll,
+    required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
   }) async {
-    final tlsFp = _pinnedFp ?? desc.tlsFp;
+    // Channel binding signs the fingerprint from the verified descriptor
+    // fetch (Sig_p already proved the server owns windowId): the POST
+    // pin-check below + the server's tlsFp comparison both gate on it.
+    final tlsFp = desc.tlsFp;
     final body = jsonEncode(buildProveBody(
       id: studentId,
       windowId: desc.windowId,
@@ -196,6 +339,7 @@ class ProxClient {
       roll: roll,
       tlsFp: tlsFp,
       sigBind: sigBindFor(tlsFp, j),
+      pkS: pkS,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =
@@ -203,11 +347,16 @@ class ProxClient {
       // Pin to the fingerprint from the verified descriptor fetch.
       return bytesEqual(fp, desc.tlsFp);
     };
-    final req = await _http.postUrl(_uri('/prove'));
+    final req = await _http
+        .postUrl(_uri('/prove'))
+        .timeout(const Duration(seconds: 8));
     req.headers.contentType = ContentType.json;
     req.write(body);
-    final resp = await req.close().timeout(const Duration(seconds: 8));
-    final text = await resp.transform(utf8.decoder).join();
+    // Generous single-shot timeout (loose classroom WiFi): the driver
+    // loop retries across tokens anyway — one slow POST must not kill it.
+    final resp = await req.close().timeout(const Duration(seconds: 10));
+    final text =
+        await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     if (resp.statusCode == 429) throw StateError('rate-limited, retry later');
     final m = jsonDecode(text) as Map<String, dynamic>;
     return ProveResult(

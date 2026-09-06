@@ -126,21 +126,21 @@ void main() {
         classLabel: 'CS201-Room301',
         dateIso: '2026-09-03',
         w1: {
-          'aarav@institute.ac.in': true,
-          'diya@institute.ac.in': false
+          'student@example.com': true,
+          'student2@example.com': false
         },
         w2: {
-          'aarav@institute.ac.in': true,
-          'diya@institute.ac.in': true
+          'student@example.com': true,
+          'student2@example.com': true
         },
-        names: {'aarav@institute.ac.in': 'Aarav S', 'diya@institute.ac.in': 'Diya R'},
-        rolls: {'aarav@institute.ac.in': '12342210'},
+        names: {'student@example.com': 'Student One', 'student2@example.com': 'Student Two'},
+        rolls: {'student@example.com': '12342210'},
       );
       expect(csv, contains('Name,ID Number,Email,W1,W2,Status'));
       expect(csv,
-          contains('Aarav S,12342210,aarav@institute.ac.in,1,1,Present'));
+          contains('Student One,12342210,student@example.com,1,1,Present'));
       expect(csv,
-          contains('Diya R,,diya@institute.ac.in,0,1,Partial'));
+          contains('Student Two,,student2@example.com,0,1,Partial'));
       final sig = signExport(prof.privateKey, csv);
       expect(verifyExport(prof.publicKey, csv, sig), isTrue);
       expect(verifyExport(prof.publicKey, '$csv\n', sig), isFalse);

@@ -8,9 +8,7 @@
       "version": "0.1.0",
       "dependencies": [
         "crypto",
-        "cryptography",
-        "ed25519_edwards",
-        "meta"
+        "ed25519_edwards"
       ],
       "devDependencies": [
         "lints",
@@ -54,11 +52,6 @@
       ]
     },
     {
-      "name": "meta",
-      "version": "1.19.0",
-      "dependencies": []
-    },
-    {
       "name": "crypto",
       "version": "3.0.7",
       "dependencies": [
@@ -73,17 +66,6 @@
         "collection",
         "convert",
         "crypto"
-      ]
-    },
-    {
-      "name": "cryptography",
-      "version": "2.9.0",
-      "dependencies": [
-        "collection",
-        "crypto",
-        "ffi",
-        "meta",
-        "typed_data"
       ]
     },
     {
@@ -349,11 +331,6 @@
       ]
     },
     {
-      "name": "ffi",
-      "version": "2.2.0",
-      "dependencies": []
-    },
-    {
       "name": "string_scanner",
       "version": "1.4.1",
       "dependencies": [
@@ -397,6 +374,11 @@
         "source_maps",
         "stack_trace"
       ]
+    },
+    {
+      "name": "meta",
+      "version": "1.19.0",
+      "dependencies": []
     },
     {
       "name": "glob",

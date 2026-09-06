@@ -1,14 +1,9 @@
-// Linux BlueZ D-Bus advertise shim (~§8: identical UUID semantics).
+// Linux BlueZ D-Bus advertise shim (identical air bytes, §8).
 //
 // universal_ble on Linux is scan-only, so professor laptops advertise the
-// rotating UUID_P/UUID_S + fixed PROX_SVC through BlueZ LEAdvertisingManager1
-// directly. Scan path stays universal_ble; this file is advertise-only.
-//
-// Layout mirrors the mobile path exactly:
-//   ServiceUUIDs = [PROX_SVC, rotatingUuid], Type = peripheral,
-//   LocalName = Proximity, Includes = [tx-power].
-// peerW (scan-response alias) rides the advertisement data where BlueZ
-// exposes it; roster-side HMAC recompute covers the rest (same as mobile).
+// v2 air packet (16-bit [kAirSvc] + manufacturer payload) through BlueZ
+// LEAdvertisingManager1 directly. Scan path stays universal_ble; this file
+// is advertise-only.
 library;
 
 import 'dart:typed_data';
@@ -23,13 +18,24 @@ const kBluezDeviceIface = 'org.bluez.Device1';
 const kAdvertPathPrefix = '/org/proximity/advert';
 
 /// Pure advertisement property map (unit-tested without a bus).
-Map<String, DBusValue> advertisementProps(String rotatingUuid) => {
-      'Type': const DBusString('peripheral'),
-      'ServiceUUIDs': DBusArray.string([kProxSvc, rotatingUuid]),
-      'LocalName': const DBusString('Proximity'),
-      'Includes': DBusArray.string(['tx-power']),
-      'Discoverable': const DBusBoolean(true),
-    };
+/// [airMfg] is the full v2 manufacturer payload ([packAir], 18B).
+Map<String, DBusValue> advertisementProps(String airServiceUuid,
+    {required Uint8List airMfg}) {
+  return {
+    'Type': const DBusString('peripheral'),
+    'ServiceUUIDs': DBusArray.string([airServiceUuid]),
+    'ManufacturerData': DBusDict(
+      DBusSignature('q'),
+      DBusSignature('v'),
+      {
+        DBusUint16(kAirCompanyId): DBusVariant(DBusArray.byte(airMfg)),
+      },
+    ),
+    'LocalName': const DBusString('Proximity'),
+    'Includes': DBusArray.string(['tx-power']),
+    'Discoverable': const DBusBoolean(true),
+  };
+}
 
 class _AdvertisementObject extends DBusObject {
   final Map<String, DBusValue> props;
@@ -83,14 +89,29 @@ class BluezAdvertiser {
     throw StateError('No BlueZ adapter with LEAdvertisingManager1 found.');
   }
 
-  /// Advertise [rotatingUuid] alongside fixed PROX_SVC (5s rotation:
-  /// call again to republish; previous registration is released first).
-  Future<void> advertise(String rotatingUuid) async {
+  /// Advertise one air packet (5s rotation: call again to republish;
+  /// previous registration is released first).
+  Future<void> advertise(String airServiceUuid,
+      {required Uint8List airMfg}) async {
+    await _register(advertisementProps(airServiceUuid, airMfg: airMfg));
+  }
+
+  /// Advertise one legacy v1 UUID packet (no manufacturer data).
+  Future<void> advertiseUuidOnly(String uuid128) async {
+    await _register({
+      'Type': const DBusString('peripheral'),
+      'ServiceUUIDs': DBusArray.string([uuid128]),
+      'LocalName': const DBusString('Proximity'),
+      'Includes': DBusArray.string(['tx-power']),
+      'Discoverable': const DBusBoolean(true),
+    });
+  }
+
+  Future<void> _register(Map<String, DBusValue> props) async {
     await _ensureBus();
     await release();
-    final path =
-        DBusObjectPath('$kAdvertPathPrefix${_serial++}');
-    _current = _AdvertisementObject(path, advertisementProps(rotatingUuid));
+    final path = DBusObjectPath('$kAdvertPathPrefix${_serial++}');
+    _current = _AdvertisementObject(path, props);
     await _bus!.registerObject(_current!);
     await _bus!.callMethod(
       destination: kBluezService,
@@ -126,7 +147,3 @@ class BluezAdvertiser {
     _adapterPath = null;
   }
 }
-
-/// Convenience: pack a rotating challenge UUID for the shim.
-String shimChallengeUuid(Uint8List challenge8) =>
-    UuidCodec.packChallenge(challenge8);

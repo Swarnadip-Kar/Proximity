@@ -26,21 +26,9 @@ void main() {
       expect(data.length, 8);
     });
 
-    test('challenge async (cryptography) == sync (crypto)', () async {
-      final sw = Uint8List.fromList(List.generate(32, (i) => i));
-      final wid = Uint8List.fromList([1, 2, 3, 4, 5, 6]);
-      for (var j = 0; j < 6; j++) {
-        final a = ProxCrypto.challengeForSubEpoch(sw, wid, j);
-        final b = await ProxCrypto.challengeForSubEpochAsync(sw, wid, j);
-        expect(a, b, reason: 'j=$j async/sync mismatch');
-        expect(a.length, 8);
-      }
-    });
-
-    test('sha256 async == sync', () async {
-      final msg = Uint8List.fromList('proximity'.codeUnits);
-      expect(await ProxCrypto.sha256Async(msg), ProxCrypto.sha256Sync(msg));
-    });
+    // NOTE: the async cryptography twins (challengeForSubEpochAsync,
+    // sha256Async, hkdfSha256) were deleted — single sync implementation,
+    // no dual-primitive parity to test.
 
     test('C_j changes per j, stable per (S_w, windowID, j)', () async {
       final sw = randBytes(32);
@@ -67,14 +55,6 @@ void main() {
           isNot(ProxCrypto.peerAlias(pk32, w2)));
     });
 
-    test('HKDF-SHA256 deterministic + length', () async {
-      final a = await ProxCrypto.hkdfSha256(
-          ikm: [1, 2, 3], salt: [4, 5], info: [6], length: 32);
-      final b = await ProxCrypto.hkdfSha256(
-          ikm: [1, 2, 3], salt: [4, 5], info: [6], length: 32);
-      expect(a, b);
-      expect(a.length, 32);
-    });
   });
 
   group('Ed25519 incl. RFC8032', () {
@@ -211,14 +191,8 @@ void main() {
           isFalse);
     });
 
-    test('tlsPin H(PK_p||windowID) stable + window-bound', () {
-      final prof = ProxCrypto.generateEdKeypair();
-      final pk32 = Uint8List.fromList(prof.publicKey.bytes.sublist(0, 32));
-      final w1 = randBytes(6), w2 = randBytes(6);
-      expect(ProxCrypto.tlsPin(pk32, w1), ProxCrypto.tlsPin(pk32, w1));
-      expect(ProxCrypto.tlsPin(pk32, w1), isNot(ProxCrypto.tlsPin(pk32, w2)));
-    });
-
+    // NOTE: tlsPin H(PK_p||windowID) was deleted — real channel binding
+    // uses the live cert fingerprint (WindowTls.fingerprint), never this.
     test('liveness prompt bound to C_j[0]&1', () {
       expect(ProxCrypto.livenessPrompt(Uint8List.fromList([0, 1, 2, 3, 4, 5, 6, 7])),
           'turn-head');

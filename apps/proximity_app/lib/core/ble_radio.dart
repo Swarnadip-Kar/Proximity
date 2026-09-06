@@ -1,25 +1,28 @@
 // Real BLE radios behind the pure [BlePlatformDelegate] interface.
 //
-// [UniversalBleRadio] (Android/iOS/macOS/Windows): scan via universal_ble
-// filtered on PROX_SVC, advertise [PROX_SVC + rotating UUID] via
-// universal_ble peripheral, GATT client fallback (MTU 517 where exposed).
-// UUID-only payloads everywhere — identical semantics all OS.
+// [UniversalBleRadio] (Android/iOS/macOS/Windows): scan filtered on the
+// fixed 16-bit [kAirSvc], advertise [kAirSvc + air manufacturer payload]
+// via universal_ble peripheral, GATT client fallback (MTU 517 where
+// exposed). v2 air bytes everywhere (protocol/air.dart) — identical
+// semantics all OS: everything fits the 31B primary packet, so no
+// platform depends on scan responses.
 // [LinuxBleRadio]: universal_ble scan + BlueZ D-Bus advertise shim
 // (universal_ble on Linux is scan-only).
-// peerW scan-response alias: exposed where the platform stack surfaces
-// scan-response bytes; elsewhere the professor recomputes R_IDj per roster
-// entry (500 HMACs per batch, trivial) — same security, no stable MACs.
+// peerW: unused by the v2 air path (kept for the GATT fallback); the
+// professor matches radio sightings by response token instead.
 library;
 
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:universal_ble/universal_ble.dart';
+
+import 'platformx.dart' as platformx;
 
 /// Shared BLE engine (one radio per device).
 final bleEngineProvider = Provider<ProxBleEngine>((ref) {
@@ -52,7 +55,7 @@ Future<BtState> bluetoothState() async {
 /// Settings). Returns true when the radio reports powered on afterwards.
 Future<bool> requestEnableBluetooth() async {
   try {
-    if (!kIsWeb && Platform.isAndroid) {
+    if (platformx.isAndroid) {
       final ok = await UniversalBle.enableBluetooth();
       if (!ok) return false;
       return await bluetoothState() == BtState.on;
@@ -63,39 +66,208 @@ Future<bool> requestEnableBluetooth() async {
   return false;
 }
 
+/// One-shot UI prompt when Bluetooth is off. Log-only failures ("Bluetooth
+/// not enabled" buried in logcat) are invisible: both live screens call
+/// this on entry so the user gets a tappable Turn-on instead. A successful
+/// Turn-on immediately retries a scan deferred while the radio was off
+/// (the engine also self-polls, so enabling via Settings heals too).
+/// Test-safe: faked [btPowerProvider] values other than off skip silently,
+/// and the enable call never throws out of the dialog.
+Future<void> promptEnableBluetoothIfOff(
+    BuildContext context, WidgetRef ref) async {
+  BtState s;
+  try {
+    s = await ref.read(btPowerProvider)();
+  } catch (_) {
+    return;
+  }
+  if (s != BtState.off || !context.mounted) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Bluetooth is off'),
+      content: const Text(
+          'Turn it on to see classes and prove presence — without it the app can neither hear nor announce.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Later'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            var ok = false;
+            try {
+              ok = await requestEnableBluetooth();
+            } catch (_) {
+              ok = false;
+            }
+            if (ctx.mounted) Navigator.of(ctx).pop(ok);
+          },
+          child: const Text('Turn on'),
+        ),
+      ],
+    ),
+  );
+  if (ok == true) {
+    try {
+      await ref.read(bleEngineProvider).retryPendingScan();
+    } catch (_) {}
+  }
+}
+
+/// Injectable camera-permission gate for the face-scan screen
+/// (faked in widget tests).
+final cameraPermissionProvider = Provider<Future<bool> Function()>((ref) {
+  return () => ensureBlePermissions(camera: true);
+});
+
 /// Injectable BT-power gate (faked in widget tests).
 final btPowerProvider = Provider<Future<BtState> Function()>((ref) {
   return bluetoothState;
 });
 
-BleSighting _mapDevice(BleDevice d) {
-  var uuid = '';
-  for (final s in d.services) {
-    final u = UuidCodec.normalize(s);
-    if (UuidCodec.isChallengeUuid(u) || UuidCodec.isResponseUuid(u)) {
-      uuid = u;
-      break;
+/// Maps platform scan results to air sightings (v2 and legacy v1).
+class AirParser {
+  BleSighting? map(BleDevice d) {
+    final now = DateTime.now().toUtc();
+    // --- v2 path: FCD2 service + 18B payload in manufacturer data
+    // (company FFFF) or service data under the air UUID.
+    var hasAirSvc = false;
+    for (final s in d.services) {
+      if (UuidCodec.normalize(s) == UuidCodec.normalize(kAirSvc)) {
+        hasAirSvc = true;
+        break;
+      }
     }
+    if (hasAirSvc) {
+      final candidates = <Uint8List>[];
+      for (final m in d.manufacturerDataList) {
+        if (m.companyId != kAirCompanyId) continue;
+        candidates.add(m.payload);
+      }
+      for (final e in d.serviceData.entries) {
+        final k = UuidCodec.normalize(e.key);
+        if (k == UuidCodec.normalize(kAirSvc) || k == 'fcd2') {
+          candidates.add(e.value);
+        }
+      }
+      for (final c in candidates) {
+        final pdu = unpackAir(c);
+        if (pdu == null) {
+          BleLog.log('BLE', 'air unparseable payload len=${c.length}');
+          continue;
+        }
+        return BleSighting(
+          type: pdu.type,
+          token8: pdu.token8,
+          ipHost: pdu.host,
+          ipPort: pdu.port,
+          rssiDbm: d.rssi ?? -127,
+          at: now,
+        );
+      }
+      BleLog.log('BLE', 'air FCD2 without v2 payload');
+      return null;
+    }
+    // Split-packet probe (Samsung extended-scan may deliver ADV and
+    // scan-response in separate callbacks): a FFFF manufacturer payload
+    // arriving WITHOUT the FCD2 service belongs to the other half. Logged
+    // (not parsed) so live tests can tell displacement apart from split —
+    // a merge cache only helps the latter.
+    for (final m in d.manufacturerDataList) {
+      if (m.companyId == kAirCompanyId) {
+        BleLog.log('BLE',
+            'air mfg FFFF without FCD2 svc len=${m.payload.length} rssi=${d.rssi}');
+        break;
+      }
+    }
+    // --- legacy v1 path (Apple-TX compatible): rotating 128-bit UUIDs —
+    // challenge (token in low 8 bytes), response, or server-address hint
+    // (IP-hint ticks alternate with challenge ticks so Apple-originated
+    // classes publish their HTTPS address through the mesh).
+    for (final s in d.services) {
+      final u = UuidCodec.normalize(s);
+      if (UuidCodec.isChallengeUuid(u)) {
+        return BleSighting(
+          type: kAirTypeChallenge,
+          token8: Uint8List.fromList(UuidCodec.lo8Of(s)),
+          legacy: true,
+          legacyUuid: u,
+          rssiDbm: d.rssi ?? -127,
+          at: now,
+        );
+      }
+      if (UuidCodec.isResponseUuid(u)) {
+        return BleSighting(
+          type: kAirTypeResponse,
+          token8: Uint8List.fromList(UuidCodec.lo8Of(s)),
+          legacy: true,
+          legacyUuid: u,
+          rssiDbm: d.rssi ?? -127,
+          at: now,
+        );
+      }
+      if (UuidCodec.isIpHintUuid(u)) {
+        final ip = UuidCodec.unpackIpHint(s);
+        if (ip == null) continue;
+        return BleSighting(
+          type: kAirTypeIpHint,
+          token8: Uint8List(8),
+          ipHost: ip.host,
+          ipPort: ip.port,
+          legacy: true,
+          legacyUuid: u,
+          rssiDbm: d.rssi ?? -127,
+          at: now,
+        );
+      }
+    }
+    return null;
   }
-  return BleSighting(
-    uuid: uuid.isEmpty ? d.deviceId : uuid,
-    rssiDbm: d.rssi ?? -127,
-    at: DateTime.now().toUtc(),
-  );
 }
 
 class UniversalBleRadio implements BlePlatformDelegate {
   void Function(BleSighting)? _onSight;
+  final AirParser _parser = AirParser();
   @override
   String get platformName => 'universal_ble';
 
   @override
-  Future<void> startAdvertising(String serviceUuid, String rotatingUuid,
+  Future<void> startAirPacket(String airServiceUuid, Uint8List airMfg,
       {List<int>? scanResponse}) async {
+    // v2 air packet (protocol/air.dart): fixed 16-bit [kAirSvc] + 18B
+    // manufacturer payload, 29B total in the PRIMARY advertisement —
+    // identical bytes on Android/Linux/macOS/Windows.
+    BleLog.log('BLE', 'ADV start ${BleLog.shortUuid(airServiceUuid)}…');
     await UniversalBlePeripheral.stopAdvertising();
-    await UniversalBlePeripheral.startAdvertising(
-      services: [serviceUuid, rotatingUuid],
-    );
+    try {
+      await UniversalBlePeripheral.startAdvertising(
+        services: [airServiceUuid],
+        manufacturerData: ManufacturerData(kAirCompanyId, airMfg),
+      );
+      BleLog.log('BLE', 'ADV on air ${BleLog.shortUuid(airServiceUuid)}…');
+    } catch (e) {
+      BleLog.log(
+          'BLE', 'ADV FAILED ${BleLog.shortUuid(airServiceUuid)}…: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> startLegacyUuid(String uuid128) async {
+    // Legacy v1 single-UUID packet (challenge in low bytes, no IP).
+    // Used on stacks whose peripheral layout can't be trusted with
+    // extras (Apple) — students parse both formats, relays preserve them.
+    BleLog.log('BLE', 'ADV start v1 uuid=${BleLog.shortUuid(uuid128)}…');
+    await UniversalBlePeripheral.stopAdvertising();
+    try {
+      await UniversalBlePeripheral.startAdvertising(services: [uuid128]);
+      BleLog.log('BLE', 'ADV on air v1 uuid=${BleLog.shortUuid(uuid128)}…');
+    } catch (e) {
+      BleLog.log('BLE', 'ADV FAILED v1 uuid=${BleLog.shortUuid(uuid128)}…: $e');
+      rethrow;
+    }
   }
 
   @override
@@ -106,12 +278,22 @@ class UniversalBleRadio implements BlePlatformDelegate {
   Future<void> startScanning(void Function(BleSighting s) onSight) async {
     _onSight = onSight;
     UniversalBle.onScanResult = (BleDevice d) {
-      final s = _mapDevice(d);
-      if (s.isChallenge || s.isResponse) _onSight?.call(s);
+      final s = _parser.map(d);
+      // Most neighbours parse to nothing and drop silently here; the
+      // parser logs FCD2 halves so air visibility stays debuggable.
+      if (s != null) _onSight?.call(s);
     };
-    await UniversalBle.startScan(
-      scanFilter: ScanFilter(withServices: [kProxSvc]),
-    );
+    // Unfiltered scan: v1 rotating UUIDs share no common service with v2,
+    // so hardware filtering would drop one format. Parsing in [AirParser]
+    // is the filter.
+    BleLog.log('BLE', 'scan start (unfiltered, dual-format)');
+    try {
+      await UniversalBle.startScan();
+      BleLog.log('BLE', 'scan active');
+    } catch (e) {
+      BleLog.log('BLE', 'scan start FAILED: $e');
+      rethrow;
+    }
   }
 
   @override
@@ -164,10 +346,15 @@ class LinuxBleRadio extends UniversalBleRadio {
   String get platformName => 'linux-bluez';
 
   @override
-  Future<void> startAdvertising(String serviceUuid, String rotatingUuid,
+  Future<void> startAirPacket(String airServiceUuid, Uint8List airMfg,
       {List<int>? scanResponse}) async {
-    // serviceUuid is always PROX_SVC; the rotating UUID carries the secret.
-    await _bluez.advertise(rotatingUuid);
+    // serviceUuid is always [kAirSvc]; the air packet carries everything.
+    await _bluez.advertise(airServiceUuid, airMfg: airMfg);
+  }
+
+  @override
+  Future<void> startLegacyUuid(String uuid128) async {
+    await _bluez.advertiseUuidOnly(uuid128);
   }
 
   @override
@@ -175,28 +362,39 @@ class LinuxBleRadio extends UniversalBleRadio {
 }
 
 BlePlatformDelegate platformRadio() {
-  if (!kIsWeb && Platform.isLinux) return LinuxBleRadio();
+  if (platformx.isLinux) return LinuxBleRadio();
   return UniversalBleRadio();
 }
 
-/// One-time onboarding prompts (Bluetooth + location for scan on Android).
-/// Returns true when radio may start. Desktop returns true (OS handles it).
-Future<bool> ensureBlePermissions() async {
+/// One-time onboarding prompts.
+///
+/// [camera]: also request camera (face scan). Host/attendance-start flows
+/// pass false — camera is requested at the face-scan screen instead, so a
+/// denied camera can never surface as a *Bluetooth* error (Bug 1).
+/// Desktop returns true with no prompts (the OS handles radio access).
+Future<bool> ensureBlePermissions({bool camera = false}) async {
   if (kIsWeb) return true;
   try {
-    if (Platform.isAndroid) {
-      final res = await [
+    if (platformx.isAndroid) {
+      final req = [
         Permission.bluetoothScan,
         Permission.bluetoothAdvertise,
         Permission.bluetoothConnect,
         Permission.locationWhenInUse,
-        Permission.camera,
-      ].request();
-      return (res[Permission.bluetoothScan]?.isGranted ?? false) &&
+        if (camera) Permission.camera,
+      ];
+      final res = await req.request();
+      final btOk = (res[Permission.bluetoothScan]?.isGranted ?? false) &&
           (res[Permission.bluetoothAdvertise]?.isGranted ?? false) &&
           (res[Permission.bluetoothConnect]?.isGranted ?? false);
+      if (!camera) return btOk;
+      final cam = res[Permission.camera];
+      return btOk && (cam?.isGranted ?? false);
     }
-    if (Platform.isIOS || Platform.isMacOS) {
+    if (platformx.isIOS || platformx.isMacOS) {
+      // No runtime Bluetooth prompt exists on Apple platforms; the OS asks
+      // on first radio use (Info.plist usage strings are bundled).
+      if (!camera) return true;
       final cam = await Permission.camera.request();
       return cam.isGranted || cam.isLimited;
     }

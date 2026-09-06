@@ -33,7 +33,7 @@ jobs:
       - run: flutter test
       - name: protocol + transport + ble unit tests
         run: |
-          for p in protocol transport ble face_detect; do
+          for p in protocol transport ble; do
             (cd ../../packages/$p && (flutter test 2>/dev/null || dart test))
           done
 

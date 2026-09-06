@@ -21,9 +21,6 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final students =
         List.generate(40, (_) => ProxCrypto.generateEdKeypair());
-    final keys = {
-      for (var i = 0; i < 40; i++) 's$i@x.in': students[i].publicKey
-    };
     final window = WindowParams(
       sessionId: randBytes(16),
       windowId: randBytes(6),
@@ -35,9 +32,7 @@ void main() {
         classLabel: 'HALL',
       profSk: prof.privateKey,
       profPk: prof.publicKey,
-      studentKeys: keys,
-      revokedPkHex: const {},
-      sightings: ({required peerW, required expectedResponseUuid}) =>
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
           const RadioSighting(rssiDbm: -60, hop: 0),
     );
     await server.start(port: 0);
@@ -58,6 +53,7 @@ void main() {
           j: 0,
           faceScore: 0.9,
           peerW: peerW,
+          pkS: pk32(kp.publicKey),
           sigSFor: (c, j) => ProxCrypto.signStudentProve(
               studentSk: kp.privateKey,
               sessionId: desc.sessionId,

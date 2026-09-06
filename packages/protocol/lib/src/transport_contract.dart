@@ -2,7 +2,6 @@
 //
 // Endpoints (professor embedded shelf server, foreground):
 //   GET  /window          -> {class, sessionID, windowID, j_now, PK_p, Cert_p, Sig_p}
-//   GET  /epoch/j         -> {Sig_p(j)} (no C_j; C_j is radio-only)
 //   POST /prove {ID,windowID,j,C_j,Sig_s,faceScore,peerW} -> {confirmed|late|invalid, serverTime, Sig_pAck}
 //   GET  /live            -> counts + rows (professor Bearer)
 //   GET  /export          -> attendance.csv + .sig (professor Bearer)
@@ -27,12 +26,6 @@ int decisionCode(ProveDecision d) => switch (d) {
       ProveDecision.invalid => 2,
     };
 
-ProveDecision decisionFromCode(int c) => switch (c) {
-      0 => ProveDecision.confirmed,
-      1 => ProveDecision.late,
-      _ => ProveDecision.invalid,
-    };
-
 /// Sliding-window IP rate limiter (in-memory, per-endpoint).
 class RateLimiter {
   final int maxHits;
@@ -49,8 +42,6 @@ class RateLimiter {
     list.add(n);
     return true;
   }
-
-  int get trackedIps => _hits.length;
 }
 
 RateLimiter proveLimiter() =>
@@ -102,7 +93,7 @@ VerifyOutcome verifyProve({
   required Uint8List windowIdExpected,
   required ed.PublicKey? studentPk, // null = unknown ID
   required bool revoked,
-  required bool freshWindow, // |now - t_j| < 7s
+  required bool freshWindow, // 0 <= now - t_j < kSubEpochSeconds + kFreshness
   required bool singleUseOk, // (ID,j) unseen
   DateTime? nowOverride,
 }) {

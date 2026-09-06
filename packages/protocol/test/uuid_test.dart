@@ -37,13 +37,11 @@ void main() {
       expect(raw.sublist(8), cj);
     });
 
-    test('challenge/response prefixes differ; PROX_SVC fixed', () {
+    test('challenge/response prefixes differ; air service id fixed', () {
       expect(kBaseP64, isNot(kBaseS64));
+      expect(kBaseP64, isNot(kBaseI64));
       expect(
-          RegExp(r'^[0-9a-f-]{36}$').hasMatch(kProxSvc.toLowerCase()), isTrue);
-      expect(
-          RegExp(r'^[0-9a-f-]{36}$').hasMatch(kProxChr.toLowerCase()), isTrue);
-      expect(kProxSvc.toLowerCase(), isNot(kProxChr.toLowerCase()));
+          RegExp(r'^[0-9a-f-]{36}$').hasMatch(kAirSvc.toLowerCase()), isTrue);
     });
 
     test('end-to-end: C_j -> UUID_P, R_IDj -> UUID_S, verify match', () {
@@ -66,7 +64,28 @@ void main() {
     test('invalid strings not misclassified', () {
       expect(UuidCodec.isChallengeUuid('not-a-uuid'), isFalse);
       expect(UuidCodec.isResponseUuid('not-a-uuid'), isFalse);
-      expect(UuidCodec.isChallengeUuid(kProxSvc), isFalse);
+      expect(UuidCodec.isChallengeUuid(kAirSvc), isFalse);
+    });
+
+    test('packIpHint roundtrip carries IPv4 + port', () {
+      final uuid = UuidCodec.packIpHint('10.50.19.107', 8443)!;
+      expect(UuidCodec.isIpHintUuid(uuid), isTrue);
+      expect(UuidCodec.isChallengeUuid(uuid), isFalse);
+      expect(UuidCodec.isResponseUuid(uuid), isFalse);
+      expect(UuidCodec.hi64Of(uuid), kBaseI64);
+      final ip = UuidCodec.unpackIpHint(uuid)!;
+      expect(ip.host, '10.50.19.107');
+      expect(ip.port, 8443);
+    });
+
+    test('packIpHint rejects unusable host/port', () {
+      expect(UuidCodec.packIpHint('127.0.0.1', 8443), isNull);
+      expect(UuidCodec.packIpHint('10.50.19.107', 0), isNull);
+      expect(UuidCodec.packIpHint('10.50.19.107', 65536), isNull);
+      expect(UuidCodec.packIpHint('not-an-ip', 8443), isNull);
+      expect(UuidCodec.packIpHint('10.50.19', 8443), isNull);
+      expect(UuidCodec.unpackIpHint(UuidCodec.packChallenge(
+          Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]))), isNull);
     });
   });
 }

@@ -215,46 +215,14 @@ class MeshPdu {
 }
 
 /// Flood admission + jitter + split-horizon. §6.2.
+///
+/// NOTE: the live relay path is ProxBleEngine._maybeRelay (packages/ble),
+/// which implements its own admission inline. The MeshPdu/LruDedup policy
+/// helpers below are the tested spec reference — only [relayJitter] and
+/// [postJitter] are called in production.
 class FloodController {
   final LruDedup dedup;
   FloodController({LruDedup? dedup}) : dedup = dedup ?? LruDedup();
-
-  /// Effective originate TTL: dense graphs cap 3→2.
-  static int effectiveOriginateTtl({required bool dense}) =>
-      dense ? kTtlDenseCap : kTtlOriginate;
-
-  /// Broadcast relay admission for challenge PDUs only.
-  /// [ingressLink] identifies where it arrived (e.g. peer hash); split-horizon
-  /// forbids sending back on [ingressLink] — enforced by caller via [isIngressLink].
-  bool shouldRelayBroadcast({
-    required MeshPdu pdu,
-    required int rssiDbm,
-    required bool Function(String candidateLink) isIngressLink,
-    String? candidateLink,
-    DateTime? now,
-  }) {
-    if (pdu.type != kPduTypeChallenge) return false; // responses never flood
-    if (pdu.ttl <= 0) return false;
-    if (rssiDbm <= kRssiRelayMinDbm) return false; // need RSSI > -80
-    if (candidateLink != null && isIngressLink(candidateLink)) return false;
-    final fresh = dedup.observe(pdu.dedupKey(), now: now);
-    if (!fresh) return false; // unseen only
-    return true;
-  }
-
-  /// Directed response-forward admission (rare, AP-isolated corners).
-  bool shouldForwardResponse({
-    required MeshPdu pdu,
-    required int hop,
-    required bool profGattConnected,
-    DateTime? now,
-  }) {
-    if (pdu.type != kPduTypeResponseFwd) return false;
-    if (!profGattConnected) return false;
-    if (hop >= kMaxRelayHop) return false;
-    if (pdu.ttl <= 0) return false;
-    return dedup.observe(pdu.dedupKey(), now: now);
-  }
 
   /// Jitter 10–220ms; wider (upper half) when dense. Deterministic under [rng].
   static Duration relayJitter({required bool dense, Random? rng}) {
@@ -268,12 +236,6 @@ class FloodController {
     const mid = (kJitterMinMs + kJitterMaxMs) ~/ 2;
     return Duration(
         milliseconds: mid + r.nextInt(kJitterMaxMs - mid + 1));
-  }
-
-  /// Tight jitter for directed response-forward (10–40ms).
-  static Duration forwardJitter({Random? rng}) {
-    final r = rng ?? Random.secure();
-    return Duration(milliseconds: 10 + r.nextInt(31));
   }
 
   /// POST herd-spread jitter 0–2s. §9.

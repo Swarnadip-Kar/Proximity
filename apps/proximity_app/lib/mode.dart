@@ -43,9 +43,6 @@ AppMode? modeFromName(String? name) => switch (name) {
       _ => null,
     };
 
-/// Window number under way (1 or 2). Present rule default 2/2.
-final windowNoProvider = StateProvider<int>((ref) => 1);
-
 /// Linked account identity (bound once at enrollment from the Gmail
 /// account itself — name imported directly, no institute-ID matching.
 /// Auto-attached to /prove during attendance; student never types anything).

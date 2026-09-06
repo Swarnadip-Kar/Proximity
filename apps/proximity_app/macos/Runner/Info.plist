@@ -28,8 +28,26 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Proximity uses the camera once to enroll your face on this device, and briefly during each attendance window to confirm the holder. Face data never leaves your device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Proximity discovers live classes and exchanges signed attendance proofs with the professor over the classroom WiFi or hotspot.</string>
+	<!-- Google Sign-In (macOS uses the iOS client via google_sign_in_ios).
+	     GIDClientID + URL scheme must match the Firebase iOS client; without
+	     them sign-in fails/crashes on macOS. Values from firebase_options. -->
+	<key>GIDClientID</key>
+	<string>355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.355638335271-2qeu0tlr8qctga1rdbnej4s62alk3mqd</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Proximity uses Bluetooth to prove students are inside the classroom during attendance windows. The app only scans and advertises while a window is open and the app is in the foreground.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>

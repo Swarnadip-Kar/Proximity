@@ -15,7 +15,7 @@
 // [FakeHostDriver] mirrors the states with demo marks (tests / UI polish).
 library;
 
-import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -26,52 +26,115 @@ import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
 import 'device_store.dart';
-import 'roster_repo.dart';
+import 'net_if.dart';
+import 'platformx.dart' as platformx;
 
 class HostSession {
-  final String addressLine; // https://<ip>:<port> · Code XXX (live only)
+  final String addressLine; // https://<ip>:<port> · ... (initial IP)
+  final String hostIp; // the announced IP (changeable via setAnnounceHost)
+  final int port;
+  final List<String> allIps; // every local IPv4 candidate
   final String displayCode; // '' while merely advertising
   final bool windowOpen;
   const HostSession({
     required this.addressLine,
+    required this.hostIp,
+    required this.port,
+    required this.allIps,
     required this.displayCode,
     required this.windowOpen,
   });
+
+  /// Rebuilt line after the professor picks a different announced IP.
+  String lineFor(String ip) => windowOpen
+      ? 'https://$ip:$port · Code $displayCode'
+      : 'https://$ip:$port · waiting for window';
 }
 
 abstract class HostDriver {
   TallyStore get tally;
   bool get isHosting;
   bool get windowLive;
-  Future<HostSession> startHosting({required String classLabel});
+  int get currentWindowNo;
+  int get waitingCount;
+  List<WaitingRow> get waitingRows;
+  List<ManualRow> get manualRows;
+  List<ManualRow> get manualPending;
+  Future<HostSession> startHosting({required String classLabel, int port = 8443});
   Future<HostSession> startWindow(int windowNo);
   Future<void> stopWindow();
 
+  /// Manual attendance decisions over LAN.
+  Future<void> decideManual(String email, bool approve);
+  Future<void> addManualEntry(
+      {required String email, required String name, String roll = ''});
+
+  /// Replaces the live tally with persisted draft data (back/app-kill
+  /// resume). Window numbering continues from the restored [windowNo].
+  Future<void> restoreTally({
+    required List<Map<String, bool>> windows,
+    required Map<String, String> names,
+    Map<String, String> rolls,
+    List<int>? windowNos,
+  });
+
+  /// Switches the announced/advertised IP (professor picks the right NIC
+  /// when several show up, e.g. VPN vs WiFi). Next beacons use it.
+  Future<void> setAnnounceHost(String ip);
+
   /// Updates the professor display name announced with the class.
   Future<void> setDisplayName(String name);
-  Future<String> signExport(String csv);
   Future<void> endHosting();
+}
+
+class WaitingRow {
+  final String email;
+  final String name;
+  final String roll;
+  const WaitingRow({required this.email, required this.name, this.roll = ''});
+}
+
+class ManualRow {
+  final String email;
+  final String name;
+  final String roll;
+  final String status;
+  const ManualRow(
+      {required this.email,
+      required this.name,
+      this.roll = '',
+      this.status = 'pending'});
 }
 
 class RealHostDriver implements HostDriver {
   final DeviceStore _store;
-  final RosterRepository _repo;
   final ProxBleEngine _engine;
 
   ProxServer? _server;
   ClassAnnouncer? _announcer;
+  String _lastBeaconTargets = '';
+  Timer? _scanHold; // post-stop grace: scan lingers AND proofs still
+  // accepted (cancelled by retake/end, which own both immediately).
+
+  /// Post-stop grace: the scan lingers for last tokens AND the server
+  /// keeps accepting proofs. Tests shrink it.
+  Duration scanLinger = const Duration(seconds: 10);
+
+  /// Single-flight guard: concurrent startHosting calls (double-tap,
+  /// re-entry) must not interleave server/announcer/engine setup.
+  bool _hostingBusy = false;
   TallyStore _tally = TallyStore();
   Uint8List? _sessionId;
   ed.KeyPair? _profKeys;
   String _profName = '';
   String _classLabel = '';
+  String _announceIp = '';
+  List<String> _allIps = const [];
 
   RealHostDriver({
     required DeviceStore store,
-    required RosterRepository repo,
     required ProxBleEngine engine,
   })  : _store = store,
-        _repo = repo,
         _engine = engine;
 
   @override
@@ -84,7 +147,69 @@ class RealHostDriver implements HostDriver {
   bool get windowLive => _server?.windowOpen ?? false;
 
   @override
-  Future<HostSession> startHosting({required String classLabel}) async {
+  int get currentWindowNo => _server?.windowNo ?? 0;
+
+  @override
+  int get waitingCount => _server?.waitingCount ?? 0;
+
+  @override
+  List<WaitingRow> get waitingRows => [
+        for (final w in (_server?.waitingRows ?? const []))
+          WaitingRow(email: w.email, name: w.name, roll: w.roll),
+      ];
+
+  @override
+  List<ManualRow> get manualRows => [
+        for (final m in (_server?.manualRows ?? const []))
+          ManualRow(
+              email: m.email, name: m.name, roll: m.roll, status: m.status),
+      ];
+
+  @override
+  List<ManualRow> get manualPending => [
+        for (final m in (_server?.manualPending ?? const []))
+          ManualRow(
+              email: m.email, name: m.name, roll: m.roll, status: m.status),
+      ];
+
+  /// Matches a recomputed response token against live air sightings.
+  /// [expectedAirKey]/[expectedUuid] cover both formats (v2 `type:hex`,
+  /// v1 `uuid:`) so mixed fleets interoperate.
+  ///
+  /// Hop mapping: air packets carry NO TTL byte, so every real sighting
+  /// arrives with `ttl == kTtlOriginate` (3) — direct vs relayed is
+  /// unknowable on receipt. Map all matches to hop 0 and let the RSSI
+  /// gate do the proximity work (a far response never clears -70 dBm at
+  /// the professor's antenna; relay tolerance is by design). Mapping
+  /// `hop: s.ttl` instead rejects EVERY live prove as `no-ble-sighting`
+  /// (3 satisfies neither the `== 0` direct nor the `<= 2` relay branch)
+  /// — unit tests hid this by stubbing hop 0.
+  static RadioSighting? matchResponse(
+      ProxBleEngine engine, String expectedAirKey, String expectedUuid) {
+    for (final s in engine.byRssiDesc) {
+      if (s.isResponse &&
+          (s.key == expectedAirKey || s.key == expectedUuid)) {
+        BleLog.log('BLE',
+            'response sighting match rssi=${s.rssiDbm} hop=${s.ttl}');
+        return RadioSighting(rssiDbm: s.rssiDbm, hop: 0);
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<HostSession> startHosting({required String classLabel, int port = 8443}) async {
+    if (_hostingBusy) throw StateError('Already starting hosting.');
+    _hostingBusy = true;
+    try {
+      return await _startHostingInner(classLabel: classLabel, port: port);
+    } finally {
+      _hostingBusy = false;
+    }
+  }
+
+  Future<HostSession> _startHostingInner(
+      {required String classLabel, int port = 8443}) async {
     await endHosting();
     final stored = await _store.readEnrollment();
     String manual = '';
@@ -104,50 +229,97 @@ class RealHostDriver implements HostDriver {
     }
     _classLabel = classLabel;
     _sessionId = randBytes(kSessionIdBytes);
-    final keys = await _repo.fetchKeysCached();
-    final studentKeys = <String, ed.PublicKey>{};
-    for (final e in keys.entries) {
-      try {
-        studentKeys[e.key] = ed.PublicKey(hexDecode(e.value.pkHex));
-      } catch (_) {
-        // Skip malformed key records; CRL/admin cleanup handles them.
-      }
-    }
-    final crl = await _repo.fetchCrlCached();
+    // Rosterless: no roster fetch — students verify with presented device
+    // keys (TOFU per class). Whoever proves presence over radio lands in
+    // the union.
     _server = ProxServer(
       classLabel: classLabel,
       profSk: _profKeys!.privateKey,
       profPk: _profKeys!.publicKey,
-      studentKeys: studentKeys,
-      revokedPkHex: crl,
-      sightings: ({required peerW, required expectedResponseUuid}) {
-        // Match the recomputed response UUID against live radio sightings.
-        for (final s in _engine.byRssiDesc) {
-          if (s.isResponse &&
-              UuidCodec.normalize(s.uuid) ==
-                  UuidCodec.normalize(expectedResponseUuid)) {
-            return RadioSighting(rssiDbm: s.rssiDbm, hop: s.ttl);
-          }
-        }
-        return null;
-      },
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
+          matchResponse(_engine, expectedAirKey, expectedUuid),
+      onProve: (email, decision, reason) =>
+          BleLog.log('NET', 'prove $email -> $decision ($reason)'),
       tally: _tally,
     );
-    await _server!.start();
-    final ip = await _lanIp();
+    await _server!.start(port: port);
+    _allIps = await _lanIps();
+    _announceIp = _allIps.first;
+    final ip = _announceIp;
+    BleLog.log('NET', 'HTTPS up on port ${_server!.port}');
+    BleLog.log('LAN', 'announcing as $ip (${_allIps.length} NICs)');
+    // Air format per platform: v2 packets (challenge+IP) where the stack
+    // delivers manufacturer data intact (Android/Linux); legacy v1
+    // single-UUID ticks alternating challenge and IP-hint where it doesn't
+    // (Apple/Windows — students parse all formats, relays preserve them).
+    try {
+      _engine.legacyTx = !(platformx.isAndroid || platformx.isLinux);
+      if (_engine.legacyTx) {
+        BleLog.log('BLE', 'legacy v1 TX (challenge + IP-hint ticks)');
+      }
+    } catch (_) {}
+    // BLE air packets carry our HTTPS host:port — students hear the class
+    // IP over radio and background-probe it (no LAN broadcasts needed).
+    // Loopback is never advertised: students probing 127.0.0.1 would test
+    // THEMSELVES and fail — stay undiscoverable-by-radio until a real LAN
+    // IP exists (the professor picks one via the all-IP picker).
+    if (ip == 'this-device') {
+      _engine.clearServerIp();
+      BleLog.log('LAN',
+          'no LAN IP — connect WiFi and pick the announce address; BLE hint off');
+    } else {
+      _engine.setServerIp(ip, _server!.port);
+    }
     await _announcer?.stop();
-    _announcer = ClassAnnouncer(() => ClassAnnouncement(
-          classLabel: _classLabel,
-          host: ip == 'this-device' ? '127.0.0.1' : ip,
-          port: _server?.port ?? 8443,
-          display: _server?.window?.displayCode ?? '',
-          prof: _profName,
-          windowOpen: _server?.windowOpen ?? false,
-          ts: DateTime.now().toUtc(),
-        ));
-    await _announcer!.start();
+    _announcer = ClassAnnouncer(() {
+      // Reads fields live so setAnnounceHost / window flips apply to the
+      // very next beacon without restarting the announcer.
+      final ip = _announceIp;
+      return ClassAnnouncement(
+        classLabel: _classLabel,
+        // Never 127.0.0.1 here: a loopback beacon makes students probe
+        // themselves. 'this-device' fails honestly until a LAN IP exists.
+        host: ip,
+        port: _server?.port ?? 8443,
+        display: _server?.window?.displayCode ?? '',
+        prof: _profName,
+        windowOpen: _server?.windowOpen ?? false,
+        ts: DateTime.now().toUtc(),
+      );
+    });
+    final announcer = _announcer!;
+    announcer.onBeacon = (a, targets) {
+      // Beacons fire every 2s: log on targets-change (a phone joining the
+      // WiFi is immediately visible) else every 10th live / 5th idle, so
+      // a long window doesn't drown the terminal. The ring caps history.
+      final live = _server?.windowOpen ?? false;
+      final key = targets.map((t) => t.address).join(',');
+      final nth = announcer.beaconCount % (live ? 10 : 5) == 1;
+      if (key != _lastBeaconTargets || nth) {
+        _lastBeaconTargets = key;
+        BleLog.log('LAN',
+            'beacon sent ${a.classLabel}@${a.host}:${a.port} ${a.windowOpen ? "OPEN" : "idle"} → ${targets.length} targets');
+      }
+    };
+    await announcer.start();
+    final targets = await broadcastTargets();
+    BleLog.log('LAN',
+        'broadcast targets: ${targets.map((t) => t.address).join(", ")}');
+    // Waiting-room discoverability: UDP beacons are AP-suppressed on
+    // isolating networks, so repeat the BLE server-address hint (same
+    // packet the round path alternates — challenge-free, nothing provable)
+    // until the window starts its challenge rotation.
+    try {
+      await _engine.startIdleHintRotation();
+      BleLog.log('BLE', 'idle IP-hint rotation on (waiting discoverable)');
+    } catch (e) {
+      BleLog.log('BLE', 'idle hint start FAILED: $e');
+    }
     return HostSession(
       addressLine: 'https://$ip:${_server!.port} · waiting for window',
+      hostIp: ip,
+      port: _server!.port,
+      allIps: _allIps,
       displayCode: '',
       windowOpen: false,
     );
@@ -160,6 +332,10 @@ class RealHostDriver implements HostDriver {
     if (server == null || session == null) {
       throw StateError('Start hosting first.');
     }
+    // Heal a stale announce IP (e.g. hosting started on mobile data before
+    // WiFi DHCP completed): beacons + BLE air packets below must carry the
+    // reachable WiFi address, and the returned session feeds the IP picker.
+    await refreshAnnounceIps();
     final window = WindowParams(
       sessionId: session,
       windowId: randBytes(kWindowIdBytes),
@@ -168,24 +344,171 @@ class RealHostDriver implements HostDriver {
       classLabel: _classLabel,
     );
     server.openWindow(window, windowNo);
+    BleLog.log('BLE', 'window #$windowNo open code=${window.displayCode}');
+    _scanHold?.cancel(); // retake owns the scan from here
     _engine.relayEnabled = false; // professors originate, never relay
-    await _engine.startScanning();
-    await _engine.startProfRotation(window);
-    final ip = await _lanIp();
+    BleLog.log('MESH', 'mesh off (prof originates, never relays)');
+    try {
+      await _engine.startScanning(deferIfNotReady: true);
+    } catch (e) {
+      BleLog.log('BLE', 'prof scan start FAILED: $e');
+    }
+    try {
+      await _engine.startProfRotation(window);
+      BleLog.log('BLE', 'prof advertising challenges (5s rotation)');
+    } catch (e) {
+      BleLog.log('BLE', 'prof ADV start FAILED: $e');
+      // Half-open cleanup: the window + scan above succeeded, so unwind
+      // them before surfacing — never leave a live window with no beacons.
+      try {
+        server.closeWindow();
+      } catch (_) {}
+      try {
+        await _engine.stopScanOnly();
+      } catch (_) {}
+      rethrow;
+    }
+    final ip = _announceIp;
     return HostSession(
       addressLine:
           'https://$ip:${server.port} · Code ${window.displayCode}',
+      hostIp: ip,
+      port: server.port,
+      allIps: _allIps,
       displayCode: window.displayCode,
       windowOpen: true,
     );
   }
 
+  /// Applies an announce-IP switch to the radio hint (loopback blanks it —
+  /// see startHosting: students must never probe 127.0.0.1).
+  void _applyAnnounceIp(String ip) {
+    if (ip == 'this-device') {
+      _engine.clearServerIp();
+      BleLog.log('LAN', 'BLE hint off (no LAN IP)');
+    } else {
+      _engine.setServerIp(ip, _server?.port ?? 8443);
+    }
+  }
+
+  /// Re-resolves local IPs and switches the announce host when the current
+  /// one vanished or a better (non-VPN, non-cellular) candidate appeared.
+  /// Never overrides an explicit professor pick of a still-present IP —
+  /// only heals stale (gone) or mobile-data addresses.
+  Future<void> refreshAnnounceIps() async {
+    List<LanAddress> cands;
+    try {
+      cands = await lanAddressCandidates();
+    } catch (_) {
+      return;
+    }
+    if (cands.isEmpty) return;
+    final seen = <String>{};
+    final ordered = <String>[];
+    for (final c in cands) {
+      if (seen.add(c.addr)) ordered.add(c.addr);
+    }
+    _allIps = ordered;
+    final best = ordered.first;
+    String? switchTo;
+    if (!ordered.contains(_announceIp)) {
+      switchTo = best;
+    } else if (_announceIp != best) {
+      final cur = cands.firstWhere((c) => c.addr == _announceIp,
+          orElse: () => cands.first);
+      final top = cands.first;
+      final curBad = cur.likelyVpn || isCellularIfaceName(cur.iface);
+      final bestGood =
+          !top.likelyVpn && !isCellularIfaceName(top.iface);
+      if (curBad && bestGood) switchTo = best;
+    }
+    if (switchTo != null) {
+      final old = _announceIp;
+      _announceIp = switchTo;
+      BleLog.log('LAN', 'announce IP refreshed $old → $switchTo');
+      _applyAnnounceIp(switchTo);
+    }
+  }
+
+  @override
+  Future<void> setAnnounceHost(String ip) async {
+    if (_allIps.contains(ip)) {
+      _announceIp = ip;
+      BleLog.log('LAN', 'announce IP switched to $ip');
+      _applyAnnounceIp(ip);
+    }
+  }
+
   @override
   Future<void> stopWindow() async {
+    BleLog.log('BLE', 'window stopping (rotation off, proofs accepted '
+        '${scanLinger.inSeconds}s more)');
+    _scanHold?.cancel();
+    // Record the round NOW (not after the linger): snapshots taken on the
+    // Stop tap must already count this round, or an empty/late-only round
+    // vanishes and the intersection still reads 1/1 after 2 rounds.
+    // Idempotent (Set) — the grace close re-notes harmlessly. The live
+    // window is never noted at OPEN, so the intersection cannot collapse
+    // mid-round before anyone marks.
     try {
-      await _engine.stop();
+      final no = _server?.windowNo ?? 0;
+      if (no > 0) _tally.noteWindow(no);
     } catch (_) {}
-    _server?.closeWindow();
+    try {
+      // Keep scanning: late student responses still arrive for ~seconds
+      // after close and must be heard (their POSTs were already sent).
+      await _engine.stop(keepScanning: true);
+    } catch (_) {}
+    // Hosting continues: resume idle hints so the waiting class stays
+    // discoverable for the retake (rotation only runs inside windows).
+    try {
+      await _engine.startIdleHintRotation();
+    } catch (_) {}
+    try {
+      await _engine.startScanning(deferIfNotReady: true);
+    } catch (_) {}
+    // Grace: the server window stays OPEN for the linger, so proofs
+    // already on the wire (or a last rotation token) still mark. Only
+    // then does the window hard-close. A retake/end meanwhile cancels
+    // this timer and owns the window immediately — so a firing timer
+    // always means grace elapsed with no new window: close unconditionally.
+    _scanHold = Timer(scanLinger, () async {
+      _server?.closeWindow();
+      try {
+        await _engine.stopScanOnly();
+        BleLog.log('BLE', 'post-window grace done (window closed, scan off)');
+      } catch (_) {}
+    });
+    BleLog.log('BLE', 'window stopped (grace running)');
+  }
+
+  @override
+  Future<void> decideManual(String email, bool approve) async {
+    _server?.decideManual(email, approve);
+  }
+
+  @override
+  Future<void> addManualEntry(
+      {required String email, required String name, String roll = ''}) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty || !key.contains('@')) return;
+    // Manual marks land immediately in the current (or first — windows
+    // always number from 1) round: the entry is visible at once, drafts
+    // capture it, and later rounds intersect honestly.
+    final no = _server?.windowNo ?? 0;
+    _tally.mark(key, name, no == 0 ? 1 : no, roll: roll);
+    _server?.registerWaiting(key, name, roll);
+  }
+
+  @override
+  Future<void> restoreTally({
+    required List<Map<String, bool>> windows,
+    required Map<String, String> names,
+    Map<String, String> rolls = const {},
+    List<int>? windowNos,
+  }) async {
+    _tally.restore(
+        windows: windows, names: names, rolls: rolls, windowNos: windowNos);
   }
 
   @override
@@ -197,20 +520,14 @@ class RealHostDriver implements HostDriver {
   }
 
   @override
-  Future<String> signExport(String csv) async {
-    final kp = _profKeys;
-    if (kp == null) throw StateError('Not hosting.');
-    return hexEncode(
-        ProxCrypto.sign(kp.privateKey, ProxCrypto.sha256Sync(csv.codeUnits)));
-  }
-
-  @override
   Future<void> endHosting() async {
+    _scanHold?.cancel();
     await _announcer?.stop();
     _announcer = null;
     try {
       await _engine.stop();
     } catch (_) {}
+    _engine.clearServerIp();
     await _server?.stop();
     _server = null;
     _tally = TallyStore();
@@ -220,16 +537,24 @@ class RealHostDriver implements HostDriver {
     _classLabel = '';
   }
 
-  static Future<String> _lanIp() async {
+  static Future<List<String>> _lanIps() async {
+    // WiFi-first ordering via lanAddressCandidates: VPN/tun interfaces
+    // (utun*) are deprioritized so the announced `host` is the reachable
+    // LAN IP, not a tunnel address. The professor can still override via
+    // the all-IP picker when several NICs show up.
     try {
-      final ifs = await NetworkInterface.list(type: InternetAddressType.IPv4);
-      for (final i in ifs) {
-        for (final a in i.addresses) {
-          if (!a.isLoopback) return a.address;
-        }
+      final cands = await lanAddressCandidates();
+      final out = <String>[];
+      for (final c in cands) {
+        if (!out.contains(c.addr)) out.add(c.addr);
       }
+      if (out.isNotEmpty) return out;
     } catch (_) {}
-    return 'this-device';
+    try {
+      final addrs = await localIPv4Addrs();
+      if (addrs.isNotEmpty) return addrs;
+    } catch (_) {}
+    return const ['this-device'];
   }
 }
 
@@ -237,6 +562,9 @@ class FakeHostDriver implements HostDriver {
   TallyStore _tally = TallyStore();
   bool _hosting = false;
   bool _live = false;
+  int _windowNo = 0;
+  final List<WaitingRow> _waiting = [];
+  final List<ManualRow> _manual = [];
 
   @override
   TallyStore get tally => _tally;
@@ -248,11 +576,31 @@ class FakeHostDriver implements HostDriver {
   bool get windowLive => _live;
 
   @override
-  Future<HostSession> startHosting({required String classLabel}) async {
+  int get currentWindowNo => _windowNo;
+
+  @override
+  int get waitingCount => _waiting.length;
+
+  @override
+  List<WaitingRow> get waitingRows => List.of(_waiting);
+
+  @override
+  List<ManualRow> get manualRows => List.of(_manual);
+
+  @override
+  List<ManualRow> get manualPending =>
+      _manual.where((m) => m.status == 'pending').toList();
+
+  @override
+  Future<HostSession> startHosting({required String classLabel, int port = 8443}) async {
     _hosting = true;
     _live = false;
+    _windowNo = 0;
     return const HostSession(
         addressLine: 'demo · waiting for window',
+        hostIp: 'demo',
+        port: 8443,
+        allIps: ['demo'],
         displayCode: '',
         windowOpen: false);
   }
@@ -260,28 +608,93 @@ class FakeHostDriver implements HostDriver {
   @override
   Future<HostSession> startWindow(int windowNo) async {
     _live = true;
-    _tally.mark('aarav@institute.ac.in', 'Aarav S', windowNo,
+    _windowNo = windowNo;
+    _tally.mark('student@example.com', 'Student One', windowNo,
         roll: '12342210');
-    _tally.mark('diya@institute.ac.in', 'Diya R', windowNo, roll: '12342211');
+    _tally.mark('student2@example.com', 'Student Two', windowNo, roll: '12342211');
     return const HostSession(
         addressLine: 'demo · Code KQ7',
+        hostIp: 'demo',
+        port: 8443,
+        allIps: ['demo'],
         displayCode: 'KQ7',
         windowOpen: true);
   }
 
   @override
-  Future<void> stopWindow() async => _live = false;
+  Future<void> stopWindow() async {
+    // Completed round persists even when empty (mirrors the real server).
+    if (_windowNo > 0) _tally.noteWindow(_windowNo);
+    _live = false;
+  }
+
+  @override
+  Future<void> decideManual(String email, bool approve) async {
+    final key = email.trim().toLowerCase();
+    final idx = _manual.indexWhere((m) => m.email == key);
+    if (idx < 0) return;
+    final m = _manual[idx];
+    _manual[idx] = ManualRow(
+        email: m.email,
+        name: m.name,
+        roll: m.roll,
+        status: approve ? 'approved' : 'rejected');
+    if (approve) {
+      _tally.mark(key, m.name, _windowNo == 0 ? 1 : _windowNo, roll: m.roll);
+    }
+  }
+
+  @override
+  Future<void> addManualEntry(
+      {required String email, required String name, String roll = ''}) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return;
+    // Immediate mark into the current (or first — windows always number
+    // from 1) round: visible at once, captured by drafts, intersected
+    // honestly by later rounds.
+    _tally.mark(key, name, _windowNo == 0 ? 1 : _windowNo, roll: roll);
+    if (_waiting.every((w) => w.email != key)) {
+      _waiting.add(WaitingRow(email: key, name: name, roll: roll));
+    }
+  }
+
+  @override
+  Future<void> restoreTally({
+    required List<Map<String, bool>> windows,
+    required Map<String, String> names,
+    Map<String, String> rolls = const {},
+    List<int>? windowNos,
+  }) async {
+    _tally.restore(
+        windows: windows, names: names, rolls: rolls, windowNos: windowNos);
+  }
+
+  /// Test helper: seed waiting/manual queues.
+  void seedWaiting(List<WaitingRow> rows) {
+    _waiting
+      ..clear()
+      ..addAll(rows);
+  }
+
+  void seedManual(List<ManualRow> rows) {
+    _manual
+      ..clear()
+      ..addAll(rows);
+  }
+
+  @override
+  Future<void> setAnnounceHost(String ip) async {}
 
   @override
   Future<void> setDisplayName(String name) async {}
 
   @override
-  Future<String> signExport(String csv) async => '00' * 64;
-
-  @override
   Future<void> endHosting() async {
     _hosting = false;
     _live = false;
+    _windowNo = 0;
+    _waiting.clear();
+    _manual.clear();
     _tally = TallyStore();
   }
 }

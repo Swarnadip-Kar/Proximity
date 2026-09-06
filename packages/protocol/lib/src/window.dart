@@ -1,8 +1,12 @@
 // Window timing + single-use + freshness per §5.1, §5.3, §6.1.
-//
-// 30s window = 6 × 5s sub-epochs j=0..5.
-// Rotation: stop/start advertise every 5s.
-// Freshness: |now - t_j| < 7s. (ID,j) single-use, else late/invalid.
+//s
+// The window opens when the professor taps Start and stays open until
+// they tap Stop: challenges rotate every 5s (j=0,1,2… unbounded) and any
+// proof whose sub-epoch is fresh (0 <= now - t_j < 5s + 7s) marks. There is no
+// round clock on either side — the student never races a countdown, and
+// stopping the window only ends acceptance (after a short grace on the
+// host). Single-use is per (ID,j); a new window carries fresh secrets so
+// old claims can never validate again.
 library;
 
 import 'dart:typed_data';
@@ -47,31 +51,25 @@ class WindowParams {
   DateTime subEpochStart(int j) =>
       t0.add(Duration(seconds: j * kSubEpochSeconds));
 
-  /// j for elapsed time; clamps to 0..5, returns -1 if before, 6 if after.
+  /// j for elapsed time (unbounded — the window closes only when the
+  /// professor stops it); -1 when called before open.
   int jForTime(DateTime now) {
     final el = now.toUtc().difference(t0).inMilliseconds / 1000.0;
     if (el < 0) return -1;
-    final j = (el / kSubEpochSeconds).floor();
-    if (j >= kSubEpochsPerWindow) return kSubEpochsPerWindow;
-    return j;
+    return (el / kSubEpochSeconds).floor();
   }
 
-  bool get isClosedAtNow => jForTime(DateTime.now().toUtc()) >= kSubEpochsPerWindow;
-
-  /// Freshness: |now - t_j| < 7s where t_j is sub-epoch start + half? Spec:
-  /// |now - t_j| < 7s (5s + drift). We anchor t_j = sub-epoch start.
-  /// Accepts current j and adjacent sub-epoch within drift.
+  /// Freshness: the proof's sub-epoch started within the last rotation +
+  /// drift window. Purely time-anchored — no window-length bound, so proofs
+  /// stay valid as long as the window is open. One-sided on purpose: a
+  /// FUTURE sub-epoch (now < t_j) is never fresh, so a token cannot be
+  /// pre-played before it airs. Same-clock evaluation (professor serves
+  /// and verifies), so no negative slack is needed.
   bool isFresh(int j, DateTime now) {
-    if (j < 0 || j >= kSubEpochsPerWindow) return false;
-    final tj = subEpochStart(j);
-    final dt = now.toUtc().difference(tj).abs();
-    // Accept if within freshness of the sub-epoch start..end extended:
-    // now in [t_j - 7s, t_j + 5s + 7s).
-    return now.toUtc().isAfter(tj.subtract(kFreshness)) &&
-        now.toUtc().isBefore(tj.add(
-            const Duration(seconds: kSubEpochSeconds) + kFreshness)) &&
-        dt.inMilliseconds <=
-            (kSubEpochSeconds * 1000 + kFreshness.inMilliseconds);
+    if (j < 0) return false;
+    final dt = now.toUtc().difference(subEpochStart(j));
+    return dt >= Duration.zero &&
+        dt < const Duration(seconds: kSubEpochSeconds) + kFreshness;
   }
 }
 
@@ -84,35 +82,6 @@ class SingleUseTracker {
   /// Returns true if first use (marks used), false if replay.
   bool claim(String id, int j) => _seen.add(_key(id, j));
 
-  bool isUsed(String id, int j) => _seen.contains(_key(id, j));
-
   void clear() => _seen.clear();
   int get size => _seen.length;
-}
-
-/// Window state machine for UI (prof start→LIVE→close→export; student join→...).
-enum WindowState { idle, live, closed }
-
-class WindowTimer {
-  final WindowParams params;
-  WindowTimer(this.params);
-
-  Duration remaining(DateTime now) {
-    final end = params.t0.add(const Duration(seconds: kWindowSeconds));
-    final r = end.difference(now.toUtc());
-    return r.isNegative ? Duration.zero : r;
-  }
-
-  double progress(DateTime now) {
-    final el =
-        now.toUtc().difference(params.t0).inMilliseconds / 1000.0;
-    return (el / kWindowSeconds).clamp(0.0, 1.0);
-  }
-
-  WindowState state(DateTime now) {
-    final j = params.jForTime(now);
-    if (j < 0) return WindowState.idle;
-    if (j >= kSubEpochsPerWindow) return WindowState.closed;
-    return WindowState.live;
-  }
 }
