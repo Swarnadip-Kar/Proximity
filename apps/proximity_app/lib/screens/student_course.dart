@@ -9,7 +9,10 @@ import 'package:proximity_storage/storage.dart';
 
 import '../main.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
 import '../widgets/course_attendance.dart';
+import '../widgets/prox_motion.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 
 class StudentCourseScreen extends ConsumerStatefulWidget {
@@ -70,18 +73,26 @@ class _StudentCourseScreenState extends ConsumerState<StudentCourseScreen> {
             CourseSummaryHeader(summary: summary),
             const SizedBox(height: 8),
             if (_sessions.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 32),
-                child: Text('No sessions in this course.',
-                    textAlign: TextAlign.center),
+              const ProxEmptyState(
+                message: 'No sessions in this course.',
               )
             else
-              for (final s in _sessions)
-                StudentSessionTile(
-                  session: s,
-                  email: widget.email,
-                  course: widget.course,
-                  onHide: () => _hide(s),
+              // Restrained motion: stagger on load only, keyed by session
+              // so hiding one never replays the rest.
+              for (var i = 0; i < _sessions.length; i++)
+                ProxFadeSlideIn(
+                  key: ValueKey<String>('session-${_sessions[i].id}'),
+                  delay: Duration(
+                      milliseconds: (i *
+                              ProxDurations.staggerStep.inMilliseconds)
+                          .clamp(0,
+                              ProxDurations.staggerCap.inMilliseconds)),
+                  child: StudentSessionTile(
+                    session: _sessions[i],
+                    email: widget.email,
+                    course: widget.course,
+                    onHide: () => _hide(_sessions[i]),
+                  ),
                 ),
           ],
         ),

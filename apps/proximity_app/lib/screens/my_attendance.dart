@@ -17,8 +17,11 @@ import '../main.dart';
 import '../core/auth.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
 import '../widgets/clock.dart';
 import '../widgets/course_attendance.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 import 'student_course.dart';
 
@@ -166,61 +169,63 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
               ),
             const SizedBox(height: 8),
             if (_offlineNote.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(_offlineNote,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.grey)),
-              ),
+              ProxSyncNote(_offlineNote),
             if (_loading)
               const Center(child: CircularProgressIndicator())
             else if (_error.isNotEmpty)
-              Text(_error,
-                  style:
-                      TextStyle(color: Theme.of(context).colorScheme.error))
+              ProxErrorNote(_error)
             else if (_sessions.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 32),
-                child: Text(
-                  'No synced classes yet. Professors sync after marking — pull down to refresh when online.',
-                  textAlign: TextAlign.center,
-                ),
+              const ProxEmptyState(
+                message:
+                    'No synced classes yet. Professors sync after marking — pull down to refresh when online.',
               )
             else ...[
               Text('$totalAttended present · $totalTaken synced sessions',
                   style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               // First page is courses: tap one for its sessions + totals.
-              for (final c in courses)
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.folder_outlined),
-                    title: Text(c),
-                    subtitle:
-                        Text(summaries[c]!.line),
+              // Restrained motion: stagger on load only.
+              for (var i = 0; i < courses.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                  child: ProxListTile(
+                    title: courses[i],
+                    subtitle: summaries[courses[i]]!.line,
+                    staggerIndex: i,
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius:
+                            BorderRadius.circular(ProxRadii.md),
+                      ),
+                      child: Icon(
+                        Icons.folder_outlined,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onPrimaryContainer,
+                      ),
+                    ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                            '${summaries[c]!.present}/${summaries[c]!.sessions}',
+                            '${summaries[courses[i]]!.present}/${summaries[courses[i]]!.sessions}',
                             style: Theme.of(context).textTheme.titleSmall),
                         const Icon(Icons.chevron_right),
                       ],
                     ),
                     onTap: acct == null
                         ? null
-                        : () => _openCourse(c, groups[c]!, email),
+                        : () => _openCourse(
+                            courses[i], groups[courses[i]]!, email),
                   ),
                 ),
             ],
             if (_online)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'Synced from your professors. Removing hides it here only.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
+              const ProxSyncNote(
+                'Synced from your professors. Removing hides it here only.',
               ),
           ],
         ),

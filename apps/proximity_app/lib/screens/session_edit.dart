@@ -13,8 +13,14 @@ import 'package:proximity_storage/storage.dart';
 import '../core/auth.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
+import '../main.dart';
 import '../widgets/manual_add.dart';
 import '../widgets/partial_list.dart';
+import '../widgets/prox_buttons.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_motion.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 
 class SessionEditScreen extends ConsumerStatefulWidget {
@@ -219,8 +225,8 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
     // the professor ticks boxes or marks people present).
     final partials = partialsOfCourse([_draft]);
     final absent = _absent;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit attendance')),
+    return AdaptiveScaffold(
+      title: 'Edit attendance',
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -236,15 +242,15 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
           ],
           const SizedBox(height: 12),
           if (partials.isNotEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Partial in this session (${partials.length})',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
+            ProxCard(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ProxSectionHeader(
+                    title: 'Partial in this session (${partials.length})',
+                    padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                  ),
                     for (final e in partials)
                       ListTile(
                         dense: true,
@@ -262,20 +268,23 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                   ],
                 ),
               ),
-            ),
           if (absent.isNotEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Absent (${absent.length})',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    const Text(
-                        'Attended another session of this course.',
-                        style: TextStyle(color: Colors.grey)),
+            ProxCard(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ProxSectionHeader(
+                    title: 'Absent (${absent.length})',
+                    padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
+                  ),
+                  Text(
+                    'Attended another session of this course.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
                     for (final m in absent)
                       ListTile(
                         dense: true,
@@ -295,49 +304,23 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                   ],
                 ),
               ),
-            ),
-          for (final email in persons)
-            ExpansionTile(
-              dense: true,
-              leading: Checkbox(
-                value: _isPresent(email),
-                tristate: true,
-                // Tri-state: all rounds / some rounds / none — tapping
-                // sets or clears every round at once; per-round fixes
-                // use the checkboxes inside. View-only on web.
-                onChanged: widget.readOnly
-                    ? null
-                    : (v) => _toggle(email, v ?? false),
-              ),
-              title: Text(_names[email] ?? email),
-              subtitle: Text(
-                  '${_presentCount(email)}/${_windows.length} rounds · ${[
-                    if ((_rolls[email] ?? '').isNotEmpty) _rolls[email]!,
-                    email
-                  ].join(' · ')}'),
-              trailing: widget.readOnly
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Remove',
-                      onPressed: () => _remove(email),
-                    ),
-              children: [
-                for (var i = 0; i < _windows.length; i++)
-                  CheckboxListTile(
-                    dense: true,
-                    value: _windows[i][email] == true,
-                    onChanged: widget.readOnly
-                        ? null
-                        : (v) => _toggleWindow(email, i, v ?? false),
-                    title: Text('Round ${i + 1}'),
-                  ),
-              ],
+          // Restrained motion: person rows stagger on load only (capped),
+          // keyed by email so ticking a checkbox never replays entrances.
+          for (var pi = 0; pi < persons.length; pi++)
+            ProxFadeSlideIn(
+              key: ValueKey<String>('person-${persons[pi]}'),
+              delay: Duration(
+                  milliseconds:
+                      (pi * ProxDurations.staggerStep.inMilliseconds).clamp(
+                          0, ProxDurations.staggerCap.inMilliseconds)),
+              child: _personTile(persons[pi]),
             ),
           if (!widget.readOnly) ...[
             const SizedBox(height: 12),
-            const Text('Add person',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const ProxSectionHeader(
+              title: 'Add person',
+              padding: EdgeInsets.zero,
+            ),
             ManualAddForm(
               fieldPrefix: 'edit',
               course: widget.record.courseId.isNotEmpty
@@ -348,7 +331,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
               isPresent: _isPresent,
             ),
             const SizedBox(height: 16),
-            FilledButton.icon(
+            ProxPrimaryButton(
               icon: const Icon(Icons.save),
               label: const Text('Save changes'),
               onPressed: _save,
@@ -356,6 +339,48 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  /// One person's per-window checkboxes. Extracted so the staggered list
+  /// above stays readable; logic unchanged (tri-state header + per-round
+  /// fixes + remove).
+  Widget _personTile(String email) {
+    return ExpansionTile(
+      dense: true,
+      leading: Checkbox(
+        value: _isPresent(email),
+        tristate: true,
+        // Tri-state: all rounds / some rounds / none — tapping
+        // sets or clears every round at once; per-round fixes
+        // use the checkboxes inside. View-only on web.
+        onChanged:
+            widget.readOnly ? null : (v) => _toggle(email, v ?? false),
+      ),
+      title: Text(_names[email] ?? email),
+      subtitle: Text(
+          '${_presentCount(email)}/${_windows.length} rounds · ${[
+            if ((_rolls[email] ?? '').isNotEmpty) _rolls[email]!,
+            email
+          ].join(' · ')}'),
+      trailing: widget.readOnly
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Remove',
+              onPressed: () => _remove(email),
+            ),
+      children: [
+        for (var i = 0; i < _windows.length; i++)
+          CheckboxListTile(
+            dense: true,
+            value: _windows[i][email] == true,
+            onChanged: widget.readOnly
+                ? null
+                : (v) => _toggleWindow(email, i, v ?? false),
+            title: Text('Round ${i + 1}'),
+          ),
+      ],
     );
   }
 }

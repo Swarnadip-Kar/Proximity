@@ -17,9 +17,13 @@ import '../core/auth.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/file_saver.dart';
+import '../design/tokens.dart';
 import '../main.dart';
 import '../widgets/clock.dart';
 import '../widgets/manual_add.dart';
+import '../widgets/prox_buttons.dart';
+import '../widgets/prox_cards.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 import 'session_edit.dart';
 import 'take_attendance.dart';
@@ -399,46 +403,29 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
               const ClockHeader(),
               const WebRecordsBanner(),
               if (_syncing)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
-                      SizedBox(width: 8),
-                      Text('Syncing with cloud…',
-                          style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
-                )
+                const ProxLoadingRow(label: 'Syncing with cloud…')
               else if (_syncMsg != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(_syncMsg!,
-                      style: const TextStyle(color: Colors.grey)),
-                ),
+                ProxSyncNote(_syncMsg!),
               const SizedBox(height: 8),
               // No hosting on web records builds (no BLE/HTTPS there).
               if (!kIsWeb)
-                FilledButton.icon(
+                ProxPrimaryButton(
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Take attendance'),
                   onPressed: _takeAttendance,
                 ),
               if (!kIsWeb) const SizedBox(height: 8),
-              OutlinedButton.icon(
+              ProxSecondaryButton(
                 icon: const Icon(Icons.calendar_month),
                 label: const Text('Export date range'),
                 onPressed: sessions.isEmpty
                     ? null
                     : () => _exportRange(sessions),
+                expanded: true,
               ),
               if (_selected.isNotEmpty && !kIsWeb) ...[
                 const SizedBox(height: 8),
-                FilledButton.icon(
+                ProxPrimaryButton(
                   icon: const Icon(Icons.delete),
                   label: Text('Delete selected (${_selected.length})'),
                   onPressed: () => _deleteSelected(sessions),
@@ -447,26 +434,18 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
               const SizedBox(height: 8),
               if (_rangeError != null) ...[
                 const SizedBox(height: 8),
-                Text(_rangeError!,
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.error)),
+                ProxErrorNote(_rangeError!),
               ],
               if (_notice != null) ...[
                 const SizedBox(height: 8),
-                Text(_notice!,
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.error)),
+                ProxErrorNote(_notice!),
               ],
               const SizedBox(height: 8),
               if (snap.connectionState == ConnectionState.waiting)
                 const Center(child: CircularProgressIndicator())
               else if (sessions.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 32),
-                  child: Text(
-                    'No sessions yet for this course.',
-                    textAlign: TextAlign.center,
-                  ),
+                const ProxEmptyState(
+                  message: 'No sessions yet for this course.',
                 )
               else
                 for (var i = 0; i < sessions.length; i++)
@@ -521,76 +500,75 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
   Widget _session(
       BuildContext context, List<ClassRecord> sessions, ClassRecord r, int i) {
     final checked = _selected.contains(r.id);
-    return AnimatedContainer(
-      duration: Duration(milliseconds: 200 + i * 40),
-      curve: Curves.easeOut,
-      child: Card(
-        child: ListTile(
-          // No multi-delete selection on web records builds.
-          leading: kIsWeb
-              ? null
-              : Checkbox(
-                  value: checked,
-                  onChanged: (v) => setState(() {
-                    if (v == true) {
-                      _selected.add(r.id);
-                    } else {
-                      _selected.remove(r.id);
-                    }
-                  }),
-                ),
-          title: Text(_sessionLabel(r)),
-          subtitle: Text(
-              '${_sessionDateLine(r)}\n${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}${_partialLine(r)}'),
-          // Tap opens the record read-only on web, editable natively.
-          // The full course list rides along for the absent computation.
-          onTap: () => _openSession(sessions, r.id),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.ios_share),
-                tooltip: 'Export CSV',
-                onPressed: () => showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(_sessionLabel(r)),
-                    content: SingleChildScrollView(
-                      child: SelectableText(r.toCsv()),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Close'),
-                      ),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.save_alt),
-                        label: const Text('Save'),
-                        onPressed: () => _saveCsv(r.toCsv(),
-                            'attendance_${r.classLabel}_${r.dateIso}_${r.id.substring(0, r.id.length.clamp(0, 8))}.csv'),
-                      ),
-                      FilledButton.icon(
-                        icon: const Icon(Icons.ios_share),
-                        label: const Text('Share'),
-                        onPressed: () => SharePlus.instance.share(ShareParams(
-                          text: r.toCsv(),
-                          subject:
-                              'Attendance ${r.classLabel} ${r.dateIso}',
-                        )),
-                      ),
-                    ],
+    // Restrained motion for this data-dense view: stagger on load only.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+      child: ProxListTile(
+        title: _sessionLabel(r),
+        subtitle:
+            '${_sessionDateLine(r)}\n${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}${_partialLine(r)}',
+        staggerIndex: i,
+        // No multi-delete selection on web records builds.
+        leading: kIsWeb
+            ? null
+            : Checkbox(
+                value: checked,
+                onChanged: (v) => setState(() {
+                  if (v == true) {
+                    _selected.add(r.id);
+                  } else {
+                    _selected.remove(r.id);
+                  }
+                }),
+              ),
+        // Tap opens the record read-only on web, editable natively.
+        // The full course list rides along for the absent computation.
+        onTap: () => _openSession(sessions, r.id),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.ios_share),
+              tooltip: 'Export CSV',
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: Text(_sessionLabel(r)),
+                  content: SingleChildScrollView(
+                    child: SelectableText(r.toCsv()),
                   ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close'),
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.save_alt),
+                      label: const Text('Save'),
+                      onPressed: () => _saveCsv(r.toCsv(),
+                          'attendance_${r.classLabel}_${r.dateIso}_${r.id.substring(0, r.id.length.clamp(0, 8))}.csv'),
+                    ),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.ios_share),
+                      label: const Text('Share'),
+                      onPressed: () => SharePlus.instance.share(ShareParams(
+                        text: r.toCsv(),
+                        subject:
+                            'Attendance ${r.classLabel} ${r.dateIso}',
+                      )),
+                    ),
+                  ],
                 ),
               ),
-              // Retake needs hosting: native only.
-              if (!kIsWeb)
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Retake attendance',
-                  onPressed: () => _takeAttendance(autoStart: true),
-                ),
-            ],
-          ),
+            ),
+            // Retake needs hosting: native only.
+            if (!kIsWeb)
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Retake attendance',
+                onPressed: () => _takeAttendance(autoStart: true),
+              ),
+          ],
         ),
       ),
     );
