@@ -656,13 +656,17 @@ class _LandingHeroState extends State<_LandingHero> {
   static const _tick = Duration(milliseconds: 50);
   Timer? _timer;
   var _progress = 0.0;
+  var _armed = false;
 
+  // The reduced-motion read must live here, not in initState:
+  // MediaQuery is an inherited widget and initState may not register
+  // inherited dependencies (red-screened on device as
+  // dependOnInheritedWidgetOfExactType called before initState completed).
   @override
-  void initState() {
-    super.initState();
-    // One-shot inherited read: MediaQuery is above us (MaterialApp), and
-    // the reduced-motion setting cannot change without a full relaunch
-    // carrying a new route anyway.
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed) return;
+    _armed = true;
     if (!ProxMotion.reduced(context)) {
       _timer = Timer.periodic(_tick, (_) {
         if (!mounted) return;
