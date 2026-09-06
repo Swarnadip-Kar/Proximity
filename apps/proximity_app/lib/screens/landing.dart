@@ -21,6 +21,10 @@ import '../core/auth.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_identity.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
+import '../widgets/prox_buttons.dart';
+import '../widgets/prox_motion.dart';
+import '../widgets/prox_states.dart';
 import '../widgets/web_banner.dart';
 
 class LandingScreen extends ConsumerStatefulWidget {
@@ -336,52 +340,55 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
   }
 
   Widget _signedOutBody(SignedAccount? acct, String extra) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ProxStaggered(
       children: [
         const WebRecordsBanner(),
+        const _LandingHero(),
         Text('Campus Attendance',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 8),
-        const Text(
+        const SizedBox(height: ProxSpacing.sm),
+        Text(
           'One sign-in for everyone. Students must sign in — each Gmail can '
           'hold only one enrolled student device (checked online). Professors '
           'may skip: classes then stay on this device only until you sign in '
           'and sync.',
           textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
         ),
-        const SizedBox(height: 24),
-        FilledButton.icon(
+        const SizedBox(height: ProxSpacing.xl),
+        ProxPrimaryButton(
           icon: const Icon(Icons.login),
           label: const Text('Sign in with Google'),
           onPressed: _busy ? null : _signIn,
         ),
         // No offline hosting on web records builds (no BLE/HTTPS there).
         if (!kIsWeb) ...[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
+          const SizedBox(height: ProxSpacing.md),
+          ProxSecondaryButton(
             icon: const Icon(Icons.present_to_all),
             label: const Text('Continue as Professor offline'),
             onPressed: _busy ? null : _continueOfflineProf,
+            expanded: true,
           ),
-          const SizedBox(height: 4),
-          const Text(
+          const SizedBox(height: ProxSpacing.xs),
+          Text(
             'Offline professors keep everything on this device. Sign in later '
             'to back up, sync across devices, and share CSVs from the cloud.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
           ),
         ],
         if (_status.isNotEmpty || extra.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text(_status.isNotEmpty ? _status : extra,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          const SizedBox(height: ProxSpacing.md),
+          ProxErrorNote(_status.isNotEmpty ? _status : extra),
         ],
         if (_busy) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: ProxSpacing.md),
           const Center(child: CircularProgressIndicator()),
         ],
       ],
@@ -462,26 +469,17 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
           if (roleLastMode(role) == 'student' && hasProf) 'prof',
           if (roleLastMode(role) != 'student' && hasStudent) 'student',
         }.toList();
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        return ProxStaggered(
           children: [
-            Text('Signed in as ${acct.displayName}',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleLarge),
-            Text(acct.email,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium),
+            _IdentityHeader(acct: acct, heldLabel: emailOk ? _heldLabel(role) : ''),
             if (linked != null && linked.gmail.toLowerCase() != acct.email.toLowerCase()) ...[
-              const SizedBox(height: 8),
-              Text(
+              const SizedBox(height: ProxSpacing.sm),
+              ProxErrorNote(
                 'Note: this device is enrolled as ${linked.gmail} — different from the signed-in account. '
                 'Wrong account? Switch below.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: ProxSpacing.lg),
             if (snap.connectionState == ConnectionState.waiting &&
                 role == null) ...[
               const Center(child: CircularProgressIndicator()),
@@ -491,18 +489,19 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
               // on the native app.
               if (kIsWeb) ...[
                 const WebRecordsBanner(),
-                const SizedBox(height: 8),
+                const SizedBox(height: ProxSpacing.sm),
                 const Text(
                   'This sign-in holds no Proximity role yet. Register once '
                   'in the native app, then return here to view records.',
                   textAlign: TextAlign.center,
                 ),
               ] else ...[
-                const Text(
+                Text(
                   'Register this sign-in (once per account):',
                   textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: ProxSpacing.sm),
                 TextField(
                   controller: _profNameCtrl,
                   decoration: const InputDecoration(
@@ -511,108 +510,306 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                     helperText: 'Gmail name is the default; shown to students.',
                   ),
                 ),
-                const SizedBox(height: 8),
-                FilledButton.icon(
+                const SizedBox(height: ProxSpacing.sm),
+                ProxPrimaryButton(
                   icon: const Icon(Icons.present_to_all),
                   label: const Text('Register as Professor'),
                   onPressed: _busy ? null : () => _registerProf(acct),
                 ),
-                const SizedBox(height: 8),
-                FilledButton.icon(
+                const SizedBox(height: ProxSpacing.sm),
+                ProxSecondaryButton(
                   icon: const Icon(Icons.school),
                   label: const Text('Register as Student'),
                   onPressed: _busy ? null : () => _registerStudent(acct),
+                  expanded: true,
                 ),
-                const SizedBox(height: 4),
-                const Text(
+                const SizedBox(height: ProxSpacing.xs),
+                Text(
                   'Same Gmail can hold both roles — switch anytime. Professor '
                   'works on many devices; student enrollment lives on exactly '
                   'one device (moves to a new phone once a week).',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                 ),
               ],
             ] else ...[
-              Text(
-                'Registered as ${_heldLabel(role!)}.',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              for (final which in ordered) ...[
-                FilledButton.icon(
-                  icon: Icon(which == 'prof'
-                      ? Icons.present_to_all
-                      : Icons.school),
-                  label: Text(which == 'prof'
-                      ? 'Continue as Professor'
-                      : 'Continue as Student'),
-                  onPressed: _busy
-                      ? null
-                      : () => _continueWithRole(acct, role, which),
-                ),
-                const SizedBox(height: 8),
+              for (var i = 0; i < ordered.length; i++) ...[
+                if (i == 0)
+                  ProxPrimaryButton(
+                    icon: Icon(ordered[i] == 'prof'
+                        ? Icons.present_to_all
+                        : Icons.school),
+                    label: Text(ordered[i] == 'prof'
+                        ? 'Continue as Professor'
+                        : 'Continue as Student'),
+                    onPressed: _busy
+                        ? null
+                        : () => _continueWithRole(acct, role!, ordered[i]),
+                  )
+                else
+                  ProxSecondaryButton(
+                    icon: Icon(ordered[i] == 'prof'
+                        ? Icons.present_to_all
+                        : Icons.school),
+                    label: Text(ordered[i] == 'prof'
+                        ? 'Continue as Professor'
+                        : 'Continue as Student'),
+                    onPressed: _busy
+                        ? null
+                        : () => _continueWithRole(acct, role!, ordered[i]),
+                    expanded: true,
+                  ),
+                if (i == 0 && roleLastMode(role).isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: ProxSpacing.xs),
+                    child: Text(
+                      'Last used — continues where you left off.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                const SizedBox(height: ProxSpacing.sm),
               ],
               // No extra registration on web records builds.
               if (!kIsWeb && (!hasProf || !hasStudent)) ...[
-                const Text(
+                Text(
                   'Add the other role on this same sign-in:',
                   textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: ProxSpacing.sm),
                 if (!hasProf)
-                  FilledButton.icon(
+                  ProxSecondaryButton(
                     icon: const Icon(Icons.present_to_all),
                     label: const Text('Register as Professor'),
                     onPressed: _busy ? null : () => _registerProf(acct),
+                    expanded: true,
                   ),
                 if (!hasStudent)
-                  FilledButton.icon(
+                  ProxSecondaryButton(
                     icon: const Icon(Icons.school),
                     label: const Text('Register as Student'),
                     onPressed: _busy ? null : () => _registerStudent(acct),
+                    expanded: true,
                   ),
-                const SizedBox(height: 4),
-                const Text(
+                const SizedBox(height: ProxSpacing.xs),
+                Text(
                   'Professor works on many devices; student enrollment lives '
                   'on exactly one device — it can move to a new phone once '
                   'a week (unlimited times).',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                 ),
               ],
               if (hasProf && !kIsWeb) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: ProxSpacing.sm),
                 const Divider(),
-                const Text(
+                Text(
                   'A student who lost their phone waits out the week for '
                   're-enrollment — meanwhile mark them manually from the '
                   'take-attendance screen (Request manual attendance or '
                   'direct entry). No reset shortcut exists by design.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                 ),
               ],
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: ProxSpacing.sm),
             TextButton.icon(
               icon: const Icon(Icons.switch_account),
               label: const Text('Switch account (sign out)'),
               onPressed: _busy ? null : _signOut,
             ),
             if (_status.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(_status,
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(color: Theme.of(context).colorScheme.error)),
+              const SizedBox(height: ProxSpacing.sm),
+              ProxErrorNote(_status),
             ],
             if (_busy) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: ProxSpacing.sm),
               const Center(child: CircularProgressIndicator()),
             ],
           ],
         );
       },
+    );
+  }
+}
+
+/// Hero moment: proximity rings emanating from a classroom mark.
+/// Pure Flutter (CustomPainter + one repeating controller, ~3 stroked
+/// circles — cheap on mid-range phones). Static when reduced motion is on.
+class _LandingHero extends StatefulWidget {
+  const _LandingHero();
+
+  @override
+  State<_LandingHero> createState() => _LandingHeroState();
+}
+
+class _LandingHeroState extends State<_LandingHero>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 148,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (!ProxMotion.reduced(context))
+            AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) => CustomPaint(
+                size: const Size(220, 148),
+                painter: _RingsPainter(
+                  progress: _c.value,
+                  primary: scheme.primary,
+                  secondary: scheme.secondary,
+                ),
+              ),
+            )
+          else
+            CustomPaint(
+              size: const Size(220, 148),
+              painter: _RingsPainter(
+                progress: 0.35,
+                primary: scheme.primary,
+                secondary: scheme.secondary,
+              ),
+            ),
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.primary.withValues(alpha: 0.35),
+                  blurRadius: 24,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.groups_outlined,
+              size: 36,
+              color: scheme.onPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RingsPainter extends CustomPainter {
+  final double progress;
+  final Color primary;
+  final Color secondary;
+  _RingsPainter({
+    required this.progress,
+    required this.primary,
+    required this.secondary,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    // Three rings, phase-offset so one is always mid-expansion.
+    for (var i = 0; i < 3; i++) {
+      final t = ((progress + i / 3) % 1.0);
+      final radius = 34 + t * 62;
+      final alpha = (1 - t) * 0.45;
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color =
+              (i.isEven ? primary : secondary).withValues(alpha: alpha),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RingsPainter old) => old.progress != progress;
+}
+
+/// Signed-in identity header: avatar initial + name + email + held roles.
+/// Keeps the legacy "Signed in as …" copy the flows rely on.
+class _IdentityHeader extends StatelessWidget {
+  final SignedAccount acct;
+  final String heldLabel;
+  const _IdentityHeader({required this.acct, required this.heldLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final initial =
+        acct.displayName.trim().isEmpty ? '?' : acct.displayName.trim()[0].toUpperCase();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.primary.withValues(alpha: 0.3)),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            initial,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        Text('Signed in as ${acct.displayName}',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleLarge),
+        Text(acct.email,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                )),
+        if (heldLabel.isNotEmpty) ...[
+          const SizedBox(height: ProxSpacing.xs),
+          Text(
+            'Registered as $heldLabel.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ],
     );
   }
 }
