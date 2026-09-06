@@ -7,6 +7,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:proximity_storage/storage.dart';
 
+import '../design/tokens.dart';
+
 /// Course bucket: the renamed courseId, else the legacy class label.
 /// Matches the professor's rename migration on both sides.
 String courseOfRecord(ClassRecord s) =>
@@ -139,7 +141,9 @@ class StudentSessionTile extends StatelessWidget {
       child: ListTile(
         leading: Icon(
           present ? Icons.check_circle : Icons.circle_outlined,
-          color: present ? Colors.green : null,
+          color: present
+              ? ProxStateColors.of(context, ProxState.marked)
+              : null,
         ),
         title: Text(sessionDateTimeLine(session)),
         subtitle: Text(

@@ -273,11 +273,18 @@ class _EnrollmentScreenState extends ConsumerState<EnrollmentScreen> {
                             child: const Text('Save enrollment'),
                           ),
                           if (!hasFace)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 4),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 'Complete all 5 face angles above to enable Save.',
-                                style: TextStyle(color: Colors.grey),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
                               ),
                             ),
                         ],

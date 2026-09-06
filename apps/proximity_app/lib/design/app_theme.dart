@@ -40,10 +40,16 @@ ThemeData proxDarkTheme() {
 }
 
 ThemeData _build(ColorScheme scheme, Brightness brightness) {
-  // Display face for headings/hero; body face for the rest. Falls back to
-  // the platform default if fonts cannot load (offline first run).
-  final display = GoogleFonts.spaceGroteskTextTheme();
-  final body = GoogleFonts.interTextTheme();
+  // Font pairing on a SCHEME-DERIVED base: GoogleFonts.textTheme() with no
+  // argument falls back to the *light* text theme, baking near-black text
+  // into every style — which renders invisible on dark surfaces (caught on
+  // Android dark mode). Deriving from the scheme keeps font families while
+  // preserving brightness-correct colors.
+  final base =
+      ThemeData(colorScheme: scheme, brightness: brightness, useMaterial3: true)
+          .textTheme;
+  final display = GoogleFonts.spaceGroteskTextTheme(base);
+  final body = GoogleFonts.interTextTheme(base);
   final text = body.copyWith(
     displayLarge: display.displayLarge?.copyWith(fontWeight: FontWeight.w700),
     displayMedium: display.displayMedium?.copyWith(fontWeight: FontWeight.w700),

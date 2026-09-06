@@ -376,8 +376,12 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Type to search the online directory — tap a card to fill:',
-            style: TextStyle(color: Colors.grey)),
+        Text(
+          'Type to search the online directory — tap a card to fill:',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
         const SizedBox(height: 4),
         TextField(
           key: ValueKey('$p-roll'),
@@ -417,24 +421,28 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         ),
         if (_searching) ...[
           const SizedBox(height: 8),
-          const Row(
+          Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
+              const SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2)),
-              SizedBox(width: 8),
-              Text('Searching online…',
-                  style: TextStyle(color: Colors.grey)),
+              const SizedBox(width: 8),
+              Text(
+                'Searching online…',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
             ],
           ),
         ],
         if (_searchOffline && _hasQuery) ...[
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Directory unreachable — your entry still saves (queued when needed).',
-            style: TextStyle(color: Colors.grey),
+            style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
         if (_searchError.isNotEmpty && _hasQuery) ...[
@@ -452,9 +460,10 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
             effectiveQuery &&
             _hits.isEmpty) ...[
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'No enrolled students match — they enroll once online in the native app.',
-            style: TextStyle(color: Colors.grey),
+            style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
         for (final h in _hits)
@@ -489,7 +498,11 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         if (_note.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(_note, style: const TextStyle(color: Colors.grey)),
+            child: Text(
+              _note,
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
           ),
         const SizedBox(height: 4),
         Align(

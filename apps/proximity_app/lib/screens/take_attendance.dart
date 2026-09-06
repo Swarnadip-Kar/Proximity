@@ -1085,12 +1085,16 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.check, color: Colors.green),
+                        icon: Icon(Icons.check,
+                            color:
+                                ProxStateColors.of(context, ProxState.marked)),
                         tooltip: 'Approve',
                         onPressed: () => _approveOne(m.email),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.red),
+                        icon: Icon(Icons.close,
+                            color:
+                                ProxStateColors.of(context, ProxState.error)),
                         tooltip: 'Reject',
                         onPressed: () => _rejectOne(m.email),
                       ),
