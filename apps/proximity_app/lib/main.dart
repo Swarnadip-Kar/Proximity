@@ -18,6 +18,7 @@ import 'core/face_detect.dart';
 import 'core/face_camera.dart';
 import 'core/host_driver.dart';
 import 'core/student_driver.dart';
+import 'design/app_theme.dart';
 import 'mode.dart';
 import 'screens/courses.dart';
 import 'screens/enrollment.dart';
@@ -219,16 +220,10 @@ class ProximityApp extends ConsumerWidget {
       title: 'Proximity',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.system,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF4F46E5),
-        useMaterial3: true,
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        colorSchemeSeed: const Color(0xFF4F46E5),
-        useMaterial3: true,
-        brightness: Brightness.dark,
-      ),
+      // Phase 1 visual identity: one theme from the design tokens —
+      // Space Grotesk display + Inter body, intentional palette.
+      theme: proxLightTheme(),
+      darkTheme: proxDarkTheme(),
       home: switch (mode) {
         AppMode.unset => const LandingScreen(),
         // Web records builds never mark: students land on records.
