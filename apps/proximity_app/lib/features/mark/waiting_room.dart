@@ -64,6 +64,14 @@ class WaitingRoomView extends StatelessWidget {
                 'Attendance has not yet started for\n$roomClass.\nKeep this open — you will continue automatically when the professor starts marking.',
                 textAlign: TextAlign.center,
               ),
+              if (!connected) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Honestly unreachable right now — check the IP and that both devices are on the same WiFi. Presence retries every 2s; hosting that ended returns you to the live list.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
               if (roundMarks.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(

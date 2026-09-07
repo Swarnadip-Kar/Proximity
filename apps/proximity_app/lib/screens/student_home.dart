@@ -948,6 +948,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           'R${_roundMarks.length + 1} · ${receipt.detail}');
     }
     BleLog.log(ProxLogTags.state, 'verdict ${receipt.result.name} (${receipt.detail})');
+    // Wrong-org refusals (Track 1 org gate) surface as error receipts
+    // with 'Wrong organization' detail — no proof was sent, no PII left.
+    // They get their own verdict screen (not generic no-signal) so the
+    // refusal reads as a decision, not a network hole.
+    final isWrongOrg = receipt.result == StudentResult.error &&
+        receipt.detail.toLowerCase().contains('wrong organization');
     setState(() {
       ackDetail = receipt.detail;
       phase = switch (receipt.result) {
@@ -955,7 +961,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         StudentResult.late => StudentPhase.late,
         StudentResult.faceFailed => StudentPhase.needsReview,
         StudentResult.noSignal => StudentPhase.noSignal,
-        StudentResult.error => StudentPhase.noSignal,
+        StudentResult.error =>
+          isWrongOrg ? StudentPhase.wrongOrg : StudentPhase.noSignal,
       };
       if (receipt.result == StudentResult.error) {
         infoDetail = receipt.detail;
@@ -1221,6 +1228,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 onRetryFace: () {},
                 onManualInstead: () {},
                 onBack: () {},
+              ),
+            StudentPhase.wrongOrg => MarkVerdictView(
+                kind: MarkVerdict.wrongOrg,
+                detail: ackDetail,
+                roundMarks: const [],
+                onRetryFace: () {},
+                onManualInstead: () {},
+                onBack: () => setState(() => phase = StudentPhase.browsing),
               ),
             StudentPhase.needsReview => MarkVerdictView(
                 kind: MarkVerdict.needsReview,

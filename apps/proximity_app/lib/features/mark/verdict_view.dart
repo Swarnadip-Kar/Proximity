@@ -15,8 +15,9 @@ import 'package:flutter/material.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_verdict.dart';
+import '../../widgets/trust_cards.dart';
 
-enum MarkVerdict { marked, late, needsReview, noSignal }
+enum MarkVerdict { marked, late, wrongOrg, needsReview, noSignal }
 
 class MarkVerdictView extends StatelessWidget {
   final MarkVerdict kind;
@@ -82,6 +83,31 @@ class MarkVerdictView extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
+              ],
+            ),
+          ),
+        ),
+      MarkVerdict.wrongOrg => Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const WrongOrgCard(classOrg: 'this class', myOrg: 'your account'),
+                const SizedBox(height: 8),
+                Text(
+                  detail.isEmpty
+                      ? 'No proof was sent — join your institute class instead.'
+                      : detail,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                ProxPrimaryButton(
+                  label: const Text('Back to classes'),
+                  onPressed: onBack,
+                  expanded: false,
+                ),
               ],
             ),
           ),

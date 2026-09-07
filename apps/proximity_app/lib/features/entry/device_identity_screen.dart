@@ -26,6 +26,7 @@ import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
+import '../../widgets/trust_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
@@ -242,42 +243,77 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
 
   /// Move-status body for a known gate verdict. Refusal copy comes from
   /// [studentClaimMessage] — the same words the enroll claim refuses with.
+  /// The binding's trust tier + server verdict ride below every verdict
+  /// (Tracks 2+3 FULL/STD/STALE/NONE + §3.4 anomaly — never silent).
   Widget _gateBody(StudentGate gate) {
+    final b = gate.binding;
+    final trust = b == null
+        ? null
+        : DeviceTrustBadge(
+            level: b.attestationLevel,
+            attestedUntilMillis: b.attestedUntilMillis,
+            anomaly: b.attestationAnomaly,
+            serverReason: b.serverVerifyReason,
+            serverVerifiedAtMillis: b.serverVerifiedAtMillis,
+            pkDHex: b.pkDHex,
+          );
     switch (gate.verdict.claim) {
       case StudentClaim.firstBind:
-        return const Column(
+        return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProxStateBadge(
+            const ProxStateBadge(
                 state: ProxState.neutral, label: 'Not enrolled yet'),
-            ProxSyncNote(
+            const ProxSyncNote(
                 'This install is free to enroll — first bind takes it.'),
+            if (trust != null) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              trust,
+            ],
           ],
         );
       case StudentClaim.sameDevice:
-        return const Column(
+        return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProxStateBadge(
+            const ProxStateBadge(
                 state: ProxState.marked,
                 label: 'This device holds the enrollment'),
-            ProxSyncNote('Re-keys and re-enrolls here are always free.'),
+            const ProxSyncNote(
+                'Re-keys and re-enrolls here are always free.'),
+            if (trust != null) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              trust,
+            ],
           ],
         );
       case StudentClaim.allowedMove:
-        return const Column(
+        return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProxStateBadge(
+            const ProxStateBadge(
                 state: ProxState.waiting, label: 'Eligible to move here'),
-            ProxSyncNote(
+            const ProxSyncNote(
                 'The week since the last move has passed — enrolling here moves it (at most once a week).'),
+            if (trust != null) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              trust,
+            ],
           ],
         );
       case StudentClaim.cooldownBlocked:
       case StudentClaim.installConflict:
-        return ProxErrorNote(
-            studentClaimMessage(gate.verdict, gate.binding));
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ProxErrorNote(
+                studentClaimMessage(gate.verdict, gate.binding)),
+            if (trust != null) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              trust,
+            ],
+          ],
+        );
     }
   }
 }

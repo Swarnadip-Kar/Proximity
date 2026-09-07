@@ -14,6 +14,7 @@ enum StudentPhase {
   listening,
   marked,
   late,
+  wrongOrg,
   needsReview,
   noSignal,
   paused,
