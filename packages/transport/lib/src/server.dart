@@ -38,7 +38,22 @@ export 'live_room.dart';
 class RadioSighting {
   final int rssiDbm;
   final int hop; // 0 = direct
-  const RadioSighting({required this.rssiDbm, required this.hop});
+  /// True when heard via a legacy v1 UUID (no direct-RSSI proof possible —
+  /// air packets carry no TTL byte, so hop is always mapped 0; see
+  /// matchResponse in the app's host driver). Drives the verify-rule log.
+  final bool legacy;
+  const RadioSighting(
+      {required this.rssiDbm, required this.hop, this.legacy = false});
+}
+
+/// Which sighting rule marked the proof (host log only — the signed ACK
+/// verdict is unchanged): `direct-rssi` (RSSI > -70 on a v2 air packet) vs
+/// `legacy-hop0-assumed` (v1 UUID or weak-signal path where hop 0 is
+/// assumed because air packets carry no TTL byte).
+String sightingRuleOf(RadioSighting? sight) {
+  if (sight == null) return 'no-sighting';
+  if (!sight.legacy && sight.rssiDbm > kRssiDirectDbm) return 'direct-rssi';
+  return 'legacy-hop0-assumed';
 }
 
 /// Radio lookup for a proof: the server recomputes the expected student
@@ -512,6 +527,8 @@ class ProxServer {
       // over the same-window suspenders.
       final useScope = '$id#${hexEncode(wid)}';
       var outcome = runVerify(sight, now, singleUse: _once.claim(useScope, j));
+      // The sighting that actually verified (drives the verify-rule log).
+      RadioSighting? verifiedSight = sight;
 
       // Sighting grace: crypto, freshness, single-use and face all passed
       // but the scan hasn't delivered the response yet (the POST beats the
@@ -528,6 +545,7 @@ class ProxServer {
         if (lateSight != null) {
           outcome = runVerify(lateSight, DateTime.now().toUtc(),
               singleUse: true); // claimed by the first verify above
+          verifiedSight = lateSight;
         }
       }
 
@@ -597,8 +615,19 @@ class ProxServer {
         if (_recentScores.length > 8) _recentScores.removeAt(0);
         if (verifierVer.isNotEmpty) _lastVerifierVer = verifierVer;
       }
-      final flaggedReason =
-          flags.isEmpty ? outcome.reason : '${outcome.reason}|${flags.join(',')}';
+      // Verify-rule log: which sighting rule marked this proof. Confirmed
+      // and late verdicts name it (direct-rssi vs legacy-hop0-assumed);
+      // invalid verdicts keep the bare reason (nothing marked). The JSON
+      // `reason` below stays the bare outcome — the rule rides only the
+      // host log line via onProve, never the wire verdict.
+      final marked =
+          outcome.decision == ProveDecision.confirmed || outcome.decision == ProveDecision.late;
+      final rule = marked ? sightingRuleOf(verifiedSight) : '';
+      final flaggedReason = [
+        outcome.reason,
+        if (rule.isNotEmpty) rule,
+        ...flags,
+      ].join('|');
       try {
         onProve?.call(id, outcome.decision.name, flaggedReason);
       } catch (_) {}

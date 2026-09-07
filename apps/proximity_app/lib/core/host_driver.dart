@@ -191,7 +191,7 @@ class RealHostDriver implements HostDriver {
           (s.key == expectedAirKey || s.key == expectedUuid)) {
         BleLog.log('BLE',
             'response sighting match rssi=${s.rssiDbm} hop=${s.ttl}');
-        return RadioSighting(rssiDbm: s.rssiDbm, hop: 0);
+        return RadioSighting(rssiDbm: s.rssiDbm, hop: 0, legacy: s.legacy);
       }
     }
     return null;

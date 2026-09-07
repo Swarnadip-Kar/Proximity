@@ -40,6 +40,14 @@ extension ProxBleRelay on ProxBleEngine {
       skip('split-horizon/own');
       return;
     }
+    if (!_relayCapAllow()) {
+      relayDrops++;
+      if (log) {
+        BleLog.log(
+            'MESH', 'relay-cap drop ${s.label} (drops=$relayDrops)');
+      }
+      return; // token guard untouched: the next hearing retries
+    }
     if (!tokenRelayGuard.add(key)) {
       skip('dup');
       return; // unseen only (storm guard: one relay per token per device)
@@ -60,8 +68,21 @@ extension ProxBleRelay on ProxBleEngine {
         aired = await _advGuard(
             () => radio.startLegacyUuid(s.legacyUuid!), 'relay ${s.label}');
       } else {
-        final mfg = packAir(
-            type: s.type, token8: s.token8, host: s.ipHost, port: s.ipPort)!;
+        // Relays preserve the heard format verbatim (v2 stays v2, v3 stays
+        // v3) and set the v3 relayed flag on re-air — never upgrade v2.
+        final mfg = s.version == kAirVerV3
+            ? packAirV3(
+                type: s.type,
+                token8: s.token8,
+                host: s.ipHost,
+                port: s.ipPort,
+                relayed: true,
+                denseHint: s.denseHint)!
+            : packAir(
+                type: s.type,
+                token8: s.token8,
+                host: s.ipHost,
+                port: s.ipPort)!;
         aired = await _advGuard(
             () => radio.startAirPacket(kAirSvc, mfg), 'relay ${s.label}');
       }

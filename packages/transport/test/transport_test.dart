@@ -92,7 +92,7 @@ void main() {
                 tlsFingerprint: fp)),
       );
       expect(res.decision, ProveDecision.confirmed);
-      expect(proved, ['$_email confirmed ok']);
+      expect(proved, ['$_email confirmed ok|direct-rssi']);
       expect(
           res.verifyAck(
             profPk: prof.publicKey,

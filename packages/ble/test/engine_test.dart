@@ -500,6 +500,104 @@ void main() {
     await engine.stop();
   });
 
+  test('per-second relay cap drops with a counted log (token kept)', () async {
+    // ~4 re-airs per rolling second per device: the 5th distinct token in
+    // the same second drops as relay-cap (counted in relayDrops + the log
+    // line) WITHOUT burning its token-guard key, so the ~1s repeat hearing
+    // relays once the window slides.
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    for (var i = 1; i <= 5; i++) {
+      engine.handleSighting(
+          challengeSighting([i, i, i, i, i, i, i, i], legacy: true));
+    }
+    await Future.delayed(const Duration(milliseconds: 700));
+    expect(engine.relayDrops, 1);
+    // The capped token was never guarded: once the 1s window slides, the
+    // ~1s repeat hearing relays it.
+    await Future.delayed(const Duration(milliseconds: 600));
+    engine.handleSighting(
+        challengeSighting([5, 5, 5, 5, 5, 5, 5, 5], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 700));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([5, 5, 5, 5, 5, 5, 5, 5]))));
+    await engine.stop();
+  });
+
+  test('v3 relay preserves version and sets the relayed flag', () async {
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    final heard = BleSighting(
+      version: kAirVerV3,
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([9, 9, 9, 9, 9, 9, 9, 9]),
+      ipHost: '10.50.19.107',
+      ipPort: 8443,
+      denseHint: true,
+      rssiDbm: -60,
+      at: DateTime.now().toUtc(),
+    );
+    engine.handleSighting(heard);
+    await Future.delayed(const Duration(milliseconds: 600));
+    final pdu = unpackAir(radio.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.relayed, isTrue); // set on re-air
+    expect(pdu.denseHint, isTrue); // preserved
+    expect(pdu.token8, [9, 9, 9, 9, 9, 9, 9, 9]); // token bytes untouched
+    await engine.stop();
+  });
+
+  test('originate stays v2 unless v3 is opted in', () async {
+    WindowParams windowFor() => WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'C',
+        );
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio);
+    engine.setServerIp('10.50.19.107', 8443);
+    await engine.startProfRotation(windowFor());
+    expect(unpackAir(radio.advertisingMfg!)!.version, kAirVer);
+    await engine.stop();
+    final radio3 = FakeBleRadio();
+    final engine3 = ProxBleEngine(radio: radio3)
+      ..v3Tx = true
+      ..denseHintTx = true;
+    engine3.setServerIp('10.50.19.107', 8443);
+    await engine3.startProfRotation(windowFor());
+    final pdu = unpackAir(radio3.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.relayed, isFalse); // originate never marks relayed
+    expect(pdu.denseHint, isTrue);
+    await engine3.stop();
+  });
+
+  test('responses are never relayed (no response-flood)', () async {
+    // Even with the mesh armed, a heard student response is dispatch-only:
+    // responses travel direct-ADV (or directed GATT), never broadcast
+    // flood — a relayed response would let one phone's mark echo
+    // hall-wide and burn other students' single-use slots.
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    engine.handleSighting(BleSighting(
+      type: kAirTypeResponse,
+      token8: Uint8List.fromList([2, 2, 2, 2, 2, 2, 2, 2]),
+      ipHost: '10.50.19.107',
+      ipPort: 8443,
+      rssiDbm: -60,
+      at: DateTime.now().toUtc(),
+    ));
+    await Future.delayed(const Duration(milliseconds: 500));
+    expect(radio.advertisingMfg, isNull);
+    expect(radio.advertisingLegacyUuid, isNull);
+    expect(engine.relayDrops, 0);
+    await engine.stop();
+  });
+
   test('heard challenge fires IP-hint callback + records server', () async {
     final heard = <String>[];
     final engine = ProxBleEngine(radio: FakeBleRadio())

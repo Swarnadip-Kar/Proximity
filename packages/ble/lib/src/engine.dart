@@ -60,6 +60,30 @@ class ProxBleEngine {
   String? _ownAdvertising; // split-horizon: never relay what we advertise
   bool _halted = false;
 
+  /// Per-device per-second relay cap (§6.2 hardening): at most
+  /// [relayMaxPerSecond] re-airs per rolling second. Over-cap hearings
+  /// drop with a counted `relay-cap` log line (never silent) and do NOT
+  /// burn the token guard, so the next hearing retries. [relayDrops] is
+  /// the process-wide counter surfaced in the prof log.
+  int relayMaxPerSecond = 4;
+  int relayDrops = 0;
+  final List<DateTime> _relayStamps = [];
+
+  bool _relayCapAllow() {
+    final now = DateTime.now().toUtc();
+    _relayStamps
+        .removeWhere((t) => now.difference(t) > const Duration(seconds: 1));
+    if (_relayStamps.length >= relayMaxPerSecond) return false;
+    _relayStamps.add(now);
+    return true;
+  }
+
+  /// Opt-in v3 originate (flags byte appended — token bytes untouched).
+  /// Default off: originators stay frozen v2; relays preserve the heard
+  /// version either way. [denseHintTx] sets v3 b1 when [v3Tx] is on.
+  bool v3Tx = false;
+  bool denseHintTx = false;
+
   /// Guards every radio advertise call: a hung peripheral stack must never
   /// wedge the rotation (one log line, then silence — the reported "legacy
   /// TX logged once, per-tick ADV lines never repeat" symptom), and two
@@ -484,11 +508,19 @@ class ProxBleEngine {
       BleLog.log('BLE', 'ADV challenge j=$j SKIPPED (no server IP set)');
       return;
     }
-    final mfg = packAir(
-        type: kAirTypeChallenge,
-        token8: cj,
-        host: _serverHost,
-        port: _serverPort)!;
+    // Opt-in v3 originate: identical token/IP/port bytes + appended flags.
+    final mfg = v3Tx
+        ? packAirV3(
+            type: kAirTypeChallenge,
+            token8: cj,
+            host: _serverHost,
+            port: _serverPort,
+            denseHint: denseHintTx)!
+        : packAir(
+            type: kAirTypeChallenge,
+            token8: cj,
+            host: _serverHost,
+            port: _serverPort)!;
     _ownAdvertising = _airKey(kAirTypeChallenge, cj);
     try {
       await radio.stopAdvertising();

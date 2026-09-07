@@ -7,6 +7,7 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  setUp(AirDrops.reset);
   Uint8List v2Payload() => packAir(
         type: kAirTypeChallenge,
         token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
@@ -56,7 +57,7 @@ void main() {
           log: log,
         )!.ipHost,
         '10.50.19.107');
-    expect(lines.first, '[BLE] air unparseable payload len=3');
+    expect(lines.first, '[BLE] air drop short:3 len=3 (n=1)');
     // FCD2 service with no v2 payload at all.
     lines.clear();
     expect(
@@ -81,6 +82,86 @@ void main() {
         isNull);
     expect(lines,
         ['[BLE] air mfg FFFF without FCD2 svc len=2 rssi=-80']);
+  });
+
+  test('unknown ver/type drop with counted visible log', () {
+    final lines = <String>[];
+    void log(String tag, String msg) => lines.add('[$tag] $msg');
+    // Unknown version 0x04 (same 18B shape): dropped, counted, visible.
+    final badVer = Uint8List.fromList(
+        [0x50, 0x58, 0x04, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB]);
+    expect(
+        const AirParser().map(
+          AirScan(
+            services: [kAirSvc],
+            manufacturerData: [AirMfg(kAirCompanyId, badVer)],
+          ),
+          log: log,
+        ),
+        isNull);
+    expect(lines, [
+      '[BLE] air drop unknown-ver:4 len=18 (n=1)',
+      '[BLE] air FCD2 without v2 payload',
+    ]);
+    expect(AirDrops.count('unknown-ver:4'), 1);
+    // Second identical drop bumps the running count on the line.
+    lines.clear();
+    expect(
+        const AirParser().map(
+          AirScan(
+            services: [kAirSvc],
+            manufacturerData: [AirMfg(kAirCompanyId, badVer)],
+          ),
+          log: log,
+        ),
+        isNull);
+    expect(lines, [
+      '[BLE] air drop unknown-ver:4 len=18 (n=2)',
+      '[BLE] air FCD2 without v2 payload',
+    ]);
+    // Unknown type 0x09 with good v2 framing: dropped, not parsed.
+    lines.clear();
+    final badType = Uint8List.fromList(
+        [0x50, 0x58, 0x02, 0x09, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB]);
+    expect(
+        const AirParser().map(
+          AirScan(
+            services: [kAirSvc],
+            manufacturerData: [AirMfg(kAirCompanyId, badType)],
+          ),
+          log: log,
+        ),
+        isNull);
+    expect(lines, [
+      '[BLE] air drop unknown-type:9 len=18 (n=1)',
+      '[BLE] air FCD2 without v2 payload',
+    ]);
+  });
+
+  test('v3 payload parses with flags; strict lengths enforced', () {
+    final v3 = packAirV3(
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
+      host: '10.50.19.107',
+      port: 8443,
+      relayed: true,
+      denseHint: true,
+    )!;
+    expect(v3.length, kAirV3PayloadLen);
+    final s = const AirParser().map(AirScan(
+      services: [kAirSvc],
+      manufacturerData: [AirMfg(kAirCompanyId, v3)],
+      rssi: -60,
+    ))!;
+    expect(s.version, kAirVerV3);
+    expect(s.type, kAirTypeChallenge);
+    expect(s.token8, [1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(s.ipHost, '10.50.19.107');
+    expect(s.relayed, isTrue);
+    expect(s.denseHint, isTrue);
+    // Token-keyed identity ignores version/flags: same rotation token heard
+    // as v2-direct and v3-relayed is ONE packet for relay dedup.
+    expect(unpackAir(v2Payload())!.key, unpackAir(v3)!.key);
   });
 
   test('legacy v1 challenge / response / ip-hint parse', () {

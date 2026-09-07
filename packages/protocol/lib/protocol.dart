@@ -8,6 +8,7 @@ export 'src/uuid_codec.dart';
 export 'src/air.dart';
 export 'src/air/ipv4.dart';
 export 'src/air/parse.dart';
+export 'src/clock_drift.dart';
 export 'src/window.dart';
 export 'src/mesh.dart';
 export 'src/face_gate.dart';

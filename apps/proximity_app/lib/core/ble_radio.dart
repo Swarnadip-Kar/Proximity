@@ -152,12 +152,15 @@ class AirParserAdapter {
     );
     if (hit == null) return null;
     return BleSighting(
+      version: hit.version,
       type: hit.type,
       token8: hit.token8,
       ipHost: hit.ipHost,
       ipPort: hit.ipPort,
       legacy: hit.legacy,
       legacyUuid: hit.legacyUuid,
+      relayed: hit.relayed,
+      denseHint: hit.denseHint,
       rssiDbm: hit.rssiDbm,
       at: hit.at,
     );

@@ -169,6 +169,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// Tests shrink it.
   Duration scanRestartSlice = const Duration(seconds: 15);
 
+  /// Clock-drift tracker: one sample per verdict (signed serverTime vs
+  /// local receipt). When the median exceeds 5s the UI banners honestly
+  /// instead of verdicting late silently (see [ClockDriftTracker]).
+  final ClockDriftTracker clockDrift = ClockDriftTracker();
+
   /// Re-entry guard: rapid rejoins must not run two listen loops on the
   /// shared engine + linger timer (UI also carries a runId; the driver
   /// enforces it so programmatic callers are safe too).
@@ -777,6 +782,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       );
       if (res.flags.isNotEmpty) {
         BleLog.log('SEC', 'host attestation flags: ${res.flags.join(',')}');
+      }
+      // Clock-drift sample: the signed serverTime is the professor's clock
+      // (time authority); the median over recent verdicts banners when the
+      // two disagree by >5s (Track 4 — never silent late verdicts).
+      clockDrift.addSample(
+          serverTime: res.serverTime, localNow: DateTime.now().toUtc());
+      final driftBanner = clockDrift.banner;
+      if (driftBanner != null) {
+        BleLog.log('CLOCK',
+            'drift banner: median ${clockDrift.medianAbsSecs.toStringAsFixed(1)}s over ${clockDrift.sampleCount} verdicts');
       }
       // Verdicts that only a fresh token fixes (round changed under us,
       // token aged out, professor never heard the response): prove the

@@ -25,6 +25,15 @@ import 'constants.dart';
 import 'crypto.dart';
 
 /// LRU seen-set with 5-min expiry. Key: sender+ts+type+digest.
+///
+/// DEDUP DOMAINS (two, different keys — do not merge): this set is
+/// SENDER-keyed (same payload arriving via different neighbors dedups to
+/// one — BitChat parity for mesh PDUs), while the live BLE relay path
+/// ([ProxBleEngine.tokenRelayGuard]) is TOKEN-keyed (the same rotation
+/// token arriving via many neighbors must re-air exactly once per device —
+/// sender-keyed dedup there would re-advertise once per path: a hall-wide
+/// storm). Observe-once here is terminal; the token guard is releasable
+/// (busy-skipped air attempts retry on the next hearing).
 class LruDedup {
   final int capacity;
   final Duration expiry;

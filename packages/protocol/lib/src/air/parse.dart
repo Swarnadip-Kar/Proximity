@@ -45,21 +45,27 @@ class AirScan {
 /// BleSighting so the adapter maps 1:1 (ttl defaults + peerW stay on the
 /// app side).
 class AirSighting {
+  final int version; // kAirVer | kAirVerV3
   final int type; // kAirTypeChallenge | kAirTypeResponse | kAirTypeIpHint
   final Uint8List token8;
   final String ipHost; // HTTPS server ('' when unknown, e.g. v1 sightings)
   final int ipPort; // 0 when unknown
   final bool legacy; // true = v1 128-bit-UUID packet (Apple-TX compatible)
   final String? legacyUuid; // normalized UUID when [legacy]
+  final bool relayed; // v3 b0 (false on v2/v1 — no flags byte there)
+  final bool denseHint; // v3 b1
   final int rssiDbm;
   final DateTime at;
   const AirSighting({
+    this.version = kAirVer,
     required this.type,
     required this.token8,
     this.ipHost = '',
     this.ipPort = 0,
     this.legacy = false,
     this.legacyUuid,
+    this.relayed = false,
+    this.denseHint = false,
     required this.rssiDbm,
     required this.at,
   }) : assert(token8.length == 8);
@@ -67,6 +73,19 @@ class AirSighting {
   bool get isChallenge => type == kAirTypeChallenge;
   bool get isResponse => type == kAirTypeResponse;
   bool get isIpHint => type == kAirTypeIpHint;
+}
+
+/// Process-wide counted air-packet drops by cause (`unknown-ver:3`,
+/// `bad-len:2:19`, …). Counted HERE (the live scan path) so unknown
+/// ver/type on air is never silent: every drop emits one visible log line
+/// carrying its running count. Tests reset via [AirDrops.reset].
+class AirDrops {
+  static final Map<String, int> _counts = {};
+  static int note(String cause) =>
+      _counts[cause] = (_counts[cause] ?? 0) + 1;
+  static int count(String cause) => _counts[cause] ?? 0;
+  static Map<String, int> get counts => Map.unmodifiable(_counts);
+  static void reset() => _counts.clear();
 }
 
 /// Log sink for the parser's probe lines. The app passes BleLog.log so the
@@ -104,16 +123,24 @@ class AirParser {
         }
       }
       for (final c in candidates) {
-        final pdu = unpackAir(c);
+        final parsed = unpackAirDetailed(c);
+        final pdu = parsed.pdu;
         if (pdu == null) {
-          log('BLE', 'air unparseable payload len=${c.length}');
+          // Unknown ver/type is dropped, never parsed — and never silent:
+          // one visible line per drop carrying the running per-cause count.
+          final cause = parsed.drop ?? 'unknown';
+          final n = AirDrops.note(cause);
+          log('BLE', 'air drop $cause len=${c.length} (n=$n)');
           continue;
         }
         return AirSighting(
+          version: pdu.version,
           type: pdu.type,
           token8: pdu.token8,
           ipHost: pdu.host,
           ipPort: pdu.port,
+          relayed: pdu.relayed,
+          denseHint: pdu.denseHint,
           rssiDbm: d.rssi ?? -127,
           at: at,
         );
