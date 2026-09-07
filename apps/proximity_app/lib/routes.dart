@@ -59,6 +59,7 @@ import 'features/records/my_attendance_screen.dart';
 import 'features/records/prof_courses_screen.dart';
 import 'features/records/session_detail_screen.dart';
 import 'features/records/session_edit_screen.dart';
+import 'features/review/flagged_devices_screen.dart';
 import 'screens/student_home.dart';
 import 'screens/take_attendance.dart';
 import 'widgets/course_attendance.dart';
@@ -138,6 +139,9 @@ abstract final class ProxRoutes {
   // Records.
   static const myAttendance = 'records/mine';
   static String courseAttendance(String course) => 'records/course/$course';
+
+  // Professor review (Track 5 required): attestationAnomaly-flagged devices.
+  static const flagged = 'prof/flagged';
 
   // Shared.
   static const debugLog = 'debug/log';
@@ -324,6 +328,8 @@ Map<String, WidgetBuilder> buildProxRoutes() => {
       ProxRoutes.enrollResult: (_) => const EnrollResultScreen(),
       // Records (bundle — absorbs the old my-attendance + student-course).
       ProxRoutes.myAttendance: (_) => const MyAttendanceScreen(),
+      // Professor review (Track 5 required surface).
+      ProxRoutes.flagged: (_) => const FlaggedDevicesScreen(),
       // Shared.
       ProxRoutes.debugLog: (_) => const DebugLogScreen(),
     };
@@ -554,6 +560,9 @@ abstract final class ProxNav {
   static Future<void> openLive(BuildContext context, String course) =>
       pushNamed(context, ProxRoutes.live(course),
           args: ProxRouteArgs(course: course));
+
+  static Future<void> openFlagged(BuildContext context) =>
+      pushNamed(context, ProxRoutes.flagged);
 
   static Future<void> openWelcome(BuildContext context) =>
       pushNamed(context, ProxRoutes.welcome);

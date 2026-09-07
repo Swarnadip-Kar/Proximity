@@ -584,6 +584,45 @@ class FirestoreCloudSync implements CloudSync {
   }
 
   @override
+  Future<List<StudentDeviceDoc>> fetchFlaggedDevices(
+      {String org = '', int limit = 50}) async {
+    _needAvailable();
+    // Single-field equality (no composite index — see §3.4 handoff): org
+    // filters client-side so cross-org rows never list. Newest verdict
+    // first (client-side; server order would need a composite index).
+    try {
+      final snap = await _db
+          .collection('studentDevices')
+          .where('attestationAnomaly', isEqualTo: true)
+          .limit(limit * 2)
+          .get(const GetOptions(source: Source.serverAndCache))
+          .timeout(const Duration(seconds: 10));
+      final out = <StudentDeviceDoc>[];
+      for (final d in snap.docs) {
+        final doc = _deviceFrom(d.data(), d.id.toLowerCase());
+        if (org.isNotEmpty) {
+          if (doc.org.isEmpty || doc.org != org) continue;
+        }
+        out.add(doc);
+      }
+      out.sort((a, b) =>
+          b.serverVerifiedAtMillis.compareTo(a.serverVerifiedAtMillis));
+      return out.take(limit).toList();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw _rulesError('flagged review');
+      if (_isOfflineError(e)) {
+        throw StateError('Flagged review needs internet.');
+      }
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        throw StateError('Flagged review needs internet.');
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<String?> fetchInstallEmail(String installId) async {
     _needAvailable();
     if (installId.isEmpty) return null;

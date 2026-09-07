@@ -64,6 +64,16 @@ abstract class CloudSync {
   /// enrolled. Drives the same-phone second-enrollment refusal.
   Future<String?> fetchInstallEmail(String installId);
 
+  /// Professor/admin review list (Track 5 required surface): enrolled
+  /// bindings flagged by verifyAttestationChain (`attestationAnomaly ==
+  /// true`). Single-field equality (no composite index); org filtered
+  /// client-side when [org] is non-empty so cross-org rows never list.
+  /// Never invalidates attendance — reviewers respond via contact /
+  /// manual attendance; a successful re-verify clears the flag and
+  /// re-enrollment resets the verdict for the new binding.
+  Future<List<StudentDeviceDoc>> fetchFlaggedDevices(
+      {String org = '', int limit = 50});
+
   /// Professor directory search over enrolled students (online). Each
   /// non-empty prefix runs a server-side prefix query (email / roll /
   /// nameLower), results merged by email and capped at [limit]. When [org]

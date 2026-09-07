@@ -111,6 +111,19 @@ class FakeCloudSync implements CloudSync {
       installs[installId];
 
   @override
+  Future<List<StudentDeviceDoc>> fetchFlaggedDevices(
+      {String org = '', int limit = 50}) async {
+    final out = [
+      for (final d in devices.values)
+        if (d.attestationAnomaly &&
+            (org.isEmpty || (d.org.isNotEmpty && d.org == org)))
+          d,
+    ]..sort((a, b) =>
+        b.serverVerifiedAtMillis.compareTo(a.serverVerifiedAtMillis));
+    return out.take(limit).toList();
+  }
+
+  @override
   Future<List<StudentDirectoryEntry>> searchStudents(
       {String emailPrefix = '',
       String rollPrefix = '',
