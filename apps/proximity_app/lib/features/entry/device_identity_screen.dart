@@ -15,7 +15,6 @@
 // identity (see [entrySignOut]) and pops back to the entry screens.
 library;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
@@ -23,6 +22,7 @@ import 'package:proximity_ble/ble.dart';
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
@@ -57,7 +57,7 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
   /// Move status for the signed-in Gmail, or null when it cannot be
   /// determined (offline / unavailable / signed out). Never throws.
   Future<StudentGate?> _gate(String? email) async {
-    if (email == null || email.isEmpty || kIsWeb) return null;
+    if (email == null || email.isEmpty || !canUseFace()) return null;
     try {
       final cloud = ref.read(cloudSyncProvider);
       if (!cloud.available || !(await cloud.isOnline())) return null;
@@ -143,10 +143,11 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
                     ),
                   ],
                 ],
-                // Native-only: enrollment key + binding gate need the
-                // device store + cloud claim, neither of which exists on
-                // web records builds.
-                if (!kIsWeb) ...[
+                // Mobile-only: enrollment key + binding gate need the
+                // device store + cloud claim + face/device trust stack,
+                // none of which exists on web/desktop records builds
+                // (Track 5 — removed, not disabled).
+                if (canUseFace()) ...[
                   const ProxSectionHeader(title: 'This device'),
                   FutureBuilder<StoredEnrollment?>(
                     future: _enrollment(),
@@ -213,7 +214,7 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
                 ] else ...[
                   const SizedBox(height: ProxSpacing.sm),
                   const Text(
-                    'Records view only on web — enrollment, keys, and device moves live in the native app.',
+                    'Records view only here — enrollment, keys, and device moves live in the mobile app (Android/iOS).',
                     textAlign: TextAlign.center,
                   ),
                 ],

@@ -22,6 +22,7 @@ import 'package:proximity_ble/ble.dart';
 
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
@@ -166,6 +167,38 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                           'in the native app, then return here to view records.',
                           textAlign: TextAlign.center,
                         ),
+                      ] else if (!canUseFace()) ...[
+                        // Records-only desktop (Track 5): professor
+                        // registration only — no student enrollment UI
+                        // here at all (no dead route to it). Students
+                        // enroll once in the mobile app.
+                        Text(
+                          'Register this sign-in as professor (this desktop is records + hosting):',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: ProxSpacing.sm),
+                        TextField(
+                          controller: _profNameCtrl,
+                          decoration: const InputDecoration(
+                            labelText:
+                                'Professor display name (for Register as Professor)',
+                            helperText:
+                                'Gmail name is the default; shown to students.',
+                          ),
+                        ),
+                        const SizedBox(height: ProxSpacing.sm),
+                        ProxPrimaryButton(
+                          icon: const Icon(Icons.present_to_all),
+                          label: const Text('Register as Professor'),
+                          onPressed: _busy ? null : _registerProf,
+                        ),
+                        const SizedBox(height: ProxSpacing.xs),
+                        const Text(
+                          'Student enrollment runs once in the mobile app (Android/iOS) — '
+                          'this desktop stays records + hosting only.',
+                          textAlign: TextAlign.center,
+                        ),
                       ] else ...[
                         Text(
                           'Register this sign-in (once per account):',
@@ -251,8 +284,10 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                           ),
                         const SizedBox(height: ProxSpacing.sm),
                       ],
-                      // No extra registration on web records builds.
-                      if (!kIsWeb && (!hasProf || !hasStudent)) ...[
+                      // No extra registration on web records builds; no
+                      // student registration on records-only desktops
+                      // (Track 5 — removed, not disabled).
+                      if (!kIsWeb && (!hasProf || (canUseFace() && !hasStudent))) ...[
                         Text(
                           'Add the other role on this same sign-in:',
                           textAlign: TextAlign.center,
@@ -266,7 +301,7 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                             onPressed: _busy ? null : _registerProf,
                             expanded: true,
                           ),
-                        if (!hasStudent)
+                        if (!hasStudent && canUseFace())
                           ProxSecondaryButton(
                             icon: const Icon(Icons.school),
                             label: const Text('Register as Student'),

@@ -13,7 +13,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/enrollment.dart';
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
+import '../../features/face_identity/face_blocked.dart';
 import '../../mode.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
@@ -71,6 +73,24 @@ class EnrollResultScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Records-only devices never save enrollment (see EnrollIntro guard).
+    if (!canUseFace()) {
+      return ProxScreen(
+        title: 'Save enrollment',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const FaceBlockedCard(flow: 'Face enrollment'),
+            const SizedBox(height: ProxSpacing.md),
+            ProxSecondaryButton(
+              label: const Text('Back'),
+              expanded: true,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      );
+    }
     final st = ref.watch(enrollmentControllerProvider);
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     if (st.phase == EnrollPhase.uploaded) {

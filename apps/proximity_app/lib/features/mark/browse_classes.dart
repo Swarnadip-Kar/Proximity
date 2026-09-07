@@ -11,6 +11,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:proximity_transport/transport.dart';
 
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
 import '../../widgets/clock.dart';
@@ -72,7 +73,10 @@ class BrowseClassesView extends StatelessWidget {
             child:
                 Text(identityLine, style: Theme.of(context).textTheme.bodyMedium),
           ),
-          if (linked == null)
+          // Mobile-only enrollment (Track 5): records-only devices
+          // (desktop/web) offer no enrollment entry point at all — no
+          // dead route to it. Marking guidance lives below instead.
+          if (linked == null && canUseFace())
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: ProxSecondaryButton(
@@ -81,6 +85,12 @@ class BrowseClassesView extends StatelessWidget {
                 onPressed: onEnroll,
                 expanded: true,
               ),
+            ),
+          if (linked == null && !canUseFace())
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Text(
+                  'Records view only here — enrollment and marking run in the mobile app (Android/iOS).'),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),

@@ -16,7 +16,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/enrollment.dart';
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
+import '../../features/face_identity/face_blocked.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
@@ -53,6 +55,28 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Desktop/web are records-only (Track 5): no enrollment UI here at
+    // all — the blocked card is the whole screen, never a disabled form.
+    // Deep-links to enroll/* on records-only devices redirect to records
+    // guidance (see ProxRoutes.mobileGuardRedirect); this is the second
+    // gate for direct pushes.
+    if (!canUseFace()) {
+      return ProxScreen(
+        title: 'Enroll this device',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const FaceBlockedCard(flow: 'Face enrollment'),
+            const SizedBox(height: ProxSpacing.md),
+            ProxSecondaryButton(
+              label: const Text('Back'),
+              expanded: true,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      );
+    }
     final st = ref.watch(enrollmentControllerProvider);
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     final hasAccount = st.account != null;
