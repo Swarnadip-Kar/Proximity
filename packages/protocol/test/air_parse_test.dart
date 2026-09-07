@@ -164,6 +164,36 @@ void main() {
     expect(unpackAir(v2Payload())!.key, unpackAir(v3)!.key);
   });
 
+  test('cross-platform: each originator parses on the other path', () {
+    // Android/Linux-originated v2 (packAir) and Apple-originated v1
+    // (packChallenge) cross-parse through the SAME platform-free parser —
+    // the wire stays identical bytes/preimages on all OS, scan unfiltered,
+    // parse in-app. Both directions, one test.
+    final tok = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
+    final v2sight = const AirParser().map(AirScan(
+      services: [kAirSvc],
+      manufacturerData: [
+        AirMfg(
+            kAirCompanyId,
+            packAir(
+                type: kAirTypeChallenge,
+                token8: tok,
+                host: '10.50.19.107',
+                port: 8443)!)
+      ],
+      rssi: -60,
+    ))!;
+    final v1sight = const AirParser().map(AirScan(
+      services: [UuidCodec.packChallenge(tok)],
+      rssi: -61,
+    ))!;
+    expect(v2sight.legacy, isFalse);
+    expect(v1sight.legacy, isTrue);
+    expect(v2sight.token8, v1sight.token8); // same preimage both ways
+    expect(v2sight.type, kAirTypeChallenge);
+    expect(v1sight.type, kAirTypeChallenge);
+  });
+
   test('legacy v1 challenge / response / ip-hint parse', () {
     final cj = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
     final c = const AirParser().map(AirScan(
