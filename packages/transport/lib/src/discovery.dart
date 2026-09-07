@@ -275,6 +275,81 @@ ClassAnnouncement? decodeAnnouncement(Uint8List raw) {
   }
 }
 
+/// Discovery assumption table (Track 4 §2). NEVER silent: the app logs
+/// [discoveryAssumptionLines] on hosting start + browse entry (LAN tag)
+/// and renders [formatLadderLine] as a one-line UI status, so a dead
+/// enterprise AP reads as an explained state, not an empty list.
+///
+/// | path | standing | note |
+/// | UDP broadcast | advisory-only | cheap 2s beacons; expected DEAD on
+/// enterprise APs (measured 0/5 incl. the true /18 broadcast) — never
+/// required, never retried harder. |
+/// | HTTPS unicast prof↔student | HARD REQUIREMENT | the only path that
+/// marks. Blocked => honest `Professor unreachable` + manual-IP + abort. |
+/// | BLE hint + unicast probe + typed IP | relied-upon | one probe per
+/// hinted host, no sweep (254 rapid probes kicked phones off enterprise
+/// WiFi); the hint is unverified, join gates (radio + Sig_p + face)
+/// unchanged. |
+/// | internet in live flow | never probed | live marking is LAN-only;
+/// cloud sync runs before/after class (SyncEngine). |
+/// | BLE off | tappable Turn-on | else honest noSignal — never silent. |
+class DiscoveryAssumption {
+  final String path;
+  final String standing;
+  final String note;
+  const DiscoveryAssumption(this.path, this.standing, this.note);
+}
+
+const discoveryAssumptions = <DiscoveryAssumption>[
+  DiscoveryAssumption('UDP broadcast', 'advisory-only',
+      'Cheap 2s beacons; expected DEAD on enterprise APs — never required.'),
+  DiscoveryAssumption('HTTPS unicast prof<->student', 'HARD REQUIREMENT',
+      'The only path that marks; blocked = honest Professor unreachable + manual-IP + abort.'),
+  DiscoveryAssumption('BLE hint + unicast probe + typed IP', 'relied-upon',
+      'One probe per hinted host, no sweep; hint unverified, join gates unchanged.'),
+  DiscoveryAssumption(
+      'internet in live flow', 'never probed', 'Live marking is LAN-only.'),
+  DiscoveryAssumption('BLE off', 'tappable Turn-on',
+      'Else honest noSignal — never a silent empty list.'),
+];
+
+/// Log-ready rendering of the table (one line per row; the app logs these
+/// with the LAN tag on hosting start + browse entry).
+List<String> discoveryAssumptionLines() => [
+      for (final a in discoveryAssumptions)
+        'assume ${a.path}: ${a.standing} — ${a.note}',
+    ];
+
+/// Degradation ladder, best first. Shown as a one-line UI status
+/// ([formatLadderLine]) and mirrored in the BleLog so the terminal and the
+/// screen always agree on which rung the session is on.
+const degradationLadder = <String>[
+  'BLE hint + probe',
+  'typed IP + BLE',
+  'LAN manual IP',
+  'offline direct manual-add',
+];
+
+/// Picks the ladder rung: unicast failure strands marking at offline
+/// manual-add; BLE-off drops to LAN manual (Turn-on prompt offered);
+/// no hint heard means typed-IP+BLE; hint + probe is the top rung.
+int ladderStepFor(
+    {required bool bleOn,
+    required bool hintHeard,
+    required bool unicastOk}) {
+  if (!unicastOk) return 3;
+  if (!bleOn) return 2;
+  if (!hintHeard) return 1;
+  return 0;
+}
+
+/// One-line ladder status with the active rung bracketed, e.g.
+/// `BLE hint + probe → [typed IP + BLE] → LAN manual IP → …`.
+String formatLadderLine(int active) => [
+      for (var i = 0; i < degradationLadder.length; i++)
+        i == active ? '[${degradationLadder[i]}]' : degradationLadder[i],
+    ].join(' → ');
+
 /// Broadcasts this host's class while it is live.
 /// Targets default to [broadcastTargets] (limited + directed guesses);
 /// inject loopback in tests.

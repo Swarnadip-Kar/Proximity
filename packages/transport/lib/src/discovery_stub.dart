@@ -17,6 +17,56 @@ const kSessionPersist = Duration(seconds: 120);
 const kSessionRefresh = Duration(seconds: 15);
 const kSessionMaxFails = 3;
 
+// Mirrored pure data (Track 4 §2 assumption table + ladder): identical
+// values to discovery.dart, no dart:io — the records UI renders the same
+// one-line status on web.
+class DiscoveryAssumption {
+  final String path;
+  final String standing;
+  final String note;
+  const DiscoveryAssumption(this.path, this.standing, this.note);
+}
+
+const discoveryAssumptions = <DiscoveryAssumption>[
+  DiscoveryAssumption('UDP broadcast', 'advisory-only',
+      'Cheap 2s beacons; expected DEAD on enterprise APs — never required.'),
+  DiscoveryAssumption('HTTPS unicast prof<->student', 'HARD REQUIREMENT',
+      'The only path that marks; blocked = honest Professor unreachable + manual-IP + abort.'),
+  DiscoveryAssumption('BLE hint + unicast probe + typed IP', 'relied-upon',
+      'One probe per hinted host, no sweep; hint unverified, join gates unchanged.'),
+  DiscoveryAssumption(
+      'internet in live flow', 'never probed', 'Live marking is LAN-only.'),
+  DiscoveryAssumption('BLE off', 'tappable Turn-on',
+      'Else honest noSignal — never a silent empty list.'),
+];
+
+List<String> discoveryAssumptionLines() => [
+      for (final a in discoveryAssumptions)
+        'assume ${a.path}: ${a.standing} — ${a.note}',
+    ];
+
+const degradationLadder = <String>[
+  'BLE hint + probe',
+  'typed IP + BLE',
+  'LAN manual IP',
+  'offline direct manual-add',
+];
+
+int ladderStepFor(
+    {required bool bleOn,
+    required bool hintHeard,
+    required bool unicastOk}) {
+  if (!unicastOk) return 3;
+  if (!bleOn) return 2;
+  if (!hintHeard) return 1;
+  return 0;
+}
+
+String formatLadderLine(int active) => [
+      for (var i = 0; i < degradationLadder.length; i++)
+        i == active ? '[${degradationLadder[i]}]' : degradationLadder[i],
+    ].join(' → ');
+
 bool hintEntryAlive({
   required DateTime now,
   required DateTime lastSeen,

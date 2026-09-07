@@ -162,8 +162,7 @@ void main() {
     expect(targets.map((e) => e.address), contains('255.255.255.255'));
   });
 
-  test('announcer start/stop lifecycle', () async {
-    var n = 0;
+  test('announcer start/stop lifecycle', () async {    var n = 0;
     final a = ClassAnnouncer(() {
       n++;
       return ClassAnnouncement(
@@ -180,5 +179,51 @@ void main() {
     await Future.delayed(const Duration(milliseconds: 100));
     await a.stop();
     expect(n, greaterThanOrEqualTo(1));
+  });
+
+  test('assumption table is never silent (5 rows, honest standings)', () {
+    expect(discoveryAssumptions, hasLength(5));
+    final byPath = {for (final a in discoveryAssumptions) a.path: a};
+    expect(byPath['UDP broadcast']!.standing, 'advisory-only');
+    expect(byPath['HTTPS unicast prof<->student']!.standing,
+        'HARD REQUIREMENT');
+    expect(byPath['BLE hint + unicast probe + typed IP']!.standing,
+        'relied-upon');
+    expect(byPath['internet in live flow']!.standing, 'never probed');
+    expect(byPath['BLE off']!.standing, 'tappable Turn-on');
+    // Log rendering covers every row (hosting start + browse entry log
+    // these with the LAN tag).
+    final lines = discoveryAssumptionLines();
+    expect(lines, hasLength(5));
+    for (final a in discoveryAssumptions) {
+      expect(lines.any((l) => l.contains(a.path)), isTrue);
+    }
+  });
+
+  test('degradation ladder order + rung picker', () {
+    expect(degradationLadder, [
+      'BLE hint + probe',
+      'typed IP + BLE',
+      'LAN manual IP',
+      'offline direct manual-add',
+    ]);
+    expect(
+        ladderStepFor(bleOn: true, hintHeard: true, unicastOk: true), 0);
+    expect(
+        ladderStepFor(bleOn: true, hintHeard: false, unicastOk: true), 1);
+    expect(
+        ladderStepFor(bleOn: false, hintHeard: false, unicastOk: true), 2);
+    expect(
+        ladderStepFor(bleOn: true, hintHeard: true, unicastOk: false), 3);
+    // One-line status brackets the active rung.
+    expect(formatLadderLine(1),
+        'BLE hint + probe → [typed IP + BLE] → LAN manual IP → offline direct manual-add');
+  });
+
+  test('discovery stays unicast-only (no sweep helper exists)', () {
+    // probeHost takes ONE host:port. A subnet sweep (254 rapid probes)
+    // kicked phones off enterprise WiFi and was deleted — this pins the
+    // single-host signature so it cannot grow a range argument silently.
+    expect(probeHost, isA<Future<ClassAnnouncement?> Function(String, int)>());
   });
 }
