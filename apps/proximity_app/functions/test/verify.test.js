@@ -156,7 +156,10 @@ function issueLeaf(keypair, oidDerPairs) {
 const OID_AND = '1.3.6.1.4.1.11129.2.1.17';
 const OID_NONCE = '1.2.840.113635.100.8.2';
 const PKG = 'org.iitbhilai.proximity';
-const NOW = Date.now();
+// attestedAtMs is stamped at VERIFY time (Date.now() at each call site),
+// never captured at module load: openssl dates have 1-second resolution,
+// so a module-load timestamp can precede a leaf's notBefore by a fraction
+// of a second and flake the validity check (see cert-validity flake).
 
 function androidMaterial({ secLevel = 2, challenge = crypto.randomBytes(32), pkg = PKG, withAppId = true, level = 'FULL' } = {}) {
   const kp = ecKeypair();
@@ -212,25 +215,25 @@ function iosFixture({ rpId = 'org.iitbhilai.proximity', challenge = crypto.rando
 // ---------- Android ----------
 test('android: genuine StrongBox chain verifies (FULL)', { skip: !OPENSSL }, () => {
   const { material, pkDHex } = androidMaterial();
-  const r = verifyAndroid({ material, pkDHex, attestationLevel: 'FULL', attestedAtMs: NOW }, TRUST);
+  const r = verifyAndroid({ material, pkDHex, attestationLevel: 'FULL', attestedAtMs: Date.now() }, TRUST);
   assert.deepEqual(r, { ok: true, reason: 'chain-ok', derivedLevel: 'FULL' });
 });
 
 test('android: understated claim (STD on StrongBox hw) still passes', { skip: !OPENSSL }, () => {
   const { material, pkDHex } = androidMaterial({ level: 'STD' });
-  const r = verifyAndroid({ material, pkDHex, attestationLevel: 'STD', attestedAtMs: NOW }, TRUST);
+  const r = verifyAndroid({ material, pkDHex, attestationLevel: 'STD', attestedAtMs: Date.now() }, TRUST);
   assert.equal(r.ok, true);
 });
 
 test('android: TEE chain fails a FULL claim, passes STD', { skip: !OPENSSL }, () => {
   const { material, pkDHex } = androidMaterial({ secLevel: 1 });
-  assert.equal(verifyAndroid({ material, pkDHex, attestationLevel: 'FULL', attestedAtMs: NOW }, TRUST).reason, 'level-mismatch');
-  assert.equal(verifyAndroid({ material, pkDHex, attestationLevel: 'STD', attestedAtMs: NOW }, TRUST).ok, true);
+  assert.equal(verifyAndroid({ material, pkDHex, attestationLevel: 'FULL', attestedAtMs: Date.now() }, TRUST).reason, 'level-mismatch');
+  assert.equal(verifyAndroid({ material, pkDHex, attestationLevel: 'STD', attestedAtMs: Date.now() }, TRUST).ok, true);
 });
 
 test('android negatives: challenge / pkg / key / root / validity / appid', { skip: !OPENSSL }, () => {
   const good = androidMaterial();
-  const base = { pkDHex: good.pkDHex, attestationLevel: 'FULL', attestedAtMs: NOW };
+  const base = { pkDHex: good.pkDHex, attestationLevel: 'FULL', attestedAtMs: Date.now() };
   assert.equal(
     verifyAndroid({ ...base, material: { ...good.material, challenge: crypto.randomBytes(32).toString('base64') } }, TRUST).reason,
     'challenge-mismatch');
@@ -245,11 +248,11 @@ test('android negatives: challenge / pkg / key / root / validity / appid', { ski
       { googleKeys: new Set(), appleKeys: new Set(), applePresent: true }).reason,
     'unknown-root');
   assert.equal(
-    verifyAndroid({ ...base, attestedAtMs: NOW + 60 * 86400 * 1000, material: good.material }, TRUST).reason,
+    verifyAndroid({ ...base, attestedAtMs: Date.now() + 60 * 86400 * 1000, material: good.material }, TRUST).reason,
     'cert-validity');
   const noAppId = androidMaterial({ withAppId: false });
   assert.equal(
-    verifyAndroid({ pkDHex: noAppId.pkDHex, attestationLevel: 'FULL', attestedAtMs: NOW, material: noAppId.material }, TRUST).reason,
+    verifyAndroid({ pkDHex: noAppId.pkDHex, attestationLevel: 'FULL', attestedAtMs: Date.now(), material: noAppId.material }, TRUST).reason,
     'appid-missing');
   const noExt = (() => {
     const kp = ecKeypair();
@@ -261,7 +264,7 @@ test('android negatives: challenge / pkg / key / root / validity / appid', { ski
   })();
   // Empty ext list: openssl writes no extensions -> missing-extension.
   // (If openssl ever requires >=1 ext, this vector fails loudly, not silently.)
-  const rNoExt = verifyAndroid({ pkDHex: noExt.pkDHex, attestationLevel: 'FULL', attestedAtMs: NOW, material: noExt.material }, TRUST);
+  const rNoExt = verifyAndroid({ pkDHex: noExt.pkDHex, attestationLevel: 'FULL', attestedAtMs: Date.now(), material: noExt.material }, TRUST);
   assert.equal(rNoExt.reason, 'missing-extension');
 });
 
@@ -282,7 +285,7 @@ test('android: chain signed by an attacker key fails (chain-signature)', { skip:
   // signature walk must fail, not the pin check.
   const r = verifyAndroid(
     { material: { chain: [evilLeaf, fs.readFileSync(ROOT_PEM, 'utf8')], pkg: PKG, challenge: challenge.toString('base64') },
-      pkDHex: kp.x.toString('hex'), attestationLevel: 'FULL', attestedAtMs: NOW },
+      pkDHex: kp.x.toString('hex'), attestationLevel: 'FULL', attestedAtMs: Date.now() },
     TRUST);
   assert.equal(r.reason, 'chain-signature');
 });
@@ -290,14 +293,14 @@ test('android: chain signed by an attacker key fails (chain-signature)', { skip:
 // ---------- iOS ----------
 test('ios: genuine attestation object verifies', { skip: !OPENSSL }, () => {
   const { material } = iosFixture();
-  const r = verifyIos({ material, attestedAtMs: NOW }, TRUST);
+  const r = verifyIos({ material, attestedAtMs: Date.now() }, TRUST);
   assert.equal(r.ok, true);
   assert.equal(r.reason, 'chain-ok');
 });
 
 test('ios negatives: rpId / counter / nonce / receipt / keyId', { skip: !OPENSSL }, () => {
   const good = iosFixture();
-  const base = { attestedAtMs: NOW };
+  const base = { attestedAtMs: Date.now() };
   assert.equal(verifyIos({ ...base, material: { ...good.material, rpId: 'com.evil.clone' } }, TRUST).reason, 'rpid-mismatch');
   const badChallenge = iosFixture({ challenge: crypto.randomBytes(32) });
   // Right shape, wrong challenge -> nonce mismatch. (Build the object with
@@ -318,7 +321,7 @@ test('ios: missing Apple root throws roots-missing (never a device flag)', { ski
   const { material } = iosFixture();
   const noApple = { googleKeys: TRUST.googleKeys, appleKeys: new Set(), applePresent: false };
   assert.throws(
-    () => verifyDeviceMaterial({ platform: 'ios', material, pkDHex: '', attestationLevel: 'FULL', attestedAtMs: NOW }, noApple),
+    () => verifyDeviceMaterial({ platform: 'ios', material, pkDHex: '', attestationLevel: 'FULL', attestedAtMs: Date.now() }, noApple),
     (e) => e.code === 'roots-missing');
 });
 
@@ -326,12 +329,12 @@ test('ios: missing Apple root throws roots-missing (never a device flag)', { ski
 test('dispatch: NONE skips, missing material / unknown platform fail closed', () => {
   const trust = { googleKeys: new Set(), appleKeys: new Set(), applePresent: false };
   assert.deepEqual(
-    verifyDeviceMaterial({ platform: 'android', material: null, pkDHex: '', attestationLevel: 'NONE', attestedAtMs: NOW }, trust),
+    verifyDeviceMaterial({ platform: 'android', material: null, pkDHex: '', attestationLevel: 'NONE', attestedAtMs: Date.now() }, trust),
     { ok: true, reason: 'skipped-none', derivedLevel: 'NONE' });
   assert.equal(
-    verifyDeviceMaterial({ platform: 'android', material: null, pkDHex: '', attestationLevel: 'FULL', attestedAtMs: NOW }, trust).reason,
+    verifyDeviceMaterial({ platform: 'android', material: null, pkDHex: '', attestationLevel: 'FULL', attestedAtMs: Date.now() }, trust).reason,
     'missing-material');
   assert.equal(
-    verifyDeviceMaterial({ platform: 'windows', material: {}, pkDHex: '', attestationLevel: 'STD', attestedAtMs: NOW }, trust).reason,
+    verifyDeviceMaterial({ platform: 'windows', material: {}, pkDHex: '', attestationLevel: 'STD', attestedAtMs: Date.now() }, trust).reason,
     'unknown-platform');
 });
