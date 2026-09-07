@@ -414,6 +414,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               prof: prev.last.prof,
               windowOpen: false,
               ts: now,
+              org: prev.last.org,
             ),
             firstSeen: prev.firstSeen,
             lastSeen: prev.lastSeen,
@@ -1045,6 +1046,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           port: c.last.port,
           rssiDbm: 0,
           displayCode: c.last.display,
+          org: c.last.org,
         );
         final hp = '${c.last.host}:${c.last.port}';
         setState(() {

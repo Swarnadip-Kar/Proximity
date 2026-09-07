@@ -108,7 +108,8 @@ Future<Map<String, String>?> entryRoleFor(
     if (cloud.available && await cloud.isOnline()) {
       final remote = await cloud.fetchRole(uid);
       if (remote != null && remote.roles.isNotEmpty) {
-        var merged = mergeRoleCache(cache, email: email, uid: uid);
+        var merged = mergeRoleCache(cache,
+            email: email, uid: uid, org: acct.org);
         for (final r in remote.roles) {
           merged =
               mergeRoleCache(merged, email: email, uid: uid, addRole: r);
@@ -117,7 +118,8 @@ Future<Map<String, String>?> entryRoleFor(
             email: email,
             uid: uid,
             displayName: remote.displayName,
-            lastMode: remote.lastMode);
+            lastMode: remote.lastMode,
+            org: remote.org.isNotEmpty ? remote.org : acct.org);
         await store.writeRole(merged);
         BleLog.log('STATE',
             'entry roles seeded from cloud $email: ${roleSet(merged).join('+')} lastMode=${roleLastMode(merged)}');
@@ -145,7 +147,8 @@ String entryHeldLabel(Map<String, String> role) {
 /// history (newer timestamp wins per id), push local-only sessions up.
 /// Best-effort — offline or failures keep local data untouched.
 Future<void> entryMergeProfCloud(
-    WidgetRef ref, String uid, String email, String name) async {
+    WidgetRef ref, String uid, String email, String name,
+    {String org = ''}) async {
   final cloud = ref.read(cloudSyncProvider);
   final store = ref.read(deviceStoreProvider);
   if (!cloud.available) return;
@@ -158,7 +161,7 @@ Future<void> entryMergeProfCloud(
   if (!online) return;
   try {
     final local = await store.readHistory();
-    final remote = await cloud.pullProfSessions(uid);
+    final remote = await cloud.pullProfSessions(uid, org: org);
     final merged = mergeHistories(local, remote);
     await store.writeHistory(merged);
     final remoteIds = {for (final r in remote) r.id};
@@ -166,7 +169,11 @@ Future<void> entryMergeProfCloud(
       if (!remoteIds.contains(r.id)) {
         try {
           await cloud.pushSession(
-              profUid: uid, profEmail: email, profName: name, record: r);
+              profUid: uid,
+              profEmail: email,
+              profName: name,
+              record: r,
+              profOrg: org);
         } catch (_) {}
       }
     }
@@ -205,7 +212,8 @@ Future<void> entryRegisterProf(WidgetRef ref, EntryMounted isMounted,
       name: acct.displayName,
       roles: const ['prof'],
       displayName: display,
-      lastMode: 'prof'));
+      lastMode: 'prof',
+      org: acct.org));
   Map<String, String>? prev;
   try {
     prev = await store.readRole();
@@ -214,11 +222,16 @@ Future<void> entryRegisterProf(WidgetRef ref, EntryMounted isMounted,
     await store.writeHostName(display);
   } catch (_) {}
   final merged = mergeRoleCache(prev,
-      email: email, uid: uid, displayName: display, addRole: 'prof', lastMode: 'prof');
+      email: email,
+      uid: uid,
+      displayName: display,
+      addRole: 'prof',
+      lastMode: 'prof',
+      org: acct.org);
   await store.writeRole(merged);
   BleLog.log('STATE',
       'entry roles now ${roleSet(merged).join('+')} lastMode=prof');
-  await entryMergeProfCloud(ref, uid, acct.email, display);
+  await entryMergeProfCloud(ref, uid, acct.email, display, org: acct.org);
   await entryGoto(ref, isMounted, AppMode.prof);
 }
 
@@ -296,13 +309,18 @@ Future<void> entryRegisterStudent(
       name: acct.displayName,
       roles: const ['student'],
       displayName: '',
-      lastMode: 'student'));
+      lastMode: 'student',
+      org: acct.org));
   Map<String, String>? prev;
   try {
     prev = await store.readRole();
   } catch (_) {}
   final merged = mergeRoleCache(prev,
-      email: email, uid: uid, addRole: 'student', lastMode: 'student');
+      email: email,
+      uid: uid,
+      addRole: 'student',
+      lastMode: 'student',
+      org: acct.org);
   await store.writeRole(merged);
   BleLog.log('STATE',
       'entry roles now ${roleSet(merged).join('+')} lastMode=student');
@@ -317,11 +335,13 @@ Future<void> entryStampLastMode(WidgetRef ref, EntryMounted isMounted,
   final uid = (role['uid'] ?? '').isNotEmpty
       ? role['uid']!
       : (acct.uid.isNotEmpty ? acct.uid : email);
+  final org = acct.org.isNotEmpty ? acct.org : (role['org'] ?? '');
   final merged = mergeRoleCache(role,
       email: email,
       uid: uid,
       displayName: role['displayName'] ?? '',
-      lastMode: which);
+      lastMode: which,
+      org: org);
   try {
     await ref.read(deviceStoreProvider).writeRole(merged);
   } catch (_) {}
@@ -338,7 +358,8 @@ Future<void> entryStampLastMode(WidgetRef ref, EntryMounted isMounted,
           name: acct.displayName,
           roles: roleSet(merged).toList(),
           displayName: merged['displayName'] ?? '',
-          lastMode: which));
+          lastMode: which,
+          org: org));
     }
   } catch (_) {}
 }
@@ -357,7 +378,8 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
             ? role['uid']!
             : acct.email.toLowerCase(),
         acct.email,
-        role['displayName'] ?? acct.displayName));
+        role['displayName'] ?? acct.displayName,
+        org: acct.org.isNotEmpty ? acct.org : (role['org'] ?? '')));
     await entryStampLastMode(ref, isMounted, acct, role, 'prof');
     await entryGoto(ref, isMounted, AppMode.prof);
     return;

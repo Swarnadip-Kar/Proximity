@@ -189,10 +189,16 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
       // still bills reads), so it waits for 2 chars. ID and email are
       // selective from the first character and fire immediately.
       final name = _nameCtrl.text.trim();
+      String myOrg = '';
+      try {
+        final role = await ref.read(deviceStoreProvider).readRole();
+        myOrg = (role?['org'] ?? '').trim().toLowerCase();
+      } catch (_) {}
       final hits = await cloud.searchStudents(
         rollPrefix: _rollCtrl.text,
         namePrefix: name.length >= 2 ? _nameCtrl.text : '',
         emailPrefix: _emailCtrl.text,
+        org: myOrg,
       );
       if (stale()) return;
       setState(() {
@@ -267,10 +273,16 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
     try {
       final cloud = ref.read(cloudSyncProvider);
       final online = await _isOnline();
+      String myOrg = '';
+      try {
+        final role = await ref.read(deviceStoreProvider).readRole();
+        myOrg = (role?['org'] ?? '').trim().toLowerCase();
+      } catch (_) {}
       if (online) {
         StudentDirectoryEntry? match;
         try {
-          final hits = await cloud.searchStudents(rollPrefix: roll);
+          final hits =
+              await cloud.searchStudents(rollPrefix: roll, org: myOrg);
           match = matchRollExact(hits, roll);
         } catch (_) {
           match = null;
@@ -308,6 +320,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
           name: name,
           email: (email.contains('@')) ? email : '',
           createdAtIso: DateTime.now().toUtc().toIso8601String(),
+          org: myOrg,
         ).toJson(),
       ]);
       if (mounted) {

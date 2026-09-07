@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
+import '../../core/auth.dart';
+import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
@@ -34,15 +36,23 @@ class ExportCenterScreen extends ConsumerStatefulWidget {
 class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   String? _rangeError;
 
-  List<ClassRecord> _sessions(List<ClassRecord> history) {
+  List<ClassRecord> _sessions(
+      List<ClassRecord> history, String myOrg) {
     final out = history
         .where((r) =>
-            r.courseId == widget.courseName ||
-            (r.courseId.isEmpty && r.classLabel == widget.courseName))
+            (r.courseId == widget.courseName ||
+                (r.courseId.isEmpty && r.classLabel == widget.courseName)) &&
+            // Org scope: same-org plus legacy '' (exportable locally only).
+            // Cross-org sessions never list here.
+            (r.org.isEmpty || myOrg.isEmpty || r.org == myOrg))
         .toList()
       ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
     return out;
   }
+
+  /// Org line for CSV previews: `Org,<org>` ('' = legacy local-only).
+  static String withOrgLine(String csv, String org) =>
+      'Org,${org.isEmpty ? '(legacy local-only)' : org}\n$csv';
 
   /// Tight title: short weekday + day/month, time when known.
   String _sessionLabel(ClassRecord r) => sessionTightLabel(
@@ -75,7 +85,7 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   }
 
   Future<void> _exportSession(ClassRecord r) async {
-    final csv = r.toCsv();
+    final csv = withOrgLine(r.toCsv(), r.org);
     await _showCsvDialog(
       title: _sessionLabel(r),
       csv: csv,
@@ -111,7 +121,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     setState(() => _rangeError = null);
     // Matrix: rows keyed by email, P = intersection-present else A;
     // same-day repeats disambiguate with HH:mm in the header.
-    final csv = buildDateRangeMatrix(inRange);
+    final org = inRange.isNotEmpty ? inRange.first.org : '';
+    final csv = withOrgLine(buildDateRangeMatrix(inRange), org);
     await _showCsvDialog(
       title: '${widget.courseName} · $rangeLabel',
       csv: csv,
@@ -131,6 +142,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(deviceStoreProvider);
+    final acct = ref.watch(accountProvider).valueOrNull;
+    final myOrg = (acct?.org ?? '').trim().toLowerCase();
     return AdaptiveScaffold(
       title: 'Export · ${widget.courseName}',
       actions: [
@@ -143,7 +156,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       body: FutureBuilder<List<ClassRecord>>(
         future: store.readHistory(),
         builder: (context, snap) {
-          final sessions = _sessions(snap.data ?? const <ClassRecord>[]);
+          final sessions =
+              _sessions(snap.data ?? const <ClassRecord>[], myOrg);
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [

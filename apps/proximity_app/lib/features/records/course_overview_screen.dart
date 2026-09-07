@@ -114,7 +114,15 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
       }
       final store = ref.read(deviceStoreProvider);
       final local = await store.readHistory();
-      final remote = await cloud.pullProfSessions(id.uid);
+      String myOrg = '';
+      try {
+        final acct = ref.read(authServiceProvider).current;
+        final role = await ref.read(deviceStoreProvider).readRole();
+        myOrg = (acct?.org ?? '').isNotEmpty
+            ? acct!.org
+            : (role?['org'] ?? '');
+      } catch (_) {}
+      final remote = await cloud.pullProfSessions(id.uid, org: myOrg);
       final merged = mergeHistories(local, remote);
       await store.writeHistory(merged);
       // Offline-queued manual adds resolve now (ID → directory → record).
@@ -137,7 +145,8 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
                         profUid: id.uid,
                         profEmail: id.email,
                         profName: id.name,
-                        record: r);
+                        record: r,
+                        profOrg: myOrg);
                   } catch (_) {}
                 }
               }
@@ -159,7 +168,8 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
                 profUid: id.uid,
                 profEmail: id.email,
                 profName: id.name,
-                record: r);
+                record: r,
+                profOrg: myOrg);
           } catch (_) {}
         }
       }

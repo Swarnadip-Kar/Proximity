@@ -208,7 +208,8 @@ class TallyStore {
           required String dateIso,
           String? timestampIso,
           String? startIso,
-          String? id}) =>
+          String? id,
+          String org = ''}) =>
       ClassRecord(
         id: id ?? '',
         courseId: courseId,
@@ -219,6 +220,7 @@ class TallyStore {
         windows: windowsAsMaps.isEmpty ? [const <String, bool>{}] : windowsAsMaps,
         names: nameMap(),
         rolls: rollMap(),
+        org: org,
       );
 }
 

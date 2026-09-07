@@ -351,6 +351,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       name: acct.displayName,
       gmail: acct.email.toLowerCase(),
       roll: roll,
+      org: acct.org,
     );
   }
 
@@ -617,6 +618,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final roll =
           state.roll.isNotEmpty ? state.roll : _restoredRoll ?? '';
       final name = acct.displayName;
+      final org = acct.org.isNotEmpty
+          ? acct.org
+          : (() {
+              final e = email.trim().toLowerCase();
+              final at = e.lastIndexOf('@');
+              if (at <= 0 || at == e.length - 1) return '';
+              var domain = e.substring(at + 1).trim();
+              if (domain == 'googlemail.com') return 'gmail.com';
+              return domain;
+            })();
       final pk32 = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pk32);
       // Online device claim first (atomic): a different bound device, or
@@ -648,7 +659,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   roll: roll,
                   modelVer: kFacePipelineVer,
                   installId: installId,
-                  platform: _platformName()),
+                  platform: _platformName(),
+                  org: org),
               installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
@@ -672,9 +684,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         templateCsv: StoredEnrollment.csvOf(template),
         enrolledAt: DateTime.now().toUtc(),
         modelVer: kFacePipelineVer,
+        org: org,
       ));
       state = state.copyWith(phase: EnrollPhase.uploaded);
-      return LinkedIdentity(name: name, gmail: email, roll: roll);
+      return LinkedIdentity(name: name, gmail: email, roll: roll, org: org);
     } catch (e) {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Save failed: $e');

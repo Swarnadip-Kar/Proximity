@@ -80,7 +80,24 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   // WHEN the class was, not when the last round pushed).
   String? _recordId;
   String? _recordStartIso;
+  String? _recordOrg;
   String _lastSavedSig = '';
+
+  /// Prof org for new sessions (role cache stamped at sign-in; '' when
+  /// offline-skipped). Cached per visit so later rounds keep the creation
+  /// org immutable.
+  Future<String> _profOrgForSession() async {
+    try {
+      final acct = ref.read(authServiceProvider).current;
+      if (acct != null && acct.org.isNotEmpty) return acct.org;
+    } catch (_) {}
+    try {
+      final role = await ref.read(deviceStoreProvider).readRole();
+      return (role?['org'] ?? '').trim().toLowerCase();
+    } catch (_) {
+      return '';
+    }
+  }
   final _nameCtrl = TextEditingController();
 
   TallyStore get tally {
@@ -300,6 +317,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _draftDateIso = d['dateIso'] as String?;
       _recordId = d['recordId'] as String?;
       _recordStartIso = d['recordStartIso'] as String?;
+      _recordOrg = d['recordOrg'] as String?;
       _resumed = true;
       _lastSavedSig = '';
     });
@@ -347,6 +365,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         'dateIso': _draftDateIso ?? dateIsoOf(DateTime.now()),
         'recordId': _recordId,
         'recordStartIso': _recordStartIso,
+        'recordOrg': _recordOrg,
         'savedAt': DateTime.now().toUtc().toIso8601String(),
         'names': tally.nameMap(),
         'rolls': tally.rollMap(),
@@ -587,6 +606,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _lastSavedSig = '';
       _recordId = null;
       _recordStartIso = null;
+      _recordOrg = null;
       await ref.read(hostDriverProvider).endHosting();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -612,6 +632,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       // rounds (and resumed drafts) keep it — timestampIso still moves
       // with every push for merge ordering.
       _recordStartIso ??= now.toUtc().toIso8601String();
+      // Session org = prof org at creation, immutable afterwards: reuse
+      // the first snapshot's org for later rounds of this visit.
+      _recordOrg ??= await _profOrgForSession();
       record = tally.toClassRecord(
         courseId: widget.courseName,
         classLabel: widget.courseName,
@@ -619,6 +642,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         timestampIso: now.toUtc().toIso8601String(),
         startIso: _recordStartIso,
         id: _recordId,
+        org: _recordOrg ?? '',
       );
       await ref.read(deviceStoreProvider).upsertHistory(record);
       BleLog.log(ProxLogTags.sync,
@@ -652,12 +676,30 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           role: role,
           hostNameFallback: hostName);
       if (id == null) return; // offline-skipped prof or student: local only
+      final profOrg = (acct?.org ?? '').isNotEmpty
+          ? acct!.org
+          : (role?['org'] ?? '');
+      // Stamp the session org once at creation; later pushes keep it.
+      final stamped = record.org.isNotEmpty || profOrg.isEmpty
+          ? record
+          : ClassRecord(
+              id: record.id,
+              courseId: record.courseId,
+              classLabel: record.classLabel,
+              dateIso: record.dateIso,
+              timestampIso: record.timestampIso,
+              startIso: record.startIso,
+              windows: record.windows,
+              names: record.names,
+              rolls: record.rolls,
+              org: profOrg);
       await cloud
           .pushSession(
               profUid: id.uid,
               profEmail: id.email,
               profName: id.name,
-              record: record)
+              record: stamped,
+              profOrg: profOrg)
           .timeout(const Duration(seconds: 10));
     } catch (_) {}
   }

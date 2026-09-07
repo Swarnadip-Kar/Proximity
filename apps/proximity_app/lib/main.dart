@@ -161,7 +161,10 @@ Future<void> main() async {
   final LinkedIdentity? initialLinked = stored == null
       ? null
       : LinkedIdentity(
-          name: stored.name, gmail: stored.email, roll: stored.roll);
+          name: stored.name,
+          gmail: stored.email,
+          roll: stored.roll,
+          org: stored.org);
   final im = initialMode;
   // Preseed enrollment with the signed-in account so the enroll screen
   // doesn't ask for Google twice after landing sign-in.

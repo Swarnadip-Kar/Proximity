@@ -182,6 +182,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
       windows: _windows,
       names: _names,
       rolls: _rolls,
+      org: widget.record.org,
     );
     try {
       await ref.read(deviceStoreProvider).upsertHistory(record);
@@ -213,12 +214,16 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
           role: role,
           hostNameFallback: hostName);
       if (id == null) return;
+      final profOrg = (acct?.org ?? '').isNotEmpty
+          ? acct!.org
+          : (role?['org'] ?? '');
       await cloud
           .pushSession(
               profUid: id.uid,
               profEmail: id.email,
               profName: id.name,
-              record: record)
+              record: record,
+              profOrg: profOrg)
           .timeout(const Duration(seconds: 10));
       BleLog.log('SYNC', 'edit: pushed session ${record.dateIso}');
     } catch (_) {}

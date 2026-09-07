@@ -91,7 +91,10 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
       }
       final store = ref.read(deviceStoreProvider);
       final local = await store.readHistory();
-      final remote = await cloud.pullProfSessions(id.uid);
+      final myOrg = (acct?.org ?? '').isNotEmpty
+          ? acct!.org
+          : (role?['org'] ?? '');
+      final remote = await cloud.pullProfSessions(id.uid, org: myOrg);
       final merged = mergeHistories(local, remote);
       await store.writeHistory(merged);
       for (final r in merged) {
