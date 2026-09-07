@@ -244,6 +244,67 @@ class FakeCloudSync implements CloudSync {
   Map<String, List<String>> auditDoublePkD() => findDoublePkD(devices);
 
   @override
+  Future<AttestationVerifyOutcome> verifyAttestationChain(
+      {required String emailLower, required String org}) async {
+    // Test-only coherence check (NOT chain cryptography — that lives
+    // server-side in functions/verify.js): mirrors the endpoint's dispatch
+    // + flag application so engine/discipline tests observe the same
+    // shapes. Offline or unknown binding defers (ok:false, never a flag).
+    if (!available || !online) {
+      return const AttestationVerifyOutcome(ok: false, reason: 'unreachable');
+    }
+    final key = emailLower.toLowerCase();
+    final binding = devices[key];
+    if (binding == null) {
+      return const AttestationVerifyOutcome(ok: false, reason: 'no-device');
+    }
+    final at = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final level = binding.attestationLevel.trim().toUpperCase();
+    final bool anomaly;
+    final String reason;
+    if (level == 'NONE') {
+      anomaly = false;
+      reason = 'skipped-none';
+    } else if (binding.pkDHex.isEmpty &&
+        binding.attestMaterialJson.isEmpty) {
+      anomaly = true;
+      reason = 'missing-material';
+    } else {
+      anomaly = false;
+      reason = 're-verified (fake coherence only)';
+    }
+    devices[key] = StudentDeviceDoc(
+      email: binding.email,
+      uid: binding.uid,
+      pkHex: binding.pkHex,
+      name: binding.name,
+      roll: binding.roll,
+      modelVer: binding.modelVer,
+      installId: binding.installId,
+      platform: binding.platform,
+      org: binding.org,
+      createdAtMillis: binding.createdAtMillis,
+      lastMoveAtMillis: binding.lastMoveAtMillis,
+      lastSeenAtMillis: binding.lastSeenAtMillis,
+      updatedAtMillis: binding.updatedAtMillis,
+      moveCount: binding.moveCount,
+      pkDHex: binding.pkDHex,
+      attestationLevel: binding.attestationLevel,
+      attestedAtMillis: binding.attestedAtMillis,
+      attestedUntilMillis: binding.attestedUntilMillis,
+      attestationAnomaly: anomaly,
+      serverVerifiedAtMillis: at,
+      serverVerifyReason: reason,
+      attestMaterialJson: binding.attestMaterialJson,
+    );
+    return AttestationVerifyOutcome(
+        ok: true,
+        anomaly: anomaly,
+        reason: reason,
+        serverVerifiedAtMillis: at);
+  }
+
+  @override
   Future<void> pushSession(
       {required String profUid,
       required String profEmail,

@@ -173,8 +173,11 @@ Future<void> main() async {
     ProviderScope(
       overrides: [
         authServiceProvider.overrideWithValue(authService),
-        cloudSyncProvider.overrideWithValue(
-            FirestoreCloudSync(available: firebaseReady)),
+        cloudSyncProvider.overrideWithValue(FirestoreCloudSync(
+            available: firebaseReady,
+            // Attestation callable auth: the endpoint verifies the caller's
+            // own binding from this token (no client args are sent).
+            idTokenOf: authService.getIdToken)),
         deviceStoreProvider.overrideWithValue(store),
         faceVerifierProvider.overrideWithValue(faceVerifier),
         deviceKeyProvider.overrideWithValue(deviceKey),

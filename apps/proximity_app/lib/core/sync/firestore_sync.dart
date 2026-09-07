@@ -5,10 +5,12 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:proximity_storage/storage.dart';
 
+import 'attest_http.dart';
 import 'claim.dart';
 import 'cloud_api.dart';
 import 'directory.dart';
@@ -39,7 +41,17 @@ StateError _rulesError(String op) => StateError(
 class FirestoreCloudSync implements CloudSync {
   @override
   final bool available;
-  FirestoreCloudSync({this.available = true});
+
+  /// Seams for the attestation callable (see attest_http.dart): [idTokenOf]
+  /// supplies the Firebase ID token (wired to AuthService.getIdToken in
+  /// main; absent in tests/offline builds → verify reports unreachable and
+  /// the engine defers). [postJson] defaults to the platform HTTP client.
+  final Future<String?> Function()? idTokenOf;
+  final Future<({int status, Map<String, dynamic> json})> Function(
+      Uri url, Map<String, String> headers, String body)? postJson;
+
+  FirestoreCloudSync(
+      {this.available = true, this.idTokenOf, this.postJson});
 
   FirebaseFirestore get _db => FirebaseFirestore.instance;
 
@@ -518,6 +530,56 @@ class FirestoreCloudSync implements CloudSync {
         return false;
       }
       return false;
+    }
+  }
+
+  @override
+  Future<AttestationVerifyOutcome> verifyAttestationChain(
+      {required String emailLower, required String org}) async {
+    _needAvailable();
+    const unreachable =
+        AttestationVerifyOutcome(ok: false, reason: 'unreachable');
+    // No client arguments are sent: the endpoint verifies the caller's own
+    // stored doc from Auth identity, so there is nothing here to forge.
+    final provider = idTokenOf;
+    if (provider == null) return unreachable;
+    String? token;
+    try {
+      token = await provider().timeout(const Duration(seconds: 8));
+    } catch (_) {
+      return unreachable;
+    }
+    if (token == null || token.isEmpty) return unreachable;
+    try {
+      final res = await (postJson ?? postCallableJson)(
+        Uri.parse(kVerifyAttestationUrl),
+        {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        jsonEncode(const {'data': <String, dynamic>{}}),
+      ).timeout(const Duration(seconds: 15));
+      final err = res.json['error'];
+      if (err is Map) {
+        // v1 callables surface HttpsErrors as 200 + {error}: NOT_FOUND (no
+        // binding), FAILED_PRECONDITION (roots-missing), mid-call drops —
+        // all defer, none flag.
+        final status = '${err['status'] ?? 'UNKNOWN'}';
+        return AttestationVerifyOutcome(
+            ok: false, reason: 'server-${status.toLowerCase()}');
+      }
+      if (res.status != 200) return unreachable;
+      final result = res.json['result'];
+      if (result is! Map) return unreachable;
+      return AttestationVerifyOutcome(
+        ok: true,
+        anomaly: result['anomaly'] == true,
+        reason: '${result['reason'] ?? ''}',
+        serverVerifiedAtMillis:
+            (result['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
+      );
+    } catch (_) {
+      return unreachable;
     }
   }
 

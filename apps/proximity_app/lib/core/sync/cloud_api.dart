@@ -11,6 +11,13 @@ import 'claim.dart';
 import 'directory.dart';
 import 'roles.dart';
 
+/// v1-callable URL for verifyAttestationChain (stable, documented —
+/// deliberately NOT via the cloud_functions plugin, which has no
+/// Windows/Linux build; see functions/README.md "Why Cloud Functions").
+/// Project: proximity-attendence, region us-central1.
+const kVerifyAttestationUrl =
+    'https://us-central1-proximity-attendence.cloudfunctions.net/verifyAttestationChain';
+
 abstract class CloudSync {
   bool get available;
   Future<bool> isOnline();
@@ -42,6 +49,16 @@ abstract class CloudSync {
       required String pkHex,
       required String installId,
       DateTime? now});
+
+  /// Server attestation re-verification for the caller's own binding.
+  /// Invoked ONLY from SyncEngine's sync-on-reconnect flush (heartbeat
+  /// path, gated by [attestationVerifyDue]) — never in the live/offline
+  /// marking path. ok=false means the endpoint was unreachable (defer,
+  /// retry later — never an anomaly); ok=true carries the server verdict
+  /// in [AttestationVerifyOutcome.anomaly] (already admin-written to the
+  /// device doc by the endpoint; attendance untouched either way).
+  Future<AttestationVerifyOutcome> verifyAttestationChain(
+      {required String emailLower, required String org});
 
   /// deviceInstalls/{installId} owner Gmail, or null when this install never
   /// enrolled. Drives the same-phone second-enrollment refusal.

@@ -137,4 +137,170 @@ void main() {
     final updateUse = rules.indexOf('allow update', rules.indexOf('studentDevices'));
     expect(unchUse > updateUse, isTrue);
   });
+
+  group('FakeCloudSync.verifyAttestationChain (coherence mirror)', () {
+    test('NONE skips with a stamp, FULL without material flags', () async {
+      final fake = FakeCloudSync();
+      await fake.claimStudentDevice(doc: dev('s@x.in'), installId: 'iA');
+      // FULL + empty pkD/material (dev() stamps no pkDHex): missing-material.
+      var out = await fake.verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isTrue);
+      expect(out.anomaly, isTrue);
+      expect(out.reason, 'missing-material');
+      expect(out.serverVerifiedAtMillis, greaterThan(0));
+      var binding = (await fake.fetchStudentDevice('s@x.in'))!;
+      expect(binding.attestationAnomaly, isTrue);
+      expect(binding.serverVerifyReason, 'missing-material');
+      // NONE short-circuits to a clear stamp.
+      fake.devices['s@x.in'] = StudentDeviceDoc(
+        email: binding.email,
+        uid: binding.uid,
+        pkHex: binding.pkHex,
+        name: binding.name,
+        roll: binding.roll,
+        modelVer: binding.modelVer,
+        installId: binding.installId,
+        platform: binding.platform,
+        org: binding.org,
+        createdAtMillis: binding.createdAtMillis,
+        lastMoveAtMillis: binding.lastMoveAtMillis,
+        lastSeenAtMillis: binding.lastSeenAtMillis,
+        updatedAtMillis: binding.updatedAtMillis,
+        moveCount: binding.moveCount,
+        attestationLevel: 'NONE',
+      );
+      out = await fake.verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isTrue);
+      expect(out.anomaly, isFalse);
+      expect(out.reason, 'skipped-none');
+      binding = (await fake.fetchStudentDevice('s@x.in'))!;
+      expect(binding.attestationAnomaly, isFalse);
+    });
+
+    test('FULL with material passes; offline/unknown defers', () async {
+      final fake = FakeCloudSync();
+      await fake.claimStudentDevice(
+          doc: StudentDeviceDoc(
+            email: 's@x.in',
+            uid: 'u1',
+            pkHex: 'aa',
+            name: 'S',
+            roll: '1',
+            modelVer: 'v',
+            platform: 'android',
+            attestationLevel: 'FULL',
+            pkDHex: 'ab' * 32,
+            attestMaterialJson: '{"chain":[]}',
+          ),
+          installId: 'iA');
+      final out = await fake.verifyAttestationChain(
+          emailLower: 'S@X.IN', org: 'x.in');
+      expect(out.ok, isTrue);
+      expect(out.anomaly, isFalse);
+      // Unknown binding + offline both defer without flagging.
+      expect(
+          (await fake.verifyAttestationChain(
+                  emailLower: 'nobody@x.in', org: 'x.in'))
+              .ok,
+          isFalse);
+      fake.online = false;
+      final before =
+          (await fake.fetchStudentDevice('s@x.in'))!.serverVerifiedAtMillis;
+      final deferred = await fake.verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(deferred.ok, isFalse);
+      expect(deferred.reason, 'unreachable');
+      expect((await fake.fetchStudentDevice('s@x.in'))!.serverVerifiedAtMillis,
+          before);
+    });
+  });
+
+  group('FirestoreCloudSync.verifyAttestationChain (injected HTTP)', () {
+    test('posts no-arg callable with bearer token, parses verdict',
+        () async {
+      Uri? gotUrl;
+      Map<String, String>? gotHeaders;
+      String? gotBody;
+      final cloud = FirestoreCloudSync(
+        idTokenOf: () async => 'tok123',
+        postJson: (url, headers, body) async {
+          gotUrl = url;
+          gotHeaders = headers;
+          gotBody = body;
+          return (
+            status: 200,
+            json: {
+              'result': {
+                'verified': true,
+                'anomaly': true,
+                'reason': 'challenge-mismatch',
+                'serverVerifiedAtMillis': 777,
+              }
+            }
+          );
+        },
+      );
+      final out = await cloud.verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isTrue);
+      expect(out.anomaly, isTrue);
+      expect(out.reason, 'challenge-mismatch');
+      expect(out.serverVerifiedAtMillis, 777);
+      expect(gotUrl.toString(), kVerifyAttestationUrl);
+      expect(gotHeaders!['Authorization'], 'Bearer tok123');
+      expect(gotHeaders!['Content-Type'], 'application/json');
+      // No client args: the endpoint verifies from Auth identity.
+      expect(gotBody, '{"data":{}}');
+    });
+
+    test('error bodies, non-200s, throws and missing token all defer',
+        () async {
+      var posts = 0;
+      Future<({int status, Map<String, dynamic> json})> err(
+              Uri u, Map<String, String> h, String b) async {
+        posts++;
+        return (
+          status: 200,
+          json: {
+            'error': {'status': 'NOT_FOUND', 'message': 'nope'}
+          }
+        );
+      }
+
+      var out = await FirestoreCloudSync(
+              idTokenOf: () async => 't', postJson: err)
+          .verifyAttestationChain(emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isFalse);
+      expect(out.reason, 'server-not_found');
+
+      out = await FirestoreCloudSync(
+          idTokenOf: () async => 't',
+          postJson: (_, __, ___) async =>
+              (status: 503, json: <String, dynamic>{})).verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isFalse);
+
+      out = await FirestoreCloudSync(
+          idTokenOf: () async => 't',
+          postJson: (_, __, ___) async =>
+              throw StateError('socket')).verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isFalse);
+      expect(out.reason, 'unreachable');
+
+      // No token provider (or empty token): no POST at all.
+      posts = 0;
+      out = await FirestoreCloudSync(postJson: err).verifyAttestationChain(
+          emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isFalse);
+      expect(posts, 0);
+      out = await FirestoreCloudSync(
+              idTokenOf: () async => '', postJson: err)
+          .verifyAttestationChain(emailLower: 's@x.in', org: 'x.in');
+      expect(out.ok, isFalse);
+      expect(posts, 0);
+    });
+  });
 }
