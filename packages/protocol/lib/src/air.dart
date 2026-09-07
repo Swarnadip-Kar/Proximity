@@ -16,6 +16,11 @@
 //     b0 = relayed (set by a relay re-airing a heard packet),
 //     b1 = dense-hint (originator signals a dense graph),
 //     b2..b7 = reserved, must be zero on transmit (non-zero drops).
+//   v3 appends instead of re-laying the frame so every v2 parser still
+//   prefix-parses a v3 sighting: a mixed-version hall (professor on an
+//   old build, students updated, or vice versa) keeps verifying proximity
+//   with no flag-day, and rotation crypto is version-independent because
+//   the token bytes are identical. Interop during rollout beats elegance.
 //   type: 0x01 professor challenge (token=C_j, ip=HTTPS server)
 //         0x02 student response   (token=R_IDj, ip echoed from heard challenge)
 //

@@ -7,6 +7,12 @@ library;
 import 'package:proximity_storage/storage.dart';
 
 class StoredEnrollment {
+  // One record, kept from the pre-plugin shape: new fields (faceId,
+  // verifierVer, sealed SKey, DKey binding) ride this same JSON doc
+  // because the secure-store layout, its additive migration (old docs
+  // parse with '' defaults — see fromJson), and its tests already handle
+  // exactly this shape. Splitting storage would create two sources of
+  // truth for one enrollment.
   final String email;
   final String name;
   final String roll;

@@ -3,9 +3,9 @@
 // Single-flight flush owned HERE (no wrapper-only modules): every screen
 // that used to push/pull/rename/delete against CloudSync directly now calls
 // [flush], [saveSessionLocal]/[deleteSessionsLocal]/[renameCourseLocal] or
-// [noteLocalSave] and stays thin. Reuses mergeHistories/sessionToDoc (via
-// pushSession), SyncQueue discipline (single-flight + remainder-rewrite at
-// end), ProxCrypto (untouched) and the org helpers (outbox entries carry
+// [noteLocalSave] and stays thin. Reuses unionMergeRecords/sessionToDoc,
+// SyncQueue discipline (single-flight + remainder-rewrite at end),
+// ProxCrypto (untouched) and the org helpers (outbox entries carry
 // org; pulls filter org).
 //
 // Durable outbox (DeviceStore): pendingSessions (full ClassRecord snapshots

@@ -17,7 +17,7 @@ ClassRecord _rec(String id, String ts, Map<String, bool> w1,
     );
 
 void main() {
-  test('mergeHistories unions by id, newer timestamp wins', () {
+  test('mergeHistoriesUnion: marks additive, newer header wins', () {
     final local = [
       _rec('s1', '2026-09-06T10:00:00.000Z', {'a@x.in': true}),
       _rec('s2', '2026-09-06T11:00:00.000Z', {'a@x.in': true}),
@@ -26,10 +26,13 @@ void main() {
       _rec('s2', '2026-09-06T12:00:00.000Z', {'a@x.in': false}),
       _rec('s3', '2026-09-06T09:00:00.000Z', {'b@x.in': true}),
     ];
-    final merged = mergeHistories(local, cloud);
+    final merged = mergeHistoriesUnion(local, cloud);
     expect(merged.map((r) => r.id), ['s2', 's1', 's3']);
-    // s2 took the newer cloud copy.
-    expect(merged.first.windows.first['a@x.in'], isFalse);
+    // s2 keeps the local TRUE mark: union ORs window maps, so a newer
+    // cloud `false` can never wipe a mark (the LWW data-loss this
+    // replaced). Header fields still come from the newer record.
+    expect(merged.first.windows.first['a@x.in'], isTrue);
+    expect(merged.first.timestampIso, '2026-09-06T12:00:00.000Z');
   });
 
   test('profPushIdentity: offline-skipped and students never push', () {
@@ -412,7 +415,7 @@ void main() {
     expect(renamed.courseId, 'CS202');
     expect(renamed.timestampIso.compareTo(pushed.timestampIso) > 0, isTrue);
     expect(renamed.startIso, pushed.startIso);
-    final merged = mergeHistories([pushed], [renamed]);
+    final merged = mergeHistoriesUnion([pushed], [renamed]);
     expect(merged.single.courseId, 'CS202');
     final student = (await fake.pullStudentSessions('a@x.in')).single;
     expect(student.courseId, 'CS202');

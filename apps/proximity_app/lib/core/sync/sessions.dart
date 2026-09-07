@@ -6,28 +6,6 @@ import 'package:proximity_storage/storage.dart';
 
 import 'org.dart';
 
-/// Merge local + cloud histories by session id; newer timestampIso wins ties
-/// by preferring the record with the later timestamp, union otherwise.
-/// Pure — tested without Firebase.
-List<ClassRecord> mergeHistories(
-    List<ClassRecord> local, List<ClassRecord> cloud) {
-  final byId = <String, ClassRecord>{};
-  for (final r in local) {
-    byId[r.id] = r;
-  }
-  for (final r in cloud) {
-    final prev = byId[r.id];
-    if (prev == null) {
-      byId[r.id] = r;
-    } else if (r.timestampIso.compareTo(prev.timestampIso) > 0) {
-      byId[r.id] = r;
-    }
-  }
-  final out = byId.values.toList()
-    ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
-  return out;
-}
-
 /// Tombstone: a deleted session id that must stay deleted across merges.
 /// Wins over any upsert with timestampIso <= [deletedAtIso]; a record
 /// re-created (or edited) AFTER the delete carries a newer timestamp and
@@ -129,7 +107,10 @@ List<ClassRecord> applyTombstones(
 
 /// Merge with union semantics + tombstones (Track 4 SyncEngine path):
 /// same-id records union (marks additive, never lost to LWW), deletes win
-/// over older upserts. [mergeHistories] above stays for legacy callers;
+/// over older upserts. (The old pure-LWW mergeHistories was deleted in the
+/// Track 4 audit: zero production callers, and its newer-wins test
+/// asserted the exact data-loss — a newer `false` wiping a local `true`
+/// mark — that union-merge-before-push was built to replace.)
 /// the engine converges through this. Pure — tested without Firebase.
 List<ClassRecord> mergeHistoriesUnion(
     List<ClassRecord> local, List<ClassRecord> cloud,

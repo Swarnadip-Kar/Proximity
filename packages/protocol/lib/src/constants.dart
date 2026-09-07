@@ -28,7 +28,10 @@ const int kAdvIntervalMs = 200;
 
 /// Rotation period per sub-epoch (s). Challenges rotate every 5s for as
 /// long as the window is open (unbounded j); the window closes only when
-/// the professor stops it.
+/// the professor stops it. 5s bounds replay to a radio-plausible window
+/// (a forwarded screenshot arrives stale) while staying cheap on BLE
+/// stacks that rate-limit scan restarts — shorter costs radio churn,
+/// longer widens the wormhole.
 const int kSubEpochSeconds = 5;
 
 /// Freshness acceptance: 0 <= now - t_j < 5s + 7s (one-sided; a future
@@ -41,7 +44,9 @@ const int kRssiDirectDbm = -70;
 /// Relay-admission RSSI threshold (dBm). §6.2.
 const int kRssiRelayMinDbm = -80;
 
-/// Max relay hops. Originate TTL=3, dense graphs cap at 2. §6.2.
+/// Max relay hops. Originate TTL=3, dense graphs cap at 2. §6.2. Three hops
+/// cover a 500-seat hall; the dense cap and the 4/s per-device relay cap
+/// bound pathological resonators without touching flood correctness.
 const int kTtlOriginate = 3;
 const int kTtlDenseCap = 2;
 

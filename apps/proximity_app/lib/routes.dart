@@ -146,6 +146,12 @@ abstract final class ProxRoutes {
   /// enrollment claim). The web records build never marks: entry, records
   /// and the debug terminal degrade or render everywhere; everything here
   /// redirects (see [webGuardRedirect]) instead of landing on a dead end.
+  /// Kept alongside [isMobileOnly] deliberately: this gate is about the
+  /// *web* records build (which cannot host BLE/HTTPS either), while
+  /// isMobileOnly is about the *face/device trust stack* (desktop can
+  /// host live/* fine, but can never enroll/mark). Different sets,
+  /// different reasons — collapsing them would wrongly block desktop
+  /// hosting or wrongly allow desktop enrollment.
   /// Pure — unit-testable without widgets.
   static bool isNativeOnly(String name) =>
       name == enrollIntro ||

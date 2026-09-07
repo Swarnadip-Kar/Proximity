@@ -294,11 +294,11 @@ class FirestoreCloudSync implements CloudSync {
     try {
       var batch = _db.batch();
       var n = 0;
-      // Rename bumps timestampIso (not just updatedAt): mergeHistories
-      // adopts the NEWER record per id, so without this any device holding
-      // a newer-timestamped copy under the OLD name would resurrect it on
-      // the next merge — the rename would never converge, for professors
-      // or for students reading the same docs.
+      // Rename bumps timestampIso (not just updatedAt): union merge takes
+      // the NEWER record's header fields per id, so without this any device
+      // holding a newer-timestamped copy under the OLD name would resurrect
+      // it on the next merge — the rename would never converge, for
+      // professors or for students reading the same docs.
       final nowIso = DateTime.now().toUtc().toIso8601String();
       for (final s in sessions) {
         if (s.courseId == oldName ||
