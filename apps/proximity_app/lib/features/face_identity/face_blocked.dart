@@ -7,6 +7,8 @@ library;
 import 'package:flutter/material.dart';
 
 import '../../core/platformx.dart';
+import '../../design/tokens.dart';
+import '../../widgets/prox_cards.dart';
 
 /// Guidance card for mobile-only flows on records-only devices.
 class FaceBlockedCard extends StatelessWidget {
@@ -15,39 +17,39 @@ class FaceBlockedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.smartphone_outlined),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '$flow needs the mobile app',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
+    // Shared library only (Track 5): one card language (ProxCard), no
+    // per-screen Card+Padding copies.
+    return ProxCard(
+      padding: const EdgeInsets.all(ProxSpacing.lg),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.smartphone_outlined),
+              const SizedBox(width: ProxSpacing.sm),
+              Expanded(
+                child: Text(
+                  '$flow needs the mobile app',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              canUseFace()
-                  ? 'Face verification is available on this device — sign in and try again.'
-                  : 'This ${_deviceLabel()} is records-only: enrollment and marking run on Android/iOS, where the face check and device key stay on-device. Your records below are unaffected.',
-            ),
-            const SizedBox(height: 8),
-            const Text(
-                'On your phone: sign in → enroll this device → join the class to mark.'),
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+          Text(
+            canUseFace()
+                ? 'Face verification is available on this device — sign in and try again.'
+                : 'This ${_deviceLabel()} is records-only: enrollment and marking run on Android/iOS, where the face check and device key stay on-device. Your records below are unaffected.',
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+          const Text(
+              'On your phone: sign in → enroll this device → join the class to mark.'),
+        ],
       ),
     );
   }

@@ -255,7 +255,7 @@ abstract final class ProxLogTags {
 
 /// Terminal colors, one per log tag. Brightness-independent (the terminal
 /// is always black), so this is a pure tag→color map — the single source
-/// for the embedded [BleLogView] and the full-screen debug log. Attendance
+/// for the full-screen debug log. Attendance
 /// meaning still comes from [ProxStateColors]; these colors only tell
 /// subsystems apart in the log stream.
 abstract final class ProxLogColors {

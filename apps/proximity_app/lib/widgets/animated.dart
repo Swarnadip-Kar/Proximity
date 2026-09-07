@@ -104,51 +104,7 @@ class PresentTicker extends StatelessWidget {
   }
 }
 
-/// Success spring: ✓ Marked (or custom [title], e.g. Late) with scale-in.
-/// Honors reduced motion (plain content, no pop). Prefer [ProxVerdictBadge]
-/// in new code, which gives each verdict a distinct motion signature.
-class MarkedBadge extends StatefulWidget {
-  final String detail;
-  final String title;
-  const MarkedBadge({super.key, required this.detail, this.title = '✓ Marked'});
-
-  @override
-  State<MarkedBadge> createState() => _MarkedBadgeState();
-}
-
-class _MarkedBadgeState extends State<MarkedBadge>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  late final Animation<double> _s;
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 450));
-    _s = CurvedAnimation(parent: _c, curve: ProxCurves.verdictSpring);
-    _c.forward();
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(widget.title, style: const TextStyle(fontSize: 28)),
-        const SizedBox(height: 4),
-        Text(widget.detail),
-      ],
-    );
-    if (ProxMotion.reduced(context)) return content;
-    return ScaleTransition(
-      scale: _s,
-      child: content,
-    );
-  }
-}
+// NOTE (Track 5): MarkedBadge removed — superseded by ProxVerdictBadge
+// (one verdict language; the elastic pop is reserved for Marked there).
+// FaceOval + PresentTicker below are the live contract (face check +
+// take-attendance header) and stay.

@@ -17,9 +17,13 @@ lib/
                         # Empty / Loading / Sync+Error notes
     prox_motion.dart    # ProxFadeSlideIn / ProxStaggered / ProxSwitcher / ProxAnimatedCount
     prox_verdict.dart   # Verdict badges with distinct motion per kind
-    animated.dart       # LEGACY: FaceOval / PresentTicker / MarkedBadge (kept for compat;
-                        #   new code prefers prox_*; removal is a later-phase cleanup)
-    ble_log_view.dart / manual_add.dart / ip_join.dart / clock.dart / ...
+    animated.dart       # FaceOval / PresentTicker (live contract: face
+                        #   check + take header; MarkedBadge removed Track 5 —
+                        #   superseded by ProxVerdictBadge)
+    trust_cards.dart    # Track 5: DeviceTrustBadge / WrongOrgCard /
+                        # HonestUnreachableCard / SyncStatusStrip (settled
+                        # states, presentation only)
+    manual_add.dart / ip_join.dart / clock.dart / ...
   routes.dart        # IA route table + web guards + ProxRouteObserver (NAV log);
                      # additive — screens migrate to pushNamed bundle by bundle
   screens/           # legacy screens (migration source; behavior frozen)
@@ -61,7 +65,8 @@ presentation (screens/, features/, widgets/)
 
 One ring buffer (`BleLog`, 500 entries, coalesced flush, adb-logcat
 mirror). Tags from `ProxLogTags`, colors from `ProxLogColors` (single
-source for the embedded `BleLogView` and the full-screen debug log):
+source for the full-screen debug log — the embedded `BleLogView` was
+removed Track 5 as a one-off; `debug/log` is the one terminal):
 
 - BLE / MESH / LAN / SEC / NET — radio + drivers (pre-existing; beacon
   and relay repeats stay deduped by packet key so the terminal survives
