@@ -31,7 +31,7 @@ professor stops them); present = intersection over all windows taken.
 2. Students prove physical presence with their own phones in an open window (no countdown).
 3. One phone cannot mark proxy for another person. One screenshot or forwarded code cannot mark proxy from hostel.
 4. Professor ends the lecture with an attendance list on their own device, exportable per session and per date range.
-5. Works fully offline on campus WiFi or phone hotspot. Internet required only once at enrollment (and for cloud sync).
+5. Works fully offline on the classroom WiFi (never a phone hotspot — hotspot networking is excluded by design) + BLE mesh. Internet required only once at enrollment (and for cloud sync).
 6. Platform split (as built — NOT identical everywhere): student
    marking (radio + face + device keys) is Android/iOS mobile-only;
    professor hosting runs on Android/iOS/macOS/Windows/Linux; the web
@@ -432,7 +432,7 @@ GET  /live                 -> counts + rows (professor Bearer)
 GET  /export               -> {csv} (professor Bearer; .sig applied at the app layer)
 ```
 
-Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. If campus AP isolates clients, professor phone hotspot is the documented fallback (same protocol, same code).
+Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. If campus AP isolates clients, BLE hint + typed IP carry the join and an unreachable host fails honestly into the manual path — hotspot is excluded, never the fallback.
 
 Discovery detail (as built + field-verified 2026-09): professors announce
 over UDP broadcast `:54545` (2 s beacons, 6 s expiry; targets: limited
@@ -639,7 +639,7 @@ BitChat (permissionlesstech/bitchat, whitepaper v2.0 Jul 2026; `bitchat-android`
 ## 11. Build status (as built, Track 6)
 
 Shipped: protocol HMAC/UUID/Ed25519 + window rotation + mesh relay +
-hotspot/manual join + iOS parity + face gate + SK lock +
+typed-IP/manual join + iOS parity + face gate + SK lock +
 channel-bound TLS + desktop host + Linux shim + cloud roles/claims/
 session backup + student records + web records build +
 verifyAttestationChain server re-verifier (§3.4) + SyncEngine heartbeat
@@ -733,8 +733,8 @@ one-liner idioms and intentional seams (below).
    flags, for server-side gaps).
 3. **Network failure modes:** isolating APs kill UDP (measured 0/5 on
    institute /18) → BLE hint + manual IP carry join; the /24 sweep was
-   deleted for kicking phones off WiFi; hotspot is the documented
-   fallback. Wormhole vs a real-time accomplice pair stands (§7.3).
+   deleted for kicking phones off WiFi; hotspot is excluded by design
+   (never a fallback). Wormhole vs a real-time accomplice pair stands (§7.3).
 4. **Sync failure modes:** history↔outbox crash window heals on next
    mutation; tombstones beat older upserts (monotonic `timestampIso`
    bounds the skew damage); student-pull bypasses single-flight (same
