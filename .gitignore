@@ -1,0 +1,3 @@
+# Build + dependency outputs (never committed).
+**/node_modules/
+**/.dart_tool/

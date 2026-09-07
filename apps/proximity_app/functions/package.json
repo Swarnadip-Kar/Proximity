@@ -1,0 +1,16 @@
+{
+  "name": "proximity-attestation",
+  "description": "Proximity narrow attestation re-verification endpoint (verifyAttestationChain only).",
+  "private": true,
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/der.test.js test/cbor.test.js test/verify.test.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^5.1.1"
+  }
+}
