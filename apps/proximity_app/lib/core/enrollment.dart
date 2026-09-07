@@ -19,7 +19,6 @@
 library;
 
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -31,9 +30,9 @@ import 'package:proximity_protocol/protocol.dart';
 import '../mode.dart';
 import 'auth.dart';
 import 'cloud_sync.dart';
-import 'device_identity.dart';
 import 'device_store.dart';
 import 'edgeface.dart';
+import 'enroll_finalize.dart';
 
 /// Minimum pairwise cosine between enrollment frames: all accepted
 /// stills must show the SAME person. Measured 2026-09-05 through the
@@ -209,23 +208,10 @@ String _platformName() => defaultTargetPlatform.name;
 
 /// Mean embedding direction of several enrollment frames, L2-normalized.
 /// All vectors must share a length; single-frame input returns it unchanged.
-List<double> _averageUnit(List<List<double>> vectors) {
-  final n = vectors.first.length;
-  final mean = List.filled(n, 0.0);
-  for (final v in vectors) {
-    assert(v.length == n);
-    for (var i = 0; i < n; i++) {
-      mean[i] += v[i] / vectors.length;
-    }
-  }
-  var norm = 0.0;
-  for (final x in mean) {
-    norm += x * x;
-  }
-  norm = math.sqrt(norm);
-  if (norm == 0) return mean;
-  return [for (final x in mean) x / norm];
-}
+/// Pure math lives in enroll_finalize.dart ([averageUnit]); this wrapper
+/// keeps existing call sites identical.
+List<double> _averageUnit(List<List<double>> vectors) =>
+    averageUnit(vectors);
 
 class EnrollmentController extends StateNotifier<EnrollmentState> {
   final AuthService _auth;
@@ -450,16 +436,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   }
 
   /// Lowest pairwise cosine in [vectors] (1.0 for a single vector).
-  double _minPairwise(List<List<double>> vectors) {
-    var minPair = 1.0;
-    for (var i = 0; i < vectors.length; i++) {
-      for (var j = i + 1; j < vectors.length; j++) {
-        final c = cosineSimilarity(vectors[i], vectors[j]);
-        if (c < minPair) minPair = c;
-      }
-    }
-    return minPair;
-  }
+  /// Pure math lives in enroll_finalize.dart ([minPairwise]).
+  double _minPairwise(List<List<double>> vectors) => minPairwise(vectors);
 
   void _emitSlots({required String message}) {
     state = state.copyWith(
@@ -501,29 +479,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     }
     final means = [for (final m in _slotMeans) m!];
     // Best agreeing pair; every slot is then judged against it.
-    var bi = 0, bj = 1;
-    var best = -2.0;
-    for (var i = 0; i < means.length; i++) {
-      for (var j = i + 1; j < means.length; j++) {
-        final c = cosineSimilarity(means[i], means[j]);
-        if (c > best) {
-          best = c;
-          bi = i;
-          bj = j;
-        }
-      }
-    }
+    // Pure math lives in enroll_finalize.dart ([bestAgreeingPair]).
+    final bestPair = bestAgreeingPair(means);
+    final bi = bestPair.bi, bj = bestPair.bj;
+    final best = bestPair.best;
     // Odd-ones-out vs the best pair at the single agreement floor: a
     // stranger reads ~0.0 either way, so no per-slot bar is needed now
     // that every slot is yaw (see enrollSlotNames).
-    final odd = [
-      for (var k = 0; k < means.length; k++)
-        if (k != bi &&
-            k != bj &&
-            cosineSimilarity(means[k], means[bi]) < kEnrollConsistencyMin &&
-            cosineSimilarity(means[k], means[bj]) < kEnrollConsistencyMin)
-          k
-    ];
+    // Pure math lives in enroll_finalize.dart ([oddOnesOut]).
+    final odd = oddOnesOut(means, bi, bj, kEnrollConsistencyMin);
     if (best >= kEnrollConsistencyMin && odd.isNotEmpty) {
       // Odd slots out (e.g. a friend did one angle): drop them alone.
       for (final k in odd) {
@@ -553,8 +517,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // Floor is kEnrollHoldoutMin (0.50): cross-pose same-person reads
       // 0.50–0.57 measured, strangers ~0.0 — a high bar here looped forever.
       const holdOut = 0;
-      final rest = [means[1], means[2]];
-      final probe = _averageUnit(rest);
+      // Pure composition lives in enroll_finalize.dart ([holdoutProbe]).
+      final probe = holdoutProbe(means);
       final session = FaceSession(
           embedder: _embedder,
           gate: FaceGate(threshold: kEnrollHoldoutMin));
@@ -566,7 +530,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       if (res.decision == FaceDecision.pass && res.score >= kEnrollHoldoutMin) {
         // Persist the mean of ALL FIVE slots (best template); the hold-out
         // mean above was validation-only.
-        _template = _averageUnit(means);
+        // Pure composition lives in enroll_finalize.dart ([finalizeTemplate]).
+        _template = finalizeTemplate(means);
         state = state.copyWith(
             phase: EnrollPhase.faceDone,
             faceScore: res.score,
@@ -598,19 +563,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// drops explicit odd-ones-out), so a bad angle costs one rescan, never
   /// the other four.
   void _dropWorstSlot(List<List<double>> means, String tailCopy) {
-    var worst = 0;
-    var worstSum = double.infinity;
-    for (var k = 0; k < means.length; k++) {
-      var sum = 0.0;
-      for (var j = 0; j < means.length; j++) {
-        if (j == k) continue;
-        sum += cosineSimilarity(means[k], means[j]);
-      }
-      if (sum < worstSum) {
-        worstSum = sum;
-        worst = k;
-      }
-    }
+    // Pure math lives in enroll_finalize.dart ([worstSlotIndex]).
+    final worst = worstSlotIndex(means);
     _slotMeans[worst] = null;
     _slotProbeFrames[worst] = null;
     _emitSlots(
