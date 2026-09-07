@@ -31,7 +31,8 @@ const int kAdvIntervalMs = 200;
 /// the professor stops it.
 const int kSubEpochSeconds = 5;
 
-/// Freshness acceptance: |now - t_j| < 7s (5s + drift). §5.3
+/// Freshness acceptance: 0 <= now - t_j < 5s + 7s (one-sided; a future
+/// sub-epoch is never fresh, so tokens cannot pre-play). §5.3
 const Duration kFreshness = Duration(seconds: 7);
 
 /// Direct-sighting RSSI threshold (dBm). §5.3 step 6.

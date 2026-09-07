@@ -21,11 +21,6 @@ class AttendanceRecord {
   AttendanceRecord(
       {required this.email, required this.name, this.roll = ''});
 
-  bool get w1 => wins.contains(1);
-  bool get w2 => wins.contains(2);
-  set w1(bool v) => v ? wins.add(1) : wins.remove(1);
-  set w2(bool v) => v ? wins.add(2) : wins.remove(2);
-
   bool presentIn(int windowNo) => wins.contains(windowNo);
 
   /// Present in ALL of [allWindows]. Empty window list -> false.
@@ -49,7 +44,7 @@ class AttendanceRecord {
   }
 }
 
-/// Professor tally: live counts + present/pending/face-flag/late lists + search.
+/// Professor tally: live counts + present/face-flag/late lists + search.
 /// Supports N windows; Present = intersection of all windows taken.
 class TallyStore {
   final Map<String, AttendanceRecord> _rows = {}; // email -> record
@@ -129,8 +124,6 @@ class TallyStore {
   List<AttendanceRecord> get confirmed => _confirmedRows;
   List<AttendanceRecord> get presentAny =>
       _rows.values.where((r) => r.wins.isNotEmpty).toList();
-  List<AttendanceRecord> get pending =>
-      _rows.values.where((r) => r.wins.isEmpty && !r.faceFlag).toList();
   List<AttendanceRecord> get lateList =>
       _rows.values.where((r) => r.late).toList();
 

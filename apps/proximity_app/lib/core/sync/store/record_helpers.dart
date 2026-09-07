@@ -4,15 +4,21 @@
 // InMemoryDeviceStore:
 //   - [recordInCourse]: the course-membership predicate used by both
 //     renameCourse impls and both deleteCourse impls (was 4 copies).
-// Kept separate (NOT collapsed) where logic differs — see flags:
-//   - renameCourse record rebuild: Secure reuses the record's windows /
-//     names / rolls references, InMemory defensively copies them
-//     (Map.of / Map<String,bool>.from). Same outward result today, but
-//     aliasing differs → both bodies kept verbatim, flagged in report.
-//   - deleteSessions / upsertHistory / writeHistory: prefs-JSON round-trip
-//     vs in-memory list ops → kept, flagged.
-//   - readCourses: Secure migrates the legacy name catalog + parses stored
-//     JSON; InMemory derives from its catalog list → kept, flagged.
+//   - [todayIso]: the course creation stamp used by Secure addCourse.
+// Deliberately NOT collapsed (M3 verdict: documented-different, item
+// closed): renameCourse's record rebuild reuses the record's windows /
+// names / rolls references in Secure but defensively copies them in
+// InMemory (Map.of); deleteSessions / upsertHistory / writeHistory go
+// through a prefs-JSON round-trip (deep copy) in Secure vs live list ops
+// (aliasing) in InMemory; readCourses parses stored JSON plus a legacy
+// catalog migration in Secure vs deriving from the catalog list in
+// InMemory. All three differences are value-invisible through the
+// DeviceStore interface (equal-valued records in, equal-valued records
+// out; Secure's next read re-parses JSON anyway) and InMemory is the
+// test/sim double, so the copy-vs-alias gap can only make InMemory safer
+// under live-object mutation, never less correct. No further extraction:
+// the remaining shared fragments are single-expression predicates whose
+// helpers would add indirection without benefit.
 library;
 
 import 'package:proximity_storage/storage.dart';
