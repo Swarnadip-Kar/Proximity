@@ -23,6 +23,11 @@ class MarkVerdictView extends StatelessWidget {
   final MarkVerdict kind;
   final String detail;
   final String infoDetail;
+  /// Real orgs for the wrong-org card (Track 6, from
+  /// [MarkedReceipt.classOrg]/[myOrg]); '' falls back to the generic
+  /// placeholders so older call sites keep compiling unchanged.
+  final String classOrg;
+  final String myOrg;
   final List<String> roundMarks;
   final int attemptsLeft;
   final VoidCallback onRetryFace;
@@ -34,6 +39,8 @@ class MarkVerdictView extends StatelessWidget {
     required this.kind,
     required this.detail,
     this.infoDetail = '',
+    this.classOrg = '',
+    this.myOrg = '',
     required this.roundMarks,
     this.attemptsLeft = 0,
     required this.onRetryFace,
@@ -93,7 +100,11 @@ class MarkVerdictView extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const WrongOrgCard(classOrg: 'this class', myOrg: 'your account'),
+                WrongOrgCard(
+                  classOrg:
+                      classOrg.isNotEmpty ? classOrg : 'this class',
+                  myOrg: myOrg.isNotEmpty ? myOrg : 'your account',
+                ),
                 const SizedBox(height: 8),
                 Text(
                   detail.isEmpty

@@ -55,8 +55,27 @@ class MarkedReceipt {
   /// next window carries a fresh code, so the student never re-faces the
   /// same open window).
   final String display;
+  /// Structured wrong-org refusal (Track 6): true when the Track 1 org
+  /// join-gate refused BEFORE any proof was sent. The UI branches on this
+  /// flag — never on matching [detail] text. [classOrg]/[myOrg] feed the
+  /// wrong-org card with the real orgs.
+  final bool isWrongOrg;
+  final String classOrg;
+  final String myOrg;
+  /// Device-trust snapshot at mark time (Tracks 2+3 tiers + §3.4 host
+  /// anomaly flags): enrolled attestation level + host-reported flags.
+  /// Informational only — verdicts are driven by [result]/[isWrongOrg].
+  final String attestationLevel;
+  final List<String> attestationFlags;
   const MarkedReceipt(
-      {required this.detail, required this.result, this.display = ''});
+      {required this.detail,
+      required this.result,
+      this.display = '',
+      this.isWrongOrg = false,
+      this.classOrg = '',
+      this.myOrg = '',
+      this.attestationLevel = '',
+      this.attestationFlags = const []});
 }
 
 class WindowProbe {
@@ -688,9 +707,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           desc.org != myOrg) {
         BleLog.log('NET',
             'wrong org (class ${desc.org} vs $myOrg) — no proof sent');
-        return const MarkedReceipt(
-            detail: 'Wrong organization for this class — join your institute class',
-            result: StudentResult.error);
+        // Track 6: structured refusal (UI branches on [isWrongOrg], never
+        // on the detail text). Detail copy kept verbatim for display.
+        return MarkedReceipt(
+            detail:
+                'Wrong organization for this class — join your institute class',
+            result: StudentResult.error,
+            isWrongOrg: true,
+            classOrg: desc.org,
+            myOrg: myOrg,
+            attestationLevel: stored.attestationLevel);
       }
       if (desc.org.isEmpty) {
         BleLog.log('NET', 'window legacy (no org) — allowed');
@@ -823,17 +849,23 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         ProveDecision.confirmed => MarkedReceipt(
             detail: '${desc.display} · $stamp',
             result: StudentResult.marked,
-            display: desc.display),
+            display: desc.display,
+            attestationLevel: stored.attestationLevel,
+            attestationFlags: res.flags),
         ProveDecision.late => MarkedReceipt(
             detail: 'Late · $stamp',
             result: StudentResult.late,
-            display: desc.display),
+            display: desc.display,
+            attestationLevel: stored.attestationLevel,
+            attestationFlags: res.flags),
         ProveDecision.invalid => MarkedReceipt(
             // Terminal rejection (bad-sig, bad-bind, replay…): the raw
             // reason matches the professor-side `prove <email> -> invalid
             // (<reason>)` log line for support.
             detail: 'Not marked [${res.reason}]',
-            result: StudentResult.error),
+            result: StudentResult.error,
+            attestationLevel: stored.attestationLevel,
+            attestationFlags: res.flags),
       };
     } finally {
       client.close();

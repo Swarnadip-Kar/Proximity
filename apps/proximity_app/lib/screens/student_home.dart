@@ -63,6 +63,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // count for the next round label. Cleared on every fresh join.
   final List<String> _roundMarks = [];
   String infoDetail = '';
+  // Structured wrong-org orgs from the latest receipt (Track 6): feed the
+  // wrong-org verdict card with the real orgs instead of placeholders.
+  String wrongClassOrg = '';
+  String wrongMyOrg = '';
   String joinError = '';
   String _typedHostPort = '';
   String _fieldInitial = '';
@@ -948,14 +952,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           'R${_roundMarks.length + 1} · ${receipt.detail}');
     }
     BleLog.log(ProxLogTags.state, 'verdict ${receipt.result.name} (${receipt.detail})');
-    // Wrong-org refusals (Track 1 org gate) surface as error receipts
-    // with 'Wrong organization' detail — no proof was sent, no PII left.
-    // They get their own verdict screen (not generic no-signal) so the
-    // refusal reads as a decision, not a network hole.
-    final isWrongOrg = receipt.result == StudentResult.error &&
-        receipt.detail.toLowerCase().contains('wrong organization');
+    // Wrong-org refusals (Track 1 org gate) surface as structured error
+    // receipts ([MarkedReceipt.isWrongOrg] — no proof was sent, no PII
+    // left). They get their own verdict screen (not generic no-signal) so
+    // the refusal reads as a decision, not a network hole. Track 6: was a
+    // `detail.contains('wrong organization')` substring match.
+    final isWrongOrg =
+        receipt.result == StudentResult.error && receipt.isWrongOrg;
     setState(() {
       ackDetail = receipt.detail;
+      wrongClassOrg = receipt.classOrg;
+      wrongMyOrg = receipt.myOrg;
       phase = switch (receipt.result) {
         StudentResult.marked => StudentPhase.marked,
         StudentResult.late => StudentPhase.late,
@@ -1232,6 +1239,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
             StudentPhase.wrongOrg => MarkVerdictView(
                 kind: MarkVerdict.wrongOrg,
                 detail: ackDetail,
+                classOrg: wrongClassOrg,
+                myOrg: wrongMyOrg,
                 roundMarks: const [],
                 onRetryFace: () {},
                 onManualInstead: () {},
