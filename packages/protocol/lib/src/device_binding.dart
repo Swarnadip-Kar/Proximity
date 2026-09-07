@@ -1,17 +1,16 @@
-// Device binding (Track 3 adopted): HW-attested device key (DKey) tiers +
-// attestation anomaly flags. Pure Dart — no platform code.
+// Device binding (Track 3 adopted): device-key tiers + attestation
+// anomaly flags. Pure Dart — no platform code.
 //
 // Model:
-//   DKey P-256 HW (StrongBox→TEE / Secure Enclave, `none` stub
-//     desktop/web) attested at enrollment (Android Key Attestation chain /
-//     iOS App Attest, challenge=SHA256(serverNonce||emailLower||installId||
-//     pkS)); SKey Ed25519 kept (protocol untouched) but sealed to DKey
-//     (AES-GCM, store ciphertext only); extended claim
-//     {pkS,pkD,installId,attestationLevel,attestedAt,attestedUntil=+90d};
+//   DKey P-256 (StrongBox→TEE / Secure Enclave once the keystore track
+//     lands; software/fake `none` until then) with SKey Ed25519 sealed
+//     to it (AES-GCM on HW, ciphertext only at rest). Extended claim
+//     {pkS,pkD,installId,attestationLevel,self-asserted,attestedAt,
+//     attestedUntil=+90d};
 //   /prove adds pkD + dSig=Sign(DKey,session||window||j||C_j||
 //     faceTicketHash||pkS) with Sig_s also binding pkD+ticketHash;
-//   professor verifies offline (chain→baked roots + dSig + Sig_s + ticket +
-//     existing checks).
+//   the professor verifies the fresh signature offline (dSig + Sig_s +
+//     ticket + existing checks) and tiers on the CLAIMED level.
 //
 // Tiers (professor offline verdict):
 //   FULL/STD → confirmed,
@@ -24,11 +23,12 @@
 // P-256 verification itself lives in the platform adapter (app layer):
 // this file holds the pure tier/anomaly decisions beside
 // evaluateStudentClaim (claim.dart forwards here), plus the canonical
-// attestation-challenge helper. Firestore X.509 caveat accepted (client
-// verify + offline re-verify + post-hoc flag; the server re-verifier has
-// LANDED since — functions/verifyAttestationChain, see
-// PROXIMITY_DESIGN.md §3.4 — so this caveat now covers only the
-// live/offline path, which stays server-free by design).
+// attestation-challenge helper. Trust caveat, stated plainly: the
+// [level] below is SELF-ASSERTED by the presenting device — no chain
+// verification exists anywhere in this system (no billing-gated backend
+// carries one), so FULL/STD mean "claims hardware backing", verified
+// only as a fresh signature over the live challenge, never as silicon
+// provenance. See PROXIMITY_DESIGN.md §3.4.
 library;
 
 import 'dart:convert';

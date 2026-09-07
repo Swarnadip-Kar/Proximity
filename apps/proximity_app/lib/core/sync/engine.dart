@@ -40,7 +40,6 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../../design/tokens.dart';
-import 'claim.dart';
 import 'cloud_api.dart';
 import 'org.dart';
 import 'queue.dart';
