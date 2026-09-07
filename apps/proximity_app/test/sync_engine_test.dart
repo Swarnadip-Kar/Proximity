@@ -55,20 +55,6 @@ class FlakyCloud extends FakeCloudSync {
   }
 }
 
-/// Fake that counts attestation verify calls (heartbeat discipline drill).
-class AttestCountingCloud extends FakeCloudSync {
-  int verifyCalls = 0;
-  bool throwOnVerify = false;
-  AttestCountingCloud({super.online});
-  @override
-  Future<AttestationVerifyOutcome> verifyAttestationChain(
-      {required String emailLower, required String org}) async {
-    verifyCalls++;
-    if (throwOnVerify) throw StateError('socket');
-    return super.verifyAttestationChain(emailLower: emailLower, org: org);
-  }
-}
-
 void main() {
   test('saveSessionLocal writes history + outbox together', () async {
     final store = InMemoryDeviceStore();
@@ -314,8 +300,7 @@ void main() {
     expect(cloud.sessions.keys, ['s1']); // pushed exactly once
   });
 
-  group('attestation heartbeat (verifyAttestationChain, sync-flush-only)',
-      () {
+  group('no server attestation path: flush is endpoint-free', () {
     StudentDeviceDoc attestDev() => StudentDeviceDoc(
           email: 's@univ.edu',
           uid: 'u9',
@@ -334,10 +319,11 @@ void main() {
               .millisecondsSinceEpoch,
         );
 
-    test('no attest identity: zero verify calls, flush unaffected',
+    test('flush with enrolled device: attendance syncs, binding untouched',
         () async {
       final store = InMemoryDeviceStore();
-      final cloud = AttestCountingCloud();
+      final cloud = FakeCloudSync();
+      await cloud.claimStudentDevice(doc: attestDev(), installId: 'iA');
       final engine = SyncEngine();
       await engine.saveSessionLocal(store,
           rec('s1', 'CS201', '2026-09-01T10:00:00.000Z', '2026-09-01T10:05:00.000Z'));
@@ -345,84 +331,12 @@ void main() {
           await engine.flush(store: store, cloud: cloud, prof: prof);
       expect(res.online, isTrue);
       expect(res.pushed, 1);
-      expect(cloud.verifyCalls, 0);
-    });
-
-    test('unknown verdict verifies once; flag never blocks attendance',
-        () async {
-      final store = InMemoryDeviceStore();
-      final cloud = AttestCountingCloud();
-      await cloud.claimStudentDevice(doc: attestDev(), installId: 'iA');
-      final engine = SyncEngine();
-      await engine.saveSessionLocal(store,
-          rec('s1', 'CS201', '2026-09-01T10:00:00.000Z', '2026-09-01T10:05:00.000Z'));
-      const attest = (emailLower: 's@univ.edu', org: 'univ.edu');
-      final res = await engine.flush(
-          store: store, cloud: cloud, prof: prof, attest: attest);
-      // Attendance still syncs (flag-don't-invalidate): pushed + converged.
-      expect(res.online, isTrue);
-      expect(res.pushed, 1);
       expect(res.remaining, 0);
-      expect(cloud.verifyCalls, 1);
-      // Fake coherence flags the material-less FULL claim — recorded on
-      // the doc, attendance untouched.
+      // No server re-check exists: the binding's self-asserted
+      // level + window pass through the flush byte-identical.
       final binding = (await cloud.fetchStudentDevice('s@univ.edu'))!;
-      expect(binding.attestationAnomaly, isTrue);
-      expect(binding.serverVerifiedAtMillis, greaterThan(0));
-      // Second flush: stamped + fresh window → cheap skip, no new call.
-      final res2 = await engine.flush(
-          store: store, cloud: cloud, prof: prof, attest: attest);
-      expect(res2.online, isTrue);
-      expect(cloud.verifyCalls, 1);
-    });
-
-    test('steady-state dual-role flush (empty outbox) still heartbeats',
-        () async {
-      final store = InMemoryDeviceStore();
-      final cloud = AttestCountingCloud();
-      await cloud.claimStudentDevice(doc: attestDev(), installId: 'iA');
-      final engine = SyncEngine();
-      const attest = (emailLower: 's@univ.edu', org: 'univ.edu');
-      final res = await engine.flush(
-          store: store, cloud: cloud, prof: prof, attest: attest);
-      expect(res.online, isTrue);
-      expect(cloud.verifyCalls, 1);
-    });
-
-    test('unreachable endpoint defers: flush succeeds, no flag, retries',
-        () async {
-      final store = InMemoryDeviceStore();
-      final cloud = AttestCountingCloud()..throwOnVerify = true;
-      await cloud.claimStudentDevice(doc: attestDev(), installId: 'iA');
-      final engine = SyncEngine();
-      await engine.saveSessionLocal(store,
-          rec('s1', 'CS201', '2026-09-01T10:00:00.000Z', '2026-09-01T10:05:00.000Z'));
-      const attest = (emailLower: 's@univ.edu', org: 'univ.edu');
-      final res = await engine.flush(
-          store: store, cloud: cloud, prof: prof, attest: attest);
-      expect(res.online, isTrue);
-      expect(res.pushed, 1);
-      expect(cloud.verifyCalls, 1);
-      // Reachability failure is NOT an anomaly: no stamp, still unknown,
-      // so the next flush retries.
-      final binding = (await cloud.fetchStudentDevice('s@univ.edu'))!;
-      expect(binding.attestationAnomaly, isFalse);
-      expect(binding.serverVerifiedAtMillis, 0);
-      await engine.flush(
-          store: store, cloud: cloud, prof: prof, attest: attest);
-      expect(cloud.verifyCalls, 2);
-    });
-
-    test('unenrolled email: binding miss skips with no verify call',
-        () async {
-      final store = InMemoryDeviceStore();
-      final cloud = AttestCountingCloud();
-      final engine = SyncEngine();
-      const attest = (emailLower: 'ghost@univ.edu', org: 'univ.edu');
-      final res = await engine.flush(
-          store: store, cloud: cloud, prof: null, attest: attest);
-      expect(res.online, isTrue);
-      expect(cloud.verifyCalls, 0);
+      expect(binding.attestationLevel, 'FULL');
+      expect(binding.pkDHex, attestDev().pkDHex);
     });
   });
 }

@@ -36,32 +36,28 @@ String trustPkDFingerprint(String pkDHex) {
   return h.length <= 12 ? h : '${h.substring(0, 12)}…';
 }
 
-/// Device trust badge: tier + window + server verdict.
+/// Device trust badge: tier + window + key. All offline and holder-local:
+/// the level is self-asserted by the enrolling client (no server re-check
+/// exists), so this badge is transparency about what THIS device claims —
+/// trust decisions happen on the professor's side per proof (dSig +
+/// ticket + sighting), not here.
 ///
 /// Tiers (protocol evaluateDeviceProof):
 /// FULL/STD fresh → confirmed; STALE (14d grace) → confirmed + banner;
-/// NONE → device-unproven → manual path. An anomaly flag never
-/// invalidates past attendance — it routes to professor/admin review.
+/// NONE → device-unproven → manual path.
 class DeviceTrustBadge extends StatelessWidget {
   final String level;
   final int attestedUntilMillis;
-  final bool anomaly;
-  final String serverReason;
-  final int serverVerifiedAtMillis;
   final String pkDHex;
 
   const DeviceTrustBadge({
     super.key,
     required this.level,
     this.attestedUntilMillis = 0,
-    this.anomaly = false,
-    this.serverReason = '',
-    this.serverVerifiedAtMillis = 0,
     this.pkDHex = '',
   });
 
   ProxState get _state {
-    if (anomaly) return ProxState.error;
     switch (level.trim().toUpperCase()) {
       case 'FULL':
       case 'STD':
@@ -75,7 +71,6 @@ class DeviceTrustBadge extends StatelessWidget {
 
   String get _label {
     final l = level.trim().isEmpty ? 'NONE' : level.trim().toUpperCase();
-    if (anomaly) return 'Flagged for review · $l';
     return switch (l) {
       'FULL' => 'Device trust FULL',
       'STD' => 'Device trust STD',
@@ -87,7 +82,6 @@ class DeviceTrustBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final until = trustDateLabel(attestedUntilMillis);
-    final verified = trustDateLabel(serverVerifiedAtMillis);
     return ProxCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,26 +93,11 @@ class DeviceTrustBadge extends StatelessWidget {
             [
               if (until.isNotEmpty) 'Attested until $until',
               'Key ${trustPkDFingerprint(pkDHex)}',
-              if (verified.isNotEmpty)
-                'Server checked $verified'
-              else
-                'Server check pending',
-              if (serverReason.isNotEmpty) 'Reason: $serverReason',
             ].join(' · '),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
           ),
-          if (anomaly) ...[
-            const SizedBox(height: ProxSpacing.xs),
-            Text(
-              'Past attendance stands — a professor reviews flagged devices '
-              'and marks manually meanwhile.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-            ),
-          ],
         ],
       ),
     );

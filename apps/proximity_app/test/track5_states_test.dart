@@ -42,24 +42,6 @@ void main() {
     }
   });
 
-  testWidgets('anomaly flag routes to review, past attendance stands',
-      (t) async {
-    await t.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: DeviceTrustBadge(
-          level: 'FULL',
-          anomaly: true,
-          serverReason: 'chain-mismatch',
-          serverVerifiedAtMillis: 1756684800000,
-          pkDHex: 'aabbcc',
-        ),
-      ),
-    ));
-    expect(find.textContaining('Flagged for review'), findsOneWidget);
-    expect(find.textContaining('Past attendance stands'), findsOneWidget);
-    expect(find.textContaining('chain-mismatch'), findsOneWidget);
-  });
-
   testWidgets('waiting room states unreachable honestly', (t) async {
     await t.pumpWidget(MaterialApp(
       home: Scaffold(

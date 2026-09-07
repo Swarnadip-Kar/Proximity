@@ -1,31 +1,33 @@
 // Device key (Track 3 adopted): DKey abstraction over HW-backed P-256.
 //
 // Production mapping (platform shell, one implementer with the trust
-// interface): Android StrongBox→TEE / iOS Secure Enclave, attested at
-// enrollment (Android Key Attestation chain / iOS App Attest with
-// challenge=SHA256(serverNonce||emailLower||installId||pkS) — see
-// attestationChallenge in the protocol). SKey Ed25519 is KEPT (protocol
-// untouched) but sealed to DKey (AES-GCM, ciphertext only at rest).
-// Extended claim {pkS,pkD,installId,attestationLevel,attestedAt,
-// attestedUntil=+90d}; /prove adds pkD + dSig=Sign(DKey, session||window||
-// j||C_j||faceTicketHash||pkS); professor verifies offline (chain→baked
-// roots + dSig + Sig_s + ticket + existing checks). Tiers FULL/STD→
-// confirmed, STALE (14d grace)→confirmed+banner, NONE→invalid:
-// device-unproven→manual path; heartbeat rolls attestedUntil;
-// old-DKey-signed MoveIntent = instant move else 7d cooldown kept;
-// backup-restore clone fails unwrap→'restore detected — re-enroll';
-// double-pkD audit flag on sync.
+// interface): Android StrongBox→TEE / iOS Secure Enclave once the
+// keystore/Enclave track lands. SKey Ed25519 is KEPT (protocol
+// untouched) but sealed to DKey (AES-GCM on HW, envelope here —
+// ciphertext only at rest). Extended claim carries
+// {pkS,pkD,installId,attestationLevel,self-asserted,attestedAt,
+// attestedUntil=+90d}; /prove adds pkD + dSig=Sign(DKey, session||
+// window||j||C_j||faceTicketHash||pkS); the professor verifies the fresh
+// signature offline (dSig + Sig_s + ticket + existing checks) and reads
+// the claimed level for tiering — chain→root verification exists
+// nowhere in this system (see the caveat below).
+// Tiers FULL/STD→confirmed, STALE (14d grace)→confirmed+banner,
+// NONE→invalid: device-unproven→manual path; heartbeat rolls
+// attestedUntil; old-DKey-signed MoveIntent = instant move else 7d
+// cooldown kept; backup-restore clone fails unwrap→'restore detected —
+// re-enroll' (on HW keys; software keys copy with their files —
+// SoftwareDeviceKey below is level `none` for exactly this reason).
 //
 // What this file IS: the narrow Dart interface + sealed-SKey envelope
 // bookkeeping + software/fake backends (level `none`, dev/test only —
 // they can never confirm at a real host since NONE→device-unproven).
 // What it is NOT (deferred, noted as residual risk): the Kotlin/Swift HW
-// keystore/Enclave backend + its enrollment-time material persistence
-// (attestMaterialJson). The server re-verifier has LANDED since:
-// functions/verifyAttestationChain re-verifies stored material during
-// SyncEngine's sync-on-reconnect flush (see PROXIMITY_DESIGN.md §3.4) —
-// what is still deferred is only the on-device HW key production that
-// would give it non-empty material to check.
+// keystore/Enclave backend that would produce genuinely hardware-bound
+// keys. Deliberately absent: any server re-check — the project carries
+// no billing-gated backend, so attestation levels are self-asserted by
+// the enrolling client and checked for consistency (never proof) by
+// offline verifiers. See PROXIMITY_DESIGN.md §3.4 for the trust model
+// this implies.
 library;
 
 import 'dart:typed_data';

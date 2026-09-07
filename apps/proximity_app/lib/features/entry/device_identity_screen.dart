@@ -243,8 +243,8 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
 
   /// Move-status body for a known gate verdict. Refusal copy comes from
   /// [studentClaimMessage] — the same words the enroll claim refuses with.
-  /// The binding's trust tier + server verdict ride below every verdict
-  /// (Tracks 2+3 FULL/STD/STALE/NONE + §3.4 anomaly — never silent).
+  /// The binding's trust tier rides below every verdict
+  /// (Tracks 2+3 FULL/STD/STALE/NONE — never silent).
   Widget _gateBody(StudentGate gate) {
     final b = gate.binding;
     final trust = b == null
@@ -252,9 +252,6 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
         : DeviceTrustBadge(
             level: b.attestationLevel,
             attestedUntilMillis: b.attestedUntilMillis,
-            anomaly: b.attestationAnomaly,
-            serverReason: b.serverVerifyReason,
-            serverVerifiedAtMillis: b.serverVerifiedAtMillis,
             pkDHex: b.pkDHex,
           );
     switch (gate.verdict.claim) {
