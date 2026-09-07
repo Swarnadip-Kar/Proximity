@@ -186,8 +186,11 @@ Collections (`apps/proximity_app/firestore.rules` + `firestore.indexes.json` —
 deploy with `firebase deploy --only firestore:rules,firestore:indexes
 --project proximity-attendence`; Track 1 org redeploy REQUIRED: the
 org-scoped queries fail without the new composite indexes, cross-org
-writes fail without the new rules; legacy docs without `org` stay
-owner-visible until the backfill stamps them, then remove `missingOrg()`):
+ writes fail without the new rules; legacy docs without `org` stay
+ owner-visible while SyncEngine discovers (unfiltered pull) and stamps them;
+ remove `missingOrg()` ONLY after its backfill-complete signal fires (SYNC
+ log + persisted flag) AND the org-wide console check (all four collections
+ where `org` missing) returns zero):
 
 - `users/{uid}`: `{email, roles[prof|student], lastMode, org}` validated
   (name/displayName pass through unvalidated) — one doc per Firebase uid;

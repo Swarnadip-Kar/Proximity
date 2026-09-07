@@ -270,6 +270,16 @@ class SyncEngine {
       _lastOnline = false;
       return SyncFlushResult(online: false, remaining: pending);
     }
+    // Legacy discovery + migration run before the empty check: the
+    // org-filtered pulls below can never see pre-org cloud docs, so an
+    // unfiltered profUid-only pull discovers them while the backfill
+    // gate is open — otherwise untouched cloud legacy would strand the
+    // missingOrg() rules grace open forever. Discovery merges into
+    // local history; the backfill stamps on this same flush.
+    var discoveredLegacy = 0;
+    if (prof != null && !(await store.readOrgBackfillComplete())) {
+      discoveredLegacy = await _discoverLegacyCloud(store, cloud, prof);
+    }
     // Migration runs before the empty check: legacy org='' history must
     // enqueue (and push) even when the outbox starts empty.
     if (prof != null) {
@@ -284,6 +294,7 @@ class SyncEngine {
     if (pending == 0 && prof != null) {
       // Still converge pulls (other devices may have written meanwhile).
       await _converge(store, cloud, prof);
+      await _maybeSignalBackfillComplete(store, discoveredLegacy);
       return const SyncFlushResult(online: true);
     }
 
@@ -335,6 +346,7 @@ class SyncEngine {
     }
     if (prof != null) {
       await _converge(store, cloud, prof);
+      await _maybeSignalBackfillComplete(store, discoveredLegacy);
     }
     final remaining = await pendingCount(store);
     BleLog.log(ProxLogTags.sync,
@@ -393,6 +405,56 @@ class SyncEngine {
   /// Migration: owner backfill of legacy org='' history records once
   /// (idempotent — stamped records never match again). Backfilled rows
   /// enqueue due-now so the stamp itself propagates on this flush.
+  ///
+  /// Unfiltered legacy discovery (Track 1 grace sunset): returns the
+  /// number of pre-org ('') cloud sessions seen, merged into local
+  /// history for stamping (-1 when the pull failed — unknown, never a
+  /// completion signal). Skipped once the gate flag fires (see
+  /// [_maybeSignalBackfillComplete]) so steady-state flushes pay no
+  /// extra query.
+  Future<int> _discoverLegacyCloud(
+      DeviceStore store, CloudSync cloud, SyncProf prof) async {
+    List<ClassRecord> remote;
+    try {
+      remote = await cloud
+          .pullProfSessions(prof.uid)
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      BleLog.log(ProxLogTags.sync, 'legacy discovery pull FAILED: $e');
+      return -1;
+    }
+    final legacy = [for (final r in remote) if (r.org.isEmpty) r];
+    if (legacy.isEmpty) return 0;
+    final local = await store.readHistory();
+    final tombRaw = await store.readTombstones();
+    final tombs = <SessionTombstone>[];
+    for (final t in tombRaw) {
+      try {
+        tombs.add(SessionTombstone.fromJson(Map<String, dynamic>.from(t)));
+      } catch (_) {}
+    }
+    await store.writeHistory(
+        mergeHistoriesUnion(local, legacy, tombstones: tombs));
+    BleLog.log(ProxLogTags.sync,
+        'legacy discovery: ${legacy.length} pre-org cloud sessions merged for stamping');
+    return legacy.length;
+  }
+
+  /// Per-device half of the missingOrg() rules-removal gate: fires once
+  /// when a full online flush leaves zero org-less records locally after
+  /// an unfiltered cloud pull also showed zero. Removal itself is a
+  /// human deploy gated on this signal PLUS the org-wide console check
+  /// (see firestore.rules) — never on judgment alone.
+  Future<void> _maybeSignalBackfillComplete(
+      DeviceStore store, int discoveredLegacy) async {
+    if (discoveredLegacy != 0) return;
+    if (await store.readOrgBackfillComplete()) return;
+    final history = await store.readHistory();
+    if (history.any((r) => r.org.isEmpty)) return;
+    await store.writeOrgBackfillComplete();
+    BleLog.log(ProxLogTags.sync,
+        'org backfill COMPLETE: no org-less records locally or in the last full cloud pull — per-device gate done. Remove missingOrg() ONLY after the org-wide console check (classSessions/studentDevices/studentDirectory/deviceInstalls where org missing) returns zero, then `firebase deploy --only firestore:rules`.');
+  }
   Future<void> _backfillLegacyOrg(
       DeviceStore store, SyncProf prof, DateTime now) async {
     final ownerOrg = prof.org.isNotEmpty ? prof.org : orgOf(prof.email);

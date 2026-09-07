@@ -204,6 +204,15 @@ abstract class DeviceStore {
   Future<List<Map<String, dynamic>>> readTombstones();
   Future<void> writeTombstones(List<Map<String, dynamic>> items);
 
+  /// One-time org-backfill gate (Track 1 grace sunset): true once this
+  /// device completed a full online flush that observed zero org-less
+  /// ('') records in local history AND in an unfiltered cloud pull.
+  /// Per-device half of the `missingOrg()` rules-removal gate — removal
+  /// additionally needs the org-wide console check (see firestore.rules),
+  /// but nothing is removed before this fires.
+  Future<bool> readOrgBackfillComplete();
+  Future<void> writeOrgBackfillComplete();
+
   /// Last synced student attendance (My Attendance cache): the pulled
   /// cloud sessions containing this Gmail, so records stay visible
   /// offline and course renames/attendance pushes converge here on the

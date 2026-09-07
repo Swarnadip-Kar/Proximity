@@ -5,8 +5,12 @@ rules_version = '2';
 // Google-account domain (gmail.com is a normal org; subdomains exact-match).
 // Every doc below stamps `org`; cross-org reads/writes are denied. Legacy
 // docs without org ('') keep a temporary owner-only grace (classSessions
-// reads + stamp-on-update) so the upgrade does not strand data — remove the
-// grace once the backfill lands (see README redeploy note).
+// reads + stamp-on-update) so the upgrade does not strand data — remove
+// the grace ONLY after SyncEngine's backfill-complete signal has fired
+// (one-time persisted flag + SYNC log) AND the org-wide console check
+// (all four collections, where org missing) returns zero. The signal is
+// the gate. The engine's unfiltered legacy-discovery pull exists so
+// untouched cloud legacy cannot strand this grace open forever.
 //
 //   users/{uid}: {email, name, roles[prof|student], displayName, lastMode,
 //     org, updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
@@ -207,7 +211,8 @@ service cloud.firestore {
     match /classSessions/{id} {
       // Org-scoped read: same-org owner OR same-org member, plus a
       // temporary legacy owner-only grace for docs stamped before Track 1
-      // (missing/'' org). Cross-org direct-ID fetches deny (T3).
+      // (missing/'' org). Cross-org direct-ID fetches deny (T3). Grace
+      // removal is gated (backfill signal + console check) — see header.
       allow read: if signedIn() && (
         ((!missingOrg(resource.data) &&
           resource.data.org == tokenOrg()) && (

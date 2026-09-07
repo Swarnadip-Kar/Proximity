@@ -22,6 +22,7 @@ class SecureDeviceStore implements DeviceStore {
   static const _kMode = 'prox.mode.v1';
   static const _kHostName = 'prox.hostname.v1';
   static const _kLastHost = 'prox.lasthost.v1';
+  static const _kOrgBackfill = 'prox.orgBackfill.v1';
   final FlutterSecureStorage _secure;
   SecureDeviceStore({FlutterSecureStorage? secure})
       : _secure = secure ?? const FlutterSecureStorage();
@@ -214,6 +215,18 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> writeLastHost(String hostPort) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kLastHost, hostPort.trim());
+  }
+
+  @override
+  Future<bool> readOrgBackfillComplete() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kOrgBackfill) ?? false;
+  }
+
+  @override
+  Future<void> writeOrgBackfillComplete() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kOrgBackfill, true);
   }
 
   @override

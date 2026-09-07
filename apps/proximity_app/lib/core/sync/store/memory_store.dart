@@ -149,6 +149,15 @@ class InMemoryDeviceStore implements DeviceStore {
   Future<void> writeLastHost(String hostPort) async =>
       lastHost = hostPort.trim();
 
+  bool _orgBackfillComplete = false;
+
+  @override
+  Future<bool> readOrgBackfillComplete() async => _orgBackfillComplete;
+
+  @override
+  Future<void> writeOrgBackfillComplete() async =>
+      _orgBackfillComplete = true;
+
   Map<String, String>? _role;
   final Set<String> _hidden = {};
   String? _installId;

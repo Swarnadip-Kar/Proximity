@@ -240,6 +240,40 @@ void main() {
     expect(cloud.sessions['s1']!['org'], 'univ.edu');
   });
 
+  test('grace gate: remote legacy discovered, stamped, then signal fires',
+      () async {
+    final store = InMemoryDeviceStore();
+    final cloud = FakeCloudSync();
+    final engine = SyncEngine();
+    expect(await store.readOrgBackfillComplete(), isFalse);
+    await store.upsertHistory(rec('old1', 'CS201',
+        '2026-08-01T10:00:00.000Z', '2026-08-01T10:05:00.000Z',
+        org: ''));
+    // Pre-org cloud doc (no 'org' key): the org-filtered pulls hide it,
+    // so only the unfiltered discovery pull can find it.
+    final legacyDoc = sessionToDoc(
+        profUid: 'u1',
+        profEmail: 'p@univ.edu',
+        profName: 'Prof',
+        record: rec('old2', 'CS201', '2026-08-02T10:00:00.000Z',
+            '2026-08-02T10:05:00.000Z',
+            org: ''),
+        profOrg: '');
+    legacyDoc.remove('org');
+    cloud.sessions['old2'] = legacyDoc;
+    // Flush 1: discovery finds old2, both stamp and push — but the gate
+    // must NOT fire on the same flush that saw legacy.
+    var res = await engine.flush(store: store, cloud: cloud, prof: prof);
+    expect(res.online, isTrue);
+    expect((await store.readHistory()).where((r) => r.org.isEmpty), isEmpty);
+    expect(cloud.sessions['old2']!['org'], 'univ.edu');
+    expect(await store.readOrgBackfillComplete(), isFalse);
+    // Flush 2: discovery sees zero legacy, local is clean → gate fires.
+    res = await engine.flush(store: store, cloud: cloud, prof: prof);
+    expect(res.online, isTrue);
+    expect(await store.readOrgBackfillComplete(), isTrue);
+  });
+
   test('backoff schedule 5s -> 1min -> 15min cap with jitter', () {
     final rng = Random(7);
     final first = syncBackoffFor(0, rng: rng);
