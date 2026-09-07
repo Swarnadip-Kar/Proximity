@@ -106,6 +106,10 @@ abstract class StudentDriver {
   Future<void> sendPresence(
       {required ClassBeacon target, required LinkedIdentity identity});
 
+  /// Clock-drift tracker (one sample per verdict; median > 5s banners).
+  /// The UI reads [ClockDriftTracker.banner] for the honest drift note.
+  ClockDriftTracker get clockDrift;
+
   /// Explicit waiting-room leave so the prof's count drops immediately.
   /// Best-effort (never throws).
   Future<void> leaveWaiting(
@@ -172,6 +176,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// Clock-drift tracker: one sample per verdict (signed serverTime vs
   /// local receipt). When the median exceeds 5s the UI banners honestly
   /// instead of verdicting late silently (see [ClockDriftTracker]).
+  @override
   final ClockDriftTracker clockDrift = ClockDriftTracker();
 
   /// Re-entry guard: rapid rejoins must not run two listen loops on the
@@ -857,6 +862,9 @@ class FakeStudentDriver implements StudentDriver {
       {this.ackDetail = 'KQ7 · 10:04:12',
       this.windowOpenProbe = false,
       this.manualStatus = 'pending'});
+
+  @override
+  ClockDriftTracker get clockDrift => ClockDriftTracker();
 
   @override
   Future<FaceCheckResult> checkFace(String imagePath) async =>

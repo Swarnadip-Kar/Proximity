@@ -47,6 +47,7 @@ dependencies:
   google_fonts: ^6.2.1
   # Web records build only (browser download for CSV exports).
   web: ^1.0.0
+  connectivity_plus: ^7.3.1
 
 dev_dependencies:
   flutter_test:

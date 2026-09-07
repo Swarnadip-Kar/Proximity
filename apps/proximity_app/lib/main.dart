@@ -1,5 +1,8 @@
 // Single-app entry: Prof + Student modes in one app (per updated requirement).
 // Mobile devices switch modes; desktop runs Prof mode. Identical security all OS.
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -15,6 +18,7 @@ import 'core/enrollment.dart';
 import 'core/host_driver.dart';
 import 'core/platformx.dart';
 import 'core/student_driver.dart';
+import 'core/sync_hook.dart';
 import 'design/app_theme.dart';
 import 'features/enrollment/enroll_intro.dart';
 import 'features/face_identity/device_key.dart';
@@ -210,11 +214,72 @@ Future<void> main() async {
   );
 }
 
-class ProximityApp extends ConsumerWidget {
+class ProximityApp extends ConsumerStatefulWidget {
   const ProximityApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProximityApp> createState() => _ProximityAppState();
+}
+
+/// App shell: route table (mode-driven home) + Track 4 sync triggers.
+/// The engine owns the flush; this only wakes it: connectivity-return edge
+/// (platform hint, server probe decides), app resume, and the 15min
+/// backstop while the outbox is non-empty.
+class _ProximityAppState extends ConsumerState<ProximityApp>
+    with WidgetsBindingObserver {
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
+
+  Future<SyncProf?> _profOf() => readSyncProf(ref);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    try {
+      final store = ref.read(deviceStoreProvider);
+      final cloud = ref.read(cloudSyncProvider);
+      syncEngine.startBackstop(
+          store: store, cloud: cloud, profOf: _profOf);
+      // Platform hint ONLY (never trusted): a return hint schedules the
+      // ~5s debounced server probe inside the engine; only a real
+      // offline→online edge flushes.
+      _connSub = Connectivity()
+          .onConnectivityChanged
+          .listen((List<ConnectivityResult> results) {
+        final hintOnline =
+            results.any((r) => r != ConnectivityResult.none);
+        try {
+          syncEngine.onConnectivityHint(hintOnline,
+              store: ref.read(deviceStoreProvider),
+              cloud: ref.read(cloudSyncProvider),
+              profOf: _profOf);
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _connSub?.cancel();
+    syncEngine.stopBackstop();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      try {
+        syncEngine.onAppResume(
+            store: ref.read(deviceStoreProvider),
+            cloud: ref.read(cloudSyncProvider),
+            profOf: _profOf);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final mode = ref.watch(appModeProvider);
     return MaterialApp(
       title: 'Proximity',

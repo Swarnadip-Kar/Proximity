@@ -143,51 +143,22 @@ String entryHeldLabel(Map<String, String> role) {
   return parts.join(' + ');
 }
 
-/// First-sign-in professor merge: pull cloud sessions, union with local
-/// history (newer timestamp wins per id), push local-only sessions up.
-/// Best-effort — offline or failures keep local data untouched.
+/// First-sign-in professor merge: SyncEngine flush (outbox pushes +
+/// pull-union converge + legacy org backfill). Best-effort — offline or
+/// failures keep local data untouched.
 Future<void> entryMergeProfCloud(
     WidgetRef ref, String uid, String email, String name,
     {String org = ''}) async {
   final cloud = ref.read(cloudSyncProvider);
   final store = ref.read(deviceStoreProvider);
   if (!cloud.available) return;
-  var online = false;
   try {
-    online = await cloud.isOnline().timeout(const Duration(seconds: 8));
-  } catch (_) {
-    online = false;
-  }
-  if (!online) return;
-  try {
-    final local = await store.readHistory();
-    final remote = await cloud.pullProfSessions(uid, org: org);
-    final merged = mergeHistories(local, remote);
-    await store.writeHistory(merged);
-    final remoteIds = {for (final r in remote) r.id};
-    for (final r in local) {
-      if (!remoteIds.contains(r.id)) {
-        try {
-          await cloud.pushSession(
-              profUid: uid,
-              profEmail: email,
-              profName: name,
-              record: r,
-              profOrg: org);
-        } catch (_) {}
-      }
-    }
-    // Courses referenced by cloud sessions exist locally too.
-    for (final r in merged) {
-      final course = r.courseId.isNotEmpty ? r.courseId : r.classLabel;
-      if (course.isNotEmpty) {
-        try {
-          await store.addCourse(course);
-        } catch (_) {}
-      }
-    }
-    BleLog.log(
-        'STATE', 'entry prof cloud merged (${merged.length} sessions)');
+    final res = await syncEngine.flush(
+        store: store,
+        cloud: cloud,
+        prof: (uid: uid, email: email, name: name, org: org));
+    BleLog.log('STATE',
+        'entry prof cloud merged (${res.pushed} pushed, ${res.remaining} remaining)');
   } catch (_) {}
 }
 

@@ -635,7 +635,7 @@ class SyncEngine {
   void onConnectivityHint(bool hintOnline,
       {required DeviceStore store,
       required CloudSync cloud,
-      SyncProf? prof}) {
+      FutureOr<SyncProf?> Function()? profOf}) {
     _debounce?.cancel();
     if (!hintOnline) {
       _lastOnline = false;
@@ -652,6 +652,10 @@ class SyncEngine {
       if (online && _lastOnline == false) {
         BleLog.log(ProxLogTags.sync,
             'SYNC connectivity returned (hint + server probe) — flushing');
+        SyncProf? prof;
+        try {
+          prof = await profOf?.call();
+        } catch (_) {}
         unawaited(flush(store: store, cloud: cloud, prof: prof));
       }
       _lastOnline = online;
@@ -663,8 +667,21 @@ class SyncEngine {
   void onAppResume(
       {required DeviceStore store,
       required CloudSync cloud,
-      SyncProf? prof}) {
-    unawaited(flush(store: store, cloud: cloud, prof: prof));
+      FutureOr<SyncProf?> Function()? profOf}) {
+    unawaited(_resumeFlush(store: store, cloud: cloud, profOf: profOf));
+  }
+
+  Future<void> _resumeFlush(
+      {required DeviceStore store,
+      required CloudSync cloud,
+      FutureOr<SyncProf?> Function()? profOf}) async {
+    SyncProf? prof;
+    try {
+      prof = await profOf?.call();
+    } catch (_) {}
+    try {
+      await flush(store: store, cloud: cloud, prof: prof);
+    } catch (_) {}
   }
 
   /// 15min backstop while the outbox is non-empty (covers missed edges:
@@ -673,14 +690,18 @@ class SyncEngine {
   void startBackstop(
       {required DeviceStore store,
       required CloudSync cloud,
-      SyncProf? Function()? profOf,
+      FutureOr<SyncProf?> Function()? profOf,
       Duration interval = const Duration(minutes: 15)}) {
     _backstop?.cancel();
     _backstop = Timer.periodic(interval, (_) async {
       try {
         if (await pendingCount(store) > 0) {
           BleLog.log(ProxLogTags.sync, 'SYNC backstop tick — flushing');
-          await flush(store: store, cloud: cloud, prof: profOf?.call());
+          SyncProf? prof;
+          try {
+            prof = await profOf?.call();
+          } catch (_) {}
+          await flush(store: store, cloud: cloud, prof: prof);
         }
       } catch (_) {}
     });

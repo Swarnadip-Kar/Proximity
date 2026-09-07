@@ -22,6 +22,7 @@ import '../core/ble_radio.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
 import '../core/student_driver.dart';
+import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
 import '../features/enrollment/enroll_flow.dart';
@@ -105,6 +106,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // HTTPS still starting). Retried by the heartbeat until they answer or
   // age out — never silently dropped after one miss.
   final Map<String, DateTime> _pendingHints = {};
+  // Broadcast-blocked banner: UDP beacons deliver nothing on isolating
+  // APs while BLE-hinted classes still list (hint+probe rung). True means
+  // the list below is hint-only — never a silent empty state.
+  bool _broadcastBlocked = false;
   // Live-refresh: recompute the merged list every 2s so classes that
   // stopped advertising disappear on their 6s expiry without any tap.
   Timer? _refreshTimer;
@@ -154,6 +159,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     };
     _listener.start(port: ref.read(discoveryPortProvider));
     _loadLastHost();
+    // Discovery assumptions, never silent: logged on every browse entry
+    // (LAN tag) so a dead enterprise AP reads as explained, not empty.
+    for (final line in discoveryAssumptionLines()) {
+      BleLog.log(ProxLogTags.lan, line);
+    }
+    BleLog.log(ProxLogTags.lan, 'ladder ${formatLadderLine(-1)}');
     // BLE IP-hint discovery: scan continuously while browsing; any
     // professor HTTPS hint heard over radio is background-probed and
     // listed when it answers. No verification of the hint itself — the
@@ -459,8 +470,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         lastSeen: v.lastSeen,
         lastAck: _sessionAck[k],
         fails: _sessionFails[k] ?? 0));
+    final beacons = _listener.live();
+    // Broadcast-blocked path (Track 4 §2): zero UDP beacons but BLE-hinted
+    // classes listing = the AP eats broadcasts. Edge-logged once (never
+    // silent, never spammy on the 2s refresh).
+    final blocked = beacons.isEmpty && _hints.isNotEmpty;
+    if (blocked && !_broadcastBlocked) {
+      BleLog.log(ProxLogTags.lan,
+          'broadcast-blocked? 0 UDP beacons but ${_hints.length} BLE-hinted — hint+probe rung');
+    }
+    _broadcastBlocked = blocked;
     final byKey = <String, LiveClass>{};
-    for (final c in _listener.live()) {
+    for (final c in beacons) {
       byKey[c.last.key] = c;
     }
     for (final c in _hints.values) {
@@ -544,6 +565,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _runId++;
       BleLog.log(ProxLogTags.state, 'backgrounded during $phase → paused');
       if (mounted) setState(() => phase = StudentPhase.paused);
+    }
+    // Sync-on-reconnect trigger: a resume may be a reconnect (the app-wide
+    // observer in main.dart also fires — double flushes single-flight, so
+    // this student-side call is belt over suspenders for mark flows).
+    if (state == AppLifecycleState.resumed && mounted) {
+      unawaited(flushNow(ref));
     }
   }
 
@@ -1031,6 +1058,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
   }
 
+  /// Clock-drift banner copy from the live student driver (null when
+  /// clocks agree — Track 4 never-silent rule for late verdicts).
+  String? _driftBanner() {
+    try {
+      return ref.read(studentDriverProvider).clockDrift.banner;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Widget _browsing(
       BuildContext context, LinkedIdentity? linked, String identityLine) {
     return BrowseClassesView(
@@ -1050,6 +1087,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       onJoin: _join,
       joinError: joinError,
       live: _live,
+      broadcastBlocked: _broadcastBlocked,
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final target = ClassBeacon(
@@ -1166,6 +1204,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               ),
             StudentPhase.listening => ProvingView(
                 status: listenStatus,
+                driftBanner: _driftBanner(),
               ),
             StudentPhase.marked => MarkVerdictView(
                 kind: MarkVerdict.marked,

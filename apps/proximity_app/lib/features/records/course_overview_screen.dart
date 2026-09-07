@@ -17,9 +17,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
-import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/sync_hook.dart';
 import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
@@ -29,6 +29,7 @@ import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
 import '../debug/debug_log_screen.dart';
 import 'export_center_screen.dart';
@@ -62,134 +63,22 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     super.dispose();
   }
 
-  /// Signed-in professor identity for cloud ops; null when offline-skipped
-  /// or student (local-only — never touches the cloud).
-  Future<({String uid, String email, String name})?> _profIdentity() async {
-    try {
-      final acct = ref.read(authServiceProvider).current;
-      Map<String, String>? role;
-      try {
-        role = await ref.read(deviceStoreProvider).readRole();
-      } catch (_) {}
-      String hostName = '';
-      try {
-        hostName = await ref.read(deviceStoreProvider).readHostName();
-      } catch (_) {}
-      return profPushIdentity(
-          authEmail: acct?.email,
-          authUid: acct?.uid,
-          authName: acct?.displayName,
-          role: role,
-          hostNameFallback: hostName);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Pull professor sessions and merge into local history (newer timestamp
-  /// wins per id). Runs on page open and after take-attendance returns.
-  /// Offline/failures keep local data and report quietly.
+  /// Pull-merge on open through the SyncEngine (single-flight flush:
+  /// tombstones -> outbox FIFO with union-merge-before-push -> manual
+  /// queue -> pull-union converge). Runs on page open and after
+  /// take-attendance returns. Offline/failures keep local data quietly.
   Future<void> _syncFromCloud() async {
-    final id = await _profIdentity();
-    if (id == null) return;
-    final cloud = ref.read(cloudSyncProvider);
-    if (!cloud.available) return;
     if (mounted) setState(() => _syncing = true);
-    try {
-      var online = false;
-      try {
-        online = await cloud.isOnline().timeout(const Duration(seconds: 8));
-      } catch (_) {
-        online = false;
-      }
-      if (!online) {
-        BleLog.log('SYNC', 'overview ${widget.courseName}: offline');
-        if (mounted) {
-          setState(() {
-            _syncing = false;
-            _syncMsg = 'Offline — showing this device only.';
-          });
-        }
-        return;
-      }
-      final store = ref.read(deviceStoreProvider);
-      final local = await store.readHistory();
-      String myOrg = '';
-      try {
-        final acct = ref.read(authServiceProvider).current;
-        final role = await ref.read(deviceStoreProvider).readRole();
-        myOrg = (acct?.org ?? '').isNotEmpty
-            ? acct!.org
-            : (role?['org'] ?? '');
-      } catch (_) {}
-      final remote = await cloud.pullProfSessions(id.uid, org: myOrg);
-      final merged = mergeHistories(local, remote);
-      await store.writeHistory(merged);
-      // Offline-queued manual adds resolve now (ID → directory → record).
-      // Resolved records already exist in the cloud, so the id-diff push
-      // below would skip them — push them explicitly.
-      var queueNote = '';
-      try {
-        final q = await processPendingAdds(store: store, cloud: cloud);
-        if (q.resolvedIds.isNotEmpty || q.remaining > 0) {
-          final parts = <String>[];
-          if (q.resolvedIds.isNotEmpty) {
-            final n = q.resolvedIds.length;
-            parts.add('Resolved $n queued manual add${n == 1 ? '' : 's'}');
-            final fresh = await store.readHistory();
-            for (final rid in q.resolvedIds) {
-              for (final r in fresh) {
-                if (r.id == rid) {
-                  try {
-                    await cloud.pushSession(
-                        profUid: id.uid,
-                        profEmail: id.email,
-                        profName: id.name,
-                        record: r,
-                        profOrg: myOrg);
-                  } catch (_) {}
-                }
-              }
-            }
-          }
-          if (q.remaining > 0) {
-            parts.add(
-                '${q.remaining} still queued (needs internet or a matching ID)');
-          }
-          queueNote = parts.join('. ');
-        }
-      } catch (_) {}
-      // Push local-only sessions up so other devices see this visit.
-      final remoteIds = {for (final r in remote) r.id};
-      for (final r in local) {
-        if (!remoteIds.contains(r.id)) {
-          try {
-            await cloud.pushSession(
-                profUid: id.uid,
-                profEmail: id.email,
-                profName: id.name,
-                record: r,
-                profOrg: myOrg);
-          } catch (_) {}
-        }
-      }
-      BleLog.log('SYNC',
-          'overview ${widget.courseName}: merged ${merged.length}.${queueNote.isEmpty ? '' : ' $queueNote'}');
-      if (mounted) {
-        setState(() {
-          _syncing = false;
-          _syncMsg =
-              'Synced with cloud.${queueNote.isEmpty ? '' : ' $queueNote'}';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _syncing = false;
-          _syncMsg = 'Sync failed — showing this device only.';
-        });
-      }
-    }
+    final res = await flushNow(ref);
+    if (!mounted) return;
+    setState(() {
+      _syncing = false;
+      _syncMsg = !res.online
+          ? 'Offline — showing this device only.'
+          : res.remaining > 0
+              ? 'Synced with cloud (${res.remaining} still pending).'
+              : 'Synced with cloud.';
+    });
   }
 
   Future<void> _rename() async {
@@ -218,16 +107,15 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     if (picked == null || picked.isEmpty || picked == widget.courseName) {
       return;
     }
-    final ok = await ref
-        .read(deviceStoreProvider)
-        .renameCourse(widget.courseName, picked);
+    final ok = await syncEngine.renameCourseLocal(
+        ref.read(deviceStoreProvider), widget.courseName, picked);
     if (!mounted) return;
     if (ok) {
-      // Renaming migrates local history AND the cloud copies (same prof):
-      // other devices pull the new name on next sync instead of keeping
-      // two course spellings.
+      // Renaming migrates local history AND re-queues every touched record:
+      // the same doc ids push with the new courseId on flush (no separate
+      // cloud rename batch — union merge converges other devices).
       BleLog.log('SYNC', 'overview: renamed ${widget.courseName} → $picked');
-      unawaited(_renameCloud(widget.courseName, picked));
+      unawaited(flushNow(ref));
       Navigator.of(context).pop(); // back to the refreshed course list
     } else {
       setState(() => _notice = 'Name unchanged — empty or already used.');
@@ -242,19 +130,6 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
         .toList()
       ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
     return out;
-  }
-
-  /// Best-effort cloud rename (professors, online). Local rename already
-  /// succeeded; a cloud failure only delays other devices seeing the name.
-  Future<void> _renameCloud(String oldName, String newName) async {
-    try {
-      final id = await _profIdentity();
-      if (id == null) return;
-      final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available || !(await cloud.isOnline())) return;
-      await cloud.renameCourseCloud(
-          profUid: id.uid, oldName: oldName, newName: newName);
-    } catch (_) {}
   }
 
   Future<void> _takeAttendance({bool autoStart = false}) async {
@@ -304,10 +179,17 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
       ),
     );
     if (confirm != true || !mounted) return;
-    await ref.read(deviceStoreProvider).deleteCourse(widget.courseName);
+    final repo = ref.read(deviceStoreProvider);
+    final courseIds = sessions.map((s) => s.id).toList();
+    // Tombstone first (durable delete for the cloud), then the catalog
+    // entry — the sessions are already gone by then.
+    await syncEngine.deleteSessionsLocal(repo, courseIds,
+        courseOf: (_) => widget.courseName);
+    await repo.deleteCourse(widget.courseName);
     BleLog.log('SYNC',
         'overview: deleted course ${widget.courseName} (${stats.students}/${stats.sessions})');
-    unawaited(_deleteCloud(sessions.map((s) => s.id).toList()));
+    // Tombstones propagate on flush (other devices drop them on next sync).
+    unawaited(flushNow(ref));
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -335,27 +217,18 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     );
     if (confirm != true || !mounted) return;
     final ids = sel.map((s) => s.id).toList();
-    await ref.read(deviceStoreProvider).deleteSessions(ids);
+    await syncEngine.deleteSessionsLocal(ref.read(deviceStoreProvider), ids,
+        courseOf: (_) => widget.courseName);
     BleLog.log('SYNC',
         'overview: deleted ${ids.length} sessions (${stats.students} students)');
-    // Deletes propagate to the cloud (other devices drop them on next sync).
-    unawaited(_deleteCloud(ids));
+    // Tombstones propagate on flush (other devices drop them on next sync).
+    unawaited(flushNow(ref));
     if (mounted) {
       setState(() {
         _selected.clear();
         _notice = null;
       });
     }
-  }
-
-  Future<void> _deleteCloud(List<String> ids) async {
-    try {
-      final id = await _profIdentity();
-      if (id == null) return;
-      final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available || !(await cloud.isOnline())) return;
-      await cloud.deleteSessionsCloud(profUid: id.uid, ids: ids);
-    } catch (_) {}
   }
 
   /// Tight title: short weekday + day/month, time when known
@@ -429,6 +302,10 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
                 const ProxLoadingRow(label: 'Syncing with cloud…')
               else if (_syncMsg != null)
                 ProxSyncNote(_syncMsg!),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: UnsyncedBadge(),
+              ),
               const SizedBox(height: 8),
               // No hosting on web records builds (no BLE/HTTPS there).
               if (!kIsWeb)

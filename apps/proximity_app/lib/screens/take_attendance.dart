@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+import 'package:proximity_transport/transport.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/auth.dart';
@@ -29,6 +30,7 @@ import '../core/ble_radio.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/host_driver.dart';
+import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
 import '../features/live/direct_add.dart';
@@ -40,6 +42,7 @@ import '../features/live/manual_inbox.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/clock.dart';
+import '../widgets/ladder_line.dart';
 
 // Recovery policy lives in the draft-recovery section; re-exported here
 // so existing imports (and tests) keep resolving it from this screen.
@@ -178,6 +181,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _ip = session.hostIp;
       serverLine = session.addressLine;
     });
+    // Discovery assumptions, never silent: logged on every hosting start
+    // (LAN tag) so a dead enterprise AP reads as explained, not empty.
+    for (final line in discoveryAssumptionLines()) {
+      BleLog.log(ProxLogTags.lan, line);
+    }
+    BleLog.log(ProxLogTags.lan, 'ladder ${formatLadderLine(-1)}');
     await _restoreDraft();
     if (!mounted) return;
     _idlePoll?.cancel();
@@ -619,8 +628,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// this visit's stable record id: every round rewrites the SAME record,
   /// so un-closed sessions still leave data and later rounds update it.
   /// Skipped while nothing is marked (no empty records in history).
-  /// When a signed-in professor is online, the same record pushes to the
-  /// cloud (fire-and-forget — local data never waits on it).
+  /// The SyncEngine post-live-save hook durably queues + best-effort
+  /// pushes (professors, online) — local data never waits on it.
   Future<void> _saveSnapshot([String? dateIso]) async {
     if (tally.size == 0) return;
     ClassRecord? record;
@@ -644,63 +653,20 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         id: _recordId,
         org: _recordOrg ?? '',
       );
-      await ref.read(deviceStoreProvider).upsertHistory(record);
-      BleLog.log(ProxLogTags.sync,
-          'snapshot upserted ${record.id} (${tally.confirmedCount} present)');
     } catch (_) {
       // History is best-effort; live tally + draft autosave are unaffected.
       return;
     }
     final rec = record;
-    unawaited(_pushSnapshot(rec));
-  }
-
-  /// Best-effort cloud push for one snapshot (professors only, online only).
-  Future<void> _pushSnapshot(ClassRecord record) async {
+    final prof = await readSyncProf(ref);
+    if (!mounted) return;
     try {
+      final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available) return;
-      final acct = ref.read(authServiceProvider).current;
-      Map<String, String>? role;
-      try {
-        role = await ref.read(deviceStoreProvider).readRole();
-      } catch (_) {}
-      String hostName = '';
-      try {
-        hostName = await ref.read(deviceStoreProvider).readHostName();
-      } catch (_) {}
-      final id = profPushIdentity(
-          authEmail: acct?.email,
-          authUid: acct?.uid,
-          authName: acct?.displayName,
-          role: role,
-          hostNameFallback: hostName);
-      if (id == null) return; // offline-skipped prof or student: local only
-      final profOrg = (acct?.org ?? '').isNotEmpty
-          ? acct!.org
-          : (role?['org'] ?? '');
-      // Stamp the session org once at creation; later pushes keep it.
-      final stamped = record.org.isNotEmpty || profOrg.isEmpty
-          ? record
-          : ClassRecord(
-              id: record.id,
-              courseId: record.courseId,
-              classLabel: record.classLabel,
-              dateIso: record.dateIso,
-              timestampIso: record.timestampIso,
-              startIso: record.startIso,
-              windows: record.windows,
-              names: record.names,
-              rolls: record.rolls,
-              org: profOrg);
-      await cloud
-          .pushSession(
-              profUid: id.uid,
-              profEmail: id.email,
-              profName: id.name,
-              record: stamped,
-              profOrg: profOrg)
-          .timeout(const Duration(seconds: 10));
+      BleLog.log(ProxLogTags.sync,
+          'snapshot upserted ${rec.id} (${tally.confirmedCount} present)');
+      await syncEngine.noteLocalSave(
+          store: store, cloud: cloud, prof: prof, record: rec);
     } catch (_) {}
   }
 
@@ -791,6 +757,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             const ClockHeader(),
+            if (!live) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Both devices must reach each other directly over this WiFi — marking is device-to-device, internet is not used in class.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const LadderLine(),
+            ],
             LiveSetupSection(
               hosting: hosting,
               live: live,

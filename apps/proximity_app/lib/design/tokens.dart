@@ -233,6 +233,7 @@ abstract final class ProxLogTags {
   static const transport = 'TRANSPORT';
   static const crypto = 'CRYPTO';
   static const session = 'SESSION';
+  static const clock = 'CLOCK';
 
   /// Every tag the log views offer as a filter chip, in display order.
   static const all = <String>[
@@ -247,7 +248,8 @@ abstract final class ProxLogTags {
     net,
     transport,
     crypto,
-    session
+    session,
+    clock
   ];
 }
 
@@ -270,6 +272,7 @@ abstract final class ProxLogColors {
         ProxLogTags.transport => const Color(0xFF818CF8),
         ProxLogTags.crypto => const Color(0xFFE879F9),
         ProxLogTags.session => const Color(0xFFA3E635),
+        ProxLogTags.clock => const Color(0xFFFDE68A),
         _ => const Color(0xFFE5E7EB),
       };
 }

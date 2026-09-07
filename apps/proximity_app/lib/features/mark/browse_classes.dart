@@ -14,6 +14,7 @@ import 'package:proximity_transport/transport.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
 import '../../widgets/clock.dart';
+import '../../widgets/ladder_line.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
@@ -32,6 +33,9 @@ class BrowseClassesView extends StatelessWidget {
   final VoidCallback onEnroll;
   final VoidCallback onViewRecords;
   final Future<void> Function() onRefresh;
+  /// Track 4 §2: true when UDP beacons deliver nothing but BLE-hinted
+  /// classes list (isolating AP) — the list below is hint-only, said aloud.
+  final bool broadcastBlocked;
 
   const BrowseClassesView({
     super.key,
@@ -47,6 +51,7 @@ class BrowseClassesView extends StatelessWidget {
     required this.onEnroll,
     required this.onViewRecords,
     required this.onRefresh,
+    this.broadcastBlocked = false,
   });
 
   @override
@@ -103,6 +108,16 @@ class BrowseClassesView extends StatelessWidget {
               padding: EdgeInsets.zero,
             ),
           ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
+            child: LadderLine(),
+          ),
+          if (broadcastBlocked)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Text(
+                  'Classroom WiFi blocks discovery broadcasts — showing BLE-hinted classes only (hint+probe rung). Stay on the classroom WiFi.'),
+            ),
           if (live.isEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 4, 16, 0),

@@ -12,9 +12,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
-import '../../core/auth.dart';
-import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
@@ -22,6 +21,7 @@ import '../../widgets/clock.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
 import '../debug/debug_log_screen.dart';
 import 'course_overview_screen.dart';
@@ -57,58 +57,19 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
     super.dispose();
   }
 
-  /// Pull-merge on open (first sign-in brings other devices' sessions here;
-  /// later opens converge; newer timestampIso wins per id). Offline keeps
-  /// local data quietly.
+  /// Pull-merge on open through the SyncEngine (single-flight flush:
+  /// outbox pushes + pull-union converge). Offline keeps local data
+  /// quietly; the unsynced badge shows what is still queued.
   Future<void> _syncFromCloud() async {
-    try {
-      final acct = ref.read(authServiceProvider).current;
-      Map<String, String>? role;
-      try {
-        role = await ref.read(deviceStoreProvider).readRole();
-      } catch (_) {}
-      String hostName = '';
-      try {
-        hostName = await ref.read(deviceStoreProvider).readHostName();
-      } catch (_) {}
-      final id = profPushIdentity(
-          authEmail: acct?.email,
-          authUid: acct?.uid,
-          authName: acct?.displayName,
-          role: role,
-          hostNameFallback: hostName);
-      if (id == null) return;
-      final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available) return;
-      var online = false;
-      try {
-        online = await cloud.isOnline().timeout(const Duration(seconds: 8));
-      } catch (_) {}
-      if (!online) {
-        BleLog.log('SYNC', 'courses: offline — this device only');
-        if (mounted) setState(() => _syncMsg = 'Offline — this device only.');
-        return;
-      }
-      final store = ref.read(deviceStoreProvider);
-      final local = await store.readHistory();
-      final myOrg = (acct?.org ?? '').isNotEmpty
-          ? acct!.org
-          : (role?['org'] ?? '');
-      final remote = await cloud.pullProfSessions(id.uid, org: myOrg);
-      final merged = mergeHistories(local, remote);
-      await store.writeHistory(merged);
-      for (final r in merged) {
-        final course = r.courseId.isNotEmpty ? r.courseId : r.classLabel;
-        if (course.isNotEmpty) {
-          try {
-            await store.addCourse(course);
-          } catch (_) {}
-        }
-      }
-      BleLog.log(
-          'SYNC', 'courses: merged ${local.length}+${remote.length} → ${merged.length}');
-      if (mounted) setState(() => _syncMsg = 'Synced with cloud.');
-    } catch (_) {}
+    final res = await flushNow(ref);
+    if (!mounted) return;
+    if (!res.online) {
+      setState(() => _syncMsg = 'Offline — this device only.');
+      return;
+    }
+    setState(() => _syncMsg = res.remaining > 0
+        ? 'Synced with cloud (${res.remaining} still pending).'
+        : 'Synced with cloud.');
   }
 
   Future<void> _register() async {
@@ -220,6 +181,10 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                 const ClockHeader(),
                 const WebRecordsBanner(),
                 if (_syncMsg != null) ProxSyncNote(_syncMsg!),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: UnsyncedBadge(),
+                ),
                 if (linked != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),

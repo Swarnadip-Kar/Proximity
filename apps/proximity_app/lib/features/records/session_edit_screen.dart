@@ -15,9 +15,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
-import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/manual_add.dart';
@@ -172,61 +172,37 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
   }
 
   Future<void> _save() async {
+    // Edits stamp a fresh timestampIso (monotonic): the edited row must win
+    // field conflicts on union merge instead of losing to its own older
+    // cloud copy.
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final stampIso =
+        nowIso.compareTo(widget.record.timestampIso) > 0 ? nowIso : widget.record.timestampIso;
     final record = ClassRecord(
       id: widget.record.id,
       courseId: widget.record.courseId,
       classLabel: widget.record.classLabel,
       dateIso: widget.record.dateIso,
-      timestampIso: widget.record.timestampIso,
+      timestampIso: stampIso,
       startIso: widget.record.startIso,
       windows: _windows,
       names: _names,
       rolls: _rolls,
       org: widget.record.org,
     );
+    // Durable local save + outbox enqueue with a best-effort flush
+    // (SyncEngine owns the push; offline just queues).
+    final prof = await readSyncProf(ref);
+    if (!mounted) return;
     try {
-      await ref.read(deviceStoreProvider).upsertHistory(record);
+      final store = ref.read(deviceStoreProvider);
+      final cloud = ref.read(cloudSyncProvider);
+      await syncEngine.noteLocalSave(
+          store: store, cloud: cloud, prof: prof, record: record);
     } catch (_) {}
     BleLog.log('SYNC', 'edit: saved session ${record.dateIso}');
-    unawaited(_pushRecord(record));
     if (!mounted) return;
     Navigator.of(context).pop(true);
-  }
-
-  /// Best-effort cloud push for the edited record (professors, online).
-  Future<void> _pushRecord(ClassRecord record) async {
-    try {
-      final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available) return;
-      final acct = ref.read(authServiceProvider).current;
-      Map<String, String>? role;
-      try {
-        role = await ref.read(deviceStoreProvider).readRole();
-      } catch (_) {}
-      String hostName = '';
-      try {
-        hostName = await ref.read(deviceStoreProvider).readHostName();
-      } catch (_) {}
-      final id = profPushIdentity(
-          authEmail: acct?.email,
-          authUid: acct?.uid,
-          authName: acct?.displayName,
-          role: role,
-          hostNameFallback: hostName);
-      if (id == null) return;
-      final profOrg = (acct?.org ?? '').isNotEmpty
-          ? acct!.org
-          : (role?['org'] ?? '');
-      await cloud
-          .pushSession(
-              profUid: id.uid,
-              profEmail: id.email,
-              profName: id.name,
-              record: record,
-              profOrg: profOrg)
-          .timeout(const Duration(seconds: 10));
-      BleLog.log('SYNC', 'edit: pushed session ${record.dateIso}');
-    } catch (_) {}
   }
 
   void _openLog() {

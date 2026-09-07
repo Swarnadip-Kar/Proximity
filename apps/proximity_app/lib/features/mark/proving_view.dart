@@ -11,10 +11,14 @@ import '../../widgets/prox_states.dart';
 
 class ProvingView extends StatelessWidget {
   final String status;
+  /// Clock-drift banner copy from the student driver's tracker (null when
+  /// clocks agree): shown honestly instead of verdicting late silently.
+  final String? driftBanner;
 
   const ProvingView({
     super.key,
     required this.status,
+    this.driftBanner,
   });
 
   @override
@@ -33,6 +37,14 @@ class ProvingView extends StatelessWidget {
                 key: ValueKey<String>(status),
               ),
             ),
+            if (driftBanner != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                driftBanner!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
           ],
         ),
       ),

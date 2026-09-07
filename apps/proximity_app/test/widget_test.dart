@@ -442,6 +442,14 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpWidget(testScope(mode: AppMode.student));
     await t.pumpAndSettle();
     // Paused copy exists in source (background contract); smoke-check browsing.
+    // The note sits at the bottom of the scrollable browse list (below the
+    // degradation-ladder status), so scroll it into the cache extent first.
+    await t.dragUntilVisible(
+      find.textContaining('foreground'),
+      find.byType(ListView),
+      const Offset(0, -300),
+    );
+    await t.pumpAndSettle();
     expect(find.textContaining('foreground'), findsOneWidget);
   });
 
