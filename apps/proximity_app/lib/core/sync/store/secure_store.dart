@@ -27,6 +27,10 @@ class SecureDeviceStore implements DeviceStore {
   SecureDeviceStore({FlutterSecureStorage? secure})
       : _secure = secure ?? const FlutterSecureStorage();
 
+  /// Single SharedPreferences acquisition point (Track 6: was 34 inline
+  /// `getInstance()` copies — one helper, same instance semantics).
+  Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
+
   @override
   Future<StoredEnrollment?> readEnrollment() async {
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
@@ -55,7 +59,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<List<ClassRecord>> readHistory() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kHistory);
     if (raw == null) return [];
     try {
@@ -70,7 +74,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> appendHistory(ClassRecord record) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final cur = await readHistory();
     cur.add(record);
     await prefs.setString(
@@ -79,7 +83,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<List<String>> readCatalog() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getStringList(_kCatalog) ?? const [];
   }
 
@@ -87,7 +91,7 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> addClass(String label) async {
     final clean = label.trim();
     if (clean.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final cur = await readCatalog();
     if (!cur.contains(clean)) {
       await prefs.setStringList(_kCatalog, [...cur, clean]);
@@ -96,7 +100,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<List<Course>> readCourses() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kCourses);
     if (raw == null) {
       // Migrate legacy name catalog.
@@ -119,7 +123,7 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> addCourse(String name) async {
     final clean = name.trim();
     if (clean.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final cur = await readCourses();
     if (cur.any((c) => c.name == clean)) return;
     cur.add(Course(name: clean, createdAt: todayIso()));
@@ -132,7 +136,7 @@ class SecureDeviceStore implements DeviceStore {
   Future<bool> renameCourse(String oldName, String newName) async {
     final clean = newName.trim();
     if (clean.isEmpty || clean == oldName) return false;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final courses = await readCourses();
     if (courses.any((c) => c.name == clean)) return false;
     final idx = courses.indexWhere((c) => c.name == oldName);
@@ -179,13 +183,13 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<String?> readMode() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getString(_kMode);
   }
 
   @override
   Future<void> writeMode(String? mode) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     if (mode == null) {
       await prefs.remove(_kMode);
     } else {
@@ -195,37 +199,37 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<String> readHostName() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getString(_kHostName) ?? '';
   }
 
   @override
   Future<void> writeHostName(String name) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kHostName, name.trim());
   }
 
   @override
   Future<String?> readLastHost() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getString(_kLastHost);
   }
 
   @override
   Future<void> writeLastHost(String hostPort) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kLastHost, hostPort.trim());
   }
 
   @override
   Future<bool> readOrgBackfillComplete() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getBool(_kOrgBackfill) ?? false;
   }
 
   @override
   Future<void> writeOrgBackfillComplete() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setBool(_kOrgBackfill, true);
   }
 
@@ -246,7 +250,7 @@ class SecureDeviceStore implements DeviceStore {
     var coursesRemoved = 0;
     if (ci >= 0) {
       courses.removeAt(ci);
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _prefs();
       await prefs.setString(
           _kCourses, jsonEncode(courses.map((e) => e.toJson()).toList()));
       coursesRemoved = 1;
@@ -255,7 +259,7 @@ class SecureDeviceStore implements DeviceStore {
     final keep = history.where((r) => !recordInCourse(r, name)).toList();
     final sessionsRemoved = history.length - keep.length;
     if (sessionsRemoved > 0) await writeHistory(keep);
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final catalog = await readCatalog();
     if (catalog.contains(name)) {
       await prefs.setStringList(
@@ -266,7 +270,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeHistory(List<ClassRecord> records) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(
         _kHistory, jsonEncode(records.map((e) => e.toJson()).toList()));
   }
@@ -286,7 +290,7 @@ class SecureDeviceStore implements DeviceStore {
   static const _kSessions = 'prox.sessions.v1';
 
   Future<Map<String, dynamic>> _readSessions() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kSessions);
     if (raw == null) return {};
     try {
@@ -305,7 +309,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeSession(String course, Map<String, dynamic> draft) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final all = await _readSessions();
     all[course] = draft;
     await prefs.setString(_kSessions, jsonEncode(all));
@@ -313,7 +317,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> clearSession(String course) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final all = await _readSessions();
     if (all.remove(course) != null) {
       await prefs.setString(_kSessions, jsonEncode(all));
@@ -327,7 +331,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<Map<String, String>?> readRole() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kRole);
     if (raw == null) return null;
     try {
@@ -340,13 +344,13 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeRole(Map<String, String> role) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kRole, jsonEncode(role));
   }
 
   @override
   Future<void> clearRole() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.remove(_kRole);
   }
 
@@ -365,13 +369,13 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<Set<String>> readHiddenSessions() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     return prefs.getStringList(_kHidden)?.toSet() ?? {};
   }
 
   @override
   Future<void> hideSession(String id) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final cur = prefs.getStringList(_kHidden)?.toSet() ?? <String>{};
     cur.add(id);
     await prefs.setStringList(_kHidden, cur.toList());
@@ -379,7 +383,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> unhideSession(String id) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final cur = prefs.getStringList(_kHidden)?.toSet() ?? <String>{};
     cur.remove(id);
     await prefs.setStringList(_kHidden, cur.toList());
@@ -391,7 +395,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<List<Map<String, dynamic>>> readPendingAdds() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kPendingAdds);
     if (raw == null) return [];
     try {
@@ -406,12 +410,12 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writePendingAdds(List<Map<String, dynamic>> items) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kPendingAdds, jsonEncode(items));
   }
 
   Future<List<Map<String, dynamic>>> _readJsonList(String key) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(key);
     if (raw == null) return [];
     try {
@@ -431,7 +435,7 @@ class SecureDeviceStore implements DeviceStore {
   @override
   Future<void> writePendingSessions(
       List<Map<String, dynamic>> items) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kPendingSessions, jsonEncode(items));
   }
 
@@ -441,13 +445,13 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeTombstones(List<Map<String, dynamic>> items) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kTombstones, jsonEncode(items));
   }
 
   @override
   Future<List<ClassRecord>> readStudentSessions() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     final raw = prefs.getString(_kStudentSessions);
     if (raw == null) return [];
     try {
@@ -462,7 +466,7 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeStudentSessions(List<ClassRecord> records) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs();
     await prefs.setString(_kStudentSessions,
         jsonEncode(records.map((e) => e.toJson()).toList()));
   }
