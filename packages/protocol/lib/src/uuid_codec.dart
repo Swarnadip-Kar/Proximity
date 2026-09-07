@@ -9,6 +9,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'air/ipv4.dart';
 import 'bytes.dart';
 import 'constants.dart';
 
@@ -59,14 +60,10 @@ class UuidCodec {
   /// it verbatim. Returns null when host/port unusable.
   static String? packIpHint(String host, int port) {
     if (port < 1 || port > 65535) return null;
-    final parts = host.trim().split('.');
-    if (parts.length != 4) return null;
+    final ip = parseIpv4(host);
+    if (ip == null) return null;
     final lo = Uint8List(8);
-    for (var i = 0; i < 4; i++) {
-      final n = int.tryParse(parts[i]);
-      if (n == null || n < 0 || n > 255) return null;
-      lo[i] = n;
-    }
+    lo.setRange(0, 4, ip);
     if (lo[0] == 0 || lo[0] == 127) return null;
     lo[4] = (port >> 8) & 0xFF;
     lo[5] = port & 0xFF;

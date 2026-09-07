@@ -128,108 +128,45 @@ final btPowerProvider = Provider<Future<BtState> Function()>((ref) {
 });
 
 /// Maps platform scan results to air sightings (v2 and legacy v1).
-class AirParser {
+///
+/// Thin adapter over the pure protocol [AirParser]: converts the platform
+/// [BleDevice] to an [AirScan] record, delegates parsing, and maps the
+/// pure [AirSighting] to [BleSighting]. All parse semantics plus the three
+/// probe log lines live in `package:proximity_protocol` (pure-Dart,
+/// covered by protocol tests); the logs flow verbatim via [BleLog.log].
+class AirParserAdapter {
+  final AirParser _parser = AirParser();
+
   BleSighting? map(BleDevice d) {
-    final now = DateTime.now().toUtc();
-    // --- v2 path: FCD2 service + 18B payload in manufacturer data
-    // (company FFFF) or service data under the air UUID.
-    var hasAirSvc = false;
-    for (final s in d.services) {
-      if (UuidCodec.normalize(s) == UuidCodec.normalize(kAirSvc)) {
-        hasAirSvc = true;
-        break;
-      }
-    }
-    if (hasAirSvc) {
-      final candidates = <Uint8List>[];
-      for (final m in d.manufacturerDataList) {
-        if (m.companyId != kAirCompanyId) continue;
-        candidates.add(m.payload);
-      }
-      for (final e in d.serviceData.entries) {
-        final k = UuidCodec.normalize(e.key);
-        if (k == UuidCodec.normalize(kAirSvc) || k == 'fcd2') {
-          candidates.add(e.value);
-        }
-      }
-      for (final c in candidates) {
-        final pdu = unpackAir(c);
-        if (pdu == null) {
-          BleLog.log('BLE', 'air unparseable payload len=${c.length}');
-          continue;
-        }
-        return BleSighting(
-          type: pdu.type,
-          token8: pdu.token8,
-          ipHost: pdu.host,
-          ipPort: pdu.port,
-          rssiDbm: d.rssi ?? -127,
-          at: now,
-        );
-      }
-      BleLog.log('BLE', 'air FCD2 without v2 payload');
-      return null;
-    }
-    // Split-packet probe (Samsung extended-scan may deliver ADV and
-    // scan-response in separate callbacks): a FFFF manufacturer payload
-    // arriving WITHOUT the FCD2 service belongs to the other half. Logged
-    // (not parsed) so live tests can tell displacement apart from split —
-    // a merge cache only helps the latter.
-    for (final m in d.manufacturerDataList) {
-      if (m.companyId == kAirCompanyId) {
-        BleLog.log('BLE',
-            'air mfg FFFF without FCD2 svc len=${m.payload.length} rssi=${d.rssi}');
-        break;
-      }
-    }
-    // --- legacy v1 path (Apple-TX compatible): rotating 128-bit UUIDs —
-    // challenge (token in low 8 bytes), response, or server-address hint
-    // (IP-hint ticks alternate with challenge ticks so Apple-originated
-    // classes publish their HTTPS address through the mesh).
-    for (final s in d.services) {
-      final u = UuidCodec.normalize(s);
-      if (UuidCodec.isChallengeUuid(u)) {
-        return BleSighting(
-          type: kAirTypeChallenge,
-          token8: Uint8List.fromList(UuidCodec.lo8Of(s)),
-          legacy: true,
-          legacyUuid: u,
-          rssiDbm: d.rssi ?? -127,
-          at: now,
-        );
-      }
-      if (UuidCodec.isResponseUuid(u)) {
-        return BleSighting(
-          type: kAirTypeResponse,
-          token8: Uint8List.fromList(UuidCodec.lo8Of(s)),
-          legacy: true,
-          legacyUuid: u,
-          rssiDbm: d.rssi ?? -127,
-          at: now,
-        );
-      }
-      if (UuidCodec.isIpHintUuid(u)) {
-        final ip = UuidCodec.unpackIpHint(s);
-        if (ip == null) continue;
-        return BleSighting(
-          type: kAirTypeIpHint,
-          token8: Uint8List(8),
-          ipHost: ip.host,
-          ipPort: ip.port,
-          legacy: true,
-          legacyUuid: u,
-          rssiDbm: d.rssi ?? -127,
-          at: now,
-        );
-      }
-    }
-    return null;
+    final hit = _parser.map(
+      AirScan(
+        services: List<String>.of(d.services),
+        manufacturerData: [
+          for (final m in d.manufacturerDataList)
+            AirMfg(m.companyId, m.payload),
+        ],
+        serviceData: Map<String, Uint8List>.of(d.serviceData),
+        rssi: d.rssi,
+      ),
+      log: BleLog.log,
+    );
+    if (hit == null) return null;
+    return BleSighting(
+      type: hit.type,
+      token8: hit.token8,
+      ipHost: hit.ipHost,
+      ipPort: hit.ipPort,
+      legacy: hit.legacy,
+      legacyUuid: hit.legacyUuid,
+      rssiDbm: hit.rssiDbm,
+      at: hit.at,
+    );
   }
 }
 
 class UniversalBleRadio implements BlePlatformDelegate {
   void Function(BleSighting)? _onSight;
-  final AirParser _parser = AirParser();
+  final AirParserAdapter _parser = AirParserAdapter();
   @override
   String get platformName => 'universal_ble';
 

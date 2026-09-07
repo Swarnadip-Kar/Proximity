@@ -20,6 +20,8 @@ library;
 
 import 'dart:typed_data';
 
+import 'air/ipv4.dart';
+
 /// Fixed 16-bit air service UUID (development ID — request a SIG member
 /// ID before production). Full form for stack APIs:
 /// 0000fcd2-0000-1000-8000-00805f9b34fb.
@@ -63,18 +65,6 @@ class AirPdu {
       b.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
 }
 
-List<int>? _ipv4Bytes(String host) {
-  final parts = host.trim().split('.');
-  if (parts.length != 4) return null;
-  final out = <int>[];
-  for (final p in parts) {
-    final n = int.tryParse(p);
-    if (n == null || n < 0 || n > 255) return null;
-    out.add(n);
-  }
-  return out;
-}
-
 /// Packs an air manufacturer payload, or null when host/port unusable.
 Uint8List? packAir({
   required int type,
@@ -85,7 +75,7 @@ Uint8List? packAir({
   if (type != kAirTypeChallenge && type != kAirTypeResponse) return null;
   if (token8.length != 8) return null;
   if (port < 1 || port > 65535) return null;
-  final ip = _ipv4Bytes(host);
+  final ip = parseIpv4(host);
   if (ip == null || host.startsWith('127.')) return null;
   final out = Uint8List(kAirPayloadLen);
   out[0] = 0x50; // 'P'
