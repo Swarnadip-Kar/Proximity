@@ -25,8 +25,10 @@
 // this file holds the pure tier/anomaly decisions beside
 // evaluateStudentClaim (claim.dart forwards here), plus the canonical
 // attestation-challenge helper. Firestore X.509 caveat accepted (client
-// verify + offline re-verify + post-hoc flag; Cloud Function verifier =
-// deferred — see residual risks in the Track 2+3 report).
+// verify + offline re-verify + post-hoc flag; the server re-verifier has
+// LANDED since — functions/verifyAttestationChain, see
+// PROXIMITY_DESIGN.md §3.4 — so this caveat now covers only the
+// live/offline path, which stays server-free by design).
 library;
 
 import 'dart:convert';

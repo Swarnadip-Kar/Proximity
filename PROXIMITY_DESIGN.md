@@ -112,6 +112,67 @@ stays source of truth), not key distribution.
   binding (`tlsFp` + `sigBind` over the presented cert) verified
   server-side. No external CA needed.
 
+### 3.4 Server attestation re-verification (as built)
+
+Narrow amendment, stated explicitly: the project is serverless-direct
+Firestore everywhere EXCEPT this one endpoint —
+`verifyAttestationChain`, a single callable Cloud Function
+(`apps/proximity_app/functions/`, project `proximity-attendence`,
+region `us-central1`). It independently re-verifies the calling
+device's STORED attestation material (`studentDevices/{email} /
+attestMaterialJson`) — Android Key Attestation chain against baked
+Google roots (signature walk, root pin, validity at enrollment,
+`attestationChallenge` binding, StrongBox/TEE level mapping, leaf-key ==
+bound DKey, `attestationApplicationId` package binding) and iOS App
+Attest objects (x5c chain, RP ID hash, flags, zero counter, keyId and
+`SHA256(authData || SHA256(challenge))` nonce binding, receipt
+presence) — and admin-writes ONLY `{attestationAnomaly,
+serverVerifiedAtMillis, serverVerifyReason}` on that same doc. This is
+not a general reopening: nothing else gets a server, the live/offline
+marking path never calls it (it couldn't — there is no connectivity
+there), and attendance already recorded under valid offline trust is
+NEVER retroactively invalidated (a negative verdict flags the
+device/install for professor/admin review instead; success clears the
+flag; both stamp `serverVerifiedAtMillis`). Why Functions v1 callable
+and not Cloud Run: the job is Auth-context admin writes, which a
+callable provides with zero token plumbing; the v1 URL is stable so the
+client invokes it over plain HTTPS without the `cloud_functions`
+plugin (no Windows/Linux build — the app compiles for both). Volume is
+~1 call per device per attestation window.
+
+Client trigger (SyncEngine flush only, heartbeat path): after the online
+probe, the engine fetches the local binding and calls the endpoint ONLY
+when the verdict is unknown (`serverVerifiedAtMillis == 0`) or the
+attestation window is near/past (`attestedUntil` within 30d) — never
+per flush, never on flag state alone. Anything that prevents a
+completed verification (offline, unreachable, server errors incl.
+missing Apple root) DEFERS with a log: no flag, no stamp, retry next
+flush. Devices are never flagged for server-side problems. Enforcement
+that clients cannot forge verdicts lives in `firestore.rules`
+(create: verdict fields must be default; update: unchanged — Admin SDK
+writes bypass rules) and is sufficient because every client path goes
+through rules, the endpoint authenticates via Auth, verifies only the
+caller's own same-org doc, and computes the verdict itself from stored
+material (no client-controlled input sets or clears a flag, directly
+or through the function).
+
+Track 5 handoff (required screen, this track exposes fields only): a
+professor/admin "flagged devices" list querying `studentDevices`
+`where attestationAnomaly == true` (single-field equality — no
+composite index) within the viewer's org, showing email / platform /
+claimed-vs-derived level / `serverVerifyReason` / `serverVerifiedAt` /
+DKey fingerprint. No manual clear exists by design (same philosophy as
+the no-reset move bound): a successful re-verify clears the flag, and
+re-enrollment resets the verdict for the new binding; reviewers respond
+via contact / manual attendance in the meantime.
+
+Remains (escalated, not stubbed): Apple App Attest root provisioning
+(one file — `functions/roots/README.md`); on-device HW material
+persistence by the keystore/Enclave track (until it lands, HW-claiming
+devices without material verify as `missing-material`); revocation/CRL
+checks are out of scope for the prototype (validity-at-enrollment +
+7-day move bound + manual attendance).
+
 ---
 
 ## 4. Face binding
@@ -475,7 +536,11 @@ BitChat (permissionlesstech/bitchat, whitepaper v2.0 Jul 2026; `bitchat-android`
 Shipped: protocol HMAC/UUID/Ed25519 + window rotation + mesh relay +
 hotspot/manual join + iOS parity + face gate + SK lock +
 channel-bound TLS + desktop host + Linux shim + cloud roles/claims/
-session backup + student records + web records build. (GATT
+session backup + student records + web records build +
+verifyAttestationChain server re-verifier (§3.4) + SyncEngine heartbeat
+trigger + Track 5 review fields (`attestationAnomaly`,
+`serverVerifiedAtMillis`, `serverVerifyReason`; clients cannot forge
+them — rules-enforced). (GATT
 `PROX_SVC`/`PROX_CHR` fallback is future work, not shipped.) Suite: protocol 57
 · transport 32 · ble 30 · storage 9 · app 163, `flutter analyze` clean,
 `flutter build web` green. Verified 2026-09-06: `flutter build macos`,

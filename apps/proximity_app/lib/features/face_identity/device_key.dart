@@ -20,9 +20,12 @@
 // bookkeeping + software/fake backends (level `none`, dev/test only —
 // they can never confirm at a real host since NONE→device-unproven).
 // What it is NOT (deferred, noted as residual risk): the Kotlin/Swift HW
-// keystore + X.509 chain verify. Firestore X.509 caveat accepted: client
-// verify + offline re-verify + post-hoc flag; Cloud Function verifier =
-// deferred.
+// keystore/Enclave backend + its enrollment-time material persistence
+// (attestMaterialJson). The server re-verifier has LANDED since:
+// functions/verifyAttestationChain re-verifies stored material during
+// SyncEngine's sync-on-reconnect flush (see PROXIMITY_DESIGN.md §3.4) —
+// what is still deferred is only the on-device HW key production that
+// would give it non-empty material to check.
 library;
 
 import 'dart:typed_data';
