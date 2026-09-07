@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../design/tokens.dart';
 import 'prox_cards.dart';
 import 'prox_states.dart';
+import 'sync_badge.dart';
 import '../core/sync/store/record_helpers.dart' as rh;
 
 /// Formats UTC epoch millis as yyyy-MM-dd ('' when 0). Track 6: thin
@@ -226,15 +227,9 @@ class SyncStatusStrip extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (pending > 0)
-          Chip(
-            avatar: Icon(
-              online ? Icons.cloud_upload_outlined : Icons.cloud_off_outlined,
-              size: 16,
-            ),
-            label: Text('$pending unsynced'),
-            visualDensity: VisualDensity.compact,
-          ),
+        // Track 6: shares [PendingCountChip] with the live [UnsyncedBadge]
+        // (was a duplicated Chip copy).
+        if (pending > 0) PendingCountChip(pending: pending, online: online),
         ProxSyncNote(
           note ??
               (online

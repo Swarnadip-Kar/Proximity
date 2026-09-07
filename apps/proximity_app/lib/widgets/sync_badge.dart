@@ -1,11 +1,37 @@
 // Unsynced badge (Track 4 §4): N pending out of the SyncEngine outbox
 // (sessions + manual queue + tombstones). Hidden when nothing is pending.
+//
+// [PendingCountChip] is the shared presentation (Track 6): the live
+// [UnsyncedBadge] reads the count from the store while the pure
+// SyncStatusStrip (trust_cards.dart) takes it as an arg — both render the
+// same chip instead of duplicating it.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
+
+/// Pending-count chip (`N unsynced`); the icon reflects reachability.
+/// Pure — both live and static call sites share it.
+class PendingCountChip extends StatelessWidget {
+  final int pending;
+  final bool online;
+  const PendingCountChip(
+      {super.key, required this.pending, required this.online});
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      avatar: Icon(
+        online ? Icons.cloud_upload_outlined : Icons.cloud_off_outlined,
+        size: 16,
+      ),
+      label: Text('$pending unsynced'),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
 
 class UnsyncedBadge extends ConsumerWidget {
   const UnsyncedBadge({super.key});
@@ -18,11 +44,9 @@ class UnsyncedBadge extends ConsumerWidget {
       builder: (context, snap) {
         final n = snap.data ?? 0;
         if (n <= 0) return const SizedBox.shrink();
-        return Chip(
-          avatar: const Icon(Icons.cloud_off_outlined, size: 16),
-          label: Text('$n unsynced'),
-          visualDensity: VisualDensity.compact,
-        );
+        // Reachability unknown here (store read only): keep the historic
+        // offline icon so rendering is byte-identical to before.
+        return PendingCountChip(pending: n, online: false);
       },
     );
   }
