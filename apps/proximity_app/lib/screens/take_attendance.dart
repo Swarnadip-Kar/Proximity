@@ -10,6 +10,12 @@
 // record in on-device history, so data survives even when the professor
 // forgets to end: later rounds rewrite the same record. Export is a
 // separate feature on the course page (per-session + date-range matrix).
+//
+// Layout contract: this screen owns hosting/window/draft orchestration
+// and composes the live feature sections (setup, session header, roster,
+// manual inbox, direct add, draft recovery) — one section per file under
+// lib/features/live/. Behavior is unchanged from the pre-split screen;
+// only the rendering moved.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -24,15 +30,21 @@ import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/host_driver.dart';
 import '../design/tokens.dart';
+import '../features/debug/debug_log_screen.dart';
+import '../features/live/direct_add.dart';
+import '../features/live/draft_recovery.dart';
+import '../features/live/live_roster.dart';
+import '../features/live/live_session.dart';
+import '../features/live/live_setup.dart';
+import '../features/live/manual_inbox.dart';
 import '../main.dart';
 import '../mode.dart';
-import '../widgets/animated.dart';
-import '../widgets/ble_log_view.dart';
 import '../widgets/clock.dart';
-import '../widgets/manual_add.dart';
-import '../widgets/prox_cards.dart';
-import '../widgets/prox_motion.dart';
-import '../widgets/prox_states.dart';
+
+// Recovery policy lives in the draft-recovery section; re-exported here
+// so existing imports (and tests) keep resolving it from this screen.
+export '../features/live/draft_recovery.dart'
+    show recoverPromptThreshold, shouldPromptRecover;
 
 class TakeAttendanceScreen extends ConsumerStatefulWidget {
   final String courseName;
@@ -45,20 +57,6 @@ class TakeAttendanceScreen extends ConsumerStatefulWidget {
       _TakeAttendanceScreenState();
 }
 
-/// Session-recovery policy: the "Recover old session?" prompt appears ONLY
-/// when the autosaved draft is older than 2.5h (a genuinely old visit —
-/// yesterday's class, a forgotten session). A recent draft (quick back-nav,
-/// crash, app kill mid-lecture) is auto-archived to history as marked
-/// attendance and the professor starts fresh — no prompt, no lost data.
-const recoverPromptThreshold = Duration(minutes: 150);
-
-/// Pure policy for tests: true = prompt, false = auto-archive + fresh.
-@visibleForTesting
-bool shouldPromptRecover(DateTime? savedAt, DateTime now) {
-  if (savedAt == null) return false;
-  return now.toUtc().difference(savedAt.toUtc()) > recoverPromptThreshold;
-}
-
 class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   final TallyStore _fallbackTally = TallyStore();
   bool hosting = false;
@@ -69,7 +67,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Duration elapsed = Duration.zero;
   Timer? _t;
   Timer? _idlePoll;
-  String search = '';
   String? serverLine;
   String? serverError;
   HostSession? _session;
@@ -85,9 +82,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   String? _recordStartIso;
   String _lastSavedSig = '';
   final _nameCtrl = TextEditingController();
-  final Set<String> _manualSelected = {};
-  // Toggleable terminal log (BLE RX → sighting match → tally → ACK).
-  bool _showLog = false;
 
   TallyStore get tally {
     try {
@@ -199,10 +193,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     final left = _prevWaiting.difference(cur);
     _prevWaiting = cur;
     for (final e in joined) {
-      BleLog.log('LAN', 'waiting +$e (${cur.length} waiting)');
+      BleLog.log(ProxLogTags.lan, 'waiting +$e (${cur.length} waiting)');
     }
     for (final e in left) {
-      BleLog.log('LAN', 'waiting -$e left (${cur.length} waiting)');
+      BleLog.log(ProxLogTags.lan, 'waiting -$e left (${cur.length} waiting)');
     }
     return joined.isNotEmpty || left.isNotEmpty;
   }
@@ -231,12 +225,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (windowNo <= 0 && windows.isEmpty && names.isEmpty) return;
     final savedAt = DateTime.tryParse(d['savedAt'] as String? ?? '');
     if (shouldPromptRecover(savedAt, DateTime.now())) {
-      final recover = await _askRecover(savedAt);
+      final recover = await showRecoverOldDialog(context, savedAt);
       if (!mounted) return;
       if (recover == true) {
+        BleLog.log(ProxLogTags.nav, 'old draft recovered (continue same visit)');
         await _applyDraft(d);
       } else {
         // Save & start fresh (or dismissed): archive first, then clear.
+        BleLog.log(ProxLogTags.nav, 'old draft archived, starting fresh visit');
         await _archiveDraftAsHistory(d);
         try {
           await ref
@@ -247,6 +243,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       return;
     }
     // Recent: snapshot to history, then resume the same visit live.
+    BleLog.log(ProxLogTags.nav, 'recent draft auto-archived + resumed live, no prompt');
     await _archiveDraftAsHistory(d);
     await _applyDraft(d);
   }
@@ -276,39 +273,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               id: d['recordId'] as String?,
             ),
           );
+      BleLog.log(ProxLogTags.sync, 'draft archived to history (${tally.size} marked)');
     } catch (_) {}
-  }
-
-  /// Old-session prompt. Returns true = Recover, false = save & fresh.
-  Future<bool?> _askRecover(DateTime? savedAt) {
-    final age = savedAt == null
-        ? 'a while ago'
-        : _ageLine(DateTime.now().toUtc().difference(savedAt.toUtc()));
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Recover old session?'),
-        content: Text(
-            'An autosaved session from $age is still here. Recover it to continue, or save it to history and start fresh.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Save & start fresh'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Recover'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _ageLine(Duration age) {
-    if (age.inHours >= 24) return '${age.inDays}d ago';
-    if (age.inHours >= 1) return '${age.inHours}h ago';
-    return '${age.inMinutes}m ago';
   }
 
   /// Continues an autosaved draft in the fresh host: the tally and window
@@ -417,6 +383,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _discardDraft() async {
+    BleLog.log(ProxLogTags.state, 'draft discarded by professor (tally cleared)');
     try {
       await ref.read(deviceStoreProvider).clearSession(widget.courseName);
     } catch (_) {}
@@ -429,7 +396,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _resumed = false;
       _draftDateIso = null;
       _lastSavedSig = '';
-      _manualSelected.clear();
     });
   }
 
@@ -438,37 +404,17 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _pickIp() async {
     final session = _session;
     if (session == null || session.allIps.length < 2) return;
-    final picked = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Announce on'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final ip in session.allIps)
-                ListTile(
-                  title: Text(ip),
-                  trailing:
-                      ip == _ip ? const Icon(Icons.check) : null,
-                  onTap: () => Navigator.of(ctx).pop(ip),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
+    final picked = await showAnnounceIpDialog(
+      context,
+      allIps: session.allIps,
+      currentIp: _ip,
     );
     if (picked == null || picked == _ip) return;
     try {
       await ref.read(hostDriverProvider).setAnnounceHost(picked);
     } catch (_) {}
     if (!mounted) return;
+    BleLog.log(ProxLogTags.state, 'announce IP switched to $picked');
     setState(() {
       _ip = picked;
       serverLine = session.lineFor(picked);
@@ -482,11 +428,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     _nameCtrl.dispose();
     _setWake(false);
     // Best-effort only: dispose cannot await, so the durable save is the
-    // autosave + _leave path above. _saveDraft/endHosting here are
-    // fire-and-forget teardowns (ports close, last draft attempted).
-    // Persist first so back navigation never loses marks; then full teardown
-    // closes HTTPS + UDP sockets so no port stays open (req 7).
-    _saveDraft();
+    // autosave + _leave path above.
+    // Non-clobbering teardown: _leave/_endAttendance save first and then
+    // endHosting clears the live tally, so an unconditional write here
+    // would persist an EMPTY visit over the good draft (back-nav would
+    // then "resume" zero marks). Only top-up when live marks exist that
+    // the autosave may not have flushed yet (abnormal teardown without
+    // back-nav); the awaited _leave save + per-round snapshots own the
+    // normal path. (Ports still close unconditionally below — req 7.)
+    if (tally.size > 0) _saveDraft();
     try {
       ref.read(hostDriverProvider).endHosting();
     } catch (_) {}
@@ -494,6 +444,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _leave() async {
+    // Freeze autosave FIRST: endHosting clears the live tally below, and a
+    // 1s/2s timer tick landing between the clear and unmount would persist
+    // an EMPTY visit over the good draft (back-nav would "resume" zero
+    // marks). Timers die here (and again in dispose), never after the pop.
+    _t?.cancel();
+    _idlePoll?.cancel();
+    BleLog.log(ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
     await _saveDraft();
     try {
       await ref.read(hostDriverProvider).endHosting();
@@ -535,6 +492,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (!mounted) return;
     // Keep the screen awake for the live window on all OS.
     _setWake(true);
+    BleLog.log(ProxLogTags.state, 'window #$windowNo live (code ${session.displayCode})');
     setState(() {
       live = true;
       _windowNo = windowNo;
@@ -565,6 +523,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _closeWindow() async {
     _t?.cancel();
     if (!mounted) return;
+    BleLog.log(ProxLogTags.state, 'window #$_windowNo stopped (grace running)');
     setState(() => live = false);
     _setWake(false);
     try {
@@ -576,14 +535,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _stopEarly() => _closeWindow();
-
-  /// Open-window elapsed clock (mm:ss, unbounded — Stop ends it).
-  String _elapsedLabel() {
-    final s = elapsed.inSeconds;
-    final mm = (s ~/ 60).toString().padLeft(2, '0');
-    final ss = (s % 60).toString().padLeft(2, '0');
-    return '$mm:$ss';
-  }
 
   /// Best-effort wakelock: fire-and-forget so a hung platform channel can
   /// never stall the attendance flow (caught once in widget tests).
@@ -622,6 +573,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// Ends attendance (no export — that lives on the course page): final
   /// snapshot, draft cleared, hosting down, back to the course.
   Future<void> _endAttendance() async {
+    BleLog.log(ProxLogTags.nav, 'end attendance (final snapshot, hosting down)');
+    // Freeze autosave first (same teardown race as _leave: the draft is
+    // cleared and the tally dropped below, so a timer tick landing before
+    // unmount would resurrect a stale empty draft behind the course page).
+    _t?.cancel();
+    _idlePoll?.cancel();
     try {
       await _saveSnapshot();
       try {
@@ -664,6 +621,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         id: _recordId,
       );
       await ref.read(deviceStoreProvider).upsertHistory(record);
+      BleLog.log(ProxLogTags.sync,
+          'snapshot upserted ${record.id} (${tally.confirmedCount} present)');
     } catch (_) {
       // History is best-effort; live tally + draft autosave are unaffected.
       return;
@@ -706,39 +665,38 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _approveOne(String email) async {
     try {
       await _driver?.decideManual(email, true);
+      BleLog.log(ProxLogTags.state, 'manual approved $email');
     } catch (e) {
       if (mounted) setState(() => serverError = '$e');
     }
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) {
-      setState(() => _manualSelected.remove(email.toLowerCase()));
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _rejectOne(String email) async {
     try {
       await _driver?.decideManual(email, false);
+      BleLog.log(ProxLogTags.state, 'manual rejected $email');
     } catch (e) {
       if (mounted) setState(() => serverError = '$e');
     }
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) {
-      setState(() => _manualSelected.remove(email.toLowerCase()));
-    }
+    if (mounted) setState(() {});
   }
 
-  Future<void> _decideSelected(bool approve) async {
-    final emails = _manualSelected.toList();
+  Future<void> _decideSelected(List<String> emails, bool approve) async {
     for (final e in emails) {
       try {
         await _driver?.decideManual(e, approve);
       } catch (_) {}
     }
+    BleLog.log(ProxLogTags.state,
+        'manual bulk ${approve ? 'approved' : 'rejected'} (${emails.length})');
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) setState(() => _manualSelected.clear());
+    if (mounted) setState(() {});
   }
 
   /// Shared manual-add submit (see ManualAddForm): the form guarantees an
@@ -756,48 +714,23 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _saveSnapshot();
   }
 
+  void _openLog() {
+    BleLog.log(ProxLogTags.nav, 'take → system log');
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final linked = ref.watch(linkedIdentityProvider);
     final present = tally.confirmedCount;
     final waiting = _driver?.waitingCount ?? 0;
-    final denom = waiting > 0 ? waiting : (present > 0 ? present : 0);
     final windowsTaken = tally.windowCount;
-    final windowNos = tally.windowNos;
-    // Intersection + partials: a student who marked R1 but missed R2 must
-    // stay visible with per-round ticks (R1 ✓ · R2 ✗) instead of vanishing
-    // from the list while the header still reads an intersection count.
-    final confirmedRows =
-        search.isEmpty ? tally.confirmed : tally.search(search).where((r) {
-          if (windowNos.isEmpty) return r.wins.isNotEmpty;
-          for (final w in windowNos) {
-            if (!r.wins.contains(w)) return false;
-          }
-          return true;
-        }).toList();
-    final partialRows = search.isEmpty
-        ? tally.presentAny
-            .where((r) {
-              if (windowNos.isEmpty) return false;
-              var all = true;
-              for (final w in windowNos) {
-                if (!r.wins.contains(w)) {
-                  all = false;
-                  break;
-                }
-              }
-              return !all;
-            })
-            .toList()
-        : const [];
-    String ticksFor(Set<int> wins) {
-      if (windowNos.isEmpty) return wins.isEmpty ? 'no rounds yet' : 'R1 ✓';
-      return [
-        for (final w in windowNos) 'R$w ${wins.contains(w) ? '✓' : '✗'}',
-      ].join(' · ');
-    }
     final waitingRows = _driver?.waitingRows ?? const [];
     final manualPending = _driver?.manualPending ?? const [];
+    final hostLine = linked == null
+        ? null
+        : 'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}';
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -805,328 +738,74 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       },
       child: AdaptiveScaffold(
         title: widget.courseName,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.terminal_outlined),
+            tooltip: 'System log',
+            onPressed: _openLog,
+          ),
+        ],
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
             const ClockHeader(),
-            if (!hosting && serverError == null) ...[
-              const SizedBox(height: 8),
-              const Text('Starting host…'),
-            ],
-            if (hosting && !live) ...[
-              const SizedBox(height: 8),
-              const Text(
-                  'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, switch this phone to hotspot and rejoin it from their side.'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Your name (optional, shown to students)',
-                ),
-                onChanged: (v) {
-                  try {
-                    ref.read(hostDriverProvider).setDisplayName(v);
-                  } catch (_) {}
-                },
-              ),
-            ],
-            if (serverLine != null) ...[
-              const SizedBox(height: 4),
-              Text(serverLine!, style: Theme.of(context).textTheme.bodyMedium),
-            ],
-            if (_session != null && _session!.allIps.length > 1) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: live ? null : _pickIp,
-                  child: Text('Announcing on $_ip · change'),
-                ),
-              ),
-            ],
-            if (serverError != null) ...[
-              const SizedBox(height: 4),
-              Text(serverError!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ],
+            LiveSetupSection(
+              hosting: hosting,
+              live: live,
+              nameCtrl: _nameCtrl,
+              onNameChanged: (v) {
+                try {
+                  ref.read(hostDriverProvider).setDisplayName(v);
+                } catch (_) {}
+              },
+              serverLine: serverLine,
+              allIps: _session?.allIps ?? const [],
+              currentIp: _ip,
+              onPickIp: _pickIp,
+              serverError: serverError,
+            ),
             if (_resumed) ...[
               const SizedBox(height: 8),
-              ProxCard(
-                padding: EdgeInsets.zero,
-                child: ListTile(
-                  leading: const Icon(Icons.history),
-                  title: const Text('Resumed autosaved session'),
-                  subtitle: Text(
-                      '$present present · $windowsTaken window${windowsTaken == 1 ? '' : 's'} so far — retake the round, take again, or end attendance.'),
-                  trailing: TextButton(
-                    onPressed: _discardDraft,
-                    child: const Text('Discard'),
-                  ),
-                ),
+              DraftResumedBanner(
+                present: present,
+                windowsTaken: windowsTaken,
+                onDiscard: _discardDraft,
               ),
             ],
             const SizedBox(height: 8),
             // Live header: elapsed clock + pulsing on-air dot + counters.
             // The dot is the only repeating motion here — everything else
             // updates in place so the 1s elapsed tick never replays
-            // entrances (rows are keyed; see waiting/present lists below).
-            AnimatedContainer(
-              duration: ProxDurations.small,
-              curve: ProxCurves.standard,
-              padding: const EdgeInsets.all(ProxSpacing.md),
-              decoration: BoxDecoration(
-                color: live
-                    ? Theme.of(context)
-                        .colorScheme
-                        .primaryContainer
-                        .withValues(alpha: 0.45)
-                    : Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.35),
-                borderRadius: ProxRadii.cardRadius,
-                border: Border.all(
-                  color: live
-                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
-                      : Theme.of(context)
-                          .colorScheme
-                          .outlineVariant
-                          .withValues(alpha: 0.5),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _elapsedLabel(),
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ProxDot(
-                            color: live
-                                ? ProxStateColors.of(
-                                    context, ProxState.active)
-                                : ProxStateColors.of(
-                                    context, ProxState.neutral),
-                            pulse: live,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            live ? 'LIVE' : 'IDLE',
-                            style: const TextStyle(letterSpacing: 3),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      PresentTicker(present: present, total: denom),
-                      ProxSwitcher(
-                        child: Text(
-                          windowsTaken <= 1
-                              ? 'Window 1 · $present present / $denom waiting'
-                              : 'Windows 1–$_windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
-                          key: ValueKey<String>(
-                              '$windowsTaken-$_windowNo-$present-$denom'),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      if (linked != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                              'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
-                              style: Theme.of(context).textTheme.bodySmall),
-                        ),
-                      const SizedBox(height: 8),
-                      // Start ⇄ Stop control cluster cross-fades (continuation,
-                      // not a hard swap) — the single most "alive" moment in
-                      // the app. Actions fire immediately; only the visuals
-                      // transition.
-                      ProxSwitcher(
-                        child: Wrap(
-                          key: ValueKey<bool>(live),
-                          spacing: 8,
-                          runSpacing: 8,
-                        children: [
-                          if (live) ...[
-                            FilledButton(
-                              onPressed: _stopEarly,
-                              child: const Text('Stop'),
-                            ),
-                          ] else ...[
-                            if (_windowNo == 0)
-                              FilledButton(
-                                onPressed:
-                                    (!hosting) ? null : () => _startNext(),
-                                child: const Text('Start'),
-                              )
-                            else ...[
-                              // Retake resumes the stopped round: same round
-                              // number, fresh secrets, marks merge into it
-                              // (no new intersection hurdle). Take another
-                              // round opens a new round instead.
-                              FilledButton(
-                                onPressed: (!hosting)
-                                    ? null
-                                    : () => _start(_windowNo),
-                                child:
-                                    Text('Retake round $_windowNo'),
-                              ),
-                              FilledButton(
-                                onPressed:
-                                    (!hosting) ? null : () => _startNext(),
-                                child: const Text('Take another round'),
-                              ),
-                              OutlinedButton(
-                                onPressed:
-                                    (!hosting) ? null : _endAttendance,
-                                child: const Text('End attendance'),
-                              ),
-                            ],
-                            if (_windowNo == 0)
-                              OutlinedButton(
-                                onPressed:
-                                    (!hosting) ? null : _endAttendance,
-                                child: const Text('End attendance'),
-                              ),
-                          ],
-                        ],
-                      ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              ),
+            // entrances (waiting rows are keyed; present rows mount
+            // static, see the roster section).
+            LiveSessionHeader(
+              live: live,
+              elapsed: elapsed,
+              present: present,
+              waiting: waiting,
+              windowsTaken: windowsTaken,
+              windowNo: _windowNo,
+              hosting: hosting,
+              hostLine: hostLine,
+              onStart: _startNext,
+              onRetake: () => _start(_windowNo),
+              onTakeAnother: _startNext,
+              onStop: _stopEarly,
+              onEnd: _endAttendance,
             ),
             const SizedBox(height: 12),
-            // Toggleable terminal: BLE RX → sighting match → tally → ACK.
-            // Same log stream as the student side; helps debug radio live.
-            BleLogView(
-              visible: _showLog,
-              onToggle: () => setState(() => _showLog = !_showLog),
+            WaitingListSection(
+              waitingRows: waitingRows,
             ),
-            const SizedBox(height: 16),
-            ProxSectionHeader(title: 'Waiting area ($waiting)'),
-            if (waitingRows.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text('No students in the waiting area yet.'),
-              )
-            else
-              // Keyed entrances: a join fades/slides its row in; the 1s
-              // elapsed tick rebuilds with stable keys so nothing replays.
-              for (final w in waitingRows)
-                ProxFadeSlideIn(
-                  key: ValueKey<String>('waiting-${w.email}'),
-                  child: ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.hourglass_top, size: 20),
-                    title: Text(w.name.isNotEmpty ? w.name : w.email),
-                    subtitle: Text(
-                        [if (w.roll.isNotEmpty) w.roll, w.email].join(' · ')),
-                  ),
-                ),
             const SizedBox(height: 8),
-            ProxSectionHeader(
-              title: 'Manual requests (${manualPending.length})',
-              padding: EdgeInsets.zero,
-              trailing: manualPending.isEmpty
-                  ? null
-                  : TextButton(
-                      onPressed: () => setState(() {
-                        if (_manualSelected.length == manualPending.length) {
-                          _manualSelected.clear();
-                        } else {
-                          _manualSelected
-                            ..clear()
-                            ..addAll(manualPending
-                                .map((m) => m.email.toLowerCase()));
-                        }
-                      }),
-                      child: Text(_manualSelected.length ==
-                              manualPending.length
-                          ? 'Clear all'
-                          : 'Select all'),
-                    ),
+            ManualInboxSection(
+              pending: manualPending,
+              onApproveOne: _approveOne,
+              onRejectOne: _rejectOne,
+              onDecide: _decideSelected,
             ),
-            if (manualPending.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text('No manual requests.'),
-              )
-            else ...[
-              for (final m in manualPending)
-                ProxFadeSlideIn(
-                  key: ValueKey<String>('manual-${m.email}'),
-                  child: CheckboxListTile(
-                    dense: true,
-                    value: _manualSelected.contains(m.email.toLowerCase()),
-                  onChanged: (v) => setState(() {
-                    if (v == true) {
-                      _manualSelected.add(m.email.toLowerCase());
-                    } else {
-                      _manualSelected.remove(m.email.toLowerCase());
-                    }
-                  }),
-                  title: Text(m.name.isNotEmpty ? m.name : m.email),
-                  subtitle: Text(
-                      [if (m.roll.isNotEmpty) m.roll, m.email].join(' · ')),
-                  secondary: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.check,
-                            color:
-                                ProxStateColors.of(context, ProxState.marked)),
-                        tooltip: 'Approve',
-                        onPressed: () => _approveOne(m.email),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close,
-                            color:
-                                ProxStateColors.of(context, ProxState.error)),
-                        tooltip: 'Reject',
-                        onPressed: () => _rejectOne(m.email),
-                      ),
-                    ],
-                  ),
-                  ),
-                ),
-              Row(
-                children: [
-                  FilledButton(
-                    onPressed: _manualSelected.isEmpty
-                        ? null
-                        : () => _decideSelected(true),
-                    child: const Text('Approve selected'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: _manualSelected.isEmpty
-                        ? null
-                        : () => _decideSelected(false),
-                    child: const Text('Reject'),
-                  ),
-                ],
-              ),
-            ],
             const SizedBox(height: 8),
-            ProxSectionHeader(
-              title: 'Direct manual entry',
-              padding: EdgeInsets.zero,
-            ),
-            ManualAddForm(
-              fieldPrefix: 'direct',
+            DirectAddSection(
               course: widget.courseName,
               sessionId: _recordId ?? '',
               onAdd: _addDirectEntry,
@@ -1136,65 +815,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   .any((r) => r.email == email.toLowerCase()),
             ),
             const SizedBox(height: 16),
-            TextField(
-              key: const ValueKey('prof-search'),
-              decoration: const InputDecoration(
-                  labelText: 'Search by name, ID, or email',
-                  prefixIcon: Icon(Icons.search)),
-              onChanged: (v) => setState(() => search = v),
+            MarkedRosterSection(
+              tally: tally,
             ),
-            const SizedBox(height: 8),
-            ProxSectionHeader(
-              title:
-                  'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
-              padding: EdgeInsets.zero,
-            ),
-            if (confirmedRows.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                    'Nobody present in every round yet — partials stay listed below.'),
-              )
-            else
-              for (var i = 0; i < confirmedRows.length; i++)
-                ProxListTile(
-                  title: confirmedRows[i].name,
-                  subtitle: [
-                    ticksFor(confirmedRows[i].wins),
-                    if (confirmedRows[i].roll.isNotEmpty)
-                      confirmedRows[i].roll,
-                    confirmedRows[i].email,
-                    if (confirmedRows[i].late) 'late',
-                  ].join(' · '),
-                  staggerIndex: i,
-                  leading: Icon(
-                    Icons.check_circle,
-                    color: ProxStateColors.of(context, ProxState.marked),
-                  ),
-                ),
-            if (partialRows.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ProxSectionHeader(
-                title: 'Partial — some rounds (${partialRows.length})',
-                padding: EdgeInsets.zero,
-              ),
-              for (final r in partialRows)
-                ListTile(
-                  key: ValueKey<String>('partial-${r.email}'),
-                  dense: true,
-                  leading: Icon(
-                    Icons.timelapse,
-                    color: ProxStateColors.of(context, ProxState.late),
-                  ),
-                  title: Text(r.name),
-                  subtitle: Text([
-                    ticksFor(r.wins),
-                    if (r.roll.isNotEmpty) r.roll,
-                    r.email,
-                    if (r.late) 'late',
-                  ].join(' · ')),
-                ),
-            ],
           ],
         ),
       ),

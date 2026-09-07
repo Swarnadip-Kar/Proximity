@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 
 import 'core/device_store.dart';
+import 'design/tokens.dart';
 
 /// Single app, two modes. Desktop defaults to prof; mobile switches freely.
 enum AppMode { unset, student, prof, enroll, take }
@@ -28,12 +30,20 @@ bool get hasPreviewMode =>
 
 /// Sets the mode and persists it: relaunch returns straight to the profile
 /// main page. [AppMode.unset] clears it (next launch shows the hub).
+/// Mode flips log STATE (previous → next) so the terminal + logcat show
+/// the provider recompute reason; a persist failure logs too (a dropped
+/// write would otherwise surface only as "relaunch forgot my mode").
 Future<void> setMode(WidgetRef ref, AppMode mode) async {
+  final prev = ref.read(appModeProvider);
   ref.read(appModeProvider.notifier).state = mode;
+  BleLog.log(ProxLogTags.state, 'mode ${prev.name} → ${mode.name}');
   try {
     final store = ref.read(deviceStoreProvider);
     await store.writeMode(mode == AppMode.unset ? null : mode.name);
-  } catch (_) {}
+  } catch (_) {
+    BleLog.log(ProxLogTags.state,
+        'mode persist failed (${mode.name}) — relaunch returns to hub');
+  }
 }
 
 /// Restores a persisted mode name (or null).

@@ -1,29 +1,31 @@
 // Student attendance records: classes synced online by professors,
-// cached on this device. Read-only view of cloud sessions containing
-// this Gmail; "delete" hides the entry on THIS device only
+// cached on this device. Course cards (x/y days + totals header), tap one
+// for its sessions. Read-only: "delete" hides the entry on THIS device only
 // (professor/cloud data untouched).
 //
 // Course-wise in both places: the cloud docs carry courseId/courseName
 // (professor renames bump timestampIso so merges adopt them), the device
-// cache is the last pull verbatim, and this screen groups by course with
-// the class start time on every row.
+// cache is the last pull verbatim.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
-import '../main.dart';
-import '../core/auth.dart';
-import '../core/cloud_sync.dart';
-import '../core/device_store.dart';
-import '../design/tokens.dart';
-import '../widgets/clock.dart';
-import '../widgets/course_attendance.dart';
-import '../widgets/prox_cards.dart';
-import '../widgets/prox_states.dart';
-import '../widgets/web_banner.dart';
-import 'student_course.dart';
+import '../../core/auth.dart';
+import '../../core/cloud_sync.dart';
+import '../../core/device_store.dart';
+import '../../design/app_theme.dart';
+import '../../design/tokens.dart';
+import '../../main.dart';
+import '../../widgets/clock.dart';
+import '../../widgets/course_attendance.dart';
+import '../../widgets/prox_cards.dart';
+import '../../widgets/prox_states.dart';
+import '../../widgets/web_banner.dart';
+import '../debug/debug_log_screen.dart';
+import 'course_attendance_detail_screen.dart';
 
 class MyAttendanceScreen extends ConsumerStatefulWidget {
   const MyAttendanceScreen({super.key});
@@ -83,6 +85,8 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         } catch (_) {}
         final visible =
             cached.where((s) => !_hidden.contains(s.id)).toList();
+        BleLog.log('SYNC',
+            'my-attendance: offline, ${visible.length} cached sessions');
         if (mounted) {
           setState(() {
             _loading = false;
@@ -106,6 +110,8 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
       } catch (_) {}
       final visible =
           sessions.where((s) => !_hidden.contains(s.id)).toList();
+      BleLog.log(
+          'SYNC', 'my-attendance: pulled ${sessions.length} sessions');
       if (mounted) {
         setState(() {
           _loading = false;
@@ -125,13 +131,20 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
 
   Future<void> _openCourse(String course, List<ClassRecord> sessions,
       String email) async {
+    BleLog.log('NAV', 'my-attendance → $course');
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-          builder: (_) => StudentCourseScreen(
+          builder: (_) => CourseAttendanceDetailScreen(
               course: course, sessions: sessions, email: email)),
     );
     // A hide inside the detail reloads this list on return.
     if (changed == true && mounted) _load();
+  }
+
+  void _openLog() {
+    BleLog.log('NAV', 'my-attendance → system log');
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
   }
 
   @override
@@ -154,6 +167,13 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         summaries.values.fold(0, (n, s) => n + s.present);
     return AdaptiveScaffold(
       title: 'My attendance',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: _openLog,
+        ),
+      ],
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -168,8 +188,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
                     style: Theme.of(context).textTheme.bodySmall),
               ),
             const SizedBox(height: 8),
-            if (_offlineNote.isNotEmpty)
-              ProxSyncNote(_offlineNote),
+            if (_offlineNote.isNotEmpty) ProxSyncNote(_offlineNote),
             if (_loading)
               const Center(child: CircularProgressIndicator())
             else if (_error.isNotEmpty)
@@ -181,10 +200,11 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
               )
             else ...[
               Text('$totalAttended present · $totalTaken synced sessions',
-                  style: Theme.of(context).textTheme.titleSmall),
+                  style: proxTabular(
+                      context, Theme.of(context).textTheme.titleSmall)),
               const SizedBox(height: 8),
               // First page is courses: tap one for its sessions + totals.
-              // Restrained motion: stagger on load only.
+              // Restrained motion: stagger on load only (ProxListTile).
               for (var i = 0; i < courses.length; i++)
                 Padding(
                   padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
@@ -212,7 +232,8 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
                       children: [
                         Text(
                             '${summaries[courses[i]]!.present}/${summaries[courses[i]]!.sessions}',
-                            style: Theme.of(context).textTheme.titleSmall),
+                            style: proxTabular(context,
+                                Theme.of(context).textTheme.titleSmall)),
                         const Icon(Icons.chevron_right),
                       ],
                     ),

@@ -50,6 +50,9 @@ class ProxListTile extends StatelessWidget {
   final int? staggerIndex;
   final Key? tileKey;
 
+  /// Dense rows for search-hit lists (directory cards, roster hits).
+  final bool dense;
+
   const ProxListTile({
     super.key,
     required this.title,
@@ -59,6 +62,7 @@ class ProxListTile extends StatelessWidget {
     this.onTap,
     this.staggerIndex,
     this.tileKey,
+    this.dense = false,
   });
 
   @override
@@ -66,6 +70,7 @@ class ProxListTile extends StatelessWidget {
     final tile = Card(
       child: ListTile(
         key: tileKey,
+        dense: dense,
         leading: leading,
         title: Text(title),
         subtitle: subtitle == null ? null : Text(subtitle!),
@@ -112,33 +117,43 @@ class ProxDot extends StatefulWidget {
 }
 
 class _ProxDotState extends State<ProxDot> {
-  static const _period = Duration(milliseconds: 800);
   Timer? _timer;
   var _dim = false;
 
   @override
   void initState() {
     super.initState();
-    _arm();
+    // First arm happens in didChangeDependencies (MediaQuery is readable
+    // there; initState may not register inherited dependencies).
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTimer();
   }
 
   @override
   void didUpdateWidget(ProxDot old) {
     super.didUpdateWidget(old);
-    if (widget.pulse != old.pulse) {
+    if (widget.pulse != old.pulse) _syncTimer();
+  }
+
+  /// Arms the pulse only while it is visible: static (and timer-free)
+  /// when [ProxDot.pulse] is false or reduced motion is on, so idle and
+  /// reduced-motion lists never pay for a periodic rebuild.
+  void _syncTimer() {
+    final want = widget.pulse && !ProxMotion.reduced(context);
+    if (want && _timer == null) {
+      _timer = Timer.periodic(ProxDurations.dotPulse, (_) {
+        if (!mounted) return;
+        setState(() => _dim = !_dim);
+      });
+    } else if (!want && _timer != null) {
       _timer?.cancel();
       _timer = null;
       _dim = false;
-      _arm();
     }
-  }
-
-  void _arm() {
-    if (!widget.pulse) return;
-    _timer = Timer.periodic(_period, (_) {
-      if (!mounted) return;
-      setState(() => _dim = !_dim);
-    });
   }
 
   @override
@@ -156,7 +171,7 @@ class _ProxDotState extends State<ProxDot> {
     );
     if (!widget.pulse || ProxMotion.reduced(context)) return dot;
     return AnimatedOpacity(
-      duration: _period,
+      duration: ProxDurations.dotPulse,
       curve: ProxCurves.standard,
       opacity: _dim ? 0.35 : 1.0,
       child: dot,

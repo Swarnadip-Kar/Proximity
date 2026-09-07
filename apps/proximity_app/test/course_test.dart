@@ -6,8 +6,9 @@ import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/face_camera.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
-import 'package:proximity_app/screens/course_detail.dart';
-import 'package:proximity_app/screens/courses.dart';
+import 'package:proximity_app/features/records/course_overview_screen.dart';
+import 'package:proximity_app/features/records/export_center_screen.dart';
+import 'package:proximity_app/features/records/prof_courses_screen.dart';
 import 'package:proximity_app/screens/take_attendance.dart';
 import 'package:proximity_app/widgets/clock.dart';
 import 'package:proximity_ble/ble.dart';
@@ -76,21 +77,30 @@ void main() {
     expect(shortDayDateOf('garbage'), 'garbage');
   });
 
-  testWidgets('course detail: sessions + export + retake', (t) async {    await t.pumpWidget(
-        wrap(await seeded(), const CourseDetailScreen(courseName: 'CS201')));
+  testWidgets('course overview: sessions + export center + retake',
+      (t) async {
+    await t.pumpWidget(
+        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
     expect(find.text('Take attendance'), findsOneWidget);
-    expect(find.text('Export date range'), findsOneWidget);
+    expect(find.text('Review & export'), findsOneWidget);
     // Tight title: short weekday + day/month; roomy subtitle: full date.
     expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
     expect(
         find.textContaining('Thursday, 3 September 2026'), findsOneWidget);
     expect(find.textContaining('2026-09-03'), findsNothing);
-    // export dialog shows simple session CSV (no W1/W2)
+    // Review & export opens the export center (per-session CSV + matrix).
+    await t.tap(find.text('Review & export'));
+    await t.pumpAndSettle();
+    expect(find.text('Export date range'), findsOneWidget);
     await t.tap(find.byTooltip('Export CSV'));
     await t.pumpAndSettle();
+    // export dialog shows simple session CSV (no W1/W2)
     expect(find.textContaining('A,1,a@x.in,Absent'), findsOneWidget);
     await t.tap(find.text('Close'));
+    await t.pumpAndSettle();
+    // Back to overview for the retake (live screen auto-starts).
+    await t.pageBack();
     await t.pumpAndSettle();
     // retake pushes the live screen and auto-starts the single window
     await t.tap(find.byTooltip('Retake attendance'));
@@ -102,10 +112,26 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('course detail: select sessions + delete with X/Y warning',
+  testWidgets('export center: date-range matrix reachable', (t) async {
+    await t.pumpWidget(
+        wrap(await seeded(), const ExportCenterScreen(courseName: 'CS201')));
+    await t.pumpAndSettle();
+    expect(find.text('Export date range'), findsOneWidget);
+    expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
+    await t.tap(find.text('Export date range'));
+    await t.pumpAndSettle();
+    // Date-range picker opens as a dialog; dismiss back to the center.
+    expect(find.byType(Dialog), findsWidgets);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(find.text('Export date range'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('course overview: select sessions + delete with X/Y warning',
       (t) async {
     await t.pumpWidget(
-        wrap(await seeded(), const CourseDetailScreen(courseName: 'CS201')));
+        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
     await t.tap(find.byType(Checkbox).first);
     await t.pumpAndSettle();
@@ -122,10 +148,14 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('prof courses: delete course with X/Y warning', (t) async {
-    await t.pumpWidget(wrap(await seeded(), const ProfCoursesScreen()));
+  testWidgets('prof overview: delete course with X/Y warning', (t) async {
+    await t.pumpWidget(
+        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    await t.tap(find.byTooltip('Delete course').first);
+    await t.scrollUntilVisible(find.text('Delete course'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete course'));
     await t.pumpAndSettle();
     expect(
         find.textContaining(
@@ -133,7 +163,8 @@ void main() {
         findsOneWidget);
     await t.tap(find.text('Delete'));
     await t.pumpAndSettle();
-    expect(find.text('CS201'), findsNothing);
+    // Popped back after deleting the whole course.
+    expect(find.text('Delete course'), findsNothing);
     expect(t.takeException(), isNull);
   });
 

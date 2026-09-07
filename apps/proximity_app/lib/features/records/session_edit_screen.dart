@@ -1,27 +1,33 @@
-// Edit a saved class record: same manual-attendance UI as the live
-// take-attendance screen (present list + direct entry), applied to
-// history. Presence is PER WINDOW: each person expands to one checkbox
-// per round, so correcting round 3 never touches rounds 1–2 (the old
-// all-windows toggle collapsed 5-round variation to uniform on one save).
-// Saved via upsert (same record id).
+// Fix a saved class record: the same manual-attendance UI as the live
+// take-attendance screen (present list + direct entry), applied to history.
+// Presence is PER WINDOW: each person expands to one checkbox per round, so
+// correcting round 3 never touches rounds 1–2 (the old all-windows toggle
+// collapsed multi-round variation to uniform on one save). Saved via upsert
+// (same record id, startIso preserved). Web records builds never reach the
+// editor — SessionDetailScreen covers viewing there; [readOnly] keeps the
+// same guarantee if one is ever pushed on web.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
-import '../core/auth.dart';
-import '../core/cloud_sync.dart';
-import '../core/device_store.dart';
-import '../design/tokens.dart';
-import '../main.dart';
-import '../widgets/manual_add.dart';
-import '../widgets/partial_list.dart';
-import '../widgets/prox_buttons.dart';
-import '../widgets/prox_cards.dart';
-import '../widgets/prox_motion.dart';
-import '../widgets/prox_states.dart';
-import '../widgets/web_banner.dart';
+import '../../core/auth.dart';
+import '../../core/cloud_sync.dart';
+import '../../core/device_store.dart';
+import '../../design/tokens.dart';
+import '../../main.dart';
+import '../../widgets/manual_add.dart';
+import '../../widgets/partial_list.dart';
+import '../../widgets/prox_buttons.dart';
+import '../../widgets/prox_cards.dart';
+import '../../widgets/prox_motion.dart';
+import '../../widgets/prox_states.dart';
+import '../../widgets/web_banner.dart';
+import '../debug/debug_log_screen.dart';
 
 class SessionEditScreen extends ConsumerStatefulWidget {
   final ClassRecord record;
@@ -180,6 +186,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
     try {
       await ref.read(deviceStoreProvider).upsertHistory(record);
     } catch (_) {}
+    BleLog.log('SYNC', 'edit: saved session ${record.dateIso}');
     unawaited(_pushRecord(record));
     if (!mounted) return;
     Navigator.of(context).pop(true);
@@ -213,20 +220,33 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
               profName: id.name,
               record: record)
           .timeout(const Duration(seconds: 10));
+      BleLog.log('SYNC', 'edit: pushed session ${record.dateIso}');
     } catch (_) {}
+  }
+
+  void _openLog() {
+    BleLog.log('NAV', 'edit → system log');
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
   }
 
   @override
   Widget build(BuildContext context) {
     final persons = _persons;
-    final present =
-        persons.where(_isPresent).length;
+    final present = persons.where(_isPresent).length;
     // Live partial + absent lists off the current draft (they update as
     // the professor ticks boxes or marks people present).
     final partials = partialsOfCourse([_draft]);
     final absent = _absent;
     return AdaptiveScaffold(
       title: 'Edit attendance',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: _openLog,
+        ),
+      ],
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -251,23 +271,23 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                     title: 'Partial in this session (${partials.length})',
                     padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
                   ),
-                    for (final e in partials)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(e.name),
-                        subtitle: Text(
-                            '${e.sessions.first.$3} · ${[if (e.roll.isNotEmpty) e.roll, e.email].join(' · ')}'),
-                        trailing: widget.readOnly
-                            ? null
-                            : TextButton(
-                                child: const Text('Mark present'),
-                                onPressed: () => _markPresent(e.email),
-                              ),
-                      ),
-                  ],
-                ),
+                  for (final e in partials)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(e.name),
+                      subtitle: Text(
+                          '${e.sessions.first.$3} · ${rosterSubtitle(e.roll, e.email)}'),
+                      trailing: widget.readOnly
+                          ? null
+                          : TextButton(
+                              child: const Text('Mark present'),
+                              onPressed: () => _markPresent(e.email),
+                            ),
+                    ),
+                ],
               ),
+            ),
           if (absent.isNotEmpty)
             ProxCard(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -285,25 +305,23 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                               Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
-                    for (final m in absent)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(m.name),
-                        subtitle: Text(
-                            [if (m.roll.isNotEmpty) m.roll, m.email]
-                                .join(' · ')),
-                        trailing: widget.readOnly
-                            ? null
-                            : TextButton(
-                                child: const Text('Mark present'),
-                                onPressed: () => _markPresent(m.email,
-                                    name: m.name, roll: m.roll),
-                              ),
-                      ),
-                  ],
-                ),
+                  for (final m in absent)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(m.name),
+                      subtitle: Text(rosterSubtitle(m.roll, m.email)),
+                      trailing: widget.readOnly
+                          ? null
+                          : TextButton(
+                              child: const Text('Mark present'),
+                              onPressed: () => _markPresent(m.email,
+                                  name: m.name, roll: m.roll),
+                            ),
+                    ),
+                ],
               ),
+            ),
           // Restrained motion: person rows stagger on load only (capped),
           // keyed by email so ticking a checkbox never replays entrances.
           for (var pi = 0; pi < persons.length; pi++)
@@ -359,10 +377,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
       ),
       title: Text(_names[email] ?? email),
       subtitle: Text(
-          '${_presentCount(email)}/${_windows.length} rounds · ${[
-            if ((_rolls[email] ?? '').isNotEmpty) _rolls[email]!,
-            email
-          ].join(' · ')}'),
+          '${_presentCount(email)}/${_windows.length} rounds · ${rosterSubtitle(_rolls[email] ?? '', email)}'),
       trailing: widget.readOnly
           ? null
           : IconButton(

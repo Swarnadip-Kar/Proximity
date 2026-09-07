@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/screens/student_course.dart';
+import 'package:proximity_app/features/records/course_attendance_detail_screen.dart';
 import 'package:proximity_app/widgets/course_attendance.dart';
 import 'package:proximity_app/widgets/partial_list.dart';
 import 'package:proximity_storage/storage.dart';
@@ -54,7 +54,7 @@ void main() {
       rec('s2', '2026-09-05', {_email: true}, {_email: false}),
     ];
     await t.pumpWidget(ProviderScope(child: MaterialApp(
-        home: StudentCourseScreen(
+        home: CourseAttendanceDetailScreen(
             course: 'CS201', sessions: sessions, email: _email))));
     await t.pumpAndSettle();
     expect(find.text('1/2 days attended · 1 partial'), findsOneWidget);

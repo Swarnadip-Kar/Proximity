@@ -16,7 +16,7 @@ import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/main.dart';
 import 'package:proximity_app/mode.dart';
-import 'package:proximity_app/screens/session_edit.dart';
+import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/student_home.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_face/face.dart';
@@ -267,6 +267,10 @@ Future<void> enterIp(WidgetTester t, String ip) async {
           find.textContaining('has not yet started').evaluate().isNotEmpty;
     }
     expect(waiting, isTrue);
+    // The waiting→verdict hops cross-fade (mark-flow continuation shell):
+    // let the outgoing verdict badge finish exiting before asserting the
+    // trail is single — both carry the same per-round text mid-transition.
+    await t.pump(const Duration(milliseconds: 500));
     expect(find.textContaining('R1 · KQ7'), findsOneWidget);
     // Round 2 opens → auto face → auto listen → marked again, no taps.
     driver.windowOpenProbe = true;
@@ -430,7 +434,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
 
   testWidgets('enrollment: account pickup → key → face → upload → linked',
       (t) async {
-    // New flow: landing → Register as Student → student home → enroll.
+    // Bundle flow: landing → Register as Student → student home → enroll
+    // bundle (intro → capture → result).
     await t.pumpWidget(testScope());
     await t.pumpAndSettle();
     // Landing (FakeAuth signed in, no role): register as student.
@@ -440,9 +445,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.tap(find.text('Enroll this device (face + ID)'));
     await t.pumpAndSettle();
     expect(find.text('Enroll this device'), findsWidgets);
-    // 1. account — picked up silently in the background (already signed
-    // in on the landing): no second Google tap. Identity imports from
-    // Gmail; the sign-in button only remains for fresh installs.
+    // 1. intro: account picked up silently (already signed in on the
+    // landing): no second Google tap. Identity imports from Gmail.
     expect(find.text('Sign in with Google'), findsNothing);
     expect(find.textContaining('Signed in as Test User'), findsOneWidget);
     expect(find.textContaining('student@example.com'), findsWidgets);
@@ -450,14 +454,25 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.enterText(
         find.widgetWithText(TextField, 'ID Number'), '12342210');
     await t.pump();
-    // 2. device key
+    // 2. device key (scroll into view: intro carries pre-context cards).
+    await t.scrollUntilVisible(find.text('Generate device key'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
     await t.tap(find.text('Generate device key'));
     await t.pumpAndSettle();
     expect(find.textContaining('Key: '), findsOneWidget);
-    // 3. face scan: ONE tap, all five angles in a single camera session
-    // with live pair scores — no exiting and re-entering per angle.
+    // Intro → capture.
+    await t.scrollUntilVisible(find.text('Continue to face scan'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Continue to face scan'));
+    await t.pumpAndSettle();
+    // 3. capture: ONE tap, all five angles in a single camera session.
     expect(find.text('0 of 5 angles captured'), findsOneWidget);
-    expect(find.textContaining('Centre —'), findsOneWidget);
+    expect(find.textContaining('Centre —'), findsWidgets);
+    await t.scrollUntilVisible(find.text('Scan all angles'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
     await t.tap(find.text('Scan all angles'));
     await t.pump();
     await t.pump(const Duration(milliseconds: 300));
@@ -466,11 +481,24 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // detector serves each slot's pose in turn at 700ms cadence.
     await t.pump(const Duration(seconds: 60));
     await t.pumpAndSettle();
-    expect(find.textContaining('Face detected and enrolled'), findsOneWidget);
-    // 4. upload → linked banner after Done (back on student home)
-    await t.tap(find.text('Save enrollment'));
+    expect(find.textContaining('5 of 5 angles captured'), findsOneWidget);
+    // Capture → result.
+    await t.scrollUntilVisible(find.text('Continue to save'), 300,
+        scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
-    expect(find.textContaining('Enrolled. Identity linked'), findsOneWidget);
+    await t.tap(find.text('Continue to save'));
+    await t.pumpAndSettle();
+    // 4. result: save → linked banner after Done (back on student home).
+    expect(find.text('Save enrollment'), findsWidgets);
+    final saveBtn =
+        find.widgetWithText(FilledButton, 'Save enrollment');
+    await t.scrollUntilVisible(saveBtn, 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
+    await t.tap(saveBtn);
+    await t.pumpAndSettle();
+    expect(find.textContaining('✓ Done'), findsOneWidget);
+    expect(find.textContaining('Identity linked'), findsOneWidget);
     await t.tap(find.text('Done'));
     await t.pumpAndSettle();
     expect(find.textContaining('Test User · 12342210'), findsOneWidget);
@@ -503,13 +531,18 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
-    await t.pumpAndSettle();
+    // Live window runs the 1s elapsed tick + pulsing dot: pump fixed steps,
+    // never settle (settle would chase the tick).
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
     final searchField = find.byKey(const ValueKey('prof-search'));
     await t.scrollUntilVisible(searchField, 500,
         scrollable: find.byType(Scrollable).first);
-    await t.pumpAndSettle();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
     await t.enterText(searchField, 'student');
-    await t.pumpAndSettle();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
     expect(find.text('Student One'), findsWidgets);
   });
 
@@ -763,8 +796,11 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
-    // Open the saved session (same manual UI as the live screen).
+    // Open the saved session (overview → read-only detail → editor).
     await t.tap(find.textContaining('1 present'));
+    await t.pumpAndSettle();
+    expect(find.text('Session'), findsOneWidget);
+    await t.tap(find.text('Fix marks'));
     await t.pumpAndSettle();
     expect(find.text('Edit attendance'), findsOneWidget);
     // Per-window checkboxes: expand A, unmark Round 1, add B, save.

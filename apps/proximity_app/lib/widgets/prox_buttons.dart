@@ -31,8 +31,10 @@ class _PressScaleState extends State<_PressScale> {
       onPointerCancel: (_) => setState(() => _down = false),
       child: AnimatedScale(
         scale: _down ? 0.97 : 1.0,
-        duration: ProxDurations.micro,
-        curve: ProxCurves.standard,
+        // User-triggered tap language: spring squeeze, instant when the
+        // OS asks for reduced motion (the tap itself never waits).
+        duration: ProxMotion.effective(context, ProxDurations.micro),
+        curve: ProxCurves.spring,
         child: widget.child,
       ),
     );

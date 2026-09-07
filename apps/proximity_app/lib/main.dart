@@ -19,11 +19,12 @@ import 'core/face_camera.dart';
 import 'core/host_driver.dart';
 import 'core/student_driver.dart';
 import 'design/app_theme.dart';
+import 'features/enrollment/enroll_intro.dart';
+import 'features/records/my_attendance_screen.dart';
+import 'features/records/prof_courses_screen.dart';
 import 'mode.dart';
-import 'screens/courses.dart';
-import 'screens/enrollment.dart';
+import 'routes.dart';
 import 'screens/landing.dart';
-import 'screens/my_attendance.dart';
 import 'screens/student_home.dart';
 import 'screens/take_attendance.dart';
 
@@ -224,13 +225,24 @@ class ProximityApp extends ConsumerWidget {
       // Space Grotesk display + Inter body, intentional palette.
       theme: proxLightTheme(),
       darkTheme: proxDarkTheme(),
+      // Route table wired (entry/enroll/records → feature bundle; live/mark
+      // sections → their host shells which retain orchestration). `home` +
+      // PROX_MODE previews still drive launch; every push/pop logs NAV via
+      // the observer. Web records-only guards live in the table (native-only
+      // deep-links → records on web) with per-screen banners as second gate.
+      routes: buildProxRoutes(),
+      onGenerateRoute: proxOnGenerateRoute,
+      onUnknownRoute: proxOnUnknownRoute,
+      navigatorObservers: [ProxRouteObserver()],
       home: switch (mode) {
+        // Thin entry router: Welcome (signed out) vs RoleHub (signed in).
         AppMode.unset => const LandingScreen(),
         // Web records builds never mark: students land on records.
         AppMode.student =>
           kIsWeb ? const MyAttendanceScreen() : const StudentHomeScreen(),
         AppMode.prof => const ProfCoursesScreen(),
-        AppMode.enroll => const EnrollmentScreen(),
+        // Bundle entry (pre-context + account + key); capture/result follow.
+        AppMode.enroll => const EnrollIntroScreen(),
         AppMode.take =>
           const TakeAttendanceScreen(courseName: 'CS201'),
       },

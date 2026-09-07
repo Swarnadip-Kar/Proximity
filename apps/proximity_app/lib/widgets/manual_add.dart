@@ -25,10 +25,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
+import '../design/tokens.dart';
+import 'prox_buttons.dart';
+import 'prox_cards.dart';
+import 'prox_states.dart';
 
 /// User-facing copy for a caught error: [StateError] stringifies as
 /// 'Bad state: [message]', so both prefixes come off.
@@ -113,6 +118,24 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
   // Generation counter: a slow earlier query must never overwrite newer
   // results (keystrokes overlap in flight).
   int _searchGen = 0;
+  // Last directory-search failure already mirrored to the log ring:
+  // repeat failures for the same query log at most once per 10s (offline
+  // typing would otherwise emit one SYNC line per debounced keystroke —
+  // same dedupe idea as the BLE beacon/relay loud-keys).
+  DateTime? _failLoggedAt;
+  String _failLoggedMsg = '';
+  void _logSearchFailure(String msg) {
+    final now = DateTime.now().toUtc();
+    if (msg == _failLoggedMsg &&
+        _failLoggedAt != null &&
+        now.difference(_failLoggedAt!) < const Duration(seconds: 10)) {
+      return;
+    }
+    _failLoggedMsg = msg;
+    _failLoggedAt = now;
+    BleLog.log(ProxLogTags.sync, 'ManualAdd directory search failed: $msg');
+  }
+
   // Last search failure, shown verbatim (permission-denied names the rules
   // redeploy; nothing here is ever silently swallowed).
   String _searchError = '';
@@ -138,7 +161,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
 
   void _scheduleSearch() {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), _runSearch);
+    _debounce = Timer(ProxDurations.searchDebounce, _runSearch);
   }
 
   Future<bool> _isOnline() async {
@@ -214,8 +237,9 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
       // Search is advisory for SUBMIT (typing still works, submit resolves
       // or queues) but failures are SHOWN, never swallowed: a denied query
       // (rules not deployed, professor role missing) otherwise looks
-      // exactly like "no students enrolled".
-      debugPrint('ManualAdd directory search failed: $e');
+      // exactly like "no students enrolled". They are also mirrored once
+      // to the SYNC log ring (throttled above) for the terminal + logcat.
+      _logSearchFailure(_userMessage(e));
       if (stale()) return;
       final msg = _userMessage(e);
       setState(() {
@@ -421,21 +445,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         ),
         if (_searching) ...[
           const SizedBox(height: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-              const SizedBox(width: 8),
-              Text(
-                'Searching online…',
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-            ],
-          ),
+          const ProxLoadingRow(label: 'Searching online…'),
         ],
         if (_searchOffline && _hasQuery) ...[
           const SizedBox(height: 8),
@@ -467,27 +477,25 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
           ),
         ],
         for (final h in _hits)
-          Card(
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.account_circle_outlined),
-              title: Text(h.name.isEmpty ? h.email : h.name),
-              subtitle:
-                  Text([if (h.roll.isNotEmpty) h.roll, h.email].join(' · ')),
-              trailing: const Icon(Icons.add),
-              onTap: () {
-                if (_alreadyPresent(h.email)) {
-                  _notePresent();
-                  return;
-                }
-                setState(() {
-                  _error = '';
-                  _note = '';
-                  _hits = [];
-                });
-                _fill(h.name, h.roll, h.email);
-              },
-            ),
+          ProxListTile(
+            dense: true,
+            leading: const Icon(Icons.account_circle_outlined),
+            title: h.name.isEmpty ? h.email : h.name,
+            subtitle:
+                [if (h.roll.isNotEmpty) h.roll, h.email].join(' · '),
+            trailing: const Icon(Icons.add),
+            onTap: () {
+              if (_alreadyPresent(h.email)) {
+                _notePresent();
+                return;
+              }
+              setState(() {
+                _error = '';
+                _note = '';
+                _hits = [];
+              });
+              _fill(h.name, h.roll, h.email);
+            },
           ),
         if (_error.isNotEmpty)
           Padding(
@@ -507,7 +515,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
+          child: ProxSecondaryButton(
             icon: _busy
                 ? const SizedBox(
                     width: 14,
@@ -571,6 +579,10 @@ Future<({List<String> resolvedIds, int remaining})> _processPendingAddsInner(
   }
   final items = await store.readPendingAdds();
   if (!online || items.isEmpty) {
+    if (items.isNotEmpty) {
+      BleLog.log(ProxLogTags.sync,
+          'manual queue sync deferred (offline): ${items.length} waiting');
+    }
     return (resolvedIds: const <String>[], remaining: items.length);
   }
   final resolvedIds = <String>[];
@@ -634,6 +646,8 @@ Future<({List<String> resolvedIds, int remaining})> _processPendingAddsInner(
     }
     if (!done) remaining.add(raw);
   }
+  BleLog.log(ProxLogTags.sync,
+      'manual queue sync: ${resolvedIds.length} resolved, ${remaining.length} remaining');
   await store.writePendingAdds(remaining);
   return (resolvedIds: resolvedIds, remaining: remaining.length);
 }

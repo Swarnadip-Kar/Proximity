@@ -54,12 +54,46 @@ class PartialEntry {
       required this.sessions});
 }
 
-String _ticksFor(List<Map<String, bool>> windows, String email) {
+String _ticksFor(List<Map<String, bool>> windows, String email) =>
+    ticksForWindows(windows, email);
+
+/// Per-round ticks for one student ('R1 ✓ · R2 ✗'). Shared by the partial
+/// cards, the session detail rows, and the saved-session editor subtitle.
+/// Pure — unit-tested without widgets.
+String ticksForWindows(List<Map<String, bool>> windows, String email) {
   final parts = <String>[];
   for (var i = 0; i < windows.length; i++) {
     parts.add('R${i + 1} ${windows[i][email] == true ? '✓' : '✗'}');
   }
   return parts.join(' · ');
+}
+
+/// Person subtitle: roll + email ('10000001 · a@x.in'), email alone when
+/// no roll. Shared by live roster/inbox, session detail/edit, and partial
+/// cards so every person row reads identically.
+String rosterSubtitle(String roll, String email) =>
+    [if (roll.isNotEmpty) roll, email].join(' · ');
+
+/// Count of partially-present students in one record (some but not all
+/// rounds). Shared by the overview card marker and the session detail
+/// header. Pure.
+int partialCountOf(
+    List<Map<String, bool>> windows, Iterable<String> emails) {
+  if (windows.length <= 1) return 0;
+  var n = 0;
+  for (final email in emails) {
+    var some = false;
+    var all = true;
+    for (final w in windows) {
+      if (w[email] == true) {
+        some = true;
+      } else {
+        all = false;
+      }
+    }
+    if (some && !all) n++;
+  }
+  return n;
 }
 
 /// Collects partial students over [sessions] (single-round sessions never

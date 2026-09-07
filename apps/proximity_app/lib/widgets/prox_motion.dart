@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../design/app_theme.dart';
 import '../design/tokens.dart';
 
 /// Fade + slide entrance. The default "screen belongs to the same product"
@@ -179,7 +180,8 @@ class ProxAnimatedCount extends StatelessWidget {
       child: Text(
         format != null ? format!(value) : '$value',
         key: ValueKey<int>(value),
-        style: style ?? Theme.of(context).textTheme.headlineSmall,
+        style: proxTabular(
+            context, style ?? Theme.of(context).textTheme.headlineSmall),
       ),
     );
   }

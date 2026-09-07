@@ -1,6 +1,15 @@
 // Student flow: manual join (IP shown by professor; BLE discovery lands
 // with the radio slice) → real face scan → 30s listening radar → signed
 // ACK. Foreground-required; backgrounding pauses. Identical Android/iOS.
+//
+// Layout contract: this screen owns discovery/waiting/proving orchestration
+// and composes the mark feature sections (browse, join-by-IP, waiting
+// room, face check, proving, verdict, manual status) — one section per
+// file under lib/features/mark/. Waiting → scan → verdict is wrapped in
+// [MarkFlowShell] so it reads as ONE continuation (AnimatedSwitcher with
+// the screen-level emphasized curve, no hard cuts, no BLE/radar/verdict
+// info dumps). Behavior is unchanged from the pre-split screen; only the
+// rendering moved.
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -14,32 +23,24 @@ import '../core/ble_radio.dart';
 import '../core/device_store.dart';
 import '../core/student_driver.dart';
 import '../design/tokens.dart';
+import '../features/debug/debug_log_screen.dart';
+import '../features/enrollment/enroll_flow.dart';
+import '../features/mark/browse_classes.dart';
+import '../features/mark/face_check.dart';
+import '../features/mark/manual_status.dart';
+import '../features/mark/mark_flow.dart';
+import '../features/mark/mark_phase.dart';
+import '../features/mark/proving_view.dart';
+import '../features/mark/verdict_view.dart';
+import '../features/mark/waiting_room.dart';
+import '../features/records/my_attendance_screen.dart';
 import '../main.dart';
 import '../mode.dart';
-import '../widgets/animated.dart';
-import '../widgets/ble_log_view.dart';
-import '../widgets/ip_join.dart';
-import '../widgets/clock.dart';
-import '../widgets/prox_cards.dart';
-import '../widgets/prox_motion.dart';
-import '../widgets/prox_states.dart';
-import '../widgets/prox_verdict.dart';
-import 'enrollment.dart';
 import 'face_capture.dart';
-import 'my_attendance.dart';
 
-enum StudentPhase {
-  browsing,
-  waiting,
-  faceCheck,
-  listening,
-  marked,
-  late,
-  needsReview,
-  noSignal,
-  paused,
-  manualPending,
-}
+// Mark phases live in the mark-flow section; re-exported here so existing
+// imports keep resolving StudentPhase from this screen.
+export '../features/mark/mark_phase.dart' show StudentPhase;
 
 /// UDP discovery port (injectable so tests avoid clashing with a running app).
 final discoveryPortProvider = Provider<int>((_) => kDiscoveryPort);
@@ -89,9 +90,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   bool _autoFaceFired = false;
   // Transient verdict note on the face-check screen (inconclusive scans).
   String faceNotice = '';
-  // Toggleable terminal log (BLE → mesh → LAN → sign → ACK).
-  bool _showLog = false;
-  void _toggleLog() => setState(() => _showLog = !_showLog);
 
   // BLE-hint listings (professor host:port heard over radio, probed once,
   // listed on answer). Merged with broadcast beacons in [_allLive].
@@ -122,7 +120,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _listener.onBeacon = (a, isNew) {
-      BleLog.log('LAN',
+      BleLog.log(ProxLogTags.lan,
           'beacon ${isNew ? "new" : "heard"} ${a.classLabel}@${a.host}:${a.port} ${a.windowOpen ? "OPEN" : "idle"}');
     };
     _listener.onChange = () {
@@ -142,7 +140,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     '${waiting.host}:${waiting.port}' &&
                 c.last.windowOpen);
         if (flipped) {
-          BleLog.log('LAN',
+          BleLog.log(ProxLogTags.lan,
               'window OPEN seen for ${waiting.host}:${waiting.port} → face check');
           _advanceToFace(waiting);
           return;
@@ -170,7 +168,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final engine = ref.read(bleEngineProvider);
       engine.onIpHintHeard = _onBleIpHint;
       engine.relayEnabled = true;
-      BleLog.log('MESH', 'mesh on (student relay armed)');
+      BleLog.log(ProxLogTags.mesh, 'mesh on (student relay armed)');
       Future(() async {
         var ok = true;
         try {
@@ -180,7 +178,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         }
         if (!mounted) return;
         if (!ok) {
-          BleLog.log('BLE',
+          BleLog.log(ProxLogTags.ble,
               'scan held for Bluetooth permission (join re-asks)');
           return;
         }
@@ -228,7 +226,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                       '${waiting.host}:${waiting.port}' &&
                   c.last.windowOpen);
           if (flipped) {
-            BleLog.log('LAN',
+            BleLog.log(ProxLogTags.lan,
                 'window OPEN seen for ${waiting.host}:${waiting.port} → face check');
             _advanceToFace(waiting);
           }
@@ -304,11 +302,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       return;
     }
     _bleHintThrottle[key] = now;
-    BleLog.log('BLE', 'IP hint $key — background probe…');
+    BleLog.log(ProxLogTags.ble, 'IP hint $key — background probe…');
     final hit = await probeHost(host, port);
     if (!mounted) return;
     if (hit == null) {
-      BleLog.log('BLE',
+      BleLog.log(ProxLogTags.ble,
           'IP hint $key unreachable — server may still be starting, retrying…');
       // Pending: heartbeat retries (see _refreshSessions). One fast retry
       // covers the professor-tapped-Start-seconds-ago case without waiting
@@ -324,7 +322,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _hintRetryTimers.add(retry);
       return;
     }
-    BleLog.log('BLE',
+    BleLog.log(ProxLogTags.ble,
         'IP hint $key answers (${hit.classLabel}, ${hit.windowOpen ? "OPEN" : "idle"}) → listed');
     _pendingHints.remove(key);
     _sessionAck[key] = now;
@@ -423,7 +421,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           changed = true;
         }
         if ((_sessionFails[key] ?? 0) >= kSessionMaxFails) {
-          BleLog.log('LAN', 'session $key gone (no ack) → dropped');
+          BleLog.log(ProxLogTags.lan, 'session $key gone (no ack) → dropped');
           _sessionAck.remove(key);
           _sessionFails.remove(key);
           changed = true;
@@ -434,7 +432,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _sessionFails[key] = 0;
       if (_pendingHints.remove(key) != null) {
         BleLog.log(
-            'BLE', 'IP hint $key answered on retry → listed');
+            ProxLogTags.ble, 'IP hint $key answered on retry → listed');
       }
       final prev = _hints[key];
       _hints[key] = LiveClass(
@@ -543,6 +541,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (backgrounded &&
         (phase == StudentPhase.listening || phase == StudentPhase.faceCheck)) {
       _runId++;
+      BleLog.log(ProxLogTags.state, 'backgrounded during $phase → paused');
       if (mounted) setState(() => phase = StudentPhase.paused);
     }
   }
@@ -572,6 +571,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       setState(() => joinError = 'Enter the professor IP shown in class.');
       return;
     }
+    BleLog.log(ProxLogTags.nav, 'join by IP ${target.host}:${target.port} → waiting');
     try {
       await ref
           .read(deviceStoreProvider)
@@ -616,6 +616,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       await ref.read(studentDriverProvider).prewarmRadio();
     } catch (_) {}
     if (!mounted) return;
+    BleLog.log(ProxLogTags.nav,
+        'live window for ${target.host}:${target.port} → face check');
     setState(() {
       joinError = '';
       phase = StudentPhase.faceCheck;
@@ -642,6 +644,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     } catch (_) {}
     if (!mounted) return;
     _stopRoomTimers();
+    BleLog.log(ProxLogTags.nav, 'waiting room ${target.host}:${target.port}');
     setState(() {
       joinError = '';
       _waitingTarget = target;
@@ -702,7 +705,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // a waiter out).
         if (++_roomMisses >= 5) {
           final key = '${target.host}:${target.port}';
-          BleLog.log('LAN', 'hosting ended while waiting → live list');
+          BleLog.log(ProxLogTags.lan, 'hosting ended while waiting → live list');
           _dropHostEntries(key);
           _toBrowsing('Class ended — back to the live list.');
           return;
@@ -719,7 +722,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (++_roomMisses >= 5) {
         final t = _waitingTarget;
         if (t != null) {
-          BleLog.log('LAN', 'hosting ended while waiting → live list');
+          BleLog.log(ProxLogTags.lan, 'hosting ended while waiting → live list');
           _dropHostEntries('${t.host}:${t.port}');
           _toBrowsing('Class ended — back to the live list.');
           return;
@@ -785,17 +788,20 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (!mounted) return;
     switch (res.match) {
       case FaceMatch.pass:
+        BleLog.log(ProxLogTags.face, 'face pass — continuing to proving');
         setState(() => faceNotice = '');
         _listen(target, linked, res.score);
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
+        BleLog.log(ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
         _faceAttempts++;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
         // No readable verdict (attempt kept): relaunch automatically a
         // couple of times with a helpful prompt, then fall back to the
         // manual Scan button. Cancel exits this loop by returning null.
+        BleLog.log(ProxLogTags.face, 'face inconclusive — auto-retry ($_autoFaceTries of 2)');
         if (_autoFaceTries < 2) {
           _autoFaceTries++;
           setState(() => faceNotice =
@@ -812,6 +818,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // Template predates the face pipeline: matching against it would
         // be meaningless. Park on the check screen with a re-enroll
         // notice — no attempt consumed, nothing signed.
+        BleLog.log(ProxLogTags.face, 'stale template — re-enroll, nothing signed');
         setState(() => faceNotice =
             'Face recognition was updated — re-enroll this device from the home screen, then join again.');
     }
@@ -821,6 +828,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     final target = _waitingTarget ?? _parseTarget();
     final linked = ref.read(linkedIdentityProvider);
     if (target == null || linked == null) return;
+    BleLog.log(ProxLogTags.state, 'manual request → ${target.host} (polling prof)');
     setState(() {
       _manualStatus = 'pending';
       phase = StudentPhase.manualPending;
@@ -851,12 +859,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         setState(() => _manualStatus = st);
         if (st == 'approved') {
           _manualPoll?.cancel();
+          BleLog.log(ProxLogTags.state, 'manual approved — marked present');
           setState(() {
             ackDetail = 'Marked present (manual approval)';
             phase = StudentPhase.marked;
           });
         } else if (st == 'rejected') {
           _manualPoll?.cancel();
+          BleLog.log(ProxLogTags.state, 'manual rejected — parked, see professor');
           // Stays in manualPending showing the verdict (present-or-absent ACK).
         }
       } catch (_) {}
@@ -897,6 +907,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _roundMarks.add(
           'R${_roundMarks.length + 1} · ${receipt.detail}');
     }
+    BleLog.log(ProxLogTags.state, 'verdict ${receipt.result.name} (${receipt.detail})');
     setState(() {
       ackDetail = receipt.detail;
       phase = switch (receipt.result) {
@@ -979,14 +990,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       return;
     }
     if (ended) {
-      BleLog.log('LAN',
+      BleLog.log(ProxLogTags.lan,
           'hosting ended (was $markedDisplay) → live list, no re-face');
       _dropHostEntries('${target.host}:${target.port}');
       _toBrowsing('Class ended — back to the live list.');
       return;
     }
     if (rewait) {
-      BleLog.log('LAN',
+      BleLog.log(ProxLogTags.lan,
           'round over (was $markedDisplay, now ${nextDisplay.isEmpty ? 'closed' : nextDisplay}) → waiting for next');
       await _enterWaitingRoom(target);
       return;
@@ -994,162 +1005,81 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _rewaitAfterRound(target, run, markedDisplay);
   }
 
+  /// Leaves any inner phase for the browse list: timers off, explicit
+  /// /leave so the professor count drops, relay cut. Used by Cancel/Back
+  /// actions and the system-back handler (same teardown everywhere).
+  void _cancelToBrowsing() {
+    _runId++;
+    _stopRoomTimers();
+    _leaveWaitingRoom();
+    setState(() {
+      _waitingTarget = null;
+      phase = StudentPhase.browsing;
+    });
+  }
+
   Widget _browsing(
       BuildContext context, LinkedIdentity? linked, String identityLine) {
-    // Pull-down = instant local refresh (expiry pruning + recompute).
-    // No network scan: discovery is passive (UDP beacons + BLE hints).
-    return RefreshIndicator(
+    return BrowseClassesView(
+      linked: linked,
+      identityLine: identityLine,
+      ipFieldKey: ValueKey('ip-$_fieldNonce'),
+      ipInitial: _fieldInitial,
+      onIpChanged: (v) {
+        _typedHostPort = v ?? '';
+        final hp = v;
+        if (hp != null && hp.isNotEmpty) {
+          try {
+            ref.read(deviceStoreProvider).writeLastHost(hp);
+          } catch (_) {}
+        }
+      },
+      onJoin: _join,
+      joinError: joinError,
+      live: _live,
+      onTapLive: (c) {
+        BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
+        final target = ClassBeacon(
+          classLabel: c.last.classLabel,
+          host: c.last.host,
+          port: c.last.port,
+          rssiDbm: 0,
+          displayCode: c.last.display,
+        );
+        final hp = '${c.last.host}:${c.last.port}';
+        setState(() {
+          _fieldInitial = hp;
+          _fieldNonce++;
+          _typedHostPort = hp;
+        });
+        _roundMarks.clear();
+        if (c.last.windowOpen) {
+          _joinBeacon(target);
+        } else {
+          _enterWaitingRoom(target, immediateProbe: false);
+        }
+      },
+      onEnroll: () {
+        BleLog.log(ProxLogTags.nav, 'browse → enroll bundle');
+        EnrollFlow.openBundle(context).then((_) {
+          if (mounted) setState(() {});
+        });
+      },
+      onViewRecords: () {
+        BleLog.log(ProxLogTags.nav, 'browse → records');
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const MyAttendanceScreen()));
+      },
       onRefresh: () async {
         if (mounted) setState(() => _live = _allLive());
       },
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: ClockHeader(),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-          child:
-              Text(identityLine, style: Theme.of(context).textTheme.bodyMedium),
-        ),
-        if (linked == null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.badge),
-                label: const Text('Enroll this device (face + ID)'),
-                onPressed: () => Navigator.of(context)
-                    .push(MaterialPageRoute(
-                        builder: (_) => const EnrollmentScreen()))
-                    .then((_) {
-                  if (mounted) setState(() {});
-                }),
-              ),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-          child: SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.history),
-              label: const Text('My attendance records (synced)'),
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const MyAttendanceScreen())),
-            ),
-          ),
-        ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: IpJoinField(
-              key: ValueKey('ip-$_fieldNonce'),
-              initial: _fieldInitial,
-              // Persist every complete IP as it is typed, so backing out
-              // of Join never loses it — the next visit re-opens prefilled.
-              onChanged: (v) {
-                _typedHostPort = v ?? '';
-                final hp = v;
-                if (hp != null && hp.isNotEmpty) {
-                  try {
-                    ref.read(deviceStoreProvider).writeLastHost(hp);
-                  } catch (_) {}
-                }
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _join,
-                child: const Text('Join'),
-              ),
-            ),
-          ),
-              if (joinError.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: Text(joinError,
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
-                ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: ProxSectionHeader(
-            title: 'Live on this WiFi',
-            padding: EdgeInsets.zero,
-          ),
-        ),
-        if (_live.isEmpty)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: Text(
-                'No live classes heard yet. Stay on the classroom WiFi — professors appear here when they start hosting. If nothing appears, type the IP shown on the professor\u2019s screen above, or join the professor\u2019s hotspot instead.'),
-          )
-        else
-          for (var i = 0; i < _live.length; i++)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-              child: ProxListTile(
-                title: _live[i].last.classLabel,
-                subtitle: [
-                  if (_live[i].last.prof.isNotEmpty) _live[i].last.prof,
-                  _live[i].last.host,
-                  if (_live[i].last.display.isNotEmpty)
-                    'Code ${_live[i].last.display}',
-                ].join(' · '),
-                staggerIndex: i,
-                leading: ProxDot(
-                  color: _live[i].last.windowOpen
-                      ? ProxStateColors.of(context, ProxState.marked)
-                      : ProxStateColors.of(context, ProxState.neutral),
-                  pulse: _live[i].last.windowOpen,
-                  size: 12,
-                ),
-                trailing: _live[i].last.windowOpen
-                    ? const Icon(Icons.chevron_right)
-                    : const Text('idle'),
-                onTap: () {
-                  final c = _live[i];
-                  final target = ClassBeacon(
-                    classLabel: c.last.classLabel,
-                    host: c.last.host,
-                    port: c.last.port,
-                    rssiDbm: 0,
-                    displayCode: c.last.display,
-                  );
-                  final hp = '${c.last.host}:${c.last.port}';
-                  setState(() {
-                    _fieldInitial = hp;
-                    _fieldNonce++;
-                    _typedHostPort = hp;
-                  });
-                  _roundMarks.clear();
-                  if (c.last.windowOpen) {
-                    _joinBeacon(target);
-                  } else {
-                    _enterWaitingRoom(target, immediateProbe: false);
-                  }
-                },
-              ),
-            ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-              'Keep app in foreground. Backgrounding shows Paused — reopen.'),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: BleLogView(visible: _showLog, onToggle: _toggleLog),
-        ),
-        ],
-      ),
     );
+  }
+
+  void _openLog() {
+    BleLog.log(ProxLogTags.nav, 'mark → system log');
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
   }
 
   @override
@@ -1182,330 +1112,104 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         title: 'Student — Join class',
         actions: [
           IconButton(
+            icon: const Icon(Icons.terminal_outlined),
+            tooltip: 'System log',
+            onPressed: _openLog,
+          ),
+          IconButton(
             icon: const Icon(Icons.switch_account),
             tooltip: 'Switch mode',
             onPressed: () => setMode(ref, AppMode.unset),
           ),
         ],
-        body: switch (phase) {
-          StudentPhase.browsing => _browsing(context, linked, identityLine),
-          StudentPhase.waiting => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ProxFadeSlideIn(
-                  child: Column(
+        // Waiting → scan → verdict wrapped as ONE continuation: every hop
+        // cross-fades (emphasized) instead of hard-cutting.
+        body: MarkFlowShell(
+          phase: phase,
+          child: switch (phase) {
+            StudentPhase.browsing => _browsing(context, linked, identityLine),
+            StudentPhase.waiting => WaitingRoomView(
+                connected: _connected,
+                roomClass: _roomClass.isNotEmpty
+                    ? _roomClass
+                    : (_waitingTarget?.classLabel ?? 'this class'),
+                roundMarks: _roundMarks,
+                onRequestManual: _requestManual,
+                onCancel: _cancelToBrowsing,
+              ),
+            StudentPhase.manualPending => ManualRequestView(
+                status: _manualStatus,
+                onBack: _cancelToBrowsing,
+              ),
+            StudentPhase.faceCheck => FaceCheckView(
+                faceNotice: faceNotice,
+                canScan: (_waitingTarget ?? target) != null && linked != null,
+                onScan: () {
+                  final t = _waitingTarget ?? target;
+                  final l = linked;
+                  if (t != null && l != null) _scanFace(t, l);
+                },
+              ),
+            StudentPhase.listening => ProvingView(
+                status: listenStatus,
+              ),
+            StudentPhase.marked => MarkVerdictView(
+                kind: MarkVerdict.marked,
+                detail: ackDetail,
+                roundMarks: _roundMarks,
+                onRetryFace: () {},
+                onManualInstead: () {},
+                onBack: () {},
+              ),
+            StudentPhase.late => MarkVerdictView(
+                kind: MarkVerdict.late,
+                detail: ackDetail,
+                roundMarks: _roundMarks,
+                onRetryFace: () {},
+                onManualInstead: () {},
+                onBack: () {},
+              ),
+            StudentPhase.needsReview => MarkVerdictView(
+                kind: MarkVerdict.needsReview,
+                detail: '',
+                roundMarks: const [],
+                attemptsLeft: 4 - _faceAttempts,
+                onRetryFace: () {
+                  final t = _waitingTarget ?? target;
+                  final l = linked;
+                  setState(() => phase = StudentPhase.faceCheck);
+                  if (t != null && l != null) {
+                    _scheduleAutoScan(t, l);
+                  }
+                },
+                onManualInstead: _requestManual,
+                onBack: () => setState(() => phase = StudentPhase.browsing),
+              ),
+            StudentPhase.noSignal => MarkVerdictView(
+                kind: MarkVerdict.noSignal,
+                detail: ackDetail,
+                infoDetail: infoDetail,
+                roundMarks: const [],
+                onRetryFace: () {},
+                onManualInstead: () {},
+                onBack: () => setState(() => phase = StudentPhase.browsing),
+              ),
+            StudentPhase.paused => Center(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ProxSwitcher(
-                      child: ProxStateBadge(
-                        key: ValueKey<bool>(_connected),
-                        state: _connected
-                            ? ProxState.active
-                            : ProxState.waiting,
-                        label: _connected ? 'Connected' : 'Not connected',
-                        pulse: _connected,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ProxSwitcher(
-                      child: Text(
-                        _connected
-                            ? 'Connected — waiting for professor to start marking'
-                            : 'Not connected — check WiFi / IP',
-                        key: ValueKey<bool>(_connected),
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
+                    const Text('Paused — reopen'),
                     const SizedBox(height: 8),
-                    Text(
-                      'Attendance has not yet started for\n${_roomClass.isNotEmpty ? _roomClass : (_waitingTarget?.classLabel ?? 'this class')}.\nKeep this open — you will continue automatically when the professor starts marking.',
-                      textAlign: TextAlign.center,
-                    ),
-                    if (_roundMarks.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'This session: ${_roundMarks.join(' · ')}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.how_to_reg),
-                      label: const Text('Request manual attendance'),
-                      onPressed: _requestManual,
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: () {
-                        _runId++;
-                        _stopRoomTimers();
-                        _leaveWaitingRoom();
-                        setState(() {
-                          _waitingTarget = null;
-                          phase = StudentPhase.browsing;
-                        });
-                      },
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
-                  ],
-                  ),
-                ),
-              ),
-            ),
-          StudentPhase.manualPending => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.how_to_reg, size: 48),
-                    const SizedBox(height: 12),
-                    Text(
-                      switch (_manualStatus) {
-                        'approved' => 'Manual attendance approved — marked present.',
-                        'rejected' =>
-                          'Manual request declined (marked absent) — see professor.',
-                        _ =>
-                          'Manual request sent — waiting for professor approval…',
-                      },
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    if (_manualStatus != 'approved' &&
-                        _manualStatus != 'rejected')
-                      const CircularProgressIndicator(),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () {
-                        _runId++;
-                        _stopRoomTimers();
-                        _leaveWaitingRoom();
-                        setState(() {
-                          _waitingTarget = null;
-                          phase = StudentPhase.browsing;
-                        });
-                      },
-                      child: const Text('Back'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          StudentPhase.faceCheck => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const FaceOval(
-                        progress: 1.0,
-                        prompt: 'Position your face in the oval'),
-                    const SizedBox(height: 8),
-                  const Text(
-                      'Professor started marking — look at the camera, scanning starts by itself.'),
-                  // Ambient BLE indicator: the radio keeps listening under
-                  // the camera UI. One small pulsing dot + caption — visible
-                  // without distracting from the scan.
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ProxDot(
-                        color: ProxStateColors.of(context, ProxState.active),
-                        pulse: true,
-                        size: 8,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'BLE listening',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                  ),
-                  if (faceNotice.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    ProxSwitcher(
-                      child: Text(
-                        faceNotice,
-                        key: ValueKey<String>(faceNotice),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.face),
-                      label: const Text('Scan face'),
-                      onPressed: (_waitingTarget ?? target) == null ||
-                              linked == null
-                          ? null
-                          : () =>
-                              _scanFace((_waitingTarget ?? target)!, linked),
-                    ),
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
-                  ],
-                ),
-              ),
-            ),
-          StudentPhase.listening => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 12),
-                    ProxSwitcher(
-                      child: Text(
-                        listenStatus,
-                        key: ValueKey<String>(listenStatus),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
-                  ],
-                ),
-              ),
-            ),
-          StudentPhase.marked => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ProxVerdictBadge.marked(detail: ackDetail),
-                    if (_roundMarks.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'This session: ${_roundMarks.join(' · ')}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Stay put — the next round rejoins automatically.',
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
-                  ],
-                ),
-              ),
-            ),
-          StudentPhase.late => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ProxVerdictBadge.late(detail: ackDetail),
-                    if (_roundMarks.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'This session: ${_roundMarks.join(' · ')}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
-                  ],
-                ),
-              ),
-            ),
-          StudentPhase.needsReview => Center(
-              child: ProxFadeSlideIn(
-                child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                      'Face check didn\'t match the enrolled face — try again in good light, holding still.'),
-                  const SizedBox(height: 12),
-                  // 4 mismatch sessions, then the review queue. Anything
-                  // unreadable never reaches this screen (the verify
-                  // session keeps scanning; free auto-relaunches follow).
-                  if (_faceAttempts < 4)
-                    FilledButton.icon(
-                      icon: const Icon(Icons.refresh),
-                      label: Text(
-                          'Retry face scan (${4 - _faceAttempts} left)'),
-                      onPressed: () {
-                        final t = _waitingTarget ?? target;
-                        final l = linked;
-                        setState(() => phase = StudentPhase.faceCheck);
-                        if (t != null && l != null) {
-                          _scheduleAutoScan(t, l);
-                        }
-                      },
-                    )
-                  else
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.how_to_reg),
-                      label:
-                          const Text('Request manual attendance instead'),
-                      onPressed: _requestManual,
-                    ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: () =>
-                        setState(() => phase = StudentPhase.browsing),
-                    child: const Text('Back'),
-                  ),
-                ],
-                ),
-              ),
-            ),
-          StudentPhase.noSignal => Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ProxVerdictBadge(
-                      kind: ProxVerdictKind.noSignal,
-                      title: 'No signal',
-                      detail: infoDetail.isNotEmpty ? infoDetail : ackDetail,
-                    ),
-                    const SizedBox(height: 12),
                     FilledButton(
                       onPressed: () =>
                           setState(() => phase = StudentPhase.browsing),
-                      child: const Text('Try again'),
+                      child: const Text('Back to join'),
                     ),
-                    const SizedBox(height: 12),
-                    BleLogView(visible: _showLog, onToggle: _toggleLog),
                   ],
                 ),
               ),
-            ),
-          StudentPhase.paused => Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Paused — reopen'),
-                  const SizedBox(height: 8),
-                  FilledButton(
-                    onPressed: () =>
-                        setState(() => phase = StudentPhase.browsing),
-                    child: const Text('Back to join'),
-                  ),
-                ],
-              ),
-            ),
-        },
+          },
+        ),
       ),
     );
   }

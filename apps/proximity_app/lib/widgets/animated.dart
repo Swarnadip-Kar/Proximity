@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../design/app_theme.dart';
 import '../design/tokens.dart';
 
 /// Face oval with progress ring (~1s check).
@@ -91,7 +92,8 @@ class PresentTicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = Text('$present/$total present',
         key: ValueKey<int>(present),
-        style: Theme.of(context).textTheme.headlineSmall);
+        style: proxTabular(
+            context, Theme.of(context).textTheme.headlineSmall));
     if (ProxMotion.reduced(context)) return label;
     return AnimatedSwitcher(
       duration: ProxDurations.medium,

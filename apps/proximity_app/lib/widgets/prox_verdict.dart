@@ -12,6 +12,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -56,27 +57,36 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
   AnimationController? _c;
   Timer? _breath;
   var _dim = false;
-
-  static const _breathPeriod = Duration(milliseconds: 1200);
+  var _armed = false;
 
   @override
   void initState() {
     super.initState();
-    if (widget.kind == ProxVerdictKind.noSignal) {
+    // One-shot controllers arm here; the noSignal breathing loop arms in
+    // didChangeDependencies (MediaQuery is readable there, and reduced
+    // motion must leave it disarmed so the badge never rebuilds).
+    if (widget.kind == ProxVerdictKind.noSignal) return;
+    final duration = switch (widget.kind) {
+      ProxVerdictKind.marked => ProxDurations.verdictPop,
+      ProxVerdictKind.late => ProxDurations.medium,
+      ProxVerdictKind.noSignal => ProxDurations.breath,
+      ProxVerdictKind.error => ProxDurations.shake,
+    };
+    _c = AnimationController(vsync: this, duration: duration)..forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed || widget.kind != ProxVerdictKind.noSignal) return;
+    _armed = true;
+    if (!ProxMotion.reduced(context)) {
       // Calm loop, timer-driven (no infinite ticker — tests settle).
-      _breath = Timer.periodic(_breathPeriod, (_) {
+      _breath = Timer.periodic(ProxDurations.breath, (_) {
         if (!mounted) return;
         setState(() => _dim = !_dim);
       });
-      return;
     }
-    final duration = switch (widget.kind) {
-      ProxVerdictKind.marked => const Duration(milliseconds: 450),
-      ProxVerdictKind.late => ProxDurations.medium,
-      ProxVerdictKind.noSignal => _breathPeriod,
-      ProxVerdictKind.error => const Duration(milliseconds: 500),
-    };
-    _c = AnimationController(vsync: this, duration: duration)..forward();
   }
 
   @override
@@ -109,7 +119,7 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
     final c = _c;
     if (widget.kind == ProxVerdictKind.noSignal) {
       return AnimatedOpacity(
-        duration: _breathPeriod,
+        duration: ProxDurations.breath,
         curve: ProxCurves.standard,
         opacity: _dim ? 0.55 : 1.0,
         child: _content(color),
@@ -140,7 +150,7 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
             // One damped shake: 3 oscillations decaying to rest.
             final t = c.value.clamp(0.0, 1.0);
             final dx = t < 1.0
-                ? (1 - t) * 10 * _shake(t * 3 * 2 * 3.1415926535)
+                ? (1 - t) * 10 * math.sin(t * 3 * 2 * math.pi)
                 : 0.0;
             return Transform.translate(
               offset: Offset(dx, 0),
@@ -150,14 +160,6 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
           child: _content(color),
         ),
     };
-  }
-
-  double _shake(double x) => x <= 0 ? 0 : (x < 0.001 ? 0 : _sin(x));
-
-  double _sin(double x) {
-    // Cheap sin without importing dart:math into the widget file header
-    // dance — implemented via the standard library below.
-    return _Sin.impl(x);
   }
 
   Widget _content(Color color) {
@@ -177,7 +179,9 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
         const SizedBox(height: ProxSpacing.md),
         Text(
           widget.title,
-          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
           textAlign: TextAlign.center,
         ),
         if (widget.detail.isNotEmpty) ...[
@@ -186,21 +190,5 @@ class _ProxVerdictBadgeState extends State<ProxVerdictBadge>
         ],
       ],
     );
-  }
-}
-
-// Tiny indirection so the shake math stays testable without pulling
-// dart:math into the public import surface of this file.
-class _Sin {
-  static double impl(double x) {
-    var n = x;
-    // Range-reduce to [-pi, pi].
-    const twoPi = 6.283185307179586;
-    n = n % twoPi;
-    if (n > 3.141592653589793) n -= twoPi;
-    if (n < -3.141592653589793) n += twoPi;
-    // Taylor, 7th order — plenty for a 10px shake.
-    final x2 = n * n;
-    return n * (1 - x2 / 6 + x2 * x2 / 120);
   }
 }

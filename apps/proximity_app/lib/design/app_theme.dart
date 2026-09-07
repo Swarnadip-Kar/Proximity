@@ -84,10 +84,19 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
       shape: RoundedRectangleBorder(
         borderRadius: ProxRadii.cardRadius,
         side: BorderSide(
-          color: scheme.outlineVariant.withValues(alpha: 0.6),
+          // Depth in dark mode comes from elevation (lighter fill), not
+          // borders — so the border steps back where the fill steps up.
+          color: scheme.outlineVariant.withValues(
+              alpha: brightness == Brightness.dark ? 0.35 : 0.6),
         ),
       ),
-      color: scheme.surfaceContainerLowest,
+      // Dark-mode rule (Material + Apple HIG alignment): cards sit ABOVE
+      // the background. M3's surfaceContainerLowest is the darkest stop —
+      // correct on light (near-white card on paper) but inverted on dark,
+      // where cards must be lighter than the page to read as elevated.
+      color: brightness == Brightness.dark
+          ? scheme.surfaceContainerLow
+          : scheme.surfaceContainerLowest,
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
@@ -150,3 +159,11 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
     iconTheme: IconThemeData(color: scheme.onSurfaceVariant, size: 20),
   );
 }
+
+/// Tabular figures for live numeric readouts (elapsed clocks, present
+/// counters). Monospaced digits stop the layout jittering every tick —
+/// the same reason transit and sports apps set tnum on their timers.
+TextStyle? proxTabular(BuildContext context, TextStyle? style) =>
+    (style ?? Theme.of(context).textTheme.bodyMedium)?.copyWith(
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );

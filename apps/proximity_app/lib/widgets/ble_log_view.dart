@@ -1,10 +1,14 @@
 // Toggleable terminal-style system log view.
 //
-// Shows live BLE/mesh/security/network events:
+// Shows live BLE/mesh/security/network events plus the foundation-track
+// NAV/SYNC/FACE/STATE tags (navigation, sync/queue, face decision points,
+// state recompute reasons):
 //   BLE msg received — forwarding to mesh — signing token — token sent —
 //   waiting for ack — ack received, plus scan/advertise/relay diagnostics.
 // The same widget is embedded in the student attendance/scanning screens
 // and the professor scanning page; visibility is toggled per screen.
+// Tag colors come from [ProxLogColors] (single source with the
+// full-screen debug log).
 //
 // Performance design (this is a debugging tool on hot screens — BLE +
 // camera + networking are already active):
@@ -44,7 +48,6 @@ class BleLogView extends StatefulWidget {
 
 class _BleLogViewState extends State<BleLogView> {
   static const _cap = 500;
-  static const _flushEvery = Duration(milliseconds: 200);
   final List<BleLogEntry> _entries = [];
   final List<BleLogEntry> _pending = [];
   StreamSubscription<BleLogEntry>? _sub;
@@ -63,7 +66,7 @@ class _BleLogViewState extends State<BleLogView> {
     _sub = BleLog.stream.listen((e) {
       if (!mounted) return;
       _pending.add(e);
-      _flush ??= Timer(_flushEvery, _applyPending);
+      _flush ??= Timer(ProxDurations.logFlush, _applyPending);
     });
   }
 
@@ -97,16 +100,7 @@ class _BleLogViewState extends State<BleLogView> {
     });
   }
 
-  Color _colorFor(String tag) {
-    return switch (tag) {
-      'BLE' => const Color(0xFF4ADE80),
-      'MESH' => const Color(0xFF60A5FA),
-      'LAN' => const Color(0xFFF472B6),
-      'SEC' => const Color(0xFFFBBF24),
-      'NET' => const Color(0xFF22D3EE),
-      _ => const Color(0xFFE5E7EB),
-    };
-  }
+  Color _colorFor(String tag) => ProxLogColors.of(tag);
 
   @override
   Widget build(BuildContext context) {

@@ -76,6 +76,29 @@ String dateIsoOf(DateTime t) =>
     '${t.month.toString().padLeft(2, '0')}-'
     '${t.day.toString().padLeft(2, '0')}';
 
+/// Tight session title: short weekday + day/month, time when known
+/// ('CS201 · Thu, 3 Sep · 10:00'). Shared by the course overview and the
+/// export center so both lists read identically. Pure — no record import.
+String sessionTightLabel(
+    String classLabel, String dateIso, String timestampIso) {
+  final time = shortTimeOf(timestampIso);
+  return '$classLabel · ${shortDayDateOf(dateIso)}'
+      '${time.isEmpty ? '' : ' · $time'}';
+}
+
+/// Roomy subtitle line: full weekday, date and year ('Friday, 4 September
+/// 2026 · 10:00'). Shared by the overview + export lists.
+String sessionRoomyLine(String dateIso, String timestampIso) {
+  final time = shortTimeOf(timestampIso);
+  return '${fullDateOf(dateIso)}${time.isEmpty ? '' : ' · $time'}';
+}
+
+/// Tight-row last-date label: short weekday + day/month ('Fri, 4 Sep').
+/// Pass-through for the 'no sessions yet' sentinel. Shared by the prof
+/// course picker rows.
+String lastDateLabel(String lastDate) =>
+    lastDate.startsWith('no') ? lastDate : shortDayDateOf(lastDate);
+
 /// Clearly visible date + ticking clock for every screen.
 class ClockHeader extends StatefulWidget {
   const ClockHeader({super.key});

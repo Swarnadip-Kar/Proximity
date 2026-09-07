@@ -1,46 +1,53 @@
-// One course: take attendance for a new instance on top, previous
-// sessions below (most recent first), each exportable. Includes calendar
-// date-range matrix export (email primary key, P/A per session) and
-// multi-select session deletion with X/Y warning. Professors signed in
-// sync with the cloud on open (first sign-in merges both ways; later opens
-// pull); renames/deletes propagate to the cloud; CSVs share or save to
-// the device.
+// One course's management page: Take a new visit on top, previous sessions
+// below (most recent first), rename/delete the course, multi-select session
+// deletion with X/Y warnings. Review/export of the past lives in
+// ExportCenterScreen; one tapping a session opens SessionDetailScreen.
+//
+// Sync law (preserved): professors signed in pull-merge on open and after a
+// take returns (newer timestampIso wins per id); offline-queued manual adds
+// resolve now (single-flight, live drafts excluded — the visit is still
+// open); local-only sessions push up; renames/deletes propagate to the cloud.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
-import 'package:share_plus/share_plus.dart';
 
-import '../core/auth.dart';
-import '../core/cloud_sync.dart';
-import '../core/device_store.dart';
-import '../core/file_saver.dart';
-import '../design/tokens.dart';
-import '../main.dart';
-import '../widgets/clock.dart';
-import '../widgets/manual_add.dart';
-import '../widgets/prox_buttons.dart';
-import '../widgets/prox_cards.dart';
-import '../widgets/prox_states.dart';
-import '../widgets/web_banner.dart';
-import 'session_edit.dart';
-import 'take_attendance.dart';
+import '../../core/auth.dart';
+import '../../core/cloud_sync.dart';
+import '../../core/device_store.dart';
+import '../../design/app_theme.dart';
+import '../../design/tokens.dart';
+import '../../main.dart';
+import '../../screens/take_attendance.dart';
+import '../../widgets/clock.dart';
+import '../../widgets/manual_add.dart';
+import '../../widgets/partial_list.dart';
+import '../../widgets/prox_buttons.dart';
+import '../../widgets/prox_cards.dart';
+import '../../widgets/prox_states.dart';
+import '../../widgets/web_banner.dart';
+import '../debug/debug_log_screen.dart';
+import 'export_center_screen.dart';
+import 'session_detail_screen.dart';
 
-class CourseDetailScreen extends ConsumerStatefulWidget {
+class CourseOverviewScreen extends ConsumerStatefulWidget {
   final String courseName;
-  const CourseDetailScreen({super.key, required this.courseName});
+  const CourseOverviewScreen({super.key, required this.courseName});
 
   @override
-  ConsumerState<CourseDetailScreen> createState() => _CourseDetailScreenState();
+  ConsumerState<CourseOverviewScreen> createState() =>
+      _CourseOverviewScreenState();
 }
 
-class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
+class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   final _renameCtrl = TextEditingController();
   String? _notice;
   final Set<String> _selected = {};
-  String? _rangeError;
   String? _syncMsg;
   bool _syncing = false;
 
@@ -97,6 +104,7 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
         online = false;
       }
       if (!online) {
+        BleLog.log('SYNC', 'overview ${widget.courseName}: offline');
         if (mounted) {
           setState(() {
             _syncing = false;
@@ -156,6 +164,8 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
           } catch (_) {}
         }
       }
+      BleLog.log('SYNC',
+          'overview ${widget.courseName}: merged ${merged.length}.${queueNote.isEmpty ? '' : ' $queueNote'}');
       if (mounted) {
         setState(() {
           _syncing = false;
@@ -169,23 +179,6 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
           _syncing = false;
           _syncMsg = 'Sync failed — showing this device only.';
         });
-      }
-    }
-  }
-
-  /// Writes [csv] into the app documents directory (native) or downloads
-  /// it (web records build) and reports the path.
-  Future<void> _saveCsv(String csv, String filename) async {
-    try {
-      final path = await saveTextFile(filename, csv);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Saved to device: $path')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Save failed: $e')));
       }
     }
   }
@@ -224,11 +217,11 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
       // Renaming migrates local history AND the cloud copies (same prof):
       // other devices pull the new name on next sync instead of keeping
       // two course spellings.
+      BleLog.log('SYNC', 'overview: renamed ${widget.courseName} → $picked');
       unawaited(_renameCloud(widget.courseName, picked));
       Navigator.of(context).pop(); // back to the refreshed course list
     } else {
-      setState(
-          () => _notice = 'Name unchanged — empty or already used.');
+      setState(() => _notice = 'Name unchanged — empty or already used.');
     }
   }
 
@@ -254,7 +247,9 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
           profUid: id.uid, oldName: oldName, newName: newName);
     } catch (_) {}
   }
+
   Future<void> _takeAttendance({bool autoStart = false}) async {
+    BleLog.log('NAV', 'overview ${widget.courseName} → take');
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => TakeAttendanceScreen(
             courseName: widget.courseName, autoStart: autoStart)));
@@ -264,75 +259,47 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
     unawaited(_syncFromCloud());
   }
 
-  /// Tight title: short weekday + day/month, time when known
-  /// ('CS201 · Thu, 3 Sep · 10:00').
-  String _sessionLabel(ClassRecord r) {
-    final time = shortTimeOf(r.timestampIso);
-    return '${r.classLabel} · ${shortDayDateOf(r.dateIso)}'
-        '${time.isEmpty ? '' : ' · $time'}';
+  Future<void> _openExport() async {
+    BleLog.log('NAV', 'overview ${widget.courseName} → export');
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ExportCenterScreen(courseName: widget.courseName)));
+    if (mounted) setState(() {});
   }
 
-  /// Roomy subtitle line: full weekday, date and year.
-  String _sessionDateLine(ClassRecord r) {
-    final time = shortTimeOf(r.timestampIso);
-    return '${fullDateOf(r.dateIso)}${time.isEmpty ? '' : ' · $time'}';
+  void _openLog() {
+    BleLog.log('NAV', 'overview → system log');
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
   }
 
-  Future<void> _exportRange(List<ClassRecord> sessions) async {
-    final now = DateTime.now();
-    final picked = await showDateRangePicker(
+  /// Deletes the whole course (catalog entry + sessions + cloud copies)
+  /// with the X/Y warning: X students, Y sessions. Native only.
+  Future<void> _deleteCourse(List<ClassRecord> sessions) async {
+    final stats = deletionStats(sessions);
+    final confirm = await showDialog<bool>(
       context: context,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 2),
-      initialDateRange: DateTimeRange(
-        start: now.subtract(const Duration(days: 30)),
-        end: now,
-      ),
-    );
-    if (picked == null || !mounted) return;
-    String fmt(DateTime d) =>
-        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    final inRange =
-        sessionsInRange(sessions, fmt(picked.start), fmt(picked.end));
-    final rangeLabel =
-        '${shortDayDateOf(fmt(picked.start))} … ${shortDayDateOf(fmt(picked.end))}';
-    if (inRange.isEmpty) {
-      setState(
-          () => _rangeError = 'No classes took place in $rangeLabel.');
-      return;
-    }
-    setState(() => _rangeError = null);
-    final csv = buildDateRangeMatrix(inRange);
-    if (!mounted) return;
-    final fname =
-        'attendance_${widget.courseName}_${fmt(picked.start)}_${fmt(picked.end)}.csv';
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('${widget.courseName} · $rangeLabel'),
-        content: SingleChildScrollView(child: SelectableText(csv)),
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete course ${widget.courseName}?'),
+        content: Text(
+            'This will delete attendance data of ${stats.students} students for ${stats.sessions} sessions. This cannot be undone.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
           ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.save_alt),
-            label: const Text('Save to device'),
-            onPressed: () => _saveCsv(csv, fname),
-          ),
-          FilledButton.icon(
-            icon: const Icon(Icons.ios_share),
-            label: const Text('Share'),
-            onPressed: () => SharePlus.instance.share(ShareParams(
-              text: csv,
-              subject:
-                  'Attendance ${widget.courseName} ${fmt(picked.start)}-${fmt(picked.end)}',
-            )),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
           ),
         ],
       ),
     );
+    if (confirm != true || !mounted) return;
+    await ref.read(deviceStoreProvider).deleteCourse(widget.courseName);
+    BleLog.log('SYNC',
+        'overview: deleted course ${widget.courseName} (${stats.students}/${stats.sessions})');
+    unawaited(_deleteCloud(sessions.map((s) => s.id).toList()));
+    if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _deleteSelected(List<ClassRecord> sessions) async {
@@ -360,6 +327,8 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
     if (confirm != true || !mounted) return;
     final ids = sel.map((s) => s.id).toList();
     await ref.read(deviceStoreProvider).deleteSessions(ids);
+    BleLog.log('SYNC',
+        'overview: deleted ${ids.length} sessions (${stats.students} students)');
     // Deletes propagate to the cloud (other devices drop them on next sync).
     unawaited(_deleteCloud(ids));
     if (mounted) {
@@ -380,12 +349,53 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
     } catch (_) {}
   }
 
+  /// Tight title: short weekday + day/month, time when known
+  /// ('CS201 · Thu, 3 Sep · 10:00').
+  String _sessionLabel(ClassRecord r) => sessionTightLabel(
+      r.classLabel, r.dateIso, r.timestampIso);
+
+  /// Roomy subtitle line: full weekday, date and year.
+  String _sessionDateLine(ClassRecord r) =>
+      sessionRoomyLine(r.dateIso, r.timestampIso);
+
+  /// One-line partial marker on the session card (multi-round sessions
+  /// only): "Partial (2)". The full per-student list lives in the session
+  /// detail, where the professor can mark them present.
+  String _partialLine(ClassRecord r) {
+    final n = partialCountOf(r.windows, r.allEmails);
+    return n == 0 ? '' : '\nPartial ($n)';
+  }
+
+  /// Tap opens the read-only session detail (edit/export branch from there).
+  Future<void> _openSession(List<ClassRecord> sessions, String id) async {
+    ClassRecord? target;
+    for (final r in sessions) {
+      if (r.id == id) {
+        target = r;
+        break;
+      }
+    }
+    if (target == null || !mounted) return;
+    BleLog.log('NAV', 'overview → session ${target.dateIso}');
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+          builder: (_) => SessionDetailScreen(
+              record: target!, courseSessions: sessions)),
+    );
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(deviceStoreProvider);
     return AdaptiveScaffold(
       title: widget.courseName,
       actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: _openLog,
+        ),
         if (!kIsWeb)
           IconButton(
             icon: const Icon(Icons.edit),
@@ -397,6 +407,10 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
         future: store.readHistory(),
         builder: (context, snap) {
           final sessions = _sessions(snap.data ?? const <ClassRecord>[]);
+          // Roster union: everyone ever seen in any session of this course.
+          // Newcomers from later classes read as absent in earlier ones,
+          // matching the matrix exports.
+          final rosterCount = courseRoster(sessions).length;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -416,12 +430,16 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
                 ),
               if (!kIsWeb) const SizedBox(height: 8),
               ProxSecondaryButton(
-                icon: const Icon(Icons.calendar_month),
-                label: const Text('Export date range'),
-                onPressed: sessions.isEmpty
-                    ? null
-                    : () => _exportRange(sessions),
+                icon: const Icon(Icons.ios_share),
+                label: const Text('Review & export'),
+                onPressed: sessions.isEmpty ? null : _openExport,
                 expanded: true,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$rosterCount people · ${sessions.length} sessions',
+                style: proxTabular(
+                    context, Theme.of(context).textTheme.titleSmall),
               ),
               if (_selected.isNotEmpty && !kIsWeb) ...[
                 const SizedBox(height: 8),
@@ -430,11 +448,6 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
                   label: Text('Delete selected (${_selected.length})'),
                   onPressed: () => _deleteSelected(sessions),
                 ),
-              ],
-              const SizedBox(height: 8),
-              if (_rangeError != null) ...[
-                const SizedBox(height: 8),
-                ProxErrorNote(_rangeError!),
               ],
               if (_notice != null) ...[
                 const SizedBox(height: 8),
@@ -448,8 +461,20 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
                   message: 'No sessions yet for this course.',
                 )
               else
+                // Restrained motion: stagger on load only (ProxListTile).
                 for (var i = 0; i < sessions.length; i++)
                   _session(context, sessions, sessions[i], i),
+              if (!kIsWeb && snap.hasData) ...[
+                const SizedBox(height: 8),
+                ProxSecondaryButton(
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete course'),
+                  onPressed: sessions.isEmpty
+                      ? null
+                      : () => _deleteCourse(sessions),
+                  expanded: true,
+                ),
+              ],
             ],
           );
         },
@@ -457,50 +482,9 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
     );
   }
 
-    /// One-line partial marker on the session card (multi-round sessions
-  /// only): "Partial (2)". The full per-student list lives on the edit
-  /// page, where the professor can mark them present.
-  String _partialLine(ClassRecord r) {
-    if (r.windows.length <= 1) return '';
-    var n = 0;
-    for (final email in r.allEmails) {
-      var some = false;
-      var all = true;
-      for (final w in r.windows) {
-        if (w[email] == true) {
-          some = true;
-        } else {
-          all = false;
-        }
-      }
-      if (some && !all) n++;
-    }
-    return n == 0 ? '' : '\nPartial ($n)';
-  }
-
-  /// Opens a session in the editor: editable natively, read-only on the
-  /// web records build.
-  Future<void> _openSession(List<ClassRecord> sessions, String id) async {
-    ClassRecord? target;
-    for (final r in sessions) {
-      if (r.id == id) {
-        target = r;
-        break;
-      }
-    }
-    if (target == null || !mounted) return;
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-          builder: (_) => SessionEditScreen(
-              record: target!, courseSessions: sessions, readOnly: kIsWeb)),
-    );
-    if (mounted) setState(() {});
-  }
-
   Widget _session(
       BuildContext context, List<ClassRecord> sessions, ClassRecord r, int i) {
     final checked = _selected.contains(r.id);
-    // Restrained motion for this data-dense view: stagger on load only.
     return Padding(
       padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
       child: ProxListTile(
@@ -521,8 +505,6 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
                   }
                 }),
               ),
-        // Tap opens the record read-only on web, editable natively.
-        // The full course list rides along for the absent computation.
         onTap: () => _openSession(sessions, r.id),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -530,36 +512,7 @@ class _CourseDetailScreenState extends ConsumerState<CourseDetailScreen> {
             IconButton(
               icon: const Icon(Icons.ios_share),
               tooltip: 'Export CSV',
-              onPressed: () => showDialog(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: Text(_sessionLabel(r)),
-                  content: SingleChildScrollView(
-                    child: SelectableText(r.toCsv()),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Close'),
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.save_alt),
-                      label: const Text('Save'),
-                      onPressed: () => _saveCsv(r.toCsv(),
-                          'attendance_${r.classLabel}_${r.dateIso}_${r.id.substring(0, r.id.length.clamp(0, 8))}.csv'),
-                    ),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.ios_share),
-                      label: const Text('Share'),
-                      onPressed: () => SharePlus.instance.share(ShareParams(
-                        text: r.toCsv(),
-                        subject:
-                            'Attendance ${r.classLabel} ${r.dateIso}',
-                      )),
-                    ),
-                  ],
-                ),
-              ),
+              onPressed: _openExport,
             ),
             // Retake needs hosting: native only.
             if (!kIsWeb)
