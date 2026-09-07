@@ -28,6 +28,7 @@ import 'package:proximity_transport/transport.dart';
 import 'device_store.dart';
 import 'net_if.dart';
 import 'platformx.dart' as platformx;
+import 'sync/roles.dart';
 
 class HostSession {
   final String addressLine; // https://<ip>:<port> · ... (initial IP)
@@ -234,7 +235,7 @@ class RealHostDriver implements HostDriver {
     var sessionOrg = '';
     try {
       final role = await _store.readRole();
-      sessionOrg = (role?['org'] ?? '').trim().toLowerCase();
+      sessionOrg = roleOrg(role);
     } catch (_) {}
     // Rosterless: no roster fetch — students verify with presented device
     // keys (TOFU per class). Whoever proves presence over radio lands in

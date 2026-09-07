@@ -192,7 +192,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
       String myOrg = '';
       try {
         final role = await ref.read(deviceStoreProvider).readRole();
-        myOrg = (role?['org'] ?? '').trim().toLowerCase();
+        myOrg = roleOrg(role);
       } catch (_) {}
       final hits = await cloud.searchStudents(
         rollPrefix: _rollCtrl.text,
@@ -276,7 +276,7 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
       String myOrg = '';
       try {
         final role = await ref.read(deviceStoreProvider).readRole();
-        myOrg = (role?['org'] ?? '').trim().toLowerCase();
+        myOrg = roleOrg(role);
       } catch (_) {}
       if (online) {
         StudentDirectoryEntry? match;

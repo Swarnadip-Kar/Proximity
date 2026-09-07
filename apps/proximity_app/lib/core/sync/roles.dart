@@ -61,14 +61,21 @@ bool roleHas(Map<String, String>? role, String which, {String? email}) {
 }
 
 /// Last used mode from cache ('prof'|'student'|'').
-String roleLastMode(Map<String, String>? role) {
-  if (role == null) return '';
+String roleLastMode(Map<String, String>? role) {  if (role == null) return '';
   final m = (role['lastMode'] ?? '').trim();
   if (m == 'prof' || m == 'student') return m;
   final set = roleSet(role);
   if (set.length == 1) return set.first;
   return '';
 }
+
+/// Org stamped on the role cache (Google-account domain, '' = legacy).
+/// Normalized (trimmed + lowercased): the cache is written lowercased at
+/// sign-in, this only defends against legacy/foreign entries. Track 6:
+/// was `(role?['org'] ?? '').trim().toLowerCase()` inline at 5+ call
+/// sites (host/take/manual-add/export/flagged).
+String roleOrg(Map<String, String>? role) =>
+    (role?['org'] ?? '').trim().toLowerCase();
 
 /// Merges a registration/continue event into a role-cache map.
 Map<String, String> mergeRoleCache(Map<String, String>? existing,
