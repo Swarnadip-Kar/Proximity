@@ -18,6 +18,7 @@ class StoredEnrollment {
   /// lives in core/edgeface.dart; import there to compare — this file stays
   /// dependency-free). '' = pre-version template → always stale.
   final String modelVer;
+  final String org; // Google-account domain (see orgOf), '' = legacy
   const StoredEnrollment({
     required this.email,
     required this.name,
@@ -27,6 +28,7 @@ class StoredEnrollment {
     required this.templateCsv,
     required this.enrolledAt,
     this.modelVer = '',
+    this.org = '',
   });
 
   /// Fail-soft: a corrupt templateCsv (bad write, manual edit) yields an
@@ -52,6 +54,7 @@ class StoredEnrollment {
         'templateCsv': templateCsv,
         'enrolledAt': enrolledAt.toIso8601String(),
         'modelVer': modelVer,
+        'org': org,
       };
 
   factory StoredEnrollment.fromJson(Map<String, dynamic> j) =>
@@ -64,6 +67,7 @@ class StoredEnrollment {
         templateCsv: j['templateCsv'] as String,
         enrolledAt: DateTime.parse(j['enrolledAt'] as String),
         modelVer: j['modelVer'] as String? ?? '',
+        org: j['org'] as String? ?? '',
       );
 }
 

@@ -297,6 +297,7 @@ class ClassRecord {
   final List<Map<String, bool>> windows; // ordered window maps
   final Map<String, String> names; // email -> name
   final Map<String, String> rolls; // email -> ID number
+  final String org; // Google-account domain of the prof org, '' = legacy
   ClassRecord({
     String id = '',
     this.courseId = '',
@@ -309,6 +310,7 @@ class ClassRecord {
     List<Map<String, bool>>? windows,
     Map<String, String>? names,
     Map<String, String>? rolls,
+    this.org = '',
   })  : id = id.isEmpty ? _genId(courseId, classLabel, dateIso) : id,
         timestampIso = timestampIso.isEmpty
             ? '${dateIso}T00:00:00.000Z'
@@ -376,6 +378,7 @@ class ClassRecord {
         'w2': w2,
         'names': names,
         'rolls': rolls,
+        'org': org,
       };
 
   factory ClassRecord.fromJson(Map<String, dynamic> j) {
@@ -415,6 +418,7 @@ class ClassRecord {
           (j['names'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
       rolls: Map<String, String>.from(
           (j['rolls'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
+      org: j['org'] as String? ?? '',
     );
   }
 }

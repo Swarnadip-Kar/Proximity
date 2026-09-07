@@ -70,8 +70,14 @@ class ProxServer {
   final SightingLookup sightings;
   final TallyStore tally;
 
+  /// Prof org domain for the join-gate (see orgOf in the app). '' = legacy
+  /// host: every body org passes (migration). Set once at hosting start;
+  /// the window/prove path never mutates it.
+  String sessionOrg;
+
   /// Fired for every processed POST /prove (confirmed/late/invalid) so the
   /// host can log the verdict + reason live. Never throws (guarded).
+  /// Also fires for org-mismatched /waiting + /manual-request rejects.
   final void Function(String email, String decision, String reason)? onProve;
   final SingleUseTracker _once = SingleUseTracker();
   final RateLimiter _proveLimits = proveLimiter();
@@ -98,6 +104,7 @@ class ProxServer {
     required this.sightings,
     TallyStore? tally,
     this.onProve,
+    this.sessionOrg = '',
   }) : tally = tally ?? TallyStore() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
@@ -279,6 +286,7 @@ class ProxServer {
         'waiting': waitingCount,
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
+        'org': sessionOrg,
       });
     }
     // j is unbounded (the window closes only when the professor stops it).
@@ -292,6 +300,7 @@ class ProxServer {
         'waiting': waitingCount,
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
+        'org': sessionOrg,
       });
     }
     final j = jRaw.clamp(0, 1 << 30);
@@ -334,6 +343,7 @@ class ProxServer {
       'sigP': hexEncode(sigP),
       'tlsFp': hexEncode(tls.fingerprint),
       'display': w.displayCode,
+      'org': sessionOrg,
       if (prev != null) ...prev,
     });
   }
@@ -348,6 +358,18 @@ class ProxServer {
     }
     try {
       final id = (body['ID'] as String).toLowerCase();
+      // Org join-gate (Track 1): cross-domain proofs never reach crypto or
+      // the tally. Legacy '' on either side passes (migration).
+      final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
+      if (sessionOrg.isNotEmpty &&
+          bodyOrg.isNotEmpty &&
+          bodyOrg != sessionOrg) {
+        try {
+          onProve?.call(id, 'invalid', 'org-mismatch');
+        } catch (_) {}
+        return _json(
+            {'decision': 'invalid', 'reason': 'org-mismatch'}, 200);
+      }
       final wid = Uint8List.fromList(hexDecode(body['windowID'] as String));
       final j = body['j'] as int;
       final cClaimed = Uint8List.fromList(hexDecode(body['C_j'] as String));
@@ -543,6 +565,16 @@ class ProxServer {
       final name = body['name'] as String? ?? email;
       final roll = body['roll'] as String? ?? '';
       if (email.isEmpty) return _json({'error': 'bad-email'}, 400);
+      final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
+      if (sessionOrg.isNotEmpty &&
+          bodyOrg.isNotEmpty &&
+          bodyOrg != sessionOrg) {
+        try {
+          onProve?.call(email, 'invalid', 'org-mismatch');
+        } catch (_) {}
+        return _json(
+            {'decision': 'invalid', 'reason': 'org-mismatch'}, 403);
+      }
       registerWaiting(email, name, roll);
       return _json({'ok': true, 'waiting': waitingCount});
     } catch (e) {
@@ -576,6 +608,16 @@ class ProxServer {
       final name = body['name'] as String? ?? email;
       final roll = body['roll'] as String? ?? '';
       if (email.isEmpty) return _json({'error': 'bad-email'}, 400);
+      final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
+      if (sessionOrg.isNotEmpty &&
+          bodyOrg.isNotEmpty &&
+          bodyOrg != sessionOrg) {
+        try {
+          onProve?.call(email, 'invalid', 'org-mismatch');
+        } catch (_) {}
+        return _json(
+            {'decision': 'invalid', 'reason': 'org-mismatch'}, 403);
+      }
       requestManual(email, name, roll);
       return _json({'ok': true, 'status': manualStatus(email)});
     } catch (e) {

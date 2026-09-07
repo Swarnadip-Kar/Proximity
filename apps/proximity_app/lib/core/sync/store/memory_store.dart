@@ -74,6 +74,7 @@ class InMemoryDeviceStore implements DeviceStore {
           windows: [for (final w in r.windows) Map.of(w)],
           names: Map.of(r.names),
           rolls: Map.of(r.rolls),
+          org: r.org,
         );
       }
     }

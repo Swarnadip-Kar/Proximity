@@ -55,6 +55,7 @@ class ClassAnnouncement {
   final String prof;
   final bool windowOpen;
   final DateTime ts;
+  final String org;
   const ClassAnnouncement({
     required this.classLabel,
     required this.host,
@@ -63,6 +64,7 @@ class ClassAnnouncement {
     required this.prof,
     required this.windowOpen,
     required this.ts,
+    this.org = '',
   });
 
   String get key => '$host:$port';

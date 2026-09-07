@@ -23,6 +23,7 @@ class WindowDescriptor {
   final Uint8List sigP;
   final Uint8List tlsFp;
   final String display;
+  final String org;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -32,6 +33,7 @@ class WindowDescriptor {
     required this.sigP,
     required this.tlsFp,
     required this.display,
+    this.org = '',
   });
 }
 
@@ -64,14 +66,22 @@ class ProxClient {
 
   void close() {}
 
-  Future<({bool reachable, bool windowOpen, String classLabel, int waiting, String display})>
-      probeWindow({Duration timeout = const Duration(seconds: 4)}) =>
+  Future<
+      ({
+        bool reachable,
+        bool windowOpen,
+        String classLabel,
+        int waiting,
+        String display,
+        String org
+      })> probeWindow({Duration timeout = const Duration(seconds: 4)}) =>
           _web();
 
   Future<void> postWaiting(
           {required String email,
           required String name,
-          String roll = ''}) =>
+          String roll = '',
+          String org = ''}) =>
       _web();
 
   Future<void> postLeave({required String email}) => _web();
@@ -79,7 +89,8 @@ class ProxClient {
   Future<void> postManualRequest(
           {required String email,
           required String name,
-          String roll = ''}) =>
+          String roll = '',
+          String org = ''}) =>
       _web();
 
   Future<String> fetchManualStatus(String email) => _web();
@@ -98,6 +109,7 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
     Random? rng,
     int maxAttempts = 3,
   }) =>

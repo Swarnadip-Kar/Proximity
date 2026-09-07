@@ -27,6 +27,7 @@ class WindowDescriptor {
   final Uint8List sigP;
   final Uint8List tlsFp;
   final String display;
+  final String org; // prof org domain, '' = legacy host
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -36,6 +37,7 @@ class WindowDescriptor {
     required this.sigP,
     required this.tlsFp,
     required this.display,
+    this.org = '',
   });
 }
 
@@ -93,12 +95,18 @@ class ProxClient {
 
   /// Lightweight LAN probe for the waiting room: reachable + windowOpen,
   /// without needing a radio challenge. Accepts the self-signed host cert.
-  Future<({bool reachable, bool windowOpen, String classLabel, int waiting, String display})>
-      probeWindow({Duration timeout = const Duration(seconds: 4)}) async {
+  Future<
+      ({
+        bool reachable,
+        bool windowOpen,
+        String classLabel,
+        int waiting,
+        String display,
+        String org
+      })> probeWindow({Duration timeout = const Duration(seconds: 4)}) async {
     try {
       _http.badCertificateCallback = (cert, h, p) => true;
-      final req =
-          await _http.getUrl(_uri('/window')).timeout(timeout);
+      final req = await _http.getUrl(_uri('/window')).timeout(timeout);
       final resp = await req.close().timeout(timeout);
       final body =
           await resp.transform(utf8.decoder).join().timeout(timeout);
@@ -108,7 +116,8 @@ class ProxClient {
           windowOpen: false,
           classLabel: '',
           waiting: 0,
-          display: ''
+          display: '',
+          org: ''
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
@@ -118,6 +127,7 @@ class ProxClient {
         classLabel: (m['class'] as String?) ?? '',
         waiting: (m['waiting'] as num?)?.toInt() ?? 0,
         display: (m['display'] as String?) ?? '',
+        org: (m['org'] as String?) ?? '',
       );
     } catch (_) {
       return (
@@ -125,7 +135,8 @@ class ProxClient {
         windowOpen: false,
         classLabel: '',
         waiting: 0,
-        display: ''
+        display: '',
+        org: ''
       );
     }
   }
@@ -146,8 +157,10 @@ class ProxClient {
   Future<void> postWaiting(
           {required String email,
           required String name,
-          String roll = ''}) =>
-      _postJson('/waiting', {'email': email, 'name': name, 'roll': roll});
+          String roll = '',
+          String org = ''}) =>
+      _postJson('/waiting',
+          {'email': email, 'name': name, 'roll': roll, 'org': org});
 
   /// Explicit waiting-room leave (best-effort: never throws; the prof UI
   /// also converges because heartbeats stop with the room timers).
@@ -160,8 +173,10 @@ class ProxClient {
   Future<void> postManualRequest(
           {required String email,
           required String name,
-          String roll = ''}) =>
-      _postJson('/manual-request', {'email': email, 'name': name, 'roll': roll});
+          String roll = '',
+          String org = ''}) =>
+      _postJson('/manual-request',
+          {'email': email, 'name': name, 'roll': roll, 'org': org});
 
   Future<String> fetchManualStatus(String email) async {
     try {
@@ -233,6 +248,7 @@ class ProxClient {
     final sigP = Uint8List.fromList(hexDecode(body['sigP'] as String));
     // The descriptor never carries C_j (radio-only). The caller proves it
     // heard the live challenge by verifying Sig_p against its radio copy.
+    // `org` rides alongside (join-gate only — never in Sig_p/Sig_s).
     WindowDescriptor descFor(int jj, Uint8List sig) => WindowDescriptor(
           classLabel: body['class'] as String,
           sessionId: sessionId,
@@ -242,6 +258,7 @@ class ProxClient {
           sigP: sig,
           tlsFp: Uint8List.fromList(hexDecode(body['tlsFp'] as String)),
           display: body['display'] as String,
+          org: body['org'] as String? ?? '',
         );
     bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
           profPk: profPk,
@@ -281,6 +298,7 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
     Random? rng,
     int maxAttempts = 3,
   }) async {
@@ -302,6 +320,7 @@ class ProxClient {
           pkS: pkS,
           sigSFor: sigSFor,
           sigBindFor: sigBindFor,
+          org: org,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -322,6 +341,7 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
@@ -340,6 +360,7 @@ class ProxClient {
       tlsFp: tlsFp,
       sigBind: sigBindFor(tlsFp, j),
       pkS: pkS,
+      org: org,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =

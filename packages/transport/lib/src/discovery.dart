@@ -218,6 +218,7 @@ class ClassAnnouncement {
   final String prof;
   final bool windowOpen;
   final DateTime ts;
+  final String org; // prof org domain, '' = legacy beacon
   const ClassAnnouncement({
     required this.classLabel,
     required this.host,
@@ -226,6 +227,7 @@ class ClassAnnouncement {
     required this.prof,
     required this.windowOpen,
     required this.ts,
+    this.org = '',
   });
 
   String get key => '$host:$port';
@@ -239,6 +241,7 @@ class ClassAnnouncement {
         'prof': prof,
         'windowOpen': windowOpen,
         'ts': ts.toUtc().toIso8601String(),
+        'org': org,
       };
 
   static ClassAnnouncement? fromJson(Map<String, dynamic> j) {
@@ -252,6 +255,7 @@ class ClassAnnouncement {
         prof: j['prof'] as String? ?? '',
         windowOpen: j['windowOpen'] as bool? ?? false,
         ts: DateTime.parse(j['ts'] as String),
+        org: j['org'] as String? ?? '',
       );
     } catch (_) {
       return null;
@@ -439,6 +443,7 @@ Future<ClassAnnouncement?> probeHost(
       prof: '',
       windowOpen: r.windowOpen,
       ts: DateTime.now().toUtc(),
+      org: r.org,
     );
   } catch (e) {
     onMiss?.call('$host: $e');

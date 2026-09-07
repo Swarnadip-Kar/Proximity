@@ -156,6 +156,7 @@ class SecureDeviceStore implements DeviceStore {
               windows: r.windows,
               names: r.names,
               rolls: r.rolls,
+              org: r.org,
             );
           }()
         else

@@ -14,6 +14,7 @@ class RoleDoc {
   final List<String> roles; // subset of ['prof', 'student']
   final String displayName;
   final String lastMode;
+  final String org; // Google-account domain (see orgOf), '' = legacy
   RoleDoc(
       {required this.uid,
       required this.email,
@@ -21,7 +22,8 @@ class RoleDoc {
       List<String>? roles,
       String? role,
       this.displayName = '',
-      this.lastMode = ''})
+      this.lastMode = '',
+      this.org = ''})
       : roles = roles ??
             (role != null && role.isNotEmpty ? [role] : const <String>[]);
 
@@ -74,7 +76,8 @@ Map<String, String> mergeRoleCache(Map<String, String>? existing,
     required String uid,
     String displayName = '',
     String? addRole,
-    String? lastMode}) {
+    String? lastMode,
+    String? org}) {
   final set = {...roleSet(existing)};
   if (addRole == 'prof') {
     set.add('prof');
@@ -92,6 +95,11 @@ Map<String, String> mergeRoleCache(Map<String, String>? existing,
   final primary = mode.isNotEmpty
       ? mode
       : (ordered.isNotEmpty ? ordered.first : '');
+  // Org persists from sign-in (never user-entered): an explicit non-empty
+  // value wins, else the previous cache entry survives (legacy '' stays).
+  final nextOrg = (org != null && org.isNotEmpty)
+      ? org
+      : (prev['org'] ?? existing?['org'] ?? '');
   return {
     'roles': ordered.join(','),
     'role': primary, // legacy mirror
@@ -99,5 +107,6 @@ Map<String, String> mergeRoleCache(Map<String, String>? existing,
     'email': email.toLowerCase(),
     'uid': uid,
     'displayName': displayName,
+    'org': nextOrg,
   };
 }

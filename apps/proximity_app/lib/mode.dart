@@ -60,8 +60,12 @@ class LinkedIdentity {
   final String name;
   final String gmail;
   final String roll; // institute ID / roll number: user-entered, unverified
+  final String org; // Google-account domain (see orgOf), '' = legacy
   const LinkedIdentity(
-      {required this.name, required this.gmail, this.roll = ''});
+      {required this.name,
+      required this.gmail,
+      this.roll = '',
+      this.org = ''});
 }
 
 final linkedIdentityProvider = StateProvider<LinkedIdentity?>((ref) => null);

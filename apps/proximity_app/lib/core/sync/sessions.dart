@@ -4,6 +4,8 @@ library;
 
 import 'package:proximity_storage/storage.dart';
 
+import 'org.dart';
+
 /// Merge local + cloud histories by session id; newer timestampIso wins ties
 /// by preferring the record with the later timestamp, union otherwise.
 /// Pure — tested without Firebase.
@@ -30,8 +32,15 @@ Map<String, dynamic> sessionToDoc(
     {required String profUid,
     required String profEmail,
     required String profName,
-    required ClassRecord record}) {
+    required ClassRecord record,
+    String? profOrg}) {
   final emails = record.allEmails.map((e) => e.toLowerCase()).toList()..sort();
+  // Session org = prof org at creation, immutable on update: a stamped
+  // record keeps its org; an unstamped (legacy) record takes the prof org.
+  final fallback = (profOrg != null && profOrg.isNotEmpty)
+      ? profOrg
+      : orgOf(profEmail);
+  final org = record.org.isNotEmpty ? record.org : fallback;
   return {
     'courseId': record.courseId,
     'courseName': record.courseId.isNotEmpty ? record.courseId : record.classLabel,
@@ -39,6 +48,7 @@ Map<String, dynamic> sessionToDoc(
     'profUid': profUid,
     'profEmail': profEmail.toLowerCase(),
     'profName': profName,
+    'org': org,
     'dateIso': record.dateIso,
     'timestampIso': record.timestampIso,
     'startIso': record.startIso.isNotEmpty
@@ -92,5 +102,6 @@ ClassRecord docToRecord(String id, Map<String, dynamic> d) {
     windows: wins,
     names: strMap(d['names']),
     rolls: strMap(d['rolls']),
+    org: d['org'] as String? ?? '',
   );
 }

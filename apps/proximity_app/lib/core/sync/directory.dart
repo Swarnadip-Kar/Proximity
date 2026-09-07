@@ -17,6 +17,10 @@ class StudentDirectoryEntry {
   final String email;
   final String name;
   final String roll;
+  final String org; // Google-account domain (see orgOf), '' = legacy
   const StudentDirectoryEntry(
-      {required this.email, required this.name, required this.roll});
+      {required this.email,
+      required this.name,
+      required this.roll,
+      this.org = ''});
 }

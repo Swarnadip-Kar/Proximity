@@ -12,12 +12,14 @@ class ClassBeacon {
   final int port;
   final int rssiDbm;
   final String displayCode;
+  final String org; // prof org domain, '' = legacy/unknown
   const ClassBeacon({
     required this.classLabel,
     required this.host,
     required this.port,
     required this.rssiDbm,
     required this.displayCode,
+    this.org = '',
   });
 }
 
@@ -40,6 +42,7 @@ Map<String, dynamic> buildProveBody({
   required Uint8List tlsFp,
   required Uint8List sigBind,
   required Uint8List pkS, // student device public key, 32B
+  String org = '', // student org domain (join-gate, not crypto)
 }) =>
     {
       'ID': id,
@@ -54,4 +57,5 @@ Map<String, dynamic> buildProveBody({
       'tlsFp': hexEncode(tlsFp),
       'sigBind': hexEncode(sigBind),
       'pkS': hexEncode(pkS),
+      'org': org,
     };

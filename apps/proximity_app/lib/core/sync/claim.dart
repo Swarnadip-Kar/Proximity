@@ -26,6 +26,7 @@ class StudentDeviceDoc {
   final String modelVer;
   final String installId;
   final String platform;
+  final String org; // Google-account domain (see orgOf), '' = legacy
   final int createdAtMillis;
   final int lastMoveAtMillis;
   final int lastSeenAtMillis;
@@ -40,6 +41,7 @@ class StudentDeviceDoc {
       required this.modelVer,
       this.installId = '',
       this.platform = '',
+      this.org = '',
       this.createdAtMillis = 0,
       this.lastMoveAtMillis = 0,
       this.lastSeenAtMillis = 0,

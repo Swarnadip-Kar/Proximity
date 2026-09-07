@@ -63,7 +63,10 @@ class ProxServer {
     required SightingLookup sightings,
     TallyStore? tally,
     void Function(String email, String decision, String reason)? onProve,
+    this.sessionOrg = '',
   });
+
+  String sessionOrg;
 
   Duration sightingGrace = const Duration(seconds: 4);
 

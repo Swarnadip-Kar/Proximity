@@ -23,13 +23,15 @@ class PendingManualAdd {
   final String name;
   final String email;
   final String createdAtIso;
+  final String org; // prof org at enqueue (see orgOf), '' = legacy
   const PendingManualAdd(
       {required this.course,
       required this.sessionId,
       required this.roll,
       this.name = '',
       this.email = '',
-      required this.createdAtIso});
+      required this.createdAtIso,
+      this.org = ''});
 
   Map<String, dynamic> toJson() => {
         'course': course,
@@ -38,6 +40,7 @@ class PendingManualAdd {
         'name': name,
         'email': email,
         'createdAtIso': createdAtIso,
+        'org': org,
       };
 
   factory PendingManualAdd.fromJson(Map<String, dynamic> j) =>
@@ -48,6 +51,7 @@ class PendingManualAdd {
         name: j['name'] as String? ?? '',
         email: j['email'] as String? ?? '',
         createdAtIso: j['createdAtIso'] as String? ?? '',
+        org: j['org'] as String? ?? '',
       );
 }
 
