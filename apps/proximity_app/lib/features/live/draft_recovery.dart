@@ -78,17 +78,16 @@ class DraftResumedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ProxCard(
-      padding: EdgeInsets.zero,
-      child: ListTile(
-        leading: const Icon(Icons.history),
-        title: const Text('Resumed autosaved session'),
-        subtitle: Text(
-            '$present present · $windowsTaken window${windowsTaken == 1 ? '' : 's'} so far — retake the round, take again, or end attendance.'),
-        trailing: TextButton(
-          onPressed: onDiscard,
-          child: const Text('Discard'),
-        ),
+    // Track 6: was ProxCard(zero-padding) + bespoke ListTile — the same
+    // single card, now the shared row (no nested cards).
+    return ProxListTile(
+      leading: const Icon(Icons.history),
+      title: 'Resumed autosaved session',
+      subtitle:
+          '$present present · $windowsTaken window${windowsTaken == 1 ? '' : 's'} so far — retake the round, take again, or end attendance.',
+      trailing: TextButton(
+        onPressed: onDiscard,
+        child: const Text('Discard'),
       ),
     );
   }

@@ -9,6 +9,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
 
 /// Lets the professor pick which local IP to announce when several NICs
@@ -28,8 +29,10 @@ Future<String?> showAnnounceIpDialog(
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final ip in allIps)
-              ListTile(
-                title: Text(ip),
+              // Track 6: was a bespoke ListTile copy (non-dense, kept) —
+              // same title/trailing/tap, now the shared row.
+              ProxListTile(
+                title: ip,
                 trailing: ip == currentIp ? const Icon(Icons.check) : null,
                 onTap: () => Navigator.of(ctx).pop(ip),
               ),

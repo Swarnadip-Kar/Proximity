@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../design/tokens.dart';
+import 'prox_cards.dart';
 
 /// Course bucket: the renamed courseId, else the legacy class label.
 /// Matches the professor's rename migration on both sides.
@@ -89,12 +90,12 @@ class CourseSummaryHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+    // Track 6: was a bespoke Card+Padding copy — same 16dp padding as
+    // [ProxCard]'s default, so this is a straight swap.
+    return ProxCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
             Text(summary.course,
                 style: compact
                     ? Theme.of(context).textTheme.titleSmall
@@ -116,7 +117,6 @@ class CourseSummaryHeader extends StatelessWidget {
             ],
           ],
         ),
-      ),
     );
   }
 }
@@ -137,25 +137,25 @@ class StudentSessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = sessionStatusOf(session, email);
     final present = status == 'Present';
-    return Card(
-      child: ListTile(
-        leading: Icon(
-          present ? Icons.check_circle : Icons.circle_outlined,
-          color: present
-              ? ProxStateColors.of(context, ProxState.marked)
-              : null,
-        ),
-        title: Text(sessionDateTimeLine(session)),
-        subtitle: Text(
-            '$status · ${session.windowCount} round${session.windowCount == 1 ? '' : 's'}${session.classLabel.isNotEmpty && session.classLabel != course ? ' · ${session.classLabel}' : ''}'),
-        trailing: onHide == null
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Remove from this device',
-                onPressed: onHide,
-              ),
+    // Track 6: was a bespoke Card+ListTile copy — same leading/title/
+    // subtitle/trailing, now the shared row.
+    return ProxListTile(
+      leading: Icon(
+        present ? Icons.check_circle : Icons.circle_outlined,
+        color: present
+            ? ProxStateColors.of(context, ProxState.marked)
+            : null,
       ),
+      title: sessionDateTimeLine(session),
+      subtitle:
+          '$status · ${session.windowCount} round${session.windowCount == 1 ? '' : 's'}${session.classLabel.isNotEmpty && session.classLabel != course ? ' · ${session.classLabel}' : ''}',
+      trailing: onHide == null
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Remove from this device',
+              onPressed: onHide,
+            ),
     );
   }
 }

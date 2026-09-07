@@ -253,12 +253,13 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                     padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
                   ),
                   for (final e in partials)
-                    ListTile(
+                    // Track 6: was a bespoke dense ListTile copy — same
+                    // title/subtitle/trailing, now the shared dense row.
+                    ProxListTile(
                       dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(e.name),
-                      subtitle: Text(
-                          '${e.sessions.first.$3} · ${rosterSubtitle(e.roll, e.email)}'),
+                      title: e.name,
+                      subtitle:
+                          '${e.sessions.first.$3} · ${rosterSubtitle(e.roll, e.email)}',
                       trailing: widget.readOnly
                           ? null
                           : TextButton(
@@ -287,11 +288,12 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                         ),
                   ),
                   for (final m in absent)
-                    ListTile(
+                    // Track 6: was a bespoke dense ListTile copy — same
+                    // title/subtitle/trailing, now the shared dense row.
+                    ProxListTile(
                       dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(m.name),
-                      subtitle: Text(rosterSubtitle(m.roll, m.email)),
+                      title: m.name,
+                      subtitle: rosterSubtitle(m.roll, m.email),
                       trailing: widget.readOnly
                           ? null
                           : TextButton(
