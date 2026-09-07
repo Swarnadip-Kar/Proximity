@@ -24,7 +24,6 @@ import '../../widgets/prox_states.dart';
 import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
 import '../debug/debug_log_screen.dart';
-import '../review/flagged_devices_screen.dart';
 import 'course_overview_screen.dart';
 
 class ProfCoursesScreen extends ConsumerStatefulWidget {
@@ -202,16 +201,6 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                     onPressed: _register,
                   ),
                 if (!kIsWeb) const SizedBox(height: 8),
-                ProxSecondaryButton(
-                  icon: const Icon(Icons.flag_outlined),
-                  label: const Text('Review flagged devices'),
-                  expanded: true,
-                  onPressed: () {
-                    BleLog.log('NAV', 'courses → flagged review');
-                    Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const FlaggedDevicesScreen()));
-                  },
-                ),
                 const SizedBox(height: 8),
                 if (snap.connectionState == ConnectionState.waiting)
                   const Center(child: CircularProgressIndicator())

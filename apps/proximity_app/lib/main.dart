@@ -174,10 +174,7 @@ Future<void> main() async {
       overrides: [
         authServiceProvider.overrideWithValue(authService),
         cloudSyncProvider.overrideWithValue(FirestoreCloudSync(
-            available: firebaseReady,
-            // Attestation callable auth: the endpoint verifies the caller's
-            // own binding from this token (no client args are sent).
-            idTokenOf: authService.getIdToken)),
+            available: firebaseReady)),
         deviceStoreProvider.overrideWithValue(store),
         faceVerifierProvider.overrideWithValue(faceVerifier),
         deviceKeyProvider.overrideWithValue(deviceKey),
@@ -234,8 +231,6 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
 
   Future<SyncProf?> _profOf() => readSyncProf(ref);
 
-  Future<AttestLocal?> _attestOf() => readAttestLocal(ref);
-
   /// Arms the connectivity-hint subscription only where the platform
   /// plugin actually answers: a missing plugin (widget tests, Linux
   /// desktop) reports through FlutterError at EventChannel-listen time,
@@ -249,7 +244,7 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
       final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
        syncEngine.startBackstop(
-           store: store, cloud: cloud, profOf: _profOf, attestOf: _attestOf);
+          store: store, cloud: cloud, profOf: _profOf);
       try {
         await Connectivity().checkConnectivity();
       } catch (_) {
@@ -265,11 +260,10 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
         final hintOnline =
             results.any((r) => r != ConnectivityResult.none);
         try {
-           syncEngine.onConnectivityHint(hintOnline,
-               store: ref.read(deviceStoreProvider),
-               cloud: ref.read(cloudSyncProvider),
-               profOf: _profOf,
-               attestOf: _attestOf);
+          syncEngine.onConnectivityHint(hintOnline,
+              store: ref.read(deviceStoreProvider),
+              cloud: ref.read(cloudSyncProvider),
+              profOf: _profOf);
         } catch (_) {}
         // Channel errors must never surface: the hint is advisory, the
         // server probe is ground truth.
@@ -296,11 +290,10 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       try {
-         syncEngine.onAppResume(
-             store: ref.read(deviceStoreProvider),
-             cloud: ref.read(cloudSyncProvider),
-             profOf: _profOf,
-             attestOf: _attestOf);
+          syncEngine.onAppResume(
+              store: ref.read(deviceStoreProvider),
+              cloud: ref.read(cloudSyncProvider),
+              profOf: _profOf);
       } catch (_) {}
     }
   }

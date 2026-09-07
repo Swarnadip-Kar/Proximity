@@ -90,11 +90,7 @@ class FakeCloudSync implements CloudSync {
             pkDHex: doc.pkDHex,
             attestationLevel: doc.attestationLevel,
             attestedAtMillis: doc.attestedAtMillis,
-            attestedUntilMillis: doc.attestedUntilMillis,
-            attestationAnomaly: doc.attestationAnomaly,
-            serverVerifiedAtMillis: doc.serverVerifiedAtMillis,
-            serverVerifyReason: doc.serverVerifyReason,
-            attestMaterialJson: doc.attestMaterialJson);
+            attestedUntilMillis: doc.attestedUntilMillis);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -109,19 +105,6 @@ class FakeCloudSync implements CloudSync {
   @override
   Future<String?> fetchInstallEmail(String installId) async =>
       installs[installId];
-
-  @override
-  Future<List<StudentDeviceDoc>> fetchFlaggedDevices(
-      {String org = '', int limit = 50}) async {
-    final out = [
-      for (final d in devices.values)
-        if (d.attestationAnomaly &&
-            (org.isEmpty || (d.org.isNotEmpty && d.org == org)))
-          d,
-    ]..sort((a, b) =>
-        b.serverVerifiedAtMillis.compareTo(a.serverVerifiedAtMillis));
-    return out.take(limit).toList();
-  }
 
   @override
   Future<List<StudentDirectoryEntry>> searchStudents(
@@ -194,13 +177,6 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: doc.attestationLevel,
       attestedAtMillis: doc.attestedAtMillis,
       attestedUntilMillis: doc.attestedUntilMillis,
-      // A move/re-key carries fresh client material but never a server
-      // verdict: the verdict belongs to the new binding and starts unknown
-      // (the heartbeat path re-verifies). attestMaterialJson rides along.
-      attestationAnomaly: false,
-      serverVerifiedAtMillis: 0,
-      serverVerifyReason: '',
-      attestMaterialJson: doc.attestMaterialJson,
     );
     installs[installId] = key;
     dir[key] =
@@ -244,79 +220,14 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: binding.attestationLevel,
       attestedAtMillis: binding.attestedAtMillis,
       attestedUntilMillis: binding.attestedUntilMillis,
-      // Heartbeat touches recency only — the server verdict survives.
-      attestationAnomaly: binding.attestationAnomaly,
-      serverVerifiedAtMillis: binding.serverVerifiedAtMillis,
-      serverVerifyReason: binding.serverVerifyReason,
-      attestMaterialJson: binding.attestMaterialJson,
     );
     return true;
   }
 
   /// Post-hoc double-pkD audit over the in-memory bindings (see
   /// findDoublePkD in claim.dart): pkD values shared by 2+ Gmails.
+  /// Offline and permanent: clone-or-shared-device signal for review.
   Map<String, List<String>> auditDoublePkD() => findDoublePkD(devices);
-
-  @override
-  Future<AttestationVerifyOutcome> verifyAttestationChain(
-      {required String emailLower, required String org}) async {
-    // Test-only coherence check (NOT chain cryptography — that lives
-    // server-side in functions/verify.js): mirrors the endpoint's dispatch
-    // + flag application so engine/discipline tests observe the same
-    // shapes. Offline or unknown binding defers (ok:false, never a flag).
-    if (!available || !online) {
-      return const AttestationVerifyOutcome(ok: false, reason: 'unreachable');
-    }
-    final key = emailLower.toLowerCase();
-    final binding = devices[key];
-    if (binding == null) {
-      return const AttestationVerifyOutcome(ok: false, reason: 'no-device');
-    }
-    final at = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final level = binding.attestationLevel.trim().toUpperCase();
-    final bool anomaly;
-    final String reason;
-    if (level == 'NONE') {
-      anomaly = false;
-      reason = 'skipped-none';
-    } else if (binding.pkDHex.isEmpty &&
-        binding.attestMaterialJson.isEmpty) {
-      anomaly = true;
-      reason = 'missing-material';
-    } else {
-      anomaly = false;
-      reason = 're-verified (fake coherence only)';
-    }
-    devices[key] = StudentDeviceDoc(
-      email: binding.email,
-      uid: binding.uid,
-      pkHex: binding.pkHex,
-      name: binding.name,
-      roll: binding.roll,
-      modelVer: binding.modelVer,
-      installId: binding.installId,
-      platform: binding.platform,
-      org: binding.org,
-      createdAtMillis: binding.createdAtMillis,
-      lastMoveAtMillis: binding.lastMoveAtMillis,
-      lastSeenAtMillis: binding.lastSeenAtMillis,
-      updatedAtMillis: binding.updatedAtMillis,
-      moveCount: binding.moveCount,
-      pkDHex: binding.pkDHex,
-      attestationLevel: binding.attestationLevel,
-      attestedAtMillis: binding.attestedAtMillis,
-      attestedUntilMillis: binding.attestedUntilMillis,
-      attestationAnomaly: anomaly,
-      serverVerifiedAtMillis: at,
-      serverVerifyReason: reason,
-      attestMaterialJson: binding.attestMaterialJson,
-    );
-    return AttestationVerifyOutcome(
-        ok: true,
-        anomaly: anomaly,
-        reason: reason,
-        serverVerifiedAtMillis: at);
-  }
 
   @override
   Future<void> pushSession(

@@ -10,7 +10,6 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:proximity_storage/storage.dart';
 
-import 'attest_http.dart';
 import 'claim.dart';
 import 'cloud_api.dart';
 import 'directory.dart';
@@ -42,16 +41,7 @@ class FirestoreCloudSync implements CloudSync {
   @override
   final bool available;
 
-  /// Seams for the attestation callable (see attest_http.dart): [idTokenOf]
-  /// supplies the Firebase ID token (wired to AuthService.getIdToken in
-  /// main; absent in tests/offline builds → verify reports unreachable and
-  /// the engine defers). [postJson] defaults to the platform HTTP client.
-  final Future<String?> Function()? idTokenOf;
-  final Future<({int status, Map<String, dynamic> json})> Function(
-      Uri url, Map<String, String> headers, String body)? postJson;
-
-  FirestoreCloudSync(
-      {this.available = true, this.idTokenOf, this.postJson});
+  FirestoreCloudSync({this.available = true});
 
   FirebaseFirestore get _db => FirebaseFirestore.instance;
 
@@ -202,14 +192,6 @@ class FirestoreCloudSync implements CloudSync {
         attestedAtMillis: (d['attestedAtMillis'] as num?)?.toInt() ?? 0,
         attestedUntilMillis:
             (d['attestedUntilMillis'] as num?)?.toInt() ?? 0,
-        // Server-verdict fields are READ here (for the cheap-trigger gate
-        // + Track 5 review queries) but never written by clients — see
-        // kAttestationServerFields; the claim write below omits them.
-        attestationAnomaly: (d['attestationAnomaly'] as bool?) ?? false,
-        serverVerifiedAtMillis:
-            (d['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
-        serverVerifyReason: d['serverVerifyReason'] as String? ?? '',
-        attestMaterialJson: d['attestMaterialJson'] as String? ?? '',
       );
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('device lookup');
@@ -387,11 +369,6 @@ class FirestoreCloudSync implements CloudSync {
         attestedAtMillis: (d?['attestedAtMillis'] as num?)?.toInt() ?? 0,
         attestedUntilMillis:
             (d?['attestedUntilMillis'] as num?)?.toInt() ?? 0,
-        attestationAnomaly: (d?['attestationAnomaly'] as bool?) ?? false,
-        serverVerifiedAtMillis:
-            (d?['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
-        serverVerifyReason: d?['serverVerifyReason'] as String? ?? '',
-        attestMaterialJson: d?['attestMaterialJson'] as String? ?? '',
       );
 
   @override
@@ -445,16 +422,13 @@ class FirestoreCloudSync implements CloudSync {
           'lastSeenAtMillis': atMillis,
           'updatedAtMillis': atMillis,
           'moveCount': claim.moveCount,
-          // Tracks 2+3 extended claim (offline-verifiable device binding)
-          // + client-written attestation material. The server-verdict
-          // fields (kAttestationServerFields) are deliberately ABSENT:
-          // only the endpoint's admin writes may set them (rules deny
-          // client writes that change them).
+          // Tracks 2+3 extended claim (offline device binding: pkD,
+          // self-asserted attestation level + window). No server-verdict
+          // fields exist — there is no server re-check.
           'pkDHex': doc.pkDHex,
           'attestationLevel': doc.attestationLevel,
           'attestedAtMillis': doc.attestedAtMillis,
           'attestedUntilMillis': doc.attestedUntilMillis,
-          'attestMaterialJson': doc.attestMaterialJson,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {
@@ -483,13 +457,13 @@ class FirestoreCloudSync implements CloudSync {
       if (e.code == 'permission-denied') throw _rulesError('enrollment');
       if (_isOfflineError(e)) {
         throw StateError(
-            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 5 angles are kept.');
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 3 stills are kept.');
       }
       rethrow;
     } catch (e) {
       if (_isOfflineError(e)) {
         throw StateError(
-            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 5 angles are kept.');
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 3 stills are kept.');
       }
       rethrow;
     }
@@ -530,95 +504,6 @@ class FirestoreCloudSync implements CloudSync {
         return false;
       }
       return false;
-    }
-  }
-
-  @override
-  Future<AttestationVerifyOutcome> verifyAttestationChain(
-      {required String emailLower, required String org}) async {
-    _needAvailable();
-    const unreachable =
-        AttestationVerifyOutcome(ok: false, reason: 'unreachable');
-    // No client arguments are sent: the endpoint verifies the caller's own
-    // stored doc from Auth identity, so there is nothing here to forge.
-    final provider = idTokenOf;
-    if (provider == null) return unreachable;
-    String? token;
-    try {
-      token = await provider().timeout(const Duration(seconds: 8));
-    } catch (_) {
-      return unreachable;
-    }
-    if (token == null || token.isEmpty) return unreachable;
-    try {
-      final res = await (postJson ?? postCallableJson)(
-        Uri.parse(kVerifyAttestationUrl),
-        {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        jsonEncode(const {'data': <String, dynamic>{}}),
-      ).timeout(const Duration(seconds: 15));
-      final err = res.json['error'];
-      if (err is Map) {
-        // v1 callables surface HttpsErrors as 200 + {error}: NOT_FOUND (no
-        // binding), FAILED_PRECONDITION (roots-missing), mid-call drops —
-        // all defer, none flag.
-        final status = '${err['status'] ?? 'UNKNOWN'}';
-        return AttestationVerifyOutcome(
-            ok: false, reason: 'server-${status.toLowerCase()}');
-      }
-      if (res.status != 200) return unreachable;
-      final result = res.json['result'];
-      if (result is! Map) return unreachable;
-      return AttestationVerifyOutcome(
-        ok: true,
-        anomaly: result['anomaly'] == true,
-        reason: '${result['reason'] ?? ''}',
-        serverVerifiedAtMillis:
-            (result['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
-      );
-    } catch (_) {
-      return unreachable;
-    }
-  }
-
-  @override
-  Future<List<StudentDeviceDoc>> fetchFlaggedDevices(
-      {String org = '', int limit = 50}) async {
-    _needAvailable();
-    // Single-field equality (no composite index — see §3.4 handoff): org
-    // filters client-side so cross-org rows never list. Newest verdict
-    // first (client-side; server order would need a composite index).
-    try {
-      final snap = await _db
-          .collection('studentDevices')
-          .where('attestationAnomaly', isEqualTo: true)
-          .limit(limit * 2)
-          .get(const GetOptions(source: Source.serverAndCache))
-          .timeout(const Duration(seconds: 10));
-      final out = <StudentDeviceDoc>[];
-      for (final d in snap.docs) {
-        final doc = _deviceFrom(d.data(), d.id.toLowerCase());
-        if (org.isNotEmpty) {
-          if (doc.org.isEmpty || doc.org != org) continue;
-        }
-        out.add(doc);
-      }
-      out.sort((a, b) =>
-          b.serverVerifiedAtMillis.compareTo(a.serverVerifiedAtMillis));
-      return out.take(limit).toList();
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') throw _rulesError('flagged review');
-      if (_isOfflineError(e)) {
-        throw StateError('Flagged review needs internet.');
-      }
-      rethrow;
-    } catch (e) {
-      if (_isOfflineError(e)) {
-        throw StateError('Flagged review needs internet.');
-      }
-      rethrow;
     }
   }
 
