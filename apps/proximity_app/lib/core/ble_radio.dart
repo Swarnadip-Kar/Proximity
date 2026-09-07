@@ -241,36 +241,6 @@ class UniversalBleRadio implements BlePlatformDelegate {
     } catch (_) {}
     _onSight = null;
   }
-
-  @override
-  Future<Uint8List?> gattRead(
-      String deviceId, String serviceUuid, String charUuid) async {
-    try {
-      await UniversalBle.connect(deviceId);
-      final v = await UniversalBle.read(deviceId, serviceUuid, charUuid);
-      await UniversalBle.disconnect(deviceId);
-      return Uint8List.fromList(v);
-    } catch (_) {
-      try {
-        await UniversalBle.disconnect(deviceId);
-      } catch (_) {}
-      return null;
-    }
-  }
-
-  @override
-  Future<void> gattWrite(String deviceId, String serviceUuid,
-      String charUuid, Uint8List value) async {
-    try {
-      await UniversalBle.connect(deviceId);
-      await UniversalBle.write(deviceId, serviceUuid, charUuid, value);
-      await UniversalBle.disconnect(deviceId);
-    } catch (_) {
-      try {
-        await UniversalBle.disconnect(deviceId);
-      } catch (_) {}
-    }
-  }
 }
 
 /// Linux prof host: BlueZ D-Bus advertise shim + universal_ble scan.

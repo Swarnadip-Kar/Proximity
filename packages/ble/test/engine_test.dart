@@ -463,6 +463,43 @@ void main() {
     await engine.stop();
   });
 
+  test('busy-skipped relay retries on next hearing (no starvation)', () async {
+    // Observed live: under relay load the ADV guard is busy and a relay
+    // re-advertise is skipped — if that skip burned the token, every back
+    // row behind this phone would lose that rotation. The guard
+    // ([tokenRelayGuard]) releases the key on busy-skip, so the ~1s
+    // repeat hearing relays instead of dup-skipping. This test pins the
+    // guard with token A, busy-skips token B, then proves B relays on
+    // re-hearing (without the release, the last expect fails: B dup-skips
+    // and never airs).
+    final radio = _GateRadio()..gate = Completer<void>();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    // Occupy the guard: token A relay blocks at the gate past jitter.
+    engine.handleSighting(
+        challengeSighting([7, 7, 7, 7, 7, 7, 7, 7], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 400));
+    // Token B arrives while the guard is held: reserves, then busy-skips.
+    engine.handleSighting(
+        challengeSighting([8, 8, 8, 8, 8, 8, 8, 8], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 500));
+    // Release: A airs for real.
+    radio.gate!.complete();
+    await Future.delayed(const Duration(milliseconds: 400));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([7, 7, 7, 7, 7, 7, 7, 7]))));
+    // Repeat hearing of B relays now — the release made room for it.
+    engine.handleSighting(
+        challengeSighting([8, 8, 8, 8, 8, 8, 8, 8], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 600));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([8, 8, 8, 8, 8, 8, 8, 8]))));
+    await engine.stop();
+  });
+
   test('heard challenge fires IP-hint callback + records server', () async {
     final heard = <String>[];
     final engine = ProxBleEngine(radio: FakeBleRadio())
