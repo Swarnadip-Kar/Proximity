@@ -8,8 +8,18 @@
 //   R_IDj    = HMAC-SHA256(C_j, ID_utf8)[0:8]
 //   peerW    = HMAC-SHA256(PK_s_raw32, windowID)[0:8]
 //   Sig_p(j) = Sign(SK_p, sessionID || windowID || j || C_j)
-//   Sig_s    = Sign(SK_s, sessionID || windowID || j || C_j || ID_utf8 || faceMilliBE16)
+//   Sig_s    = Sign(SK_s, sessionID || windowID || j || C_j || ID_utf8 ||
+//                     faceMilliBE16 || faceValidAtMsBE64 || verifierVerHash8 ||
+//                     pkD32 || faceTicketHash8)
+//              (Tracks 2+3: plugin reality wins — no images/embeddings leave
+//              the device; the host verifies PK_s sig, C_j/single-use/
+//              freshness (unchanged), score>=T + faceValid window +
+//              verifierVer allowlist, BLE sighting (unchanged), signed ACK
+//              (unchanged) + attestation anomaly flags. Sig_p/ACK layouts
+//              and all crypto primitives are untouched.)
 //   Sig_ack  = Sign(SK_p, sessionID || windowID || j || ID_utf8 || decision_u8 || serverTimeMs_BE64)
+//   Sig_d    = Sign(DKey_P256, sessionID || windowID || j || C_j ||
+//                     faceTicketHash8 || pkS32)
 //
 // NOTE (M1): moved verbatim from src/crypto.dart. The whole ProxCrypto
 // class stays contiguous here on purpose — Dart cannot split one class's
@@ -140,7 +150,47 @@ class ProxCrypto {
     return b.buffer.asUint8List();
   }
 
-  /// Sig_s preimage: sessionID || windowID || j32 || C_j || ID || faceMilliBE.
+  /// faceValidAt canonical: UTC epoch millis u64 BE. Binds WHEN the
+  /// on-device match happened (host enforces the faceValid window + flags
+  /// future/reused stamps — see verify.dart anomaly flags).
+  static Uint8List faceValidAtBe(int faceValidAtMs) {
+    final b = ByteData(8)..setUint64(0, faceValidAtMs, Endian.big);
+    return b.buffer.asUint8List();
+  }
+
+  /// verifierVer binding: SHA-256(utf8(verifierVer))[0:8]. Binds WHICH
+  /// pipeline produced the score (host checks the allowlist; flapping
+  /// across proves is flagged post-hoc). 8 bytes keep Sig_s compact.
+  static Uint8List verifierVerHash8(String verifierVer) =>
+      Uint8List.fromList(sha256Sync(utf8.encode(verifierVer)).sublist(0, 8));
+
+  /// Face ticket hash: SHA-256(scoreMilliBE16 || faceValidAtBE64 ||
+  /// verifierVerHash8)[0:8]. The ticket (score, faceValidAt, verifierVer)
+  /// travels in POST /prove `face:{...}`; its hash binds into Sig_s AND
+  /// into dSig so neither signature can be transplanted across tickets.
+  /// No images/embeddings leave the device — only this hash + the ticket.
+  static Uint8List faceTicketHash({
+    required double faceScore,
+    required int faceValidAtMs,
+    required String verifierVer,
+  }) =>
+      Uint8List.fromList(sha256Sync(concat([
+        faceMilliBe(faceScore),
+        faceValidAtBe(faceValidAtMs),
+        verifierVerHash8(verifierVer),
+      ])).sublist(0, 8));
+
+  /// Sig_s preimage (Tracks 2+3 extended): sessionID || windowID || j32 ||
+  /// C_j || ID || faceMilliBE || faceValidAtBE || verifierVerHash8 ||
+  /// pkD32 || faceTicketHash8.
+  ///
+  /// Backward-compatible call shape: the four new fields default to neutral
+  /// (epoch 0, empty verifier, empty pkD/ticket) so pre-Tracks-2+3 call
+  /// sites still compile — but the PREIMAGE itself is extended (longer
+  /// than the old 6-field form), so old signatures never verify against
+  /// the new preimage and vice versa. Legacy defaults exist only to keep
+  /// the migration compilable, never to accept legacy proofs at runtime
+  /// (the host requires a non-zero faceValidAt + allowlisted verifierVer).
   static Uint8List studentProvePreimage({
     required Uint8List sessionId,
     required Uint8List windowId,
@@ -148,15 +198,30 @@ class ProxCrypto {
     required Uint8List challenge,
     required String studentId,
     required double faceScore,
-  }) =>
-      concat([
-        sessionId,
-        windowId,
-        j32(j),
-        challenge,
-        utf8.encode(studentId),
-        faceMilliBe(faceScore),
-      ]);
+    int faceValidAtMs = 0,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Uint8List? faceTicketHashBytes,
+  }) {
+    final d = pkD ?? Uint8List(0);
+    final t = faceTicketHashBytes ??
+        faceTicketHash(
+            faceScore: faceScore,
+            faceValidAtMs: faceValidAtMs,
+            verifierVer: verifierVer);
+    return concat([
+      sessionId,
+      windowId,
+      j32(j),
+      challenge,
+      utf8.encode(studentId),
+      faceMilliBe(faceScore),
+      faceValidAtBe(faceValidAtMs),
+      verifierVerHash8(verifierVer),
+      d,
+      t,
+    ]);
+  }
 
   static Uint8List signStudentProve({
     required ed.PrivateKey studentSk,
@@ -166,6 +231,10 @@ class ProxCrypto {
     required Uint8List challenge,
     required String studentId,
     required double faceScore,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Uint8List? faceTicketHashBytes,
   }) =>
       sign(
           studentSk,
@@ -175,7 +244,11 @@ class ProxCrypto {
               j: j,
               challenge: challenge,
               studentId: studentId,
-              faceScore: faceScore));
+              faceScore: faceScore,
+              faceValidAtMs: faceValidAtMs,
+              verifierVer: verifierVer,
+              pkD: pkD,
+              faceTicketHashBytes: faceTicketHashBytes));
 
   static bool verifyStudentProve({
     required ed.PublicKey studentPk,
@@ -186,6 +259,10 @@ class ProxCrypto {
     required String studentId,
     required double faceScore,
     required List<int> sig,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Uint8List? faceTicketHashBytes,
   }) =>
       verify(
           studentPk,
@@ -195,8 +272,34 @@ class ProxCrypto {
               j: j,
               challenge: challenge,
               studentId: studentId,
-              faceScore: faceScore),
+              faceScore: faceScore,
+              faceValidAtMs: faceValidAtMs,
+              verifierVer: verifierVer,
+              pkD: pkD,
+              faceTicketHashBytes: faceTicketHashBytes),
           sig);
+
+  /// Sig_d (device-key) preimage: sessionID || windowID || j32 || C_j ||
+  /// faceTicketHash8 || pkS32. Signed by DKey (P-256 HW: StrongBox→TEE /
+  /// Secure Enclave; `none` stub on desktop/web). The P-256 verify itself
+  /// lives in the platform adapter (app layer) — this canonical preimage
+  /// is the shared contract both sides sign/verify against.
+  static Uint8List deviceProvePreimage({
+    required Uint8List sessionId,
+    required Uint8List windowId,
+    required int j,
+    required Uint8List challenge,
+    required Uint8List faceTicketHashBytes,
+    required Uint8List pkS,
+  }) =>
+      concat([
+        sessionId,
+        windowId,
+        j32(j),
+        challenge,
+        faceTicketHashBytes,
+        pkS,
+      ]);
 
   /// Sig_ack preimage: sessionID || windowID || j32 || ID || decision || serverMsBE64.
   /// decision: 0=confirmed, 1=late, 2=invalid.
@@ -233,9 +336,11 @@ class ProxCrypto {
   }
 
   /// Liveness prompt bound to challenge: C_j[0] & 1 ? blink : turn-head. §4.
-  /// KEPT (M1 verdict): live production caller in packages/face (FaceSession.verify)
-  /// passes this prompt to FaceEmbedder.checkLiveness; design §4 removed the
-  /// stills-blink *gates*, not the challenge-bound prompt.
+  /// DEPRECATED (Tracks 2+3): the plugin path is PASSIVE-only — no
+  /// blink/turn-head prompts are ever shown. Kept (not deleted) so the
+  /// historical crypto_test vector still compiles; no production caller
+  /// may use it (FaceVerifier.verify takes no prompt).
+  @Deprecated('Tracks 2+3 passive-only: no liveness prompts. Do not call.')
   static String livenessPrompt(Uint8List challenge) =>
       (challenge[0] & 1) == 1 ? 'blink' : 'turn-head';
 }

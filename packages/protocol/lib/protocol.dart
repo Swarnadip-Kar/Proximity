@@ -17,3 +17,4 @@ export 'src/crypto/primitives.dart';
 export 'src/crypto/preimages.dart';
 export 'src/crypto/freshness.dart';
 export 'src/crypto/verify.dart';
+export 'src/device_binding.dart';

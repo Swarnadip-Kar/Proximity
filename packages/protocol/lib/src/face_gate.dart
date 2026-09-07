@@ -1,9 +1,16 @@
-// Face gate: threshold + freshness + retry policy. §4 (logic only; embeddings mocked in tests).
+// Face gate: threshold + freshness + retry policy. §4 (logic only; the
+// on-device match itself runs in the `face_verification` plugin — see
+// features/face_identity/face_verifier.dart in the app).
 //
 // Purpose: key proves phone, BLE proves location, face proves holder.
 // Gating: SK use requires faceValid < 5min. Each 30s window demands fresh check.
 // Failure: 2 instant retries, then needs-review (professor logged manual override).
-// Threshold: cosine 0.60 starting point (FAR ~0.01% / FRR <2% pilot-tuned).
+// Threshold: 0.70 on the plugin (FaceNet) score scale — plugin default,
+// calibrated for FAR ~0.01% / FRR <2%. The old 0.60/0.80 EdgeFace-XS cosine
+// numbers MUST NOT be reused (deleted pipeline, incomparable space).
+// Passive only: no blink/turn-head prompts — production callers pass
+// livenessPass:true; the parameter stays so historical call sites compile,
+// but nothing gates on an active prompt anymore.
 library;
 
 import 'dart:math';

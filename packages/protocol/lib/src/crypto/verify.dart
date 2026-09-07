@@ -24,6 +24,7 @@ import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 
 import '../bytes.dart';
 import '../constants.dart';
+import '../device_binding.dart';
 import 'primitives.dart';
 
 enum ProveDecision { confirmed, late, invalid }
@@ -72,6 +73,28 @@ class VerifyRequest {
   final int rssiDbm;
   final int relayHop; // 0 = direct
   final DateTime now;
+  // Tracks 2+3 local-trust ticket (transported in POST /prove
+  // face:{score,faceValidAt,verifierVer} — no images/embeddings leave the
+  // device). Sig_s binds all three via faceTicketHash + pkD (see
+  // primitives.studentProvePreimage).
+  final String verifierVer;
+  final int faceValidAtMs;
+  final Uint8List pkD; // DKey raw (empty = unbound legacy)
+  final Uint8List faceTicketHashBytes;
+  // Device proof (Track 3): platform-verified dSig result + attestation
+  // window. [dSigValid] is the P-256 verify over deviceProvePreimage,
+  // computed by the platform adapter before calling in.
+  final AttestationLevel attestationLevel;
+  final DateTime attestedAt;
+  final DateTime attestedUntil;
+  final bool dSigValid;
+  // Replay/anomaly context (server-kept): previously seen faceValidAt
+  // stamps, prior scores for the 1.000-repeat flag, and the last
+  // verifierVer for flapping detection.
+  final Set<int> seenFaceValidAtMs;
+  final List<double> priorScores;
+  final String lastVerifierVer;
+  final List<String> verifierAllowlist;
   VerifyRequest({
     required this.id,
     required this.windowId,
@@ -84,16 +107,51 @@ class VerifyRequest {
     required this.rssiDbm,
     required this.relayHop,
     required this.now,
-  });
+    this.verifierVer = '',
+    this.faceValidAtMs = 0,
+    Uint8List? pkD,
+    Uint8List? faceTicketHashBytes,
+    this.attestationLevel = AttestationLevel.none,
+    DateTime? attestedAt,
+    DateTime? attestedUntil,
+    this.dSigValid = false,
+    this.seenFaceValidAtMs = const {},
+    this.priorScores = const [],
+    this.lastVerifierVer = '',
+    this.verifierAllowlist = const [kVerifierVerPrefix],
+  })  : pkD = pkD ?? Uint8List(0),
+        faceTicketHashBytes = faceTicketHashBytes ?? Uint8List(0),
+        attestedAt = attestedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        attestedUntil = attestedUntil ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 }
 
 class VerifyOutcome {
   final ProveDecision decision;
   final String reason;
-  const VerifyOutcome(this.decision, this.reason);
+  /// Attestation anomaly flags (score==1.000 repeats, future/reused
+  /// faceValidAt, verifierVer flapping, device-stale banner). Signed ACK
+  /// itself is unchanged; flags ride alongside for logging + post-hoc sync
+  /// audit (double-pkD).
+  final List<String> attestationFlags;
+  const VerifyOutcome(this.decision, this.reason,
+      [this.attestationFlags = const []]);
 }
 
 /// Stateless verifier (caller supplies enrolled PK + CRL + expected C_j).
+///
+/// Two modes (migration-safe):
+/// - legacy (default): [VerifyRequest] carries no ticket (empty
+///   verifierVer/pkD) and [requireBoundTicket] is false — the original
+///   6-field Sig_s preimage path with neutral defaults. Existing callers
+///   verify exactly as before; no new gate applies.
+/// - bound (Tracks 2+3): the request carries the face ticket
+///   (score/faceValidAt/verifierVer + pkD) or [requireBoundTicket] is true
+///   (the professor server always sets it) — Sig_s is verified over the
+///   extended preimage, the verifierVer allowlist + faceValid window apply,
+///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner,
+///   NONE→invalid:device-unproven), and attestation anomaly flags ride on
+///   the outcome. Legacy tickets fail closed here (`face-unbound` /
+///   `unknown-verifier`), never auto-present.
 VerifyOutcome verifyProve({
   required VerifyRequest req,
   required Uint8List expectedCj,
@@ -104,6 +162,7 @@ VerifyOutcome verifyProve({
   required bool freshWindow, // 0 <= now - t_j < kSubEpochSeconds + kFreshness
   required bool singleUseOk, // (ID,j) unseen
   DateTime? nowOverride,
+  bool requireBoundTicket = false,
 }) {
   final now = (nowOverride ?? req.now).toUtc();
   if (!bytesEqual(req.windowId, windowIdExpected)) {
@@ -124,6 +183,21 @@ VerifyOutcome verifyProve({
   if (revoked) {
     return const VerifyOutcome(ProveDecision.invalid, 'revoked');
   }
+  final bound = requireBoundTicket ||
+      req.verifierVer.isNotEmpty ||
+      req.faceValidAtMs != 0 ||
+      req.pkD.isNotEmpty;
+  // The SIGNED stamp is authoritative for the preimage: legacy callers
+  // leave faceValidAtMs at 0 (matching their sign-time defaults), bound
+  // callers stamp the same millis they signed. The DateTime field drives
+  // the faceValid window check below (callers/servers keep both in sync).
+  final faceAtMs = req.faceValidAtMs;
+  final ticket = req.faceTicketHashBytes.isNotEmpty
+      ? req.faceTicketHashBytes
+      : ProxCrypto.faceTicketHash(
+          faceScore: req.faceScore,
+          faceValidAtMs: faceAtMs,
+          verifierVer: req.verifierVer);
   final sigOk = ProxCrypto.verifyStudentProve(
     studentPk: studentPk,
     sessionId: sessionId,
@@ -133,15 +207,69 @@ VerifyOutcome verifyProve({
     studentId: req.id,
     faceScore: req.faceScore,
     sig: req.sigS,
+    faceValidAtMs: faceAtMs,
+    verifierVer: req.verifierVer,
+    pkD: req.pkD,
+    faceTicketHashBytes: ticket,
   );
+  List<String> flags() => detectFaceAnomalies(
+        score: req.faceScore,
+        faceValidAtMs: faceAtMs,
+        verifierVer: req.verifierVer,
+        now: now,
+        priorScores: req.priorScores,
+        seenFaceValidAtMs: req.seenFaceValidAtMs,
+        allowlistPrefixes: req.verifierAllowlist,
+        lastVerifierVer: req.lastVerifierVer,
+      );
   if (!sigOk) {
-    return const VerifyOutcome(ProveDecision.invalid, 'bad-sig');
+    return VerifyOutcome(
+        ProveDecision.invalid, 'bad-sig', bound ? flags() : const []);
   }
   if (req.faceScore < kFaceThreshold) {
-    return const VerifyOutcome(ProveDecision.invalid, 'face-below-threshold');
+    return VerifyOutcome(ProveDecision.invalid, 'face-below-threshold',
+        bound ? flags() : const []);
   }
   if (now.difference(req.faceValidAt.toUtc()).abs() > kFaceValidWindow) {
-    return const VerifyOutcome(ProveDecision.invalid, 'face-stale');
+    return VerifyOutcome(
+        ProveDecision.invalid, 'face-stale', bound ? flags() : const []);
+  }
+  if (bound) {
+    // Bound-ticket gate: non-zero stamp + allowlisted verifierVer, or the
+    // ticket was transplanted across pipelines. Fail closed — never
+    // auto-present on an unbound match.
+    final allowed =
+        req.verifierAllowlist.any((p) => req.verifierVer.startsWith(p));
+    if (faceAtMs == 0 || req.verifierVer.isEmpty || !allowed) {
+      final reason = req.verifierVer.isNotEmpty && !allowed
+          ? 'unknown-verifier'
+          : 'face-unbound';
+      return VerifyOutcome(ProveDecision.invalid, reason, flags());
+    }
+    // Device-proof tiers (Track 3): FULL/STD→confirmed,
+    // STALE (14d grace)→confirmed+banner, NONE→invalid:device-unproven.
+    final proof = evaluateDeviceProof(
+      level: req.attestationLevel,
+      attestedAt: req.attestedAt,
+      attestedUntil: req.attestedUntil,
+      dSigValid: req.dSigValid,
+      now: now,
+    );
+    final allFlags = [...flags(), ...proof.auditFlags];
+    if (!proof.confirms) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'device-unproven', allFlags);
+    }
+    // BLE sighting: direct RSSI > -70, or relayed hop <= 2 (flagged).
+    final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
+    final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
+    if (!direct && !relayed) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'no-ble-sighting', allFlags);
+    }
+    // STALE confirms with its banner flag (heartbeat should roll
+    // attestedUntil; the flag tells the professor to expect re-attest).
+    return VerifyOutcome(ProveDecision.confirmed, 'ok', allFlags);
   }
   // BLE sighting: direct RSSI > -70, or relayed hop <= 2 (flagged).
   final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;

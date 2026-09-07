@@ -56,14 +56,42 @@ const Duration kDedupExpiry = Duration(minutes: 5);
 const int kJitterMinMs = 10;
 const int kJitterMaxMs = 220;
 
-/// Face cosine threshold starting point. §4.
-const double kFaceThreshold = 0.60;
+/// Face match threshold on the `face_verification` plugin (FaceNet TFLite)
+/// scale. 0.70 = plugin default, calibrated for FAR ~0.01% / FRR <2%.
+/// The old 0.60/0.80 EdgeFace-XS cosine numbers MUST NOT be reused: the
+/// vendored EdgeFace pipeline is deleted (Tracks 2+3) and its embedding
+/// space is incomparable with the plugin's FaceNet space.
+/// Policy shape (valid window, retry counts) is unchanged — only the VALUE
+/// is recalibrated to the new scale.
+const double kFaceThreshold = 0.70;
 
 /// Private-key use requires faceValid < 5 min. §4.
 const Duration kFaceValidWindow = Duration(minutes: 5);
 
 /// Face failure: 2 instant retries then needs-review. §4.
 const int kFaceMaxRetries = 2;
+
+/// Marking verify-session budget: one dead 12s session burns exactly one
+/// attempt (4 sessions → needs-review → manual override, never
+/// auto-present). Policy constant kept with FaceGate (threshold VALUE
+/// recalibrated above; counts untouched).
+const int kFaceMaxSessions = 4;
+
+/// Inconclusive rescan cadence inside a verify session (passive only —
+/// no blink/turn-head prompts; the holder just holds still).
+const Duration kFaceRescanInterval = Duration(seconds: 12);
+
+/// Verifier-version allowlist prefix. Stored `verifierVer` values look like
+/// `face_verification/0.3.9+b45ab893` (plugin version + bundled-asset
+/// hash8). The host accepts any version with this prefix unless a course
+/// pins a stricter list (offline professor verifies against this prefix;
+/// post-hoc sync flags flapping — see device_binding.dart).
+const String kVerifierVerPrefix = 'face_verification/';
+
+/// Device attestation validity: +90d from attestation, with a 14d stale
+/// grace (STALE → confirmed+banner; NONE → invalid:device-unproven).
+const Duration kDeviceAttestedValidity = Duration(days: 90);
+const Duration kDeviceStaleGrace = Duration(days: 14);
 
 /// TLS pin preimage: H(PK_p || windowID). §3.3.
 const int kSessionIdBytes = 16; // rand(128) per lecture
