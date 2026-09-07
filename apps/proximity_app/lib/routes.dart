@@ -19,19 +19,23 @@
 //                   (adoption: identical strings to `EnrollFlow`, so bundle
 //                   pushes and this table name the same routes)
 //   Records:        records/mine · records/course/<course>
+//   Review:         prof/flagged (attestationAnomaly review list)
 //   Shared:         debug/log (filterable full-screen terminal)
 //
-// Status: wired. Entry/enroll/debug/records + prof setup builders point
-// at the feature bundle screens; live/mark sections build their host
-// shells (take_attendance + student_home retain orchestration, features
-// are presentational). `MaterialApp.home` + `PROX_MODE` previews + web
-// records-only behavior are preserved (see `main.dart` wiring).
+// Status: wired. Entry/enroll/debug/records/review + prof setup builders
+// point at the feature bundle screens; live sections build focused screens
+// (roster/inbox/add/setup — one purpose each, same host driver; recover
+// stays on the host which owns the draft); mark phases build the host
+// shell (one continuation — phases, not pages; take_attendance +
+// student_home retain orchestration, features are presentational).
+// `MaterialApp.home` + `PROX_MODE` previews + web records-only behavior
+// are preserved (see `main.dart` wiring).
 //
 // Loaders: routes that need a record object resolve it from the store
 // (session detail/edit, course attendance detail) and render guidance +
 // STATE log on a miss — never a silent dead end, never a crash. Section
-// routes (live roster/inbox/…, mark phases) build their host screen; the
-// section hop itself is logged NAV with the section arg.
+// hops log NAV with the section arg; cold live sections (no host below)
+// render guidance, never a crash.
 library;
 
 import 'package:flutter/foundation.dart' show kIsWeb;

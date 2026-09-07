@@ -86,6 +86,9 @@ requirements are preserved — restructuring only, no weakening.
   `ProxVerdictBadge` (one verdict language, elastic reserved for Marked).
 - `BleLogView` (widgets/ble_log_view) removed — superseded by the
   full-screen debug log + embedded terminal contract (single log vocabulary).
-- Legacy `screens/` hosts (student_home, take_attendance) thinned to flow
-  coordinators; presentational sections live in features/ (one purpose per
-  file); deep-links land on the right phase/section via initial args.
+- Legacy `screens/` hosts (student_home, take_attendance) keep flow
+  orchestration (timers, drivers, drafts — behavior frozen); presentational
+  sections live in features/ (one purpose per file); live section
+  deep-links (`roster`/`inbox`/`add`/`setup`) land on focused screens
+  reading the same host driver, `recover` stays on the host (it owns the
+  draft); mark phases stay one continuation (phases, not pages).
