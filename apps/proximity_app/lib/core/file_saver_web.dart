@@ -6,9 +6,11 @@ import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
 
+import 'file_saver_common.dart';
+
 /// Writes [content] as [filename] via a browser download.
 Future<String> saveTextFile(String filename, String content) async {
-  final safe = filename.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+  final safe = sanitizeFilename(filename);
   final blob = web.Blob([content.toJS].toJS,
       web.BlobPropertyBag(type: 'text/csv'));
   final url = web.URL.createObjectURL(blob);
