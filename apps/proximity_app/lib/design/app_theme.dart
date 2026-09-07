@@ -40,6 +40,10 @@ ThemeData proxDarkTheme() {
 }
 
 ThemeData _build(ColorScheme scheme, Brightness brightness) {
+  // Offline-first: fonts are bundled (pubspec `fonts:`) and runtime
+  // fetching is OFF — the live flow must never wait on fonts.gstatic.com.
+  // google_fonts then resolves the pubspec families above, same API.
+  GoogleFonts.config.allowRuntimeFetching = false;
   // Font pairing on a SCHEME-DERIVED base: GoogleFonts.textTheme() with no
   // argument falls back to the *light* text theme, baking near-black text
   // into every style — which renders invisible on dark surfaces (caught on

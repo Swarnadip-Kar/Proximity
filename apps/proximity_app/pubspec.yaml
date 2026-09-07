@@ -66,3 +66,29 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models/
+    - assets/fonts/
+  # Offline-first: display/body fonts ship in the bundle (no runtime fetch
+  # — the live attendance flow must never wait on fonts.gstatic.com).
+  # Filenames follow the google_fonts local-asset convention
+  # (<Family>-<Weight>.ttf) so GoogleFonts.*TextTheme() resolves bundled.
+  fonts:
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/SpaceGrotesk-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/SpaceGrotesk-Bold.ttf
+          weight: 700
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700

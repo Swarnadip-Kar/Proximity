@@ -231,15 +231,26 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
 
   Future<SyncProf?> _profOf() => readSyncProf(ref);
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
+  /// Arms the connectivity-hint subscription only where the platform
+  /// plugin actually answers: a missing plugin (widget tests, Linux
+  /// desktop) reports through FlutterError at EventChannel-listen time,
+  /// which no stream onError can catch — so probe first with a catchable
+  /// Future and skip the subscription when it refuses. No timeout here:
+  /// a hung probe must not leave a wall-clock Timer pending past widget
+  /// disposal (a dangling Future is harmless; a Timer fails tests). Sync
+  /// still triggers on resume + backstop there; the hint is advisory.
+  Future<void> _armConnectivityHint() async {
     try {
       final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
       syncEngine.startBackstop(
           store: store, cloud: cloud, profOf: _profOf);
+      try {
+        await Connectivity().checkConnectivity();
+      } catch (_) {
+        return; // No plugin on this platform — resume/backstop cover sync.
+      }
+      if (!mounted) return;
       // Platform hint ONLY (never trusted): a return hint schedules the
       // ~5s debounced server probe inside the engine; only a real
       // offline→online edge flushes.
@@ -254,8 +265,17 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
               cloud: ref.read(cloudSyncProvider),
               profOf: _profOf);
         } catch (_) {}
-      });
+        // Channel errors must never surface: the hint is advisory, the
+        // server probe is ground truth.
+      }, onError: (_) {});
     } catch (_) {}
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_armConnectivityHint());
   }
 
   @override
