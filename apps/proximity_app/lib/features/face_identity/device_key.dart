@@ -228,8 +228,9 @@ class FakeDeviceKey implements DeviceKey {
     signed.add(Uint8List.fromList(data));
     // Test stand-in bytes (the host checks the platform P-256 dSig in
     // production; tests assert [dSigValid] plumbing + preimage content).
-    return Uint8List.fromList(
-        ProxCrypto.sha256Sync([...data, ...pkDBytes]).sublist(0, 64));
+    final h1 = ProxCrypto.sha256Sync([...data, ...pkDBytes]);
+    final h2 = ProxCrypto.sha256Sync([...pkDBytes, ...data]);
+    return Uint8List.fromList([...h1, ...h2]);
   }
 
   @override

@@ -46,11 +46,15 @@ class ProveResult {
   final String reason;
   final DateTime serverTime;
   final Uint8List sigAck;
+  /// Attestation anomaly flags from the host (empty on legacy path).
+  /// Advisory: the signed ACK verdict is authoritative.
+  final List<String> flags;
   const ProveResult({
     required this.decision,
     required this.reason,
     required this.serverTime,
     required this.sigAck,
+    this.flags = const [],
   });
 
   bool verifyAck({
@@ -286,6 +290,12 @@ class ProxClient {
   /// and a same-j retry would only age the token (and burn single-use on
   /// a retake). Each attempt carries its own budget so a hung POST can
   /// never outlive the driver's dead-air cap.
+  ///
+  /// Tracks 2+3 (all optional, legacy-compatible): [faceValidAtMs] +
+  /// [verifierVer] emit the `face:{score,faceValidAt,verifierVer}` ticket
+  /// (Sig_s binds them — no images/embeddings leave the device); [pkD] +
+  /// [dSigFor] emit the device binding (`pkD` hex + `dSig` over
+  /// deviceProvePreimage with the ticket hash).
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -301,6 +311,12 @@ class ProxClient {
     String org = '',
     Random? rng,
     int maxAttempts = 3,
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -321,6 +337,12 @@ class ProxClient {
           sigSFor: sigSFor,
           sigBindFor: sigBindFor,
           org: org,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer,
+          pkD: pkD,
+          dSigFor: dSigFor,
+          attestationLevel: attestationLevel,
+          attestedUntilMs: attestedUntilMs,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -342,11 +364,30 @@ class ProxClient {
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
     String org = '',
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
     // pin-check below + the server's tlsFp comparison both gate on it.
     final tlsFp = desc.tlsFp;
+    // Bound ticket (Tracks 2+3): stamp + tag + device binding. Legacy
+    // callers leave verifierVer empty → legacy body, legacy server path.
+    final bound = verifierVer.isNotEmpty;
+    final stampMs = faceValidAtMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+    final ticket = bound
+        ? ProxCrypto.faceTicketHash(
+            faceScore: faceScore,
+            faceValidAtMs: stampMs,
+            verifierVer: verifierVer)
+        : null;
+    final dSig = (bound && dSigFor != null && ticket != null)
+        ? await dSigFor(ticket, j)
+        : null;
     final body = jsonEncode(buildProveBody(
       id: studentId,
       windowId: desc.windowId,
@@ -361,6 +402,12 @@ class ProxClient {
       sigBind: sigBindFor(tlsFp, j),
       pkS: pkS,
       org: org,
+      faceValidAtMs: bound ? stampMs : null,
+      verifierVer: verifierVer,
+      pkD: pkD,
+      dSig: dSig,
+      attestationLevel: attestationLevel,
+      attestedUntilMs: attestedUntilMs,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =
@@ -389,6 +436,9 @@ class ProxClient {
       reason: m['reason'] as String? ?? '',
       serverTime: DateTime.parse(m['serverTime'] as String),
       sigAck: Uint8List.fromList(hexDecode(m['sigAck'] as String)),
+      flags: [
+        for (final f in (m['flags'] as List? ?? const [])) '$f',
+      ],
     );
   }
 }

@@ -10,16 +10,16 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
-import 'package:proximity_app/core/face_camera.dart';
-import 'package:proximity_app/core/face_detect.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/features/face_identity/device_key.dart';
+import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/main.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/student_home.dart';
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_face/face.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
@@ -46,8 +46,11 @@ ProviderScope testScope(
       authServiceProvider.overrideWithValue(auth),
       cloudSyncProvider.overrideWithValue(cloud ?? FakeCloudSync()),
       deviceStoreProvider.overrideWithValue(deviceStore),
-      faceCameraProvider.overrideWithValue(FakeFaceCamera()),
-      faceDetectorProvider.overrideWithValue(FakeFaceDetector()),
+      faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+      deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+      // Canned stills (the camera plugin has no test double; verdicts
+      // come from the FakeFaceVerifier above).
+      stillCapturerProvider.overrideWithValue(const FakeStillCapturer()),
       hostDriverProvider.overrideWithValue(hostDriver ?? FakeHostDriver()),
       studentDriverProvider.overrideWithValue(
           studentDriver ?? FakeStudentDriver(windowOpenProbe: probeOpen)),
@@ -66,10 +69,8 @@ ProviderScope testScope(
         (ref) => EnrollmentController(
           auth: ref.watch(authServiceProvider),
           store: ref.watch(deviceStoreProvider),
-          embedder: MockFaceEmbedder(
-            enrolled: const [1, 0, 0, 0],
-            probe: const [1, 0, 0, 0],
-          ),
+          verifier: FakeFaceVerifier(),
+          deviceKey: FakeDeviceKey(),
         ),
       ),
     ],
@@ -90,6 +91,8 @@ class _HangingStudentDriver extends FakeStudentDriver {
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     onStatus(ListenStatus.waiting);
     await release.future;
@@ -110,6 +113,8 @@ class _RoundStudentDriver extends FakeStudentDriver {
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     listens++;
     onStatus(ListenStatus.waiting);
@@ -125,6 +130,8 @@ class _RoundStudentDriver extends FakeStudentDriver {
       identity: identity,
       faceScore: faceScore,
       onStatus: onStatus,
+      faceValidAtMs: faceValidAtMs,
+      verifierVer: verifierVer,
     );
   }
 }
@@ -138,6 +145,8 @@ class _FlakyStudentDriver extends FakeStudentDriver {
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     listens++;
     onStatus(ListenStatus.waiting);
@@ -166,6 +175,8 @@ class _EndedHostDriver extends FakeStudentDriver {
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     listens++;
     return super.listenAndProve(
@@ -173,6 +184,8 @@ class _EndedHostDriver extends FakeStudentDriver {
       identity: identity,
       faceScore: faceScore,
       onStatus: onStatus,
+      faceValidAtMs: faceValidAtMs,
+      verifierVer: verifierVer,
     );
   }
 }
@@ -467,26 +480,13 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     await t.tap(find.text('Continue to face scan'));
     await t.pumpAndSettle();
-    // 3. capture: ONE tap, all five angles in a single camera session.
-    expect(find.text('0 of 5 angles captured'), findsOneWidget);
-    expect(find.textContaining('Centre —'), findsWidgets);
-    await t.scrollUntilVisible(find.text('Scan all angles'), 300,
+    // 3. capture: ONE tap captures 3 stills (centre/left/right) via the
+    // canned capturer; the fake verifier enrolls + self-checks → result.
+    expect(find.text('Scan your face'), findsOneWidget);
+    await t.scrollUntilVisible(find.text('Scan face'), 300,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
-    await t.tap(find.text('Scan all angles'));
-    await t.pump();
-    await t.pump(const Duration(milliseconds: 300));
-    expect(find.text('Face scan'), findsWidgets);
-    // Five guided sections (front/left/right/up/down gated); the scripted
-    // detector serves each slot's pose in turn at 700ms cadence.
-    await t.pump(const Duration(seconds: 60));
-    await t.pumpAndSettle();
-    expect(find.textContaining('5 of 5 angles captured'), findsOneWidget);
-    // Capture → result.
-    await t.scrollUntilVisible(find.text('Continue to save'), 300,
-        scrollable: find.byType(Scrollable).first);
-    await t.pumpAndSettle();
-    await t.tap(find.text('Continue to save'));
+    await t.tap(find.text('Scan face'));
     await t.pumpAndSettle();
     // 4. result: save → linked banner after Done (back on student home).
     expect(find.text('Save enrollment'), findsWidgets);

@@ -185,6 +185,11 @@ class FirestoreCloudSync implements CloudSync {
         lastSeenAtMillis: (d['lastSeenAtMillis'] as num?)?.toInt() ?? 0,
         updatedAtMillis: (d['updatedAtMillis'] as num?)?.toInt() ?? 0,
         moveCount: (d['moveCount'] as num?)?.toInt() ?? 0,
+        pkDHex: d['pkDHex'] as String? ?? '',
+        attestationLevel: d['attestationLevel'] as String? ?? 'NONE',
+        attestedAtMillis: (d['attestedAtMillis'] as num?)?.toInt() ?? 0,
+        attestedUntilMillis:
+            (d['attestedUntilMillis'] as num?)?.toInt() ?? 0,
       );
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('device lookup');
@@ -357,13 +362,19 @@ class FirestoreCloudSync implements CloudSync {
         lastSeenAtMillis: (d?['lastSeenAtMillis'] as num?)?.toInt() ?? 0,
         updatedAtMillis: (d?['updatedAtMillis'] as num?)?.toInt() ?? 0,
         moveCount: (d?['moveCount'] as num?)?.toInt() ?? 0,
+        pkDHex: d?['pkDHex'] as String? ?? '',
+        attestationLevel: d?['attestationLevel'] as String? ?? 'NONE',
+        attestedAtMillis: (d?['attestedAtMillis'] as num?)?.toInt() ?? 0,
+        attestedUntilMillis:
+            (d?['attestedUntilMillis'] as num?)?.toInt() ?? 0,
       );
 
   @override
   Future<ClaimOutcome> claimStudentDevice(
       {required StudentDeviceDoc doc,
       required String installId,
-      DateTime? now}) async {
+      DateTime? now,
+      bool moveIntentValid = false}) async {
     _needAvailable();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -389,7 +400,8 @@ class FirestoreCloudSync implements CloudSync {
             binding: binding,
             installEmail: installEmail,
             email: key,
-            now: at);
+            now: at,
+            moveIntentValid: moveIntentValid);
         final isFirst = claim.isFirst;
         final isMove = claim.isMove;
         final org = doc.org.isNotEmpty ? doc.org : orgOf(key);
@@ -408,6 +420,11 @@ class FirestoreCloudSync implements CloudSync {
           'lastSeenAtMillis': atMillis,
           'updatedAtMillis': atMillis,
           'moveCount': claim.moveCount,
+          // Tracks 2+3 extended claim (offline-verifiable device binding).
+          'pkDHex': doc.pkDHex,
+          'attestationLevel': doc.attestationLevel,
+          'attestedAtMillis': doc.attestedAtMillis,
+          'attestedUntilMillis': doc.attestedUntilMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {

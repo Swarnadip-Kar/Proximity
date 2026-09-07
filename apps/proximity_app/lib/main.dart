@@ -5,21 +5,20 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:proximity_face/face.dart';
 
 import 'firebase_options.dart';
 import 'core/auth.dart';
 import 'core/ble_radio.dart';
 import 'core/cloud_sync.dart';
 import 'core/device_store.dart';
-import 'core/edgeface.dart';
 import 'core/enrollment.dart';
-import 'core/face_detect.dart';
-import 'core/face_camera.dart';
 import 'core/host_driver.dart';
+import 'core/platformx.dart';
 import 'core/student_driver.dart';
 import 'design/app_theme.dart';
 import 'features/enrollment/enroll_intro.dart';
+import 'features/face_identity/device_key.dart';
+import 'features/face_identity/face_verifier.dart';
 import 'features/records/my_attendance_screen.dart';
 import 'features/records/prof_courses_screen.dart';
 import 'mode.dart';
@@ -140,23 +139,20 @@ Future<void> main() async {
       return true;
     }
   };
-  // Real face stack, loaded once: BlazeFace detect+align feeding the
-  // vendored EdgeFace-XS TFLite. Fail-closed when a model file is missing
-  // (face checks throw FaceModelMissing; SK never signs) — never a mock
-  // pass in production. Web records builds never check faces: mock
-  // embedder + fake detector (no camera/BLE UI exists there).
-  final FaceEmbedder faceEmbedder;
-  final FaceDetector faceDetector;
-  if (kIsWeb) {
-    faceEmbedder = MockFaceEmbedder(
-      enrolled: const [1, 0, 0, 0],
-      probe: const [1, 0, 0, 0],
-    );
-    faceDetector = FakeFaceDetector();
+  // Trust stack (Tracks 2+3 L3 DI): mobile-only plugin face verifier +
+  // software DKey (the HW keystore/Enclave backend plugs into the
+  // DeviceKey interface — deferred platform work; until attested the
+  // level is NONE, so unproven devices take the manual path per the tier
+  // table). Desktop/web records builds get the fail-closed stubs: every
+  // face/key op throws before anything signs — never a mock pass.
+  final FaceVerifier faceVerifier;
+  final DeviceKey deviceKey;
+  if (canUseFace()) {
+    faceVerifier = PluginFaceVerifier();
+    deviceKey = SoftwareDeviceKey();
   } else {
-    final real = await loadFaceEmbedder();
-    faceEmbedder = real;
-    faceDetector = real.detector;
+    faceVerifier = const UnavailableFaceVerifier();
+    deviceKey = const UnavailableDeviceKey();
   }
   final LinkedIdentity? initialLinked = stored == null
       ? null
@@ -176,10 +172,8 @@ Future<void> main() async {
         cloudSyncProvider.overrideWithValue(
             FirestoreCloudSync(available: firebaseReady)),
         deviceStoreProvider.overrideWithValue(store),
-        faceCameraProvider.overrideWithValue(RealFaceCamera()),
-        // Shared BlazeFace detector (loaded once with the embedder above;
-        // fake on web records builds).
-        faceDetectorProvider.overrideWithValue(faceDetector),
+        faceVerifierProvider.overrideWithValue(faceVerifier),
+        deviceKeyProvider.overrideWithValue(deviceKey),
         hostDriverProvider.overrideWith((ref) => kIsWeb
             ? FakeHostDriver()
             : RealHostDriver(
@@ -190,8 +184,9 @@ Future<void> main() async {
             ? FakeStudentDriver()
             : RealStudentDriver(
                 store: ref.watch(deviceStoreProvider),
-                // Real holder check: vendored EdgeFace-XS (loaded above).
-                embedder: faceEmbedder,
+                // Real holder check: on-device plugin verifier (L1-gated).
+                verifier: ref.watch(faceVerifierProvider),
+                deviceKey: ref.watch(deviceKeyProvider),
                 engine: bleEngine,
               )),
         bleEngineProvider.overrideWithValue(bleEngine),
@@ -202,8 +197,9 @@ Future<void> main() async {
           (ref) => EnrollmentController(
             auth: ref.watch(authServiceProvider),
             store: ref.watch(deviceStoreProvider),
-            // Real enrollment embedding: vendored EdgeFace-XS (loaded above).
-            embedder: faceEmbedder,
+            // Real enrollment: plugin verifier + device key (L1-gated).
+            verifier: ref.watch(faceVerifierProvider),
+            deviceKey: ref.watch(deviceKeyProvider),
             preseed: preseed,
             cloud: ref.watch(cloudSyncProvider),
           ),

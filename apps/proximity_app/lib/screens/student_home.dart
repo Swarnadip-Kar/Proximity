@@ -11,7 +11,6 @@
 // info dumps). Behavior is unchanged from the pre-split screen; only the
 // rendering moved.
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +20,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/ble_radio.dart';
 import '../core/device_store.dart';
+import '../core/platformx.dart';
 import '../core/student_driver.dart';
 import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
@@ -757,41 +757,44 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   Future<void> _scanFace(ClassBeacon target, LinkedIdentity linked) async {
     // Manual tap before the post-frame callback must not double-push.
     _autoFaceFired = true;
+    // L1: records-only devices never scan — guidance, nothing consumed,
+    // nothing signed.
+    if (!canUseFace()) {
+      BleLog.log(ProxLogTags.face, 'face blocked: records-only device');
+      setState(() => faceNotice =
+          'Marking needs the mobile app (Android/iOS) — this device is records-only.');
+      return;
+    }
     // Parallel face + mesh (req 1): the scan pre-warmed at join keeps
     // running (and relaying) under the camera UI; we only wait on the face
     // verdict here. The challenge wait is armed AFTER the face passes, so a
     // token heard during the camera UI can never be reused as proof for a
     // rotated/restarted round (air carries no window ID — a pre-face token
     // verifies against nothing and fails as "prof signature mismatch").
-    // Live auto-scan returns accepted stills (or null on cancel/timeout).
-    // Marking scan runs a fast cadence (350ms gaps) inside a 12s VERIFY
-    // SESSION: the camera page checks every accepted still live, with
-    // score feedback and a countdown — any one pass pops at once, and a
-    // dead session pops its failures together so it burns exactly one of
-    // the 4 attempts. A single bad frame never exits the camera nor burns
-    // a retry on its own (instant single-frame failure is gone).
-    // Enrollment uses the slower default cadence without a verifier.
-    // Zero-progress timeouts auto-retry twice in-screen (Cancel always
-    // available); attempts are never consumed here either way.
-    final frames = await Navigator.of(context).push<List<Uint8List>>(
-      MaterialPageRoute(
-          builder: (_) => FaceCaptureScreen(
-                frameGap: const Duration(milliseconds: 350),
-                autoRetries: 2,
-                verifyWindow: const Duration(seconds: 12),
-                verifier: (bytes) =>
-                    ref.read(studentDriverProvider).checkFace(bytes),
-              )),
-    );
-    if (frames == null || frames.isEmpty || !mounted) return;
-    final res =
-        await ref.read(studentDriverProvider).checkFace(frames.first);
+    // Marking captures ONE still; the driver runs the single on-device
+    // verify (isolate hot path). Match→stamp+prove; readable mismatch→burn
+    // one of the 4 attempts (whole 12s session); inconclusive→rescan in
+    // the 12s session burning nothing.
+    final paths = await ref
+        .read(stillCapturerProvider)
+        .capture(context, captures: 1, autoFire: true);
+    if (paths == null || paths.isEmpty || !mounted) return;
+    late final FaceCheckResult res;
+    try {
+      res = await ref.read(studentDriverProvider).checkFace(paths.first);
+    } on StateError {
+      if (!mounted) return;
+      setState(() => faceNotice =
+          'Marking needs the mobile app (Android/iOS) — this device is records-only.');
+      return;
+    }
     if (!mounted) return;
     switch (res.match) {
       case FaceMatch.pass:
         BleLog.log(ProxLogTags.face, 'face pass — continuing to proving');
         setState(() => faceNotice = '');
-        _listen(target, linked, res.score);
+        _listen(target, linked, res.score,
+            faceValidAtMs: res.faceValidAtMs, verifierVer: res.verifierVer);
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
@@ -816,12 +819,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               'Could not read that scan — adjust light and try again.');
         }
       case FaceMatch.staleTemplate:
-        // Template predates the face pipeline: matching against it would
+        // FaceId predates the plugin pipeline: matching against it would
         // be meaningless. Park on the check screen with a re-enroll
         // notice — no attempt consumed, nothing signed.
-        BleLog.log(ProxLogTags.face, 'stale template — re-enroll, nothing signed');
+        BleLog.log(ProxLogTags.face, 'stale face — re-enroll, nothing signed');
         setState(() => faceNotice =
             'Face recognition was updated — re-enroll this device from the home screen, then join again.');
+      case FaceMatch.blocked:
+        // Records-only device (desktop/web L1 gate): guidance, nothing
+        // consumed, nothing signed.
+        BleLog.log(ProxLogTags.face, 'face blocked — records-only device');
+        setState(() => faceNotice =
+            'Marking needs the mobile app (Android/iOS) — this device is records-only.');
     }
   }
 
@@ -875,7 +884,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   }
 
   Future<void> _listen(
-      ClassBeacon target, LinkedIdentity linked, double faceScore) async {
+      ClassBeacon target, LinkedIdentity linked, double faceScore,
+      {int faceValidAtMs = 0, String verifierVer = ''}) async {
     final run = ++_runId;
     _rewaitTimer?.cancel();
     _rewaitTimer = null;
@@ -891,6 +901,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           target: target,
           identity: linked,
           faceScore: faceScore,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer,
           onStatus: (s) {
             if (!mounted || run != _runId) return;
             setState(() => listenStatus = switch (s) {

@@ -32,6 +32,17 @@ class StudentDeviceDoc {
   final int lastSeenAtMillis;
   final int updatedAtMillis;
   final int moveCount;
+  // --- Tracks 2+3 extended claim {pkS,pkD,installId,attestationLevel,
+  // attestedAt,attestedUntil=+90d} (+ pipeline tag for flapping audit).
+  // Defaults keep legacy constructors compiling; enrollment always stamps
+  // them. [modelVer] is kept as the pipeline-version slot (now stamped
+  // with the plugin verifierVer) so existing rules/queries keep working.
+  /// DKey public bytes hex ('' = unbound legacy).
+  final String pkDHex;
+  /// Attestation level wire name ('FULL'/'STD'/'NONE').
+  final String attestationLevel;
+  final int attestedAtMillis;
+  final int attestedUntilMillis;
   const StudentDeviceDoc(
       {required this.email,
       required this.uid,
@@ -46,7 +57,11 @@ class StudentDeviceDoc {
       this.lastMoveAtMillis = 0,
       this.lastSeenAtMillis = 0,
       this.updatedAtMillis = 0,
-      this.moveCount = 0});
+      this.moveCount = 0,
+      this.pkDHex = '',
+      this.attestationLevel = 'NONE',
+      this.attestedAtMillis = 0,
+      this.attestedUntilMillis = 0});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.
@@ -92,6 +107,11 @@ class StudentClaimResult {
 /// Pure claim verdict shared by the Firestore transaction, the fake, and
 /// the landing pre-check (so the UI refuses for exactly the reasons the
 /// server refuses). [installEmail] is deviceInstalls[installId].email.
+/// [moveIntentValid]: an old-DKey-signed MoveIntent (verified by the
+/// caller against the PREVIOUS binding's pkD) grants an instant move even
+/// inside the cooldown — genuine phone change with the old phone at hand.
+/// Without it the 7d cooldown stands (lost/stolen path, manual attendance
+/// covers the gap).
 StudentClaimResult evaluateStudentClaim({
   required String localPkHex,
   required String localInstallId,
@@ -99,6 +119,7 @@ StudentClaimResult evaluateStudentClaim({
   required String? installEmail,
   required String email,
   DateTime? now,
+  bool moveIntentValid = false,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
   final want = email.toLowerCase();
@@ -125,6 +146,10 @@ StudentClaimResult evaluateStudentClaim({
   if (held != null && held.isNotEmpty && held != want) {
     return StudentClaimResult(StudentClaim.installConflict,
         installEmail: installEmail);
+  }
+  // Old-DKey-signed MoveIntent: instant move (the old phone vouches).
+  if (moveIntentValid) {
+    return const StudentClaimResult(StudentClaim.allowedMove);
   }
   final base = binding.lastMoveAtMillis;
   if (base > 0 &&
@@ -208,6 +233,7 @@ ClaimWrite resolveStudentClaimWrite({
   required String? installEmail,
   required String email,
   DateTime? now,
+  bool moveIntentValid = false,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
   final atMillis = at.millisecondsSinceEpoch;
@@ -218,7 +244,8 @@ ClaimWrite resolveStudentClaimWrite({
       binding: binding,
       installEmail: installEmail,
       email: key,
-      now: at);
+      now: at,
+      moveIntentValid: moveIntentValid);
   if (!verdict.ok) {
     throw StateError(studentClaimMessage(verdict, binding));
   }
@@ -274,4 +301,30 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
     await store.writeInstallId(id);
   } catch (_) {}
   return id;
+}
+
+// --- Track 3 device-proof seam (beside evaluateStudentClaim) ---
+//
+// The pure device-proof verdict itself lives in the protocol
+// ([evaluateDeviceProof] in package:proximity_protocol — same import
+// surface as the Sig_s helpers), so offline professor verification and
+// the app share one implementation. What lives HERE is the sync-side
+// audit: the double-pkD flag.
+//
+// /// Double-pkD audit flag (post-hoc, on sync): groups enrolled bindings
+// by non-empty pkDHex; every pkD shared by 2+ distinct Gmails is a
+// clone-or-shared-device signal for professor review. Pure — the sync
+// layer calls it after pulling studentDevices and surfaces the groups.
+Map<String, List<String>> findDoublePkD(
+    Map<String, StudentDeviceDoc> devices) {
+  final byPkD = <String, List<String>>{};
+  for (final e in devices.entries) {
+    final pkD = e.value.pkDHex.trim();
+    if (pkD.isEmpty) continue;
+    byPkD.putIfAbsent(pkD.toLowerCase(), () => []).add(e.key);
+  }
+  return {
+    for (final e in byPkD.entries)
+      if (e.value.length > 1) e.key: (e.value..sort()),
+  };
 }

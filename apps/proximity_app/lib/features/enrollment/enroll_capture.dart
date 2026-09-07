@@ -1,29 +1,24 @@
-// EnrollCapture — bundle step 2: the guided 5-angle face scan.
+// EnrollCapture — bundle step 2: the 3-still face capture (Tracks 2+3).
 //
-// One focused screen for Centre / Left / Right / Top / Bottom with progress,
-// the pose-guidance dial, live scores, and resume that scans ONLY the
-// missing slots. Behavioral law (preserved, not re-decided here):
-// - each angle clears a 0.70 best-pair (kEnrollSectionScoreMin — the camera
-//   gate and the controller re-validation share the constant);
-// - yaw gates + Top/Bottom pitch gates live in the shared camera loop
-//   (face_detect poseOkWithRef, enforced by FaceCaptureScreen, reused —
-//   never forked); this screen only explains them;
-// - finalize failures drop ONLY the weakest slot (never a wipe); the key is
-//   always kept, even on Start over;
-// - the camera stays open till the requested angles clear (bounded:
-//   3 fruitless rounds surface the retry offer); Cancel always exits at
-//   once with completed sections kept — a camera exit means success or the
-//   holder's own Cancel;
-// - fail-closed: no template, no save (Continue stays gated till 5/5).
-import 'dart:async';
-import 'dart:typed_data';
-
+// GUTTED per spec: the 5 guided-pose slots, per-frame detectors,
+// yaw/pitch gates, pair-consistency bars and hold-out math are gone (the
+// plugin owns detection + matching passively, on-device). What remains is
+// the shell + flow position: key check → capture 3 stills
+// (centre/left/right) via FaceCaptureScreen → controller.enrollFace
+// (plugin enroll + self-check) → result.
+//
+// Mobile-only (L2): records-only devices see the blocked card, never a
+// camera. Fail-closed: a failed capture stores no face (controller), the
+// error notice shows the controller message verbatim, Save stays blocked
+// until the capture validates.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/enrollment.dart';
-import '../../core/face_detect.dart';
+import '../../core/platformx.dart';
 import '../../design/tokens.dart';
+import '../../features/face_identity/face_blocked.dart';
+import '../../features/face_identity/face_verifier.dart';
 import '../../screens/face_capture.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
@@ -33,128 +28,63 @@ import '../../widgets/prox_states.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
 
-/// Slot order matches [enrollSlotNames]: Centre/Left/Right/Top/Bottom.
-const _slotTargets = [
-  PoseTarget.front,
-  PoseTarget.left,
-  PoseTarget.right,
-  PoseTarget.up,
-  PoseTarget.down,
-];
-
-/// Holder-facing gate copy per slot: what counts, in one line. The numbers
-/// stay in face_detect (kPoseSideMin/kPitchRelDelta…) — this is the human
-/// twin, same contract as the live in-camera arrows.
-String _gateNote(int slot) => switch (slot) {
-      0 => 'Look straight at the camera and hold still.',
-      1 => 'A slight turn left counts — no sharp angles.',
-      2 => 'A slight turn right counts — no sharp angles.',
-      // Pitch failure mode is OVER-tilting (a bigger tilt degrades the
-      // embedding, which drops the slot again): ask for LESS tilt.
-      3 => 'Tilt LESS — barely lift your chin, phone at eye level.',
-      4 => 'Tilt LESS — barely lower your chin, phone at eye level.',
-      _ => '',
-    };
-
-class EnrollCaptureScreen extends ConsumerStatefulWidget {
+class EnrollCaptureScreen extends ConsumerWidget {
   const EnrollCaptureScreen({super.key});
 
-  @override
-  ConsumerState<EnrollCaptureScreen> createState() =>
-      _EnrollCaptureScreenState();
-}
-
-class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
-  @override
-  void initState() {
-    super.initState();
-    // Deep-link safe: pickup is a no-op when Intro already ran it.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(
-          ref.read(enrollmentControllerProvider.notifier).pickUpAccount());
-    });
-  }
-
-  /// One tap, one camera page over ONLY the missing slots. Completed angles
-  /// are never re-captured: pairs chunk in order, pair k belongs to slot
-  /// missing[k]. Cancel (null/empty) keeps progress — nothing burns.
-  Future<void> _scan() async {
-    final st = ref.read(enrollmentControllerProvider);
+  Future<void> _scan(BuildContext context, WidgetRef ref) async {
     final ctl = ref.read(enrollmentControllerProvider.notifier);
+    final st = ref.read(enrollmentControllerProvider);
     if (st.pkHex.isEmpty) {
       EnrollLog.face('scan refused: no device key yet');
       return;
     }
-    final missing = missingSlots(st.angleSlots);
-    if (missing.isEmpty) return;
-    EnrollLog.face(
-        'rescan slots ${missing.map((m) => enrollSlotNames[m]).join(', ')} '
-        '— missing only, kept slots untouched');
-    final targets = [for (final m in missing) _slotTargets[m]];
-    final titles = [
-      for (final m in missing) '${enrollSlotNames[m]} — ${enrollSlotHints[m]}'
-    ];
-    final frames = await Navigator.of(context).push<List<Uint8List>>(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: 'enroll/scan'),
-        builder: (_) => FaceCaptureScreen(
-          // Five angles need headroom (~18 stills per angle at real-world
-          // cadence). Stay-open: a weak angle keeps its camera across
-          // rounds until its pair clears the shared 0.70 bar — exits ONLY
-          // on success or Cancel (which keeps completed angles).
-          maxFrames: 90,
-          stayOpen: true,
-          sectionScoreMin: kEnrollSectionScoreMin,
-          sectionTargets: targets,
-          sectionTitles: titles,
-          scorer: ctl.embedder,
-        ),
-      ),
-    );
-    if (!mounted) return;
-    if (frames != null && frames.isNotEmpty) {
-      final pairs = slotPairs(frames);
-      EnrollLog.face(
-          'scan returned ${pairs.length} pair(s) for ${missing.length} missing slot(s)');
-      for (var k = 0; k < pairs.length && k < missing.length; k++) {
-        await ctl.captureSlot(missing[k], pairs[k]);
-      }
-      if (!mounted) return;
-      final after = ref.read(enrollmentControllerProvider);
-      if (after.message.isNotEmpty) {
-        // Controller names the dropped slot + why (mixed faces / odd-one-
-        // out / weakest hold-out) — mirrored to the log for field reports.
-        EnrollLog.face('controller: ${after.message}');
-      } else {
-        EnrollLog.face('slots landed clean');
-      }
+    EnrollLog.face('capture opened (3 stills)');
+    final paths = await ref
+        .read(stillCapturerProvider)
+        .capture(context, captures: 3, autoFire: false);
+    if (paths == null || paths.isEmpty) {
+      EnrollLog.face('capture cancelled — progress kept');
+      return;
+    }
+    EnrollLog.face('stills captured (${paths.length}) — enrolling');
+    await ctl.enrollFace(paths);
+    final after = ref.read(enrollmentControllerProvider);
+    if (after.phase == EnrollPhase.faceDone) {
+      EnrollLog.face('capture validated — continuing');
+      if (context.mounted) EnrollFlow.openResult(context);
     } else {
-      final kept =
-          ref.read(enrollmentControllerProvider).angleSlots.where((d) => d).length;
-      EnrollLog.face(
-          'scan cancelled by holder — progress kept ($kept/5), nothing burned');
+      EnrollLog.face('controller: ${after.message}');
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final st = ref.watch(enrollmentControllerProvider);
-    final ctl = ref.read(enrollmentControllerProvider.notifier);
-    final hasKey = st.pkHex.isNotEmpty;
-    // Explicit step gate (never phase.index: EnrollPhase.error sorts last
-    // and must NOT read as done).
-    final hasFace = st.phase == EnrollPhase.faceDone ||
+    // L2 assert: records-only devices never reach the camera.
+    if (!canUseFace()) {
+      return ProxScreen(
+        title: 'Face capture',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const FaceBlockedCard(flow: 'Face enrollment'),
+            const SizedBox(height: ProxSpacing.md),
+            ProxSecondaryButton(
+              label: const Text('Back'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      );
+    }
+    final done = st.phase == EnrollPhase.faceDone ||
         st.phase == EnrollPhase.uploaded;
-    final doneCount = st.angleSlots.where((d) => d).length;
-    final firstMissing = firstMissingSlot(st.angleSlots);
-    final activeSlot = firstMissing < 0 ? 0 : firstMissing;
-    final targeted =
-        st.message.isNotEmpty && _isTargetedRescan(st.message);
     return ProxScreen(
-      title: 'Face scan',
+      title: 'Face capture',
       child: ProxStaggered(
         children: [
+          EnrollProgress(done: done ? 3 : 0, total: faceEnrollSlots.length),
+          const SizedBox(height: ProxSpacing.lg),
           Text(
             'Scan your face',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -162,156 +92,78 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                 ),
           ),
           const SizedBox(height: ProxSpacing.xs),
-          const Text(
-            enrollRetryBrief,
-            style: TextStyle(fontStyle: FontStyle.italic),
+          Text(
+            'Three quick stills (centre, left, right) — hold still in good '
+            'light. Matching runs on this phone only; stills and face data '
+            'never leave the device.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
           ),
           const SizedBox(height: ProxSpacing.lg),
           ProxCard(
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                EnrollPoseGuide(
-                  target: _slotTargets[activeSlot],
-                  progress:
-                      enrollSlotNames.isEmpty ? 0 : doneCount / enrollSlotNames.length,
-                ),
-                const SizedBox(width: ProxSpacing.lg),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hasFace
-                            ? 'All angles captured — finishing…'
-                            : '${enrollSlotNames[activeSlot]} — '
-                                '${enrollSlotHints[activeSlot]}',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: ProxSpacing.xs),
-                      Text(
-                        _gateNote(activeSlot),
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context)
+                for (var i = 0; i < faceEnrollSlots.length; i++)
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: ProxSpacing.xs),
+                    child: Row(
+                      children: [
+                        Icon(
+                          done
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                          color: done
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context)
                                   .colorScheme
                                   .onSurfaceVariant,
-                            ),
-                      ),
-                    ],
+                        ),
+                        const SizedBox(width: ProxSpacing.sm),
+                        Text(
+                          '${faceEnrollSlots[i][0].toUpperCase()}${faceEnrollSlots[i].substring(1)} still${done ? ' — captured' : ''}',
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                if (st.faceScore > 0) ...[
+                  const SizedBox(height: ProxSpacing.sm),
+                  Text(
+                    'Match score ${st.faceScore.toStringAsFixed(2)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant,
+                        ),
+                  ),
+                ],
               ],
             ),
           ),
-          const SizedBox(height: ProxSpacing.md),
-          EnrollProgress(done: doneCount, total: enrollSlotNames.length),
-          const SizedBox(height: ProxSpacing.xs),
-          Text(
-            '$doneCount of ${enrollSlotNames.length} angles captured',
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
-          if (st.faceScore > 0)
-            Text(
-              'Match score ${st.faceScore.toStringAsFixed(2)} — '
-              'template never leaves this phone.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color:
-                        Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-          const SizedBox(height: ProxSpacing.sm),
-          for (var i = 0; i < enrollSlotNames.length; i++)
-            EnrollAngleRow(
-              done: st.angleSlots[i],
-              label: '${enrollSlotNames[i]} — ${enrollSlotHints[i]}',
-              delay: Duration(
-                  milliseconds: (i *
-                          ProxDurations.staggerStep.inMilliseconds)
-                      .clamp(
-                          0, ProxDurations.staggerCap.inMilliseconds)),
-            ),
-          ProxSyncNote(
-            'Each angle clears at '
-            '${kEnrollSectionScoreMin.toStringAsFixed(2)} pair agreement.',
-          ),
-          const SizedBox(height: ProxSpacing.md),
-          ProxPrimaryButton(
-            icon: const Icon(Icons.face),
-            label: Text(scanButtonLabel(st.angleSlots)),
-            // Never silently drop: Scan needs the key first.
-            onPressed: !hasKey ? null : _scan,
-          ),
-          if (!hasKey)
-            const ProxSyncNote(
-              'Generate the device key on the previous screen, then scan.',
-            ),
-          // Escape hatch: one angle stuck in a drop→rescan loop must never
-          // trap the holder. Clears ALL slot progress (key kept) so the
-          // next tap re-scans all five from a fresh start.
-          if (st.angleSlots.any((d) => d) && !hasFace) ...[
-            const SizedBox(height: ProxSpacing.sm),
-            ProxSecondaryButton(
-              icon: const Icon(Icons.refresh),
-              label: const Text('Start over (clear all angles)'),
-              expanded: true,
-              onPressed: () {
-                EnrollLog.face(
-                    'start-over: cleared $doneCount slot(s), key kept');
-                ctl.restartFace();
-              },
-            ),
-          ],
-          if (st.message.isNotEmpty) ...[
+          if (st.phase == EnrollPhase.error && st.message.isNotEmpty) ...[
             const SizedBox(height: ProxSpacing.md),
-            EnrollNotice(
-              message: st.message,
-              isError: st.phase == EnrollPhase.error && !targeted,
-            ),
-            if (targeted) ...[
-              const SizedBox(height: ProxSpacing.sm),
-              const Text(
-                enrollRetryBrief,
-                style: TextStyle(fontStyle: FontStyle.italic),
-              ),
-            ],
-            const SizedBox(height: ProxSpacing.sm),
-            ProxSecondaryButton(
-              label: Text(st.phase == EnrollPhase.error && !targeted
-                  ? 'Try again'
-                  : 'Dismiss'),
-              onPressed: ctl.dismissError,
-            ),
+            EnrollNotice(message: st.message, isError: true),
           ],
           const SizedBox(height: ProxSpacing.lg),
           ProxPrimaryButton(
-            icon: const Icon(Icons.arrow_forward),
-            label: const Text('Continue to save'),
-            // Fail-closed UI: disabled until all 5 angles validate (the
-            // controller re-validates for programmatic callers too).
-            onPressed: !hasFace
-                ? null
-                : () {
-                    EnrollLog.nav(
-                        'capture → result ($doneCount/5 angles, score ${st.faceScore.toStringAsFixed(2)})');
-                    EnrollFlow.openResult(context);
-                  },
+            label: Text(st.pkHex.isEmpty ? 'Generate key first' : 'Scan face'),
+            onPressed: st.pkHex.isEmpty ? null : () => _scan(context, ref),
           ),
-          if (!hasFace)
+          if (st.pkHex.isEmpty)
             const ProxSyncNote(
-              'Complete all 5 face angles above to enable Save.',
+              'Generate the device key on the previous screen first — the '
+              'face capture seals to it.',
             ),
+          const SizedBox(height: ProxSpacing.sm),
+          ProxSecondaryButton(
+            label: const Text('Back'),
+            expanded: true,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
         ],
       ),
     );
   }
-}
-
-bool _isTargetedRescan(String message) {
-  final m = message.toLowerCase();
-  return m.contains('rescan') ||
-      m.contains('retry') ||
-      m.contains('angle') ||
-      m.contains('weakest');
 }

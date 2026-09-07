@@ -86,7 +86,11 @@ class FakeCloudSync implements CloudSync {
             lastMoveAtMillis: doc.lastMoveAtMillis,
             lastSeenAtMillis: doc.lastSeenAtMillis,
             updatedAtMillis: doc.updatedAtMillis,
-            moveCount: doc.moveCount);
+            moveCount: doc.moveCount,
+            pkDHex: doc.pkDHex,
+            attestationLevel: doc.attestationLevel,
+            attestedAtMillis: doc.attestedAtMillis,
+            attestedUntilMillis: doc.attestedUntilMillis);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -133,7 +137,8 @@ class FakeCloudSync implements CloudSync {
   Future<ClaimOutcome> claimStudentDevice(
       {required StudentDeviceDoc doc,
       required String installId,
-      DateTime? now}) async {
+      DateTime? now,
+      bool moveIntentValid = false}) async {
     _needOnline();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -147,7 +152,8 @@ class FakeCloudSync implements CloudSync {
         binding: binding,
         installEmail: installs[installId],
         email: key,
-        now: at);
+        now: at,
+        moveIntentValid: moveIntentValid);
     final isFirst = claim.isFirst;
     final isMove = claim.isMove;
     final org = doc.org.isNotEmpty ? doc.org : orgOf(key);
@@ -166,6 +172,10 @@ class FakeCloudSync implements CloudSync {
       lastSeenAtMillis: atMillis,
       updatedAtMillis: atMillis,
       moveCount: claim.moveCount,
+      pkDHex: doc.pkDHex,
+      attestationLevel: doc.attestationLevel,
+      attestedAtMillis: doc.attestedAtMillis,
+      attestedUntilMillis: doc.attestedUntilMillis,
     );
     installs[installId] = key;
     dir[key] =
@@ -205,9 +215,17 @@ class FakeCloudSync implements CloudSync {
       lastSeenAtMillis: at,
       updatedAtMillis: at,
       moveCount: binding.moveCount,
+      pkDHex: binding.pkDHex,
+      attestationLevel: binding.attestationLevel,
+      attestedAtMillis: binding.attestedAtMillis,
+      attestedUntilMillis: binding.attestedUntilMillis,
     );
     return true;
   }
+
+  /// Post-hoc double-pkD audit over the in-memory bindings (see
+  /// findDoublePkD in claim.dart): pkD values shared by 2+ Gmails.
+  Map<String, List<String>> auditDoublePkD() => findDoublePkD(devices);
 
   @override
   Future<void> pushSession(

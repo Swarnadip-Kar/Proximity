@@ -10,40 +10,54 @@ class StoredEnrollment {
   final String email;
   final String name;
   final String roll;
-  final String seedHex; // Ed25519 seed, 32B hex
+  /// SKey Ed25519 seed: DKey-sealed ciphertext hex in production (only
+  /// ciphertext at rest — unwrap needs the HW DKey; a backup-restore
+  /// clone fails unwrap → 'restore detected — re-enroll'). Raw seed hex
+  /// in tests / legacy docs (sealedKeyHex empty → raw path).
+  final String seedHex;
   final String pkHex;
-  final String templateCsv; // embedding doubles
+  /// DKey-sealed SKey envelope hex ('' = unsealed legacy/test path).
+  final String sealedKeyHex;
+  /// Opaque face identity: sha256(gmailLower+installId) hex — never raw
+  /// Gmail. The plugin store is keyed by this. '' = never enrolled.
+  final String faceId;
   final DateTime enrolledAt;
-  /// Face pipeline version that produced [templateCsv] ([kFacePipelineVer]
-  /// lives in core/edgeface.dart; import there to compare — this file stays
-  /// dependency-free). '' = pre-version template → always stale.
-  final String modelVer;
+  /// Pipeline tag that produced the enrollment
+  /// (`face_verification/<pkgVer>+<assetHash8>`). '' = pre-plugin
+  /// template → always stale → forced re-face, key kept.
+  final String verifierVer;
   final String org; // Google-account domain (see orgOf), '' = legacy
-  const StoredEnrollment({
+  // --- Device binding (Track 3), persisted locally for dSig + heartbeat.
+  /// DKey public bytes hex ('' = unbound legacy).
+  final String pkDHex;
+  /// Attestation level wire name ('FULL'/'STD'/'NONE').
+  final String attestationLevel;
+  final DateTime attestedAt;
+  final DateTime attestedUntil;
+  StoredEnrollment({
     required this.email,
     required this.name,
     required this.roll,
     required this.seedHex,
     required this.pkHex,
-    required this.templateCsv,
+    this.sealedKeyHex = '',
+    this.faceId = '',
     required this.enrolledAt,
-    this.modelVer = '',
+    this.verifierVer = '',
     this.org = '',
-  });
+    this.pkDHex = '',
+    this.attestationLevel = 'NONE',
+    DateTime? attestedAt,
+    DateTime? attestedUntil,
+  })  : attestedAt = attestedAt ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        attestedUntil = attestedUntil ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
-  /// Fail-soft: a corrupt templateCsv (bad write, manual edit) yields an
-  /// empty vector instead of throwing — callers treat it as inconclusive /
-  /// stale and force recapture, never crash.
-  List<double> get template {
-    try {
-      if (templateCsv.trim().isEmpty) return const [];
-      return templateCsv.split(',').map(double.parse).toList();
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  static String csvOf(List<double> t) => t.join(',');
+  /// Stale pipeline: anything not stamped with the current plugin
+  /// verifierVer is incomparable — forced re-face, key kept.
+  bool isFaceStale(String currentVerifierVer) =>
+      faceId.isEmpty || verifierVer != currentVerifierVer;
 
   Map<String, dynamic> toJson() => {
         'email': email,
@@ -51,24 +65,47 @@ class StoredEnrollment {
         'roll': roll,
         'seedHex': seedHex,
         'pkHex': pkHex,
-        'templateCsv': templateCsv,
+        'sealedKeyHex': sealedKeyHex,
+        'faceId': faceId,
         'enrolledAt': enrolledAt.toIso8601String(),
-        'modelVer': modelVer,
+        'verifierVer': verifierVer,
         'org': org,
+        'pkDHex': pkDHex,
+        'attestationLevel': attestationLevel,
+        'attestedAt': attestedAt.toIso8601String(),
+        'attestedUntil': attestedUntil.toIso8601String(),
       };
 
-  factory StoredEnrollment.fromJson(Map<String, dynamic> j) =>
-      StoredEnrollment(
-        email: j['email'] as String,
-        name: j['name'] as String,
-        roll: j['roll'] as String? ?? '',
-        seedHex: j['seedHex'] as String,
-        pkHex: j['pkHex'] as String,
-        templateCsv: j['templateCsv'] as String,
-        enrolledAt: DateTime.parse(j['enrolledAt'] as String),
-        modelVer: j['modelVer'] as String? ?? '',
-        org: j['org'] as String? ?? '',
-      );
+  factory StoredEnrollment.fromJson(Map<String, dynamic> j) {
+    // Legacy migration: pre-plugin docs carried templateCsv/modelVer
+    // (deleted — embeddings incomparable with the plugin FaceNet space).
+    // They map to faceId '' + verifierVer = old modelVer (or ''), so the
+    // stale check forces re-face while the SKey is kept.
+    final legacyModel = j['modelVer'] as String? ?? '';
+    final hasTemplate =
+        (j['templateCsv'] as String?)?.trim().isNotEmpty ?? false;
+    return StoredEnrollment(
+      email: j['email'] as String,
+      name: j['name'] as String,
+      roll: j['roll'] as String? ?? '',
+      seedHex: j['seedHex'] as String,
+      pkHex: j['pkHex'] as String,
+      sealedKeyHex: j['sealedKeyHex'] as String? ?? '',
+      faceId: j['faceId'] as String? ?? '',
+      enrolledAt: DateTime.parse(j['enrolledAt'] as String),
+      verifierVer: j['verifierVer'] as String? ??
+          (hasTemplate ? legacyModel : ''),
+      org: j['org'] as String? ?? '',
+      pkDHex: j['pkDHex'] as String? ?? '',
+      attestationLevel: j['attestationLevel'] as String? ?? 'NONE',
+      attestedAt: j['attestedAt'] == null
+          ? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
+          : DateTime.parse(j['attestedAt'] as String),
+      attestedUntil: j['attestedUntil'] == null
+          ? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
+          : DateTime.parse(j['attestedUntil'] as String),
+    );
+  }
 }
 
 abstract class DeviceStore {

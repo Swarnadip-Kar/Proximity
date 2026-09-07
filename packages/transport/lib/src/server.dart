@@ -80,6 +80,12 @@ class ProxServer {
   /// Also fires for org-mismatched /waiting + /manual-request rejects.
   final void Function(String email, String decision, String reason)? onProve;
   final SingleUseTracker _once = SingleUseTracker();
+  // Tracks 2+3 anomaly context (server-kept, bounded): seen face-ticket
+  // stamps (reused-face flag), recent scores (1.000-repeat flag), last
+  // pipeline tag (verifier-flapping flag).
+  final Set<int> _seenFaceStamps = {};
+  final List<double> _recentScores = [];
+  String _lastVerifierVer = '';
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
 
@@ -387,6 +393,48 @@ class ProxServer {
       final sigBind =
           Uint8List.fromList(hexDecode(body['sigBind'] as String? ?? ''));
 
+      // Tracks 2+3 bound ticket: face:{score,faceValidAt,verifierVer} (no
+      // images/embeddings leave the device) + pkD + dSig. Absent → legacy
+      // path (migration). Bound → extended Sig_s + allowlist + tiers.
+      final faceMap = body['face'] as Map<String, dynamic>?;
+      final bound = faceMap != null;
+      final ticketScore =
+          (faceMap?['score'] as num?)?.toDouble() ?? faceScore;
+      final ticketStampMs =
+          (faceMap?['faceValidAt'] as num?)?.toInt() ?? 0;
+      final verifierVer = faceMap?['verifierVer'] as String? ?? '';
+      Uint8List pkD = Uint8List(0);
+      Uint8List dSig = Uint8List(0);
+      try {
+        if (body['pkD'] is String && (body['pkD'] as String).isNotEmpty) {
+          pkD = Uint8List.fromList(hexDecode(body['pkD'] as String));
+        }
+        if (body['dSig'] is String && (body['dSig'] as String).isNotEmpty) {
+          dSig = Uint8List.fromList(hexDecode(body['dSig'] as String));
+        }
+      } catch (_) {
+        pkD = Uint8List(0);
+        dSig = Uint8List(0);
+      }
+      // Lightweight attestation claims (client-asserted; full X.509 chain
+      // verify is deferred — see file header caveat + residual risks).
+      final attMap = body['att'] as Map<String, dynamic>?;
+      final attLevel = attestationLevelOf(attMap?['level'] as String? ?? 'NONE');
+      final attUntil = attMap?['until'] is num
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (attMap!['until'] as num).toInt(), isUtc: true)
+          : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      // dSig presence check (raw P-256 verify lives in the platform
+      // verifier — deferred; the ticket+Sig_s crypto below is fully
+      // verified here, and the double-pkD audit flags clones post-hoc).
+      final dSigPresent = pkD.isNotEmpty && dSig.isNotEmpty;
+      final ticket = bound
+          ? ProxCrypto.faceTicketHash(
+              faceScore: ticketScore,
+              faceValidAtMs: ticketStampMs,
+              verifierVer: verifierVer)
+          : Uint8List(0);
+
       // Rosterless (offline-local phase): the student presents its device
       // key and both signatures verify against it — trust-on-first-use per
       // class, no roster lookup. Radio freshness, single-use, face score,
@@ -421,14 +469,29 @@ class ProxServer {
             j: j,
             cClaimed: cClaimed,
             sigS: sigS,
-            faceScore: faceScore,
+            faceScore: bound ? ticketScore : faceScore,
             // Holder freshness is gated on-device (SK locked without fresh
             // face); transport re-checks score + radio + crypto proofs.
-            faceValidAt: now,
+            // Bound path: the stamp IS the ticket time (reused/future
+            // stamps flag via the anomaly context below).
+            faceValidAt: bound
+                ? DateTime.fromMillisecondsSinceEpoch(ticketStampMs,
+                    isUtc: true)
+                : now,
             peerW: peerW,
             rssiDbm: s?.rssiDbm ?? -127,
             relayHop: s?.hop ?? 99,
             now: t,
+            verifierVer: verifierVer,
+            faceValidAtMs: ticketStampMs,
+            pkD: pkD,
+            faceTicketHashBytes: ticket,
+            attestationLevel: bound ? attLevel : AttestationLevel.none,
+            attestedUntil: attUntil,
+            dSigValid: bound && dSigPresent,
+            seenFaceValidAtMs: _seenFaceStamps,
+            priorScores: List.of(_recentScores),
+            lastVerifierVer: _lastVerifierVer,
           ),
           expectedCj: expectedCj,
           sessionId: w.sessionId,
@@ -437,6 +500,7 @@ class ProxServer {
           revoked: false, // no revocation source in the offline-local phase
           freshWindow: w.isFresh(j, t),
           singleUseOk: singleUse,
+          requireBoundTicket: bound,
         );
       }
 
@@ -523,8 +587,20 @@ class ProxServer {
         tally.mark(id, name, _windowNo,
             roll: roll, late: outcome.decision == ProveDecision.late);
       }
+      // Tracks 2+3: feed the anomaly context (bounded) and surface flags
+      // alongside the verdict. The signed ACK is unchanged; flags ride in
+      // `flags` + the onProve reason suffix for the host log.
+      final flags = outcome.attestationFlags;
+      if (bound) {
+        _seenFaceStamps.add(ticketStampMs);
+        _recentScores.add(ticketScore);
+        if (_recentScores.length > 8) _recentScores.removeAt(0);
+        if (verifierVer.isNotEmpty) _lastVerifierVer = verifierVer;
+      }
+      final flaggedReason =
+          flags.isEmpty ? outcome.reason : '${outcome.reason}|${flags.join(',')}';
       try {
-        onProve?.call(id, outcome.decision.name, outcome.reason);
+        onProve?.call(id, outcome.decision.name, flaggedReason);
       } catch (_) {}
       return _json({
         'decision': switch (outcome.decision) {
@@ -533,6 +609,7 @@ class ProxServer {
           ProveDecision.invalid => 'invalid',
         },
         'reason': outcome.reason,
+        if (flags.isNotEmpty) 'flags': flags,
         'serverTime': decisionAt.toIso8601String(),
         'sigAck': hexEncode(ackSig),
       });

@@ -15,28 +15,36 @@ import 'dart:typed_data';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_face/face.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 
+import '../features/face_identity/device_key.dart';
+import '../features/face_identity/face_verifier.dart';
 import '../mode.dart';
 import 'device_store.dart';
-import 'edgeface.dart';
+import 'platformx.dart';
 
 enum StudentResult { marked, late, faceFailed, noSignal, error }
 
 /// Holder-check verdict. Only [mismatch] consumes one of the 4 attempts: a
 /// readable session matched somebody else. [inconclusive] (no enrollment, no
-/// face, unreadable bytes) never consumes an attempt — the verify session
-/// keeps scanning for a readable frame across its 10s window. [staleTemplate] means the
-/// enrolled template predates the current face pipeline ([kFacePipelineVer])
-/// and is incomparable — the holder must re-enroll, never match against it.
-enum FaceMatch { pass, mismatch, inconclusive, staleTemplate }
+/// face, unreadable still) never consumes an attempt — the check screen
+/// offers a rescan inside its 12s session. [staleTemplate] means the
+/// enrolled faceId predates the current verifier ([verifierVer] mismatch)
+/// and is incomparable — the holder must re-face, never match against it.
+/// [blocked] means a records-only device (desktop/web L1 gate) — guidance,
+/// never an attempt.
+enum FaceMatch { pass, mismatch, inconclusive, staleTemplate, blocked }
 
 class FaceCheckResult {
   final FaceMatch match;
-  final double score; // cosine for pass/mismatch, 0 for inconclusive
-  const FaceCheckResult(this.match, [this.score = 0]);
+  final double score; // plugin decision score for pass, 0 otherwise
+  /// Ticket stamp (UTC millis) bound into Sig_s. 0 unless [match] is pass.
+  final int faceValidAtMs;
+  /// Pipeline tag bound into Sig_s. '' unless [match] is pass.
+  final String verifierVer;
+  const FaceCheckResult(this.match,
+      [this.score = 0, this.faceValidAtMs = 0, this.verifierVer = '']);
 }
 
 class MarkedReceipt {
@@ -67,22 +75,28 @@ class WindowProbe {
 }
 
 abstract class StudentDriver {
-  /// Face gate against the enrolled template. [FaceMatch.pass] carries the
-  /// match score; [FaceMatch.mismatch] means a readable frame matched
-  /// somebody else (consumes one attempt); [FaceMatch.inconclusive] means
-  /// no readable verdict (keep scanning, never consumes an attempt).
-  Future<FaceCheckResult> checkFace(Uint8List frameBytes);
+  /// Face gate against the enrolled faceId. [FaceMatch.pass] carries the
+  /// match score + ticket (stamp + pipeline tag) for Sig_s binding;
+  /// [FaceMatch.mismatch] means a readable still matched somebody else
+  /// (consumes one attempt); [FaceMatch.inconclusive] means no readable
+  /// verdict (rescan, never consumes an attempt); [FaceMatch.blocked]
+  /// means a records-only device (guidance, never an attempt).
+  Future<FaceCheckResult> checkFace(String imagePath);
 
   /// Listens until marked. There is no round clock: the window stays open
   /// until the professor stops it, so every fresh challenge is signed,
   /// announced and POSTed until a verdict lands. [onStatus] reports the
   /// current step (waiting/proving/confirming) for the UI — the student
   /// never sees a countdown. Never marks without radio + signed ACK.
+  /// [faceValidAtMs]/[verifierVer] bind the face ticket into Sig_s (+pkD);
+  /// absent (0/'') → legacy unbound proof (tests only, never production).
   Future<MarkedReceipt> listenAndProve({
     required ClassBeacon target,
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   });
 
   /// Waiting-room LAN probe: reachable + windowOpen without radio.
@@ -126,14 +140,17 @@ class _TryNext implements Exception {
 }
 
 class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
-  final FaceEmbedder _embedder;
+  final FaceVerifier _verifier;
+  final DeviceKey _deviceKey;
   final ProxBleEngine _engine;
   RealStudentDriver({
     required DeviceStore store,
-    required FaceEmbedder embedder,
+    required FaceVerifier verifier,
+    required DeviceKey deviceKey,
     required ProxBleEngine engine,
   })  : _store = store,
-        _embedder = embedder,
+        _verifier = verifier,
+        _deviceKey = deviceKey,
         _engine = engine;
 
   /// Dead-air bound per wait: 45s of no new challenge, then one cheap
@@ -158,40 +175,45 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   bool _listening = false;
 
   @override
-  Future<FaceCheckResult> checkFace(Uint8List frameBytes) async {
+  Future<FaceCheckResult> checkFace(String imagePath) async {
+    // L1 domain gate first: records-only devices never reach the plugin —
+    // guidance (blocked), never an attempt, SK never signs.
+    try {
+      requireMobileFace();
+    } on StateError {
+      BleLog.log('SEC', 'face check blocked: records-only device');
+      return const FaceCheckResult(FaceMatch.blocked);
+    }
     final stored = await _store.readEnrollment();
     if (stored == null) {
       BleLog.log('SEC', 'face check: no enrollment');
       return const FaceCheckResult(FaceMatch.inconclusive);
     }
-    if (stored.modelVer != kFacePipelineVer) {
+    if (stored.faceId.isEmpty ||
+        stored.isFaceStale(_verifier.verifierVer)) {
       BleLog.log('SEC',
-          'face check: stale template ${stored.modelVer} vs $kFacePipelineVer — re-enroll, never match');
+          'face check: stale face ${stored.verifierVer} vs ${_verifier.verifierVer} — re-face, never match');
       return const FaceCheckResult(FaceMatch.staleTemplate);
     }
-    final session = FaceSession(embedder: _embedder);
     try {
-      // Enroll inside try: a corrupt stored template (bad parse) must fail
-      // closed as inconclusive, never throw out of the verifier.
-      session.enroll(stored.template);
-      final res = await session.verify(frameBytes,
-          challenge: Uint8List.fromList(const [0, 0, 0, 0, 0, 0, 0, 0]),
-          now: DateTime.now().toUtc());
-      final pass = res.decision == FaceDecision.pass;
-      BleLog.log('SEC',
-          pass ? 'face check pass score=${res.score.toStringAsFixed(2)}' : 'face check FAIL');
-      if (pass) {
+      final res = await _verifier.verify(stored.faceId, imagePath);
+      if (res.match) {
+        final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
         // Stamp the SK-use gate: the private key signs ONLY within a
         // fresh face window (kFaceValidWindow). _prove enforces it —
         // idling past expiry on the waiting screen can never sign.
         _faceGate.evaluate(
-            score: res.score,
-            livenessPass: true,
-            now: DateTime.now().toUtc());
-        return FaceCheckResult(FaceMatch.pass, res.score);
+            score: res.score, livenessPass: true, now: DateTime.now().toUtc());
+        BleLog.log('SEC',
+            'face check pass score=${res.score.toStringAsFixed(2)}');
+        return FaceCheckResult(FaceMatch.pass, res.score, stampMs,
+            _verifier.verifierVer);
       }
+      BleLog.log('SEC', 'face check FAIL');
       return FaceCheckResult(FaceMatch.mismatch, res.score);
     } catch (e) {
+      // Unreadable still / missing model: fail closed as inconclusive —
+      // rescan inside the 12s session, attempt kept, never auto-present.
       BleLog.log('SEC', 'face check ERROR: $e');
       return const FaceCheckResult(FaceMatch.inconclusive);
     }
@@ -341,7 +363,18 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
+    // L1 domain gate: records-only devices never listen-and-prove —
+    // guidance, nothing signed.
+    try {
+      requireMobileFace();
+    } on StateError {
+      return const MarkedReceipt(
+          detail: 'Marking needs the mobile app (Android/iOS)',
+          result: StudentResult.error);
+    }
     if (_listening) {
       return const MarkedReceipt(
           detail: 'Already proving — wait for the current round',
@@ -353,7 +386,9 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           target: target,
           identity: identity,
           faceScore: faceScore,
-          onStatus: onStatus);
+          onStatus: onStatus,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer);
     } finally {
       _listening = false;
     }
@@ -364,6 +399,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     final stored = await _store.readEnrollment();
     if (stored == null ||
@@ -371,11 +408,19 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       return const MarkedReceipt(
           detail: 'Not enrolled on this device', result: StudentResult.error);
     }
+    // Stale pipeline at listen time: never prove against an incomparable
+    // face — re-face first (key kept).
+    if (stored.faceId.isEmpty ||
+        stored.isFaceStale(_verifier.verifierVer)) {
+      return const MarkedReceipt(
+          detail: 'Face recognition was updated — re-enroll this device, then join again',
+          result: StudentResult.faceFailed);
+    }
     // The face score is the holder evidence for THIS listen (the face
-    // screen verified liveness just before calling): stamp the SK-use
-    // gate now, so _prove can time-bound marathon listens — a face pass
-    // older than kFaceValidWindow refuses to sign and the student
-    // re-scans instead of marking on a stale check.
+    // screen matched just before calling): stamp the SK-use gate now, so
+    // _prove can time-bound marathon listens — a face pass older than
+    // kFaceValidWindow refuses to sign and the student re-scans instead
+    // of marking on a stale check.
     if (faceScore >= kFaceThreshold) {
       _faceGate.evaluate(
           score: faceScore, livenessPass: true, now: DateTime.now().toUtc());
@@ -429,8 +474,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           target: target,
           identity: identity,
           faceScore: faceScore,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer,
           challenge: cj,
-          seedHex: stored.seedHex,
+          stored: stored,
           onStatus: onStatus,
         );
       } on _TryNext catch (t) {
@@ -559,21 +606,65 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// receipt (marked/late/error), or throws [_TryNext] to prove the next
   /// fresh challenge. POST transport failures propagate to the caller
   /// (transient → next token, refused → fast fail).
+  ///
+  /// Tracks 2+3: Sig_s binds the face ticket (score/stamp/pipeline tag +
+  /// pkD + ticket hash — no images/embeddings leave the device) and the
+  /// POST carries pkD + dSig (DKey over deviceProvePreimage) + lightweight
+  /// attestation claims. Legacy unbound proofs (tests only) still encode
+  /// when no ticket is present.
   Future<MarkedReceipt> _prove({
     required ClassBeacon target,
     required LinkedIdentity identity,
     required double faceScore,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
     required Uint8List challenge,
-    required String seedHex,
+    required StoredEnrollment stored,
     required void Function(ListenStatus s) onStatus,
   }) async {
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      // Key decode inside try: a corrupt seed fails as a terminal error
-      // receipt, never an uncaught throw mislabeled by outer handlers.
-      final sk = ed.newKeyFromSeed(hexDecode(seedHex));
+      // Key decode inside try: a corrupt seed (or a clone that fails
+      // unwrap) fails as a terminal error receipt, never an uncaught
+      // throw mislabeled by outer handlers.
+      final ed.PrivateKey sk;
+      try {
+        if (stored.sealedKeyHex.isNotEmpty) {
+          await _deviceKey.ensure();
+          final seed =
+              await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
+          sk = ed.newKeyFromSeed(seed);
+        } else {
+          sk = ed.newKeyFromSeed(hexDecode(stored.seedHex));
+        }
+      } on StateError catch (e) {
+        if ('$e'.contains('restore detected')) {
+          BleLog.log('SEC', 'SKey unwrap failed: backup-restore clone?');
+          return const MarkedReceipt(
+              detail: 'restore detected — re-enroll',
+              result: StudentResult.error);
+        }
+        rethrow;
+      }
       final pk = ed.public(sk);
       final pk32 = Uint8List.fromList(pk.bytes.sublist(0, 32));
+      // Device binding snapshot (enrolled claim, refreshed by heartbeat):
+      // pkD for the Sig_s bind + POST, attestation claims for the tier.
+      Uint8List pkD = Uint8List(0);
+      if (stored.pkDHex.isNotEmpty) {
+        try {
+          pkD = Uint8List.fromList(hexDecode(stored.pkDHex));
+        } catch (_) {
+          pkD = Uint8List(0);
+        }
+      }
+      final bound = verifierVer.isNotEmpty;
+      final ticket = bound
+          ? ProxCrypto.faceTicketHash(
+              faceScore: faceScore,
+              faceValidAtMs: faceValidAtMs,
+              verifierVer: verifierVer)
+          : Uint8List(0);
       // Verifies Sig_p against the RADIO-heard challenge: fake professors
       // fail here before anything is signed. Only a genuine signature
       // mismatch is suspicious (never verified); every other fetch failure
@@ -652,6 +743,13 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           challenge: c,
           studentId: identity.gmail.toLowerCase(),
           faceScore: faceScore,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer,
+          pkD: pkD,
+          // Legacy (unbound) proofs pass null so BOTH sides derive the
+          // neutral ticket identically; bound proofs pass the explicit
+          // ticket they signed.
+          faceTicketHashBytes: bound ? ticket : null,
         ),
         sigBindFor: (fp, jj) => ProxCrypto.sign(
             sk,
@@ -660,7 +758,26 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
                 windowId: desc.windowId,
                 j: jj,
                 tlsFingerprint: fp)),
+        faceValidAtMs: bound ? faceValidAtMs : null,
+        verifierVer: verifierVer,
+        pkD: pkD.isNotEmpty ? pkD : null,
+        dSigFor: bound
+            ? (t, jj) async => _deviceKey.sign(
+                ProxCrypto.deviceProvePreimage(
+                    sessionId: desc.sessionId,
+                    windowId: desc.windowId,
+                    j: jj,
+                    challenge: challenge,
+                    faceTicketHashBytes: t,
+                    pkS: pk32))
+            : null,
+        attestationLevel: stored.attestationLevel,
+        attestedUntilMs:
+            stored.attestedUntil.toUtc().millisecondsSinceEpoch,
       );
+      if (res.flags.isNotEmpty) {
+        BleLog.log('SEC', 'host attestation flags: ${res.flags.join(',')}');
+      }
       // Verdicts that only a fresh token fixes (round changed under us,
       // token aged out, professor never heard the response): prove the
       // next rotation — the server was real and answering.
@@ -727,7 +844,7 @@ class FakeStudentDriver implements StudentDriver {
       this.manualStatus = 'pending'});
 
   @override
-  Future<FaceCheckResult> checkFace(Uint8List frameBytes) async =>
+  Future<FaceCheckResult> checkFace(String imagePath) async =>
       const FaceCheckResult(FaceMatch.pass, 0.95);
 
   @override
@@ -764,6 +881,8 @@ class FakeStudentDriver implements StudentDriver {
     required LinkedIdentity identity,
     required double faceScore,
     required void Function(ListenStatus s) onStatus,
+    int faceValidAtMs = 0,
+    String verifierVer = '',
   }) async {
     onStatus(ListenStatus.confirming);
     return MarkedReceipt(detail: ackDetail, result: StudentResult.marked);

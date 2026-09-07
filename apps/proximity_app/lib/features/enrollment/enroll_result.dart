@@ -7,7 +7,7 @@
 // - install-as-other-Gmail refusal: wipe-to-switch;
 // - pipeline recapture: key kept, fresh face scan;
 // - offline retry: progress kept, Save again on reconnect.
-// Fail-closed throughout: Save needs all 5 validated angles + template
+// Fail-closed throughout: Save needs the validated 3-still capture
 // (controller re-validates); a refused claim stores nothing locally.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -48,7 +48,7 @@ _Refusal _classify(EnrollmentState st) {
   if (m.contains('improved') || m.contains('scan your face again')) {
     return _Refusal.pipeline;
   }
-  if (m.contains('5 face angles')) return _Refusal.partial;
+  if (m.contains('scan your face first')) return _Refusal.partial;
   if (m.contains('id number')) return _Refusal.roll;
   return _Refusal.generic;
 }
@@ -111,7 +111,7 @@ class EnrollResultScreen extends ConsumerWidget {
                   const SizedBox(height: ProxSpacing.xs),
                   Text(
                     'Match score ${st.faceScore.toStringAsFixed(2)} — '
-                    'template never leaves this phone.',
+                    'face data never leaves this phone.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context)
                               .colorScheme
@@ -128,8 +128,8 @@ class EnrollResultScreen extends ConsumerWidget {
             label: const Text('Re-scan face'),
             expanded: true,
             onPressed: () {
-              // Key kept; on-disk template untouched (attendance still
-              // works) until five new angles validate.
+              // Key kept; the saved enrollment is untouched (attendance
+              // still works) until 3 new stills validate.
               EnrollLog.face('re-scan from result — key kept, slots cleared');
               ctl.restartFace();
               Navigator.of(context).pop();
@@ -149,7 +149,6 @@ class EnrollResultScreen extends ConsumerWidget {
       EnrollmentController ctl) {
     final hasFace = st.phase == EnrollPhase.faceDone ||
         st.phase == EnrollPhase.uploaded;
-    final doneCount = st.angleSlots.where((d) => d).length;
     final refusal = _classify(st);
     return ProxScreen(
       title: 'Save enrollment',
@@ -181,7 +180,7 @@ class EnrollResultScreen extends ConsumerWidget {
                 const SizedBox(height: ProxSpacing.xs),
                 Text(
                   'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}… · '
-                  '$doneCount of ${enrollSlotNames.length} angles'
+                  'Face: ${hasFace ? '3 of 3 stills captured' : 'capture pending'}'
                   '${st.faceScore > 0 ? ' · score ${st.faceScore.toStringAsFixed(2)}' : ''}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context)
@@ -217,13 +216,13 @@ class EnrollResultScreen extends ConsumerWidget {
           ),
           if (!hasFace)
             const ProxSyncNote(
-              'Complete all 5 face angles on the previous screen to '
-              'enable Save — a partial scan cannot save.',
+              'Complete the 3-still face capture on the previous screen '
+              'to enable Save — a failed capture cannot save.',
             )
           else
             const ProxSyncNote(
               'Needs internet once (one enrolled device per Gmail is '
-              'checked online). Your 5 angles are kept — reconnect and '
+              'checked online). Your capture is kept — reconnect and '
               'tap Save again.',
             ),
           const SizedBox(height: ProxSpacing.sm),
@@ -288,7 +287,7 @@ class EnrollResultScreen extends ConsumerWidget {
             children: [
               const Text(
                 'Next step: connect to the internet and tap Save again — '
-                'your 5 angles are kept, no re-scan needed.',
+                'your capture is kept, no re-scan needed.',
               ),
               const SizedBox(height: ProxSpacing.sm),
               ProxSecondaryButton(
@@ -327,8 +326,8 @@ class EnrollResultScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Next step: go back and scan the remaining angles — '
-                'completed ones are kept.',
+                'Next step: go back and capture the 3 stills — '
+                'a failed capture stores nothing, so just retry.',
               ),
               const SizedBox(height: ProxSpacing.sm),
               ProxSecondaryButton(

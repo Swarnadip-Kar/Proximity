@@ -27,8 +27,13 @@ abstract class CloudSync {
   /// writes both docs (bumping lastSeen; stamping lastMove + moveCount on a
   /// move). Throws StateError with user-facing copy when refused
   /// (cooldown/install-conflict) — the second of two racing devices loses.
+  /// [moveIntentValid]: old-DKey-signed MoveIntent verified by the caller —
+  /// instant move even inside the 7d cooldown.
   Future<ClaimOutcome> claimStudentDevice(
-      {required StudentDeviceDoc doc, required String installId, DateTime? now});
+      {required StudentDeviceDoc doc,
+      required String installId,
+      DateTime? now,
+      bool moveIntentValid = false});
 
   /// Best-effort last-online heartbeat: bumps lastSeenAtMillis only when
   /// this device still holds the binding. Returns true when touched.
