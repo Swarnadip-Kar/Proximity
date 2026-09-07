@@ -16,7 +16,19 @@ Never _web() => throw UnsupportedError('records-only web build: no hosting');
 class RadioSighting {
   final int rssiDbm;
   final int hop; // 0 = direct
-  const RadioSighting({required this.rssiDbm, required this.hop});
+  /// Mirrors server.dart: true when heard via a legacy v1 UUID (no
+  /// direct-RSSI proof possible). Drives the verify-rule log.
+  final bool legacy;
+  const RadioSighting(
+      {required this.rssiDbm, required this.hop, this.legacy = false});
+}
+
+/// Which sighting rule marked the proof (host log only): `direct-rssi`
+/// vs `legacy-hop0-assumed`. Pure mirror of server.dart.
+String sightingRuleOf(RadioSighting? sight) {
+  if (sight == null) return 'no-sighting';
+  if (!sight.legacy && sight.rssiDbm > kRssiDirectDbm) return 'direct-rssi';
+  return 'legacy-hop0-assumed';
 }
 
 typedef SightingLookup = RadioSighting? Function({

@@ -42,11 +42,14 @@ class ProveResult {
   final String reason;
   final DateTime serverTime;
   final Uint8List sigAck;
+  /// Attestation anomaly flags from the host (mirror of client.dart).
+  final List<String> flags;
   const ProveResult({
     required this.decision,
     required this.reason,
     required this.serverTime,
     required this.sigAck,
+    this.flags = const [],
   });
 
   bool verifyAck({
@@ -112,6 +115,12 @@ class ProxClient {
     String org = '',
     Random? rng,
     int maxAttempts = 3,
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
   }) =>
       _web();
 }
