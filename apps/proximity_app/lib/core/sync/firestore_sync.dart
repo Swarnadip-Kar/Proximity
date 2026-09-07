@@ -675,9 +675,13 @@ class FirestoreCloudSync implements CloudSync {
       int limit = 10,
       String org = ''}) async {
     _needAvailable();
-    final eq = emailPrefix.trim().toLowerCase();
-    final rq = rollPrefix.trim();
-    final nq = namePrefix.trim().toLowerCase();
+    final q = normalizeSearchPrefixes(
+        emailPrefix: emailPrefix,
+        rollPrefix: rollPrefix,
+        namePrefix: namePrefix);
+    final eq = q.email;
+    final rq = q.roll;
+    final nq = q.name;
     if (eq.isEmpty && rq.isEmpty && nq.isEmpty) return const [];
     try {
       // Perf: one round trip — the non-empty prefix queries fan out in

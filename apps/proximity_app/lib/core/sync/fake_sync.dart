@@ -131,9 +131,13 @@ class FakeCloudSync implements CloudSync {
       int limit = 10,
       String org = ''}) async {
     _needOnline();
-    final eq = emailPrefix.trim().toLowerCase();
-    final rq = rollPrefix.trim();
-    final nq = namePrefix.trim().toLowerCase();
+    final q = normalizeSearchPrefixes(
+        emailPrefix: emailPrefix,
+        rollPrefix: rollPrefix,
+        namePrefix: namePrefix);
+    final eq = q.email;
+    final rq = q.roll;
+    final nq = q.name;
     if (eq.isEmpty && rq.isEmpty && nq.isEmpty) return const [];
     final seen = <String, StudentDirectoryEntry>{};
     for (final e in dir.values) {
