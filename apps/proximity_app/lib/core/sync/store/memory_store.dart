@@ -193,6 +193,32 @@ class InMemoryDeviceStore implements DeviceStore {
       ..addAll(items);
   }
 
+  final List<Map<String, dynamic>> _pendingSessions = [];
+  final List<Map<String, dynamic>> _tombstones = [];
+
+  @override
+  Future<List<Map<String, dynamic>>> readPendingSessions() async =>
+      [for (final e in _pendingSessions) Map<String, dynamic>.of(e)];
+
+  @override
+  Future<void> writePendingSessions(
+      List<Map<String, dynamic>> items) async {
+    _pendingSessions
+      ..clear()
+      ..addAll(items);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> readTombstones() async =>
+      [for (final e in _tombstones) Map<String, dynamic>.of(e)];
+
+  @override
+  Future<void> writeTombstones(List<Map<String, dynamic>> items) async {
+    _tombstones
+      ..clear()
+      ..addAll(items);
+  }
+
   final List<ClassRecord> studentSessions = [];
 
   @override

@@ -373,6 +373,8 @@ class SecureDeviceStore implements DeviceStore {
   }
 
   static const _kPendingAdds = 'prox.pendingAdds.v1';
+  static const _kPendingSessions = 'prox.pendingSessions.v1';
+  static const _kTombstones = 'prox.tombstones.v1';
 
   @override
   Future<List<Map<String, dynamic>>> readPendingAdds() async {
@@ -393,6 +395,41 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> writePendingAdds(List<Map<String, dynamic>> items) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kPendingAdds, jsonEncode(items));
+  }
+
+  Future<List<Map<String, dynamic>>> _readJsonList(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(key);
+    if (raw == null) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return [
+        for (final e in list) Map<String, dynamic>.from(e as Map)
+      ];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> readPendingSessions() =>
+      _readJsonList(_kPendingSessions);
+
+  @override
+  Future<void> writePendingSessions(
+      List<Map<String, dynamic>> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPendingSessions, jsonEncode(items));
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> readTombstones() =>
+      _readJsonList(_kTombstones);
+
+  @override
+  Future<void> writeTombstones(List<Map<String, dynamic>> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kTombstones, jsonEncode(items));
   }
 
   @override

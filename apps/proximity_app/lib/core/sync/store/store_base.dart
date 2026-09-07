@@ -189,6 +189,21 @@ abstract class DeviceStore {
   Future<List<Map<String, dynamic>>> readPendingAdds();
   Future<void> writePendingAdds(List<Map<String, dynamic>> items);
 
+  /// Durable session outbox (Track 4 SyncEngine): full session snapshots
+  /// keyed by record id + per-entry retry state (see PendingSession in
+  /// sync/sessions.dart). Every local history mutation upserts the outbox
+  /// in the same call (SyncEngine.saveSessionLocal); the flush pushes due
+  /// entries per-course FIFO and rewrites the remainder once at the end
+  /// (partial-failure discipline). Plain JSON maps.
+  Future<List<Map<String, dynamic>>> readPendingSessions();
+  Future<void> writePendingSessions(List<Map<String, dynamic>> items);
+
+  /// Durable delete tombstones (see SessionTombstone in
+  /// sync/sessions.dart): deletes win over older upserts across merges AND
+  /// propagate to the cloud on flush. Plain JSON maps.
+  Future<List<Map<String, dynamic>>> readTombstones();
+  Future<void> writeTombstones(List<Map<String, dynamic>> items);
+
   /// Last synced student attendance (My Attendance cache): the pulled
   /// cloud sessions containing this Gmail, so records stay visible
   /// offline and course renames/attendance pushes converge here on the

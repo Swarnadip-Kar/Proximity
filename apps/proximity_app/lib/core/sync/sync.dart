@@ -5,6 +5,7 @@ library;
 export 'claim.dart';
 export 'cloud_api.dart';
 export 'directory.dart';
+export 'engine.dart';
 export 'fake_sync.dart';
 export 'firestore_sync.dart';
 export 'org.dart';
