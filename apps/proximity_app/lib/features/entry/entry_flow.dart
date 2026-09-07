@@ -147,18 +147,16 @@ String entryHeldLabel(Map<String, String> role) {
 /// First-sign-in professor merge: SyncEngine flush (outbox pushes +
 /// pull-union converge + legacy org backfill). Best-effort — offline or
 /// failures keep local data untouched.
+/// Track 6: delegates to [flushNow] (the Track 4 call-site helper). The
+/// explicit uid/email/name/org params are retained for caller compat —
+/// the values are identical to what [readSyncProf] derives (callers write
+/// them to the auth session + role cache just before invoking), so the
+/// flush identity is unchanged.
 Future<void> entryMergeProfCloud(
     WidgetRef ref, String uid, String email, String name,
     {String org = ''}) async {
-  final cloud = ref.read(cloudSyncProvider);
-  final store = ref.read(deviceStoreProvider);
-  if (!cloud.available) return;
   try {
-    final res = await syncEngine.flush(
-        store: store,
-        cloud: cloud,
-        prof: (uid: uid, email: email, name: name, org: org),
-        attest: await readAttestLocal(ref));
+    final res = await flushNow(ref);
     BleLog.log('STATE',
         'entry prof cloud merged (${res.pushed} pushed, ${res.remaining} remaining)');
   } catch (_) {}
