@@ -45,9 +45,7 @@ Future<SyncProf?> readSyncProf(WidgetRef ref) async {
       role: role,
       hostNameFallback: hostName);
   if (id == null) return null;
-  final org = (acct?.org ?? '').isNotEmpty
-      ? acct!.org
-      : (role?['org'] ?? '');
+  final org = resolveMyOrg(acct?.org, role);
   return (uid: id.uid, email: id.email, name: id.name, org: org);
 }
 
@@ -77,7 +75,7 @@ Future<AttestLocal?> readAttestLocal(WidgetRef ref) async {
   if (role == null || !roleHas(role, 'student', email: acct.email)) {
     return null;
   }
-  final org = acct.org.isNotEmpty ? acct.org : (role['org'] ?? '');
+  final org = resolveMyOrg(acct.org, role);
   return (emailLower: acct.email.toLowerCase(), org: org);
 }
 

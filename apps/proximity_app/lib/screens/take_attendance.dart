@@ -90,13 +90,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// offline-skipped). Cached per visit so later rounds keep the creation
   /// org immutable.
   Future<String> _profOrgForSession() async {
+    String acctOrg = '';
     try {
-      final acct = ref.read(authServiceProvider).current;
-      if (acct != null && acct.org.isNotEmpty) return acct.org;
+      acctOrg = ref.read(authServiceProvider).current?.org ?? '';
     } catch (_) {}
     try {
       final role = await ref.read(deviceStoreProvider).readRole();
-      return (role?['org'] ?? '').trim().toLowerCase();
+      return resolveMyOrg(acctOrg, role);
     } catch (_) {
       return '';
     }

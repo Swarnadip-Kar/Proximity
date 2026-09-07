@@ -9,6 +9,8 @@ import 'dart:convert';
 
 import 'package:proximity_storage/storage.dart';
 
+import 'roles.dart';
+
 /// Domain of [email]: part after the LAST '@', lowercased + trimmed.
 /// Normalizes googlemail.com -> gmail.com (same Google org).
 /// Returns '' when malformed (no '@', empty local/domain, spaces, extra '@'
@@ -72,3 +74,15 @@ bool inMyOrg(String sessionOrg, String myOrg) {
 /// [ClassRecord] convenience over [inMyOrg].
 bool recordInMyOrg(ClassRecord record, String myOrg) =>
     inMyOrg(record.org, myOrg);
+
+/// Preferred org for this device: explicit account org wins, else the
+/// role-cache stamp ('' = legacy / offline-skipped / unknown).
+/// Both sides arrive normalized from sign-in; the role side is defensively
+/// normalized here. Track 6: was `(acctOrg.isNotEmpty ? acctOrg :
+/// role?['org'] ?? '')` inline in sync_hook (×2, raw role side) + the
+/// take-attendance `_profOrgForSession` helper.
+String resolveMyOrg(String? acctOrg, Map<String, String>? role) {
+  final a = (acctOrg ?? '').trim().toLowerCase();
+  if (a.isNotEmpty) return a;
+  return roleOrg(role);
+}
