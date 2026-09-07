@@ -57,7 +57,7 @@ requirements are preserved — restructuring only, no weakening.
 
 ## Professor setup / records
 - `prof/courses` EXISTS — reason: pick or register a course; cloud
-  pull-merge converges other devices; flagged-devices entry lives here.
+  pull-merge converges other devices.
 - `prof/courses/<course>` (overview) EXISTS — reason: manage one course
   (Take, sessions, rename/delete, review/export).
 - `prof/courses/<course>/export` EXISTS — reason: review + export the past
@@ -66,10 +66,6 @@ requirements are preserved — restructuring only, no weakening.
   with per-round ticks.
 - `prof/sessions/<id>/edit` EXISTS — reason: fix marks later (per-round
   checkboxes, partial/absent quick lists, unified manual-add).
-- `prof/flagged` NEW (Track 5 required) — reason: professor/admin review
-  list for attestationAnomaly-flagged devices (email/platform/claimed-vs-
-  derived level/reason/verified-at/DKey fingerprint); no manual clear by
-  design (re-verify clears, re-enroll resets).
 - `records/mine` EXISTS — reason: student's synced courses (course cards →
   sessions); offline shows last sync honestly.
 - `records/course/<course>` EXISTS — reason: one student's course drill-

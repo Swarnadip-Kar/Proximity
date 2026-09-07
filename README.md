@@ -114,9 +114,10 @@ verification under the presented keys; Evil-Twin relays fail TLS channel
 binding; replays fail single-use + freshness. Identity is the Google
 account itself, org-scoped end to end (rules, queries, exports). A
 modified client can still lie about a local match — each lie must be
-fresh, challenge-bound, and hardware-signed, and anomaly flags plus the
-server attestation re-check (`verifyAttestationChain` on sync) leave a
-permanent attributable trace. See design §4–§5.
+fresh, challenge-bound, and hardware-signed, and face-ticket anomaly
+flags plus the offline double-pkD audit leave a permanent attributable
+trace. No server re-check exists (see design §3.4 for what that costs).
+See design §4–§5.
 
 Persistence notes: the student signs, announces and POSTs *every* fresh
 challenge until a verdict lands (unheard responses, stale tokens and
@@ -275,12 +276,11 @@ apps/proximity_app/      single app: student (mobile) + prof (any OS) modes + we
                           platformx/net_if/file_saver (web-safe shims), sync_hook
   lib/features/          face_identity/ (plugin adapter + DKey + mobile gates),
                           enrollment/, mark/, live/ (roster/inbox/add/setup sections),
-                          review/ (flagged-device list), records/, entry/
+                          records/, entry/
   lib/screens/           landing/roles/device hub, student_home (mark phases), take_attendance
                           (host), course/session/record screens (see SCREEN_MAP.md)
   lib/widgets/           trust_cards (verdict/trust/sync chips), sync_badge, ladder_line,
                           manual_add (+ offline queue), course_attendance, clock, animated
-  functions/             ONE callable: verifyAttestationChain (attestation re-check on sync)
 packages/protocol/       pure Dart: air framing, HMAC/UUID pack, Ed25519, window timer,
                           mesh/relay/dedup, face gate policy, device-proof verify
 packages/ble/            BLE engine (rotation/relay/nextChallenge) + Linux BlueZ advertise shim (+ web stub)

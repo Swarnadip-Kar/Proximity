@@ -152,66 +152,53 @@ stays source of truth), not key distribution.
   binding (`tlsFp` + `sigBind` over the presented cert) verified
   server-side. No external CA needed.
 
-### 3.4 Server attestation re-verification (as built)
+### 3.4 Attestation trust — offline-only (no server re-check)
 
-Narrow amendment, stated explicitly: the project is serverless-direct
-Firestore everywhere EXCEPT this one endpoint —
-`verifyAttestationChain`, a single callable Cloud Function
-(`apps/proximity_app/functions/`, project `proximity-attendence`,
-region `us-central1`). It independently re-verifies the calling
-device's STORED attestation material (`studentDevices/{email} /
-attestMaterialJson`) — Android Key Attestation chain against baked
-Google roots (signature walk, root pin, validity at enrollment,
-`attestationChallenge` binding, StrongBox/TEE level mapping, leaf-key ==
-bound DKey, `attestationApplicationId` package binding) and iOS App
-Attest objects (x5c chain, RP ID hash, flags, zero counter, keyId and
-`SHA256(authData || SHA256(challenge))` nonce binding, receipt
-presence) — and admin-writes ONLY `{attestationAnomaly,
-serverVerifiedAtMillis, serverVerifyReason}` on that same doc. This is
-not a general reopening: nothing else gets a server, the live/offline
-marking path never calls it (it couldn't — there is no connectivity
-there), and attendance already recorded under valid offline trust is
-NEVER retroactively invalidated (a negative verdict flags the
-device/install for professor/admin review instead; success clears the
-flag; both stamp `serverVerifiedAtMillis`). Why Functions v1 callable
-and not Cloud Run: the job is Auth-context admin writes, which a
-callable provides with zero token plumbing; the v1 URL is stable so the
-client invokes it over plain HTTPS without the `cloud_functions`
-plugin (no Windows/Linux build — the app compiles for both). Volume is
-~1 call per device per attestation window.
+Stated plainly: NO server-side attestation verification exists in this
+system. A `verifyAttestationChain` Cloud Function was designed and built,
+then REMOVED before ever deploying: the project carries no billing-gated
+backend (hard constraint), so there is nothing to run it on. The project
+is serverless-direct Firestore everywhere, with no exceptions. Do not
+read any older note, comment, or report as implying a server check —
+if one does, it is stale and this section wins.
 
-Client trigger (SyncEngine flush only, heartbeat path): after the online
-probe, the engine fetches the local binding and calls the endpoint ONLY
-when the verdict is unknown (`serverVerifiedAtMillis == 0`) or the
-attestation window is near/past (`attestedUntil` within 30d) — never
-per flush, never on flag state alone. Anything that prevents a
-completed verification (offline, unreachable, server errors incl.
-missing Apple root) DEFERS with a log: no flag, no stamp, retry next
-flush. Devices are never flagged for server-side problems. Enforcement
-that clients cannot forge verdicts lives in `firestore.rules`
-(create: verdict fields must be default; update: unchanged — Admin SDK
-writes bypass rules) and is sufficient because every client path goes
-through rules, the endpoint authenticates via Auth, verifies only the
-caller's own same-org doc, and computes the verdict itself from stored
-material (no client-controlled input sets or clears a flag, directly
-or through the function).
+What that costs, honestly: the `attestationLevel` on every binding
+(FULL/STD/NONE) is SELF-ASSERTED by the enrolling client. No chain
+verification exists anywhere — not on-device, not on-server. A modified
+client can claim FULL while holding a software key, and no component in
+the system can tell the difference from the claim alone. The tier
+machinery (`evaluateDeviceProof`) still runs on every proof, but until
+the keystore/Enclave track lands real hardware keys, treat every mobile
+tier as provisional.
 
-Flagged-devices review (professor/admin screen): queries
-`studentDevices` `where attestationAnomaly == true` (single-field
-equality — no composite index) within the viewer's org, showing email /
-platform / claimed-vs-derived level / `serverVerifyReason` /
-`serverVerifiedAt` / DKey fingerprint. No manual clear exists by design
-(same philosophy as the no-reset move bound): a successful re-verify
-clears the flag, and re-enrollment resets the verdict for the new
-binding; reviewers respond via contact / manual attendance in the
-meantime.
+What still holds without it (all offline, all tested):
+- dSig challenge-binding: every proof carries a FRESH signature over
+  the live 5s challenge. Replays are worthless after rotation
+  (single-use `(windowID,ID,j)` + 12s window); forging requires the
+  device's SKey unwrapped behind a fresh face ticket, every rotation.
+- Sealed SKey: on hardware keys, file copies are ciphertext without the
+  silicon DKey (restore detected → re-enroll). On software keys
+  (everything shipped today — `SoftwareDeviceKey`, level NONE) the seal
+  travels with its files, which is exactly why software keys verify as
+  device-unproven and route to the manual path rather than confirming.
+- Face-ticket anomaly flags (`detectFaceAnomalies`: saturated scores,
+  future/reused stamps, unknown verifier, version flapping) ride every
+  proof for professor-side visibility.
+- One-active-device accounting (claim tx, 7d cooldown, MoveIntent) and
+  the offline double-pkD audit (`findDoublePkD` / `auditDoublePkD`):
+  a copied identity used on two installs leaves a permanent,
+  attributable trace in the synced bindings.
+- Live marking itself never depended on the endpoint: legacy unbound
+  proofs verify today exactly as before; bound proofs confirm only at
+  FULL/STD with valid dSig, which requires the HW keys that do not ship
+  yet — so the binding story today is architecture + enforced NONE-tier
+  routing, with confirmation reserved for hardware that earns it.
 
-Remains (escalated, not stubbed): Apple App Attest root provisioning
-(one file — `functions/roots/README.md`); on-device HW material
-persistence by the keystore/Enclave track (until it lands, HW-claiming
-devices without material verify as `missing-material`); revocation/CRL
-checks are out of scope for the prototype (validity-at-enrollment +
-7-day move bound + manual attendance).
+Remains (scoped feature work, not stubs): on-device HW key production
+by the keystore/Enclave track (the step that makes FULL/STD mean
+silicon, not self-assertion); Apple App Attest root provisioning (moot
+until a backend exists to verify against it); revocation/CRL checks
+(theft response today: 7-day move bound + manual attendance).
 
 ---
 
@@ -554,9 +541,6 @@ packages/transport/      shelf HTTPS server/client, per-session TLS +
                          channel binding, LAN discovery + ladder, rate limits
 packages/storage/        tally + course history + roster helpers
                          (in-memory API; JSON prefs backing)
-apps/proximity_app/functions/  ONE callable: verifyAttestationChain
-                         (+ roots/cbor/der helpers). Nothing else gets
-                         a server — §3.4.
 ```
 
 (No `packages/face`: face is the plugin + the one-file `FaceVerifier`
@@ -567,7 +551,7 @@ Track 6 consolidated homes (single definition each — §13):
 `record_helpers.dateIsoOf/todayIso/recordInCourse` ·
 `org.orgOf/resolveMyOrg/inMyOrg` · `roles.roleOrg` ·
 `directory.normalizeSearchPrefixes` ·
-`sync_hook.readSyncProf/readAttestLocal/flushNow` ·
+`sync_hook.readSyncProf/flushNow` ·
 `sync_badge.PendingCountChip` · `file_saver_common.sanitizeFilename` ·
 `MarkedReceipt.{isWrongOrg,classOrg,myOrg,attestationLevel,
 attestationFlags}`. UI rows are `ProxCard/ProxListTile` (dense rows
@@ -642,8 +626,7 @@ Shipped: protocol HMAC/UUID/Ed25519 + window rotation + mesh relay +
 typed-IP/manual join + iOS parity + face gate + SK lock +
 channel-bound TLS + desktop host + Linux shim + cloud roles/claims/
 session backup + student records + web records build +
-verifyAttestationChain server re-verifier (§3.4) + SyncEngine heartbeat
-trigger + flagged-devices review + org join-gate with structured
+org join-gate with structured
 wrong-org receipts (§3.0) + Track 6 consolidation (§13). (GATT
 `PROX_SVC`/`PROX_CHR` fallback is future work, not shipped.)
 Suite: protocol 96 · transport 35 · ble 35 · storage 9 · app 202 ·
@@ -725,12 +708,12 @@ one-liner idioms and intentional seams (below).
    liveness — a good printed photo can pass the matcher. Behind it:
    4-mismatch budget → needs-review → human override, 5-min holder
    gate, cross-ticket replay impossible by construction.
-2. **Device trust is software until HW lands.** No keystore/Enclave
-   backend yet → DKey level `none` in practice, `attestMaterialJson`
-   empty, server verdicts `missing-material`. Anti-clone strength today
-   = sealed envelope + install UUID + 7d move bound + professor review,
-   not silicon. Apple root file also missing (server defers, never
-   flags, for server-side gaps).
+2. **Device trust is software until HW lands, and self-asserted even
+   then at the claim layer.** No keystore/Enclave backend yet →
+   DKey level `none` in practice; no server re-check exists at all
+   (§3.4), so a claimed FULL/STD is consistency-checked, never proven.
+   Anti-clone strength today = sealed envelope + install UUID + 7d move
+   bound + offline double-pkD audit, not silicon.
 3. **Network failure modes:** isolating APs kill UDP (measured 0/5 on
    institute /18) → BLE hint + manual IP carry join; the /24 sweep was
    deleted for kicking phones off WiFi; hotspot is excluded by design
