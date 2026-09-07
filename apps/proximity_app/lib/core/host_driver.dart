@@ -452,7 +452,11 @@ class RealHostDriver implements HostDriver {
     // mid-round before anyone marks.
     try {
       final no = _server?.windowNo ?? 0;
-      if (no > 0) _tally.noteWindow(no);
+      if (no > 0) {
+        _tally.noteWindow(no);
+        BleLog.log(
+            'SESSION', 'round #$no recorded (open rounds: ${_tally.windowNos})');
+      }
     } catch (_) {}
     try {
       // Keep scanning: late student responses still arrive for ~seconds
@@ -509,6 +513,8 @@ class RealHostDriver implements HostDriver {
   }) async {
     _tally.restore(
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
+    BleLog.log('SESSION',
+        'tally restored: windows ${_tally.windowNos} (${_tally.size} records)');
   }
 
   @override
@@ -530,6 +536,7 @@ class RealHostDriver implements HostDriver {
     _engine.clearServerIp();
     await _server?.stop();
     _server = null;
+    BleLog.log('TRANSPORT', 'serve down (hosting ended)');
     _tally = TallyStore();
     _sessionId = null;
     _profKeys = null;

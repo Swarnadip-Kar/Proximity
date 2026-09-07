@@ -616,10 +616,13 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       );
       if (!ok) {
         BleLog.log('NET', 'ACK received but BAD prof signature');
+        BleLog.log('CRYPTO', 'ack verify BAD code=${desc.display} j=$j');
         return const MarkedReceipt(
             detail: 'Bad professor signature',
             result: StudentResult.error);
       }
+      BleLog.log('CRYPTO',
+          'ack verify ok code=${desc.display} j=$j (${res.decision.name})');
       BleLog.log(
           'NET', 'waiting for ACK… got ${res.decision.name} (${res.reason})');
       final time = res.serverTime;

@@ -24,6 +24,7 @@ import 'dart:typed_data';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_face/face.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -638,7 +639,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         }
         final installId = await getOrCreateInstallId(_store);
         try {
-          await cloud.claimStudentDevice(
+          final outcome = await cloud.claimStudentDevice(
               doc: StudentDeviceDoc(
                   email: email,
                   uid: acct.uid,
@@ -649,7 +650,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   installId: installId,
                   platform: _platformName()),
               installId: installId);
+          BleLog.log('SYNC',
+              'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
         } on StateError catch (e) {
+          BleLog.log('SYNC', 'device claim refused (see screen message)');
           state = state.copyWith(
               phase: EnrollPhase.error, message: e.message);
           return null;

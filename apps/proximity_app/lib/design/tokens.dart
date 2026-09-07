@@ -208,6 +208,13 @@ abstract final class ProxMotion {
 ///   what the controller dropped, gate outcomes).
 /// - STATE: provider/state recompute reasons (mode transitions, role-cache
 ///   hits/misses, claim-gate verdicts) + errors with reproducing context.
+/// - TRANSPORT: HTTPS/transport lifecycle + contract events at the
+///   transport-module boundary (serve up/down, prove-pipeline milestones).
+/// - CRYPTO: sign/verify decision points at the crypto-module boundary
+///   (proof posted, ACK verify ok/BAD — never keys or preimages).
+/// - SESSION: session/round state transitions at the session-module
+///   boundary (round recorded, tally restored, manual decisions).
+///   SYNC already covers cloud merges/pushes/pulls + the offline queue.
 ///
 /// Tags are plain strings (the [BleLog] API takes any tag); these
 /// constants keep every emitter and both log views spelling them the
@@ -223,9 +230,25 @@ abstract final class ProxLogTags {
   static const lan = 'LAN';
   static const sec = 'SEC';
   static const net = 'NET';
+  static const transport = 'TRANSPORT';
+  static const crypto = 'CRYPTO';
+  static const session = 'SESSION';
 
   /// Every tag the log views offer as a filter chip, in display order.
-  static const all = <String>[nav, sync, face, state, ble, mesh, lan, sec, net];
+  static const all = <String>[
+    nav,
+    sync,
+    face,
+    state,
+    ble,
+    mesh,
+    lan,
+    sec,
+    net,
+    transport,
+    crypto,
+    session
+  ];
 }
 
 /// Terminal colors, one per log tag. Brightness-independent (the terminal
@@ -244,6 +267,9 @@ abstract final class ProxLogColors {
         ProxLogTags.lan => const Color(0xFFF472B6),
         ProxLogTags.sec => const Color(0xFFFBBF24),
         ProxLogTags.net => const Color(0xFF22D3EE),
+        ProxLogTags.transport => const Color(0xFF818CF8),
+        ProxLogTags.crypto => const Color(0xFFE879F9),
+        ProxLogTags.session => const Color(0xFFA3E635),
         _ => const Color(0xFFE5E7EB),
       };
 }

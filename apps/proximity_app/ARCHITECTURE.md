@@ -38,7 +38,7 @@ One-way dependencies, top to bottom:
 ```
 presentation (screens/, features/, widgets/)
   → state (mode.dart providers, Riverpod controllers)
-    → data (core/device_store.dart, core/cloud_sync.dart)
+    → data (core/sync/, core/enroll_finalize.dart)
       → service (core/host_driver.dart, core/student_driver.dart,
                  BLE engine, face stack, transport)
 ```
@@ -75,6 +75,12 @@ source for the embedded `BleLogView` and the full-screen debug log):
 - STATE — provider recompute reasons (mode transitions incl. persist
   failures, role-cache hit/miss/seed, claim-gate verdicts) and route
   misses with their missing context.
+- TRANSPORT — HTTPS/transport lifecycle + contract events (serve up/down,
+  prove-pipeline milestones at the transport boundary).
+- CRYPTO — sign/verify decisions (proof posted, ACK verify ok/BAD; never
+  keys or preimages).
+- SESSION — session/round transitions (round recorded with open-round
+  list, tally restored with counts, manual decisions).
 
 Rules: meaningful transitions + errors log with reproducing context
 (course/session ids, counts, error text — never keys, templates, or
@@ -85,6 +91,19 @@ window (see the BLE `_loud` keys and the manual-add 10s failure gate);
 clears to hide state. Both log views are reduced-motion safe (toggle and
 chips use `ProxMotion.effective`; autoscroll jumps, never animates) and
 cheap under load (capped buffer, plain-Text rows, flush coalescing).
+
+## Core modules (snapshot, not a contract)
+
+Seven single-responsibility modules with DI at each seam (delegates,
+embedders, store facets, `SightingLookup`, engine callbacks — no module
+reaches into another's internals): crypto (`protocol/src/crypto/`),
+air (`protocol/src/air/`), session (`storage`), radio (`ble/src/`),
+net (`transport`, incl. `LiveRoom`), sync (`core/sync/` + `SyncQueue`),
+face-decision (`face` + `core/enroll_finalize.dart`).
+Size 11003 → 11764 LOC: more, smaller files, net larger — splits added
+barrels/wrappers while almost every shrink candidate proved live on
+zero-caller check and was kept. CSV unification, stub-entry retirement,
+and compat-barrel removal are open product decisions for a later pass.
 
 ## Routing map
 
