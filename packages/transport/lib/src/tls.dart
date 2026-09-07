@@ -14,6 +14,10 @@ import 'dart:typed_data';
 import 'package:basic_utils/basic_utils.dart';
 import 'package:proximity_protocol/protocol.dart';
 
+// M1: bindPreimage's canonical home is proximity_protocol crypto/preimages.
+// Re-export (same declaration — no ambiguity for importers of both packages).
+export 'package:proximity_protocol/protocol.dart' show bindPreimage;
+
 class WindowTls {
   final String certPem;
   final String keyPem;
@@ -46,12 +50,3 @@ WindowTls generateWindowTls() {
   final fp = ProxCrypto.sha256Sync(_derOfPem(certPem));
   return WindowTls(certPem: certPem, keyPem: keyPem, fingerprint: fp);
 }
-
-/// Channel-binding preimage: sessionID || windowID || j32 || tlsFingerprint.
-Uint8List bindPreimage({
-  required Uint8List sessionId,
-  required Uint8List windowId,
-  required int j,
-  required Uint8List tlsFingerprint,
-}) =>
-    concat([sessionId, windowId, ProxCrypto.j32(j), tlsFingerprint]);
