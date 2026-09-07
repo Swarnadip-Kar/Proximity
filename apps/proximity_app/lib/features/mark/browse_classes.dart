@@ -132,7 +132,7 @@ class BrowseClassesView extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Text(
-                  'No live classes heard yet. Stay on the classroom WiFi — professors appear here when they start hosting. If nothing appears, type the IP shown on the professor\u2019s screen above, or join the professor\u2019s hotspot instead.'),
+                  'No live classes heard yet. Stay on the classroom WiFi — professors appear here when they start hosting. If nothing appears, type the IP shown on the professor\u2019s screen above (Bluetooth must be on for auto-discovery).'),
             )
           else
             for (var i = 0; i < live.length; i++)

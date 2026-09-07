@@ -134,7 +134,7 @@ void main() {
 
   test('no-hotspot: dead target probes unreachable, never marks',
       timeout: const Timeout(Duration(minutes: 2)), () async {
-    // The professor is gone (hotspot off / wrong subnet): the window probe
+    // The professor is gone (AP down / wrong subnet): the window probe
     // says unreachable and the listen ends honestly — no mark, no hang,
     // and the UI layer turns this into `Professor unreachable` + manual-IP
     // + abort (see RealStudentDriver._isRefused → joinError path).
@@ -148,7 +148,7 @@ void main() {
     const target = ClassBeacon(
       classLabel: 't',
       host: '127.0.0.1',
-      port: 9, // nothing listens: hotspot-off shape
+      port: 9, // nothing listens: host-gone shape
       rssiDbm: 0,
       displayCode: 'X',
     );

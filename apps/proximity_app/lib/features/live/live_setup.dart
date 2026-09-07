@@ -1,5 +1,5 @@
 // Live setup (prof live): everything the professor configures BEFORE the
-// first Start — display name, announce-IP picker, hotspot guidance, and
+// first Start — display name, announce-IP picker, visibility guidance, and
 // the Bluetooth/permission error line.
 //
 // This section is idle-time only: once the window is LIVE the header owns
@@ -47,9 +47,9 @@ Future<String?> showAnnounceIpDialog(
   );
 }
 /// Pre-window setup block. [hosting] false + no error reads as the
-/// transient 'Starting host…' line; the name field + hotspot guidance show
-/// only while idle (hosting && !live); the announce line, IP picker, and
-/// error line show whenever their data exists.
+/// transient 'Starting host…' line; the name field + visibility guidance
+/// show only while idle (hosting && !live); the announce line, IP picker,
+/// and error line show whenever their data exists.
 class LiveSetupSection extends StatelessWidget {
   final bool hosting;
   final bool live;
@@ -87,7 +87,7 @@ class LiveSetupSection extends StatelessWidget {
         if (hosting && !live) ...[
           const SizedBox(height: 8),
           const Text(
-              'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, switch this phone to hotspot and rejoin it from their side.'),
+              'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, have them type the IP shown below (this screen) with Bluetooth on — discovery broadcasts are advisory, the typed IP always works.'),
           const SizedBox(height: 8),
           TextField(
             controller: nameCtrl,
