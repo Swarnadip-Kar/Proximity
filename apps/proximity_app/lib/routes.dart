@@ -42,6 +42,8 @@ import 'package:proximity_storage/storage.dart';
 
 import 'core/auth.dart';
 import 'core/device_store.dart';
+import 'core/platformx.dart';
+import 'features/face_identity/face_blocked.dart';
 import 'design/tokens.dart';
 import 'features/debug/debug_log_screen.dart';
 import 'features/enrollment/enroll_capture.dart';
@@ -60,6 +62,7 @@ import 'features/records/session_edit_screen.dart';
 import 'screens/student_home.dart';
 import 'screens/take_attendance.dart';
 import 'widgets/course_attendance.dart';
+import 'widgets/prox_buttons.dart';
 import 'widgets/prox_scaffold.dart';
 import 'widgets/prox_states.dart';
 
@@ -157,6 +160,21 @@ abstract final class ProxRoutes {
   /// gate. Pure — unit-testable without widgets.
   static String? webGuardRedirect(String name) =>
       (kIsWeb && isNativeOnly(name)) ? myAttendance : null;
+
+  /// Mobile-only set (Tracks 2+3 L2): enrollment + marking need the
+  /// on-device face/device trust stack (plugin + HW key), which exists
+  /// only on Android/iOS. Professors hosting live/* stay available on
+  /// desktop (no face needed there) — only enroll/* + mark/* redirect.
+  /// Pure — unit-testable without widgets.
+  static bool isMobileOnly(String name) =>
+      name.startsWith('enroll/') || name.startsWith('mark/');
+
+  /// Records-only-device guard: mobile-only deep-links on desktop/web land
+  /// on records/mine with a guidance card instead of a dead end. Takes an
+  /// explicit [mobile] (defaults to the live [canUseFace]) so tests pin
+  /// the matrix without platform overrides. Pure — unit-testable.
+  static String? mobileGuardRedirect(String name, {bool? mobile}) =>
+      (isMobileOnly(name) && !(mobile ?? canUseFace())) ? myAttendance : null;
 }
 
 /// Navigator observer that logs every route event NAV (pushes, pops,
@@ -197,6 +215,33 @@ class ProxRouteObserver extends NavigatorObserver {
     BleLog.log(
         ProxLogTags.nav, '⇄ ${_label(oldRoute)} ⇒ ${_label(newRoute)}');
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+  }
+}
+
+/// Guidance page for mobile-only flows opened on records-only devices
+/// (Tracks 2+3 L2): the redirect target of [ProxRoutes.mobileGuardRedirect].
+/// Explains the mobile requirement; records below are unaffected.
+class MobileOnlyGuidanceScreen extends StatelessWidget {
+  final String route;
+  const MobileOnlyGuidanceScreen({super.key, required this.route});
+
+  @override
+  Widget build(BuildContext context) {
+    final flow = route.startsWith('enroll/') ? 'Face enrollment' : 'Marking';
+    return ProxScreen(
+      title: 'Mobile only',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FaceBlockedCard(flow: flow),
+          const SizedBox(height: 12),
+          ProxSecondaryButton(
+            label: const Text('Open my records'),
+            onPressed: () => ProxNav.pushNamed(context, ProxRoutes.myAttendance),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -382,6 +427,18 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
     return MaterialPageRoute(
       settings: RouteSettings(name: redirect, arguments: settings.arguments),
       builder: (_) => const MyAttendanceScreen(),
+    );
+  }
+
+  // Tracks 2+3 L2 mobile guard: enroll/* + mark/* need the on-device
+  // face/device stack (Android/iOS only). Records-only devices land on
+  // guidance, never a dead camera screen.
+  final mobileRedirect = ProxRoutes.mobileGuardRedirect(name);
+  if (mobileRedirect != null) {
+    BleLog.log(ProxLogTags.nav, 'mobile guard: $name ⇒ guidance');
+    return MaterialPageRoute(
+      settings: RouteSettings(name: name, arguments: settings.arguments),
+      builder: (_) => MobileOnlyGuidanceScreen(route: name),
     );
   }
 
