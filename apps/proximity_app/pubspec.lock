@@ -537,7 +537,7 @@ packages:
     source: hosted
     version: "4.1.2"
   image:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: image
       sha256: "1976370a4df3091bb0f72409c187ad1f9132a818bc6b95ca59c0bae1c75c688e"
@@ -863,13 +863,6 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
-  proximity_face:
-    dependency: "direct main"
-    description:
-      path: "../../packages/face"
-      relative: true
-    source: path
-    version: "0.1.0"
   proximity_protocol:
     dependency: "direct main"
     description:
@@ -1177,7 +1170,7 @@ packages:
     source: hosted
     version: "0.6.18"
   tflite_flutter:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: tflite_flutter
       sha256: "0bba9040d8decda0960d7abf8eabf32243bf092bc7d0084e8e19681866b0bdbe"

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/face_camera.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
@@ -33,7 +32,6 @@ Future<InMemoryDeviceStore> seeded() async {
 ProviderScope wrap(InMemoryDeviceStore s, Widget home) => ProviderScope(
       overrides: [
         deviceStoreProvider.overrideWithValue(s),
-        faceCameraProvider.overrideWithValue(FakeFaceCamera()),
         hostDriverProvider.overrideWithValue(FakeHostDriver()),
         studentDriverProvider.overrideWithValue(FakeStudentDriver()),
         bleEngineProvider

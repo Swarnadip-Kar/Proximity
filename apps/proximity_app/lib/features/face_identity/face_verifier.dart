@@ -183,7 +183,7 @@ class UnavailableFaceVerifier implements FaceVerifier {
   String get verifierVer => 'unavailable';
 }
 
-/// Test-only fake (mirrors the FakeFaceCamera precedent): scripted
+/// Test-only fake (same role the old FakeFaceCamera played): scripted
 /// match/score, records calls. Never shipped (DI wires plugin/stub).
 class FakeFaceVerifier implements FaceVerifier {
   bool match;

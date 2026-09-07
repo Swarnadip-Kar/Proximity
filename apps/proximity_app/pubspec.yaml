@@ -14,8 +14,6 @@ dependencies:
     path: ../../packages/protocol
   proximity_ble:
     path: ../../packages/ble
-  proximity_face:
-    path: ../../packages/face
   proximity_transport:
     path: ../../packages/transport
   proximity_storage:
@@ -34,7 +32,6 @@ dependencies:
   shared_preferences: ^2.3.2
   universal_ble: ^2.2.0
   permission_handler: ^13.0.1
-  tflite_flutter: ^0.12.1
   # Tracks 2+3: on-device face verification (FaceNet TFLite bundled in the
   # plugin, offline; Android/iOS only — desktop/web get the fail-closed
   # UnavailableFaceVerifier via DI). Verified on pub.dev: MIT, Flutter
@@ -43,7 +40,6 @@ dependencies:
   # deleteFaceRecord/deleteUserFaces. Example/Quick-Demo pattern followed
   # in features/face_identity/face_verifier.dart.
   face_verification: ^0.3.9
-  image: ^4.9.2
   share_plus: ^12.0.2
   wakelock_plus: ^1.5.2
   # Phase 1 visual identity: real font pairing (pure Dart, no native
