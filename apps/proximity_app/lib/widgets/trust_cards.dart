@@ -20,14 +20,14 @@ import 'package:flutter/material.dart';
 import '../design/tokens.dart';
 import 'prox_cards.dart';
 import 'prox_states.dart';
+import '../core/sync/store/record_helpers.dart' as rh;
 
-/// Formats UTC epoch millis as yyyy-MM-dd ('' when 0).
+/// Formats UTC epoch millis as yyyy-MM-dd ('' when 0). Track 6: thin
+/// wrapper over the pure-core canonical ([rh.dateIsoOf]); the millis
+/// gate + UTC conversion stay here (presentation concern).
 String trustDateLabel(int millis) {
   if (millis <= 0) return '';
-  final d = DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
-  return '${d.year.toString().padLeft(4, '0')}-'
-      '${d.month.toString().padLeft(2, '0')}-'
-      '${d.day.toString().padLeft(2, '0')}';
+  return rh.dateIsoOf(DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true));
 }
 
 /// Short DKey fingerprint (first 12 hex + ellipsis).

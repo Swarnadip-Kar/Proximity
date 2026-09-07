@@ -7,6 +7,7 @@ library;
 
 import 'dart:math';
 
+import 'store/record_helpers.dart';
 import 'store/store_base.dart';
 
 /// One enrolled student device per Gmail (client + rules enforce).
@@ -199,10 +200,10 @@ String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
           'If you need attendance marked meanwhile, ask your professor for manual attendance.';
     case StudentClaim.cooldownBlocked:
       final retry = r.retryAfter != null
-          ? ' You can re-enroll this device on ${_dayOf(r.retryAfter!)} — enrollment moves to a new phone once a week (unlimited times).'
+          ? ' You can re-enroll this device on ${dateIsoOf(r.retryAfter!)} — enrollment moves to a new phone once a week (unlimited times).'
           : '';
       final seen = binding != null && binding.lastSeenAtMillis > 0
-          ? ' Its last online activity was ${_dayOf(DateTime.fromMillisecondsSinceEpoch(binding.lastSeenAtMillis, isUtc: true))}.'
+          ? ' Its last online activity was ${dateIsoOf(DateTime.fromMillisecondsSinceEpoch(binding.lastSeenAtMillis, isUtc: true))}.'
           : '';
       return 'This Gmail is enrolled on another device.$seen$retry '
           'Until then, ask your professor to mark your attendance manually (Request manual attendance in class).';
@@ -210,9 +211,6 @@ String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
       return '';
   }
 }
-
-String _dayOf(DateTime d) =>
-    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
 /// Outcome of a successful [CloudSync.claimStudentDevice].
 class ClaimOutcome {

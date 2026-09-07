@@ -106,12 +106,11 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    String fmt(DateTime d) =>
-        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    // Track 6: was a local `fmt` closure duplicating [dateIsoOf].
     final inRange =
-        sessionsInRange(sessions, fmt(picked.start), fmt(picked.end));
+        sessionsInRange(sessions, dateIsoOf(picked.start), dateIsoOf(picked.end));
     final rangeLabel =
-        '${shortDayDateOf(fmt(picked.start))} … ${shortDayDateOf(fmt(picked.end))}';
+        '${shortDayDateOf(dateIsoOf(picked.start))} … ${shortDayDateOf(dateIsoOf(picked.end))}';
     if (inRange.isEmpty) {
       setState(
           () => _rangeError = 'No classes took place in $rangeLabel.');
@@ -126,9 +125,9 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       title: '${widget.courseName} · $rangeLabel',
       csv: csv,
       filename:
-          'attendance_${widget.courseName}_${fmt(picked.start)}_${fmt(picked.end)}.csv',
+          'attendance_${widget.courseName}_${dateIsoOf(picked.start)}_${dateIsoOf(picked.end)}.csv',
       subject:
-          'Attendance ${widget.courseName} ${fmt(picked.start)}-${fmt(picked.end)}',
+          'Attendance ${widget.courseName} ${dateIsoOf(picked.start)}-${dateIsoOf(picked.end)}',
     );
   }
 
