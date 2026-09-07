@@ -13,7 +13,8 @@
 //      fetched and the add completes with a "Matched online" note.
 //   3. ID only + online + no match → error asking for full details.
 //   4. ID only + offline → the task is stored in the pending queue and
-//      applied on the next sync (see processPendingAdds), with a queued
+//      applied on the next sync (see processPendingAdds in
+//      core/sync/queue.dart), with a queued
 //      note. Nothing is lost; attendance lands late, never missing.
 //
 // Field keys are "$fieldPrefix-name|-roll|-email" so the two mounted
@@ -26,7 +27,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_storage/storage.dart';
 
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
@@ -35,48 +35,16 @@ import 'prox_buttons.dart';
 import 'prox_cards.dart';
 import 'prox_states.dart';
 
+/// Queue replay ([processPendingAdds], [PendingManualAdd], [SyncQueue])
+/// lives in core/sync/queue.dart — re-exported here so existing callers
+/// (records page, tests) keep importing this file.
+export '../core/sync/queue.dart';
+
 /// User-facing copy for a caught error: [StateError] stringifies as
 /// 'Bad state: [message]', so both prefixes come off.
 String _userMessage(Object e) => '$e'
     .replaceFirst('StateError: ', '')
     .replaceFirst('Bad state: ', '');
-
-/// One offline manual-add task, waiting for internet to resolve the ID
-/// against the student directory and land on its session record.
-class PendingManualAdd {
-  final String course;
-  final String sessionId; // '' when queued from a live (unsaved) visit
-  final String roll;
-  final String name;
-  final String email;
-  final String createdAtIso;
-  const PendingManualAdd(
-      {required this.course,
-      required this.sessionId,
-      required this.roll,
-      this.name = '',
-      this.email = '',
-      required this.createdAtIso});
-
-  Map<String, dynamic> toJson() => {
-        'course': course,
-        'sessionId': sessionId,
-        'roll': roll,
-        'name': name,
-        'email': email,
-        'createdAtIso': createdAtIso,
-      };
-
-  factory PendingManualAdd.fromJson(Map<String, dynamic> j) =>
-      PendingManualAdd(
-        course: j['course'] as String? ?? '',
-        sessionId: j['sessionId'] as String? ?? '',
-        roll: j['roll'] as String? ?? '',
-        name: j['name'] as String? ?? '',
-        email: j['email'] as String? ?? '',
-        createdAtIso: j['createdAtIso'] as String? ?? '',
-      );
-}
 
 class ManualAddForm extends ConsumerStatefulWidget {
   final String fieldPrefix;
@@ -529,138 +497,4 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
       ],
     );
   }
-}
-
-/// Applies queued offline manual adds: resolves each roll against the
-/// online directory and marks the student present on its session record.
-/// Runs wherever the professor syncs (records page open); live visits skip
-/// applying while their draft is still open (the professor is present and
-/// adds directly) — those items wait for the next sync.
-/// Returns the resolved record ids (the caller pushes them to the cloud —
-/// they already exist there, so a plain id-diff merge would skip them)
-/// plus the still-pending count.
-/// Shared helper: exact ID match out of a directory hit list.
-/// The same roll-exact loop ran in 3 places (live search submit + queue
-/// resolution); one helper keeps them consistent.
-StudentDirectoryEntry? matchRollExact(
-    List<StudentDirectoryEntry> hits, String roll) {
-  for (final h in hits) {
-    if (h.roll == roll) return h;
-  }
-  return null;
-}
-
-/// Single-flight guard: concurrent sync passes must not interleave
-/// readPendingAdds → upsertHistory → writePendingAdds (lost items).
-bool _resolvingQueue = false;
-
-Future<({List<String> resolvedIds, int remaining})> processPendingAdds(
-    {required DeviceStore store, required CloudSync cloud}) async {
-  if (_resolvingQueue) {
-    final items = await store.readPendingAdds();
-    return (resolvedIds: const <String>[], remaining: items.length);
-  }
-  _resolvingQueue = true;
-  try {
-    return await _processPendingAddsInner(store: store, cloud: cloud);
-  } finally {
-    _resolvingQueue = false;
-  }
-}
-
-Future<({List<String> resolvedIds, int remaining})> _processPendingAddsInner(
-    {required DeviceStore store, required CloudSync cloud}) async {
-  var online = false;
-  try {
-    online = cloud.available &&
-        await cloud.isOnline().timeout(const Duration(seconds: 8));
-  } catch (_) {
-    online = false;
-  }
-  final items = await store.readPendingAdds();
-  if (!online || items.isEmpty) {
-    if (items.isNotEmpty) {
-      BleLog.log(ProxLogTags.sync,
-          'manual queue sync deferred (offline): ${items.length} waiting');
-    }
-    return (resolvedIds: const <String>[], remaining: items.length);
-  }
-  final resolvedIds = <String>[];
-  final remaining = <Map<String, dynamic>>[];
-  for (final raw in items) {
-    final item = PendingManualAdd.fromJson(
-        Map<String, dynamic>.from(raw as Map));
-    var done = false;
-    try {
-      if (item.roll.isNotEmpty) {
-        final hits = await cloud.searchStudents(rollPrefix: item.roll);
-        final match = matchRollExact(hits, item.roll);
-        if (match != null) {
-          final m = match;
-          final history = await store.readHistory();
-          ClassRecord? target;
-          if (item.sessionId.isNotEmpty) {
-            for (final r in history) {
-              if (r.id == item.sessionId) {
-                target = r;
-                break;
-              }
-            }
-          }
-          target ??= _latestCourseRecord(history, item.course);
-          // A live draft for this course means the visit is still open —
-          // leave the item queued rather than racing the live tally.
-          var live = false;
-          try {
-            live = item.course.isNotEmpty &&
-                await store.readSession(item.course) != null;
-          } catch (_) {}
-          if (target != null && !live) {
-            final email = m.email.toLowerCase();
-            final names = Map<String, String>.from(target.names)
-              ..[email] = m.name;
-            final rolls = Map<String, String>.from(target.rolls)
-              ..[email] = m.roll;
-            final windows = [
-              for (final w in target.windows)
-                Map<String, bool>.from(w)..[email] = true
-            ];
-            await store.upsertHistory(ClassRecord(
-              id: target.id,
-              courseId: target.courseId,
-              classLabel: target.classLabel,
-              dateIso: target.dateIso,
-              timestampIso: target.timestampIso,
-              startIso: target.startIso,
-              windows: windows,
-              names: names,
-              rolls: rolls,
-            ));
-            resolvedIds.add(target.id);
-            done = true;
-          }
-        }
-      }
-    } catch (_) {
-      done = false;
-    }
-    if (!done) remaining.add(raw);
-  }
-  BleLog.log(ProxLogTags.sync,
-      'manual queue sync: ${resolvedIds.length} resolved, ${remaining.length} remaining');
-  await store.writePendingAdds(remaining);
-  return (resolvedIds: resolvedIds, remaining: remaining.length);
-}
-
-ClassRecord? _latestCourseRecord(List<ClassRecord> history, String course) {
-  ClassRecord? best;
-  for (final r in history) {
-    final c = r.courseId.isNotEmpty ? r.courseId : r.classLabel;
-    if (course.isNotEmpty && c != course) continue;
-    if (best == null ||
-        r.timestampIso.compareTo(best.timestampIso) > 0) {
-      best = r;
-    }
-  }
-  return best;
 }

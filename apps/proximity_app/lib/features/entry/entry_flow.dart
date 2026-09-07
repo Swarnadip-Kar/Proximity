@@ -25,7 +25,6 @@ import 'package:proximity_ble/ble.dart';
 
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
-import '../../core/device_identity.dart';
 import '../../core/device_store.dart';
 import '../../mode.dart';
 

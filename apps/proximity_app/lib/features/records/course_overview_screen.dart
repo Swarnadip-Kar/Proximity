@@ -25,7 +25,6 @@ import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../screens/take_attendance.dart';
 import '../../widgets/clock.dart';
-import '../../widgets/manual_add.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
