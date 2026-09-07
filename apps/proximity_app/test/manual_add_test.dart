@@ -333,7 +333,8 @@ class _ThrowingCloud extends FakeCloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     throw StateError(
         'Cloud directory search refused by security rules (permission-denied) — deploy them.');
   }
@@ -348,13 +349,15 @@ class _RecordingCloud extends FakeCloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     calls++;
     lastNamePrefix = namePrefix;
     return super.searchStudents(
         emailPrefix: emailPrefix,
         rollPrefix: rollPrefix,
         namePrefix: namePrefix,
-        limit: limit);
+        limit: limit,
+        org: org);
   }
 }

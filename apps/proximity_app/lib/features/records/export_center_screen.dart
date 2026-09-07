@@ -12,7 +12,6 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../../core/auth.dart';
-import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../design/app_theme.dart';
 import '../../design/tokens.dart';

@@ -10,6 +10,7 @@ import 'package:proximity_app/core/sync/org.dart';
 import 'package:proximity_app/core/sync/sessions.dart';
 import 'package:proximity_app/core/sync/fake_sync.dart';
 import 'package:proximity_app/core/sync/claim.dart';
+import 'package:proximity_app/core/sync/directory.dart' as syncdir;
 import 'package:proximity_app/core/sync/roles.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/mode.dart';
@@ -181,9 +182,9 @@ void main() {
 
     test('searchStudents filters by org', () async {
       final f = FakeCloudSync();
-      f.dir['a@univ.edu'] = const StudentDirectoryEntry(
+      f.dir['a@univ.edu'] = const syncdir.StudentDirectoryEntry(
           email: 'a@univ.edu', name: 'A', roll: '1', org: 'univ.edu');
-      f.dir['b@other.edu'] = const StudentDirectoryEntry(
+      f.dir['b@other.edu'] = const syncdir.StudentDirectoryEntry(
           email: 'b@other.edu', name: 'B', roll: '1', org: 'other.edu');
       final hits =
           await f.searchStudents(rollPrefix: '1', org: 'univ.edu');
@@ -319,52 +320,59 @@ void main() {
           mCross.close();
         }
         // Cross-org /prove returns invalid(org-mismatch) with no tally.
-        final seed = randBytes(32);
-        final skS = ed.newKeyFromSeed(seed);
-        final pkS = ed.public(skS);
-        final pk32 = Uint8List.fromList(pkS.bytes.sublist(0, 32));
-        final descClient = mk();
-        WindowDescriptor desc;
+        // Full radio loop: fetch the real descriptor with the heard
+        // challenge, then prove with a foreign org (the gate runs before
+        // crypto, so the sig helpers never even matter for the reject).
+        final stu = ProxCrypto.generateEdKeypair();
+        Uint8List pk32(ed.PublicKey k) =>
+            Uint8List.fromList(k.bytes.sublist(0, 32));
+        final fetchClient = mk();
+        late WindowDescriptor desc;
+        late Uint8List cj;
         try {
-          // Fetch with a dummy radio challenge: fetchWindow verifies Sig_p
-          // against the radio copy, so drive it through the real challenge.
-          // Simpler: hit /window directly for the descriptor fields is not
-          // exposed — instead prove with a wrong-org body and assert the
-          // server reason without needing a valid Sig_p (the org gate runs
-          // before crypto).
-          desc = WindowDescriptor(
-            classLabel: 't',
-            sessionId: randBytes(16),
-            windowId: randBytes(6),
-            jNow: 0,
-            profPk: prof.publicKey,
-            sigP: Uint8List(64),
-            tlsFp: Uint8List(32),
-            display: 't',
-            org: 'univ.edu',
-          );
+          cj = server.window!.challengeFor(0);
+          desc = await fetchClient.fetchWindow(cj);
+          expect(desc.org, 'univ.edu');
         } finally {
-          descClient.close();
+          fetchClient.close();
         }
         final proveClient = mk();
         try {
           final res = await proveClient.prove(
             desc: desc,
             studentId: 's@other.edu',
-            challenge: randBytes(8),
+            challenge: cj,
             j: 0,
             faceScore: 1.0,
-            peerW: ProxCrypto.peerAlias(pk32, desc.windowId),
+            peerW: ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId),
             name: 'S',
             roll: '1',
-            pkS: pk32,
+            pkS: pk32(stu.publicKey),
             org: 'other.edu',
-            sigSFor: (c, jj) => Uint8List(64),
-            sigBindFor: (fp, jj) => Uint8List(64),
+            sigSFor: (c, jj) => ProxCrypto.signStudentProve(
+              studentSk: stu.privateKey,
+              sessionId: desc.sessionId,
+              windowId: desc.windowId,
+              j: jj,
+              challenge: c,
+              studentId: 's@other.edu',
+              faceScore: 1.0,
+            ),
+            sigBindFor: (fp, jj) => ProxCrypto.sign(
+                stu.privateKey,
+                bindPreimage(
+                    sessionId: desc.sessionId,
+                    windowId: desc.windowId,
+                    j: jj,
+                    tlsFingerprint: fp)),
           );
           expect(res.decision, ProveDecision.invalid);
           expect(res.reason, 'org-mismatch');
-          expect(server.tally.size, 0);
+          // No tally write: the waiting room ensures rows (empty wins) for
+          // admitted emails, but the cross-org prover never lands there and
+          // nothing confirms.
+          expect(server.tally.search('other.edu'), isEmpty);
+          expect(server.tally.presentCount, 0);
         } finally {
           proveClient.close();
         }

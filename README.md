@@ -227,6 +227,18 @@ owner-visible until the backfill stamps them, then remove `missingOrg()`):
   types; readers coerce numeric names/rolls to strings. Doc ids are lowercased Gmails throughout;
   rules compare `lower()` on both sides so mixed-case accounts work.
 
+Track 1 manual drill (no emulator in CI — run once per rules deploy):
+T1 cross-domain offline pair: prof A (a@univ.edu) hosts, student B
+(b@other.edu) joins → waiting stays unlisted for B's presence is rejected
+(org-mismatch, count unchanged), B's mark attempt returns the wrong-org
+receipt with no POST, A's tally unchanged. Same-org pair marks confirmed.
+T2 edges: sign in with `User@Mail.Univ.EDU` vs `user@univ.edu` (same org,
+shared sessions), `user@mail.univ.edu` (different org, invisible), and a
+`googlemail.com` student against a `gmail.com` class (same org, marks).
+T3 direct-ID invisibility: with A's session id, B's device fetches
+`classSessions/{id}` directly → permission-denied (rules), and
+`studentDevices/b@other.edu` is unreadable to A.
+
 Timelines: device moves unlimited lifetime, ≤1 per 7 days, exact
 re-enroll date shown with the old device's last-online day; same-install
 re-key/re-enroll always free; first bind always free; manual attendance
