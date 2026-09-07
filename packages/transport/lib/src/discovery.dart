@@ -13,6 +13,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:proximity_protocol/protocol.dart';
+
 import 'client.dart';
 
 const kDiscoveryPort = 54545;
@@ -58,33 +60,33 @@ bool hintEntryAlive({
 /// suppresses broadcasts entirely (verified live: every broadcast
 /// variant 0/5), use the BLE IP-hint path or manual IP join instead.
 String? directedBroadcastGuess(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return null;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return null;
-  final first = nums[0]!;
+  // Shared dotted-quad parse (M2 protocol helper); address policy below
+  // stays local to discovery.
+  final octets = parseIpv4(addr);
+  if (octets == null) return null;
+  final first = octets[0];
   final private = first == 10 ||
-      (first == 172 && nums[1]! >= 16 && nums[1]! <= 31) ||
-      (first == 192 && nums[1] == 168);
+      (first == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (first == 192 && octets[1] == 168);
   if (!private) return null;
-  return '${parts[0]}.${parts[1]}.${parts[2]}.255';
+  return '${octets[0]}.${octets[1]}.${octets[2]}.255';
 }
 
 /// /16 directed-broadcast guess (x.y.255.255) for the same address.
 /// Covers /16..​/18 campuses where the /24 guess is a plain (unassigned)
 /// unicast address no host answers. Harmless when wrong.
 String? directedBroadcastGuess16(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return null;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return null;
-  final first = nums[0]!;
+  // Shared dotted-quad parse (M2 protocol helper); address policy below
+  // stays local to discovery.
+  final octets = parseIpv4(addr);
+  if (octets == null) return null;
+  final first = octets[0];
   final private = first == 10 ||
-      (first == 172 && nums[1]! >= 16 && nums[1]! <= 31) ||
-      (first == 192 && nums[1] == 168);
+      (first == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (first == 192 && octets[1] == 168);
   if (!private) return null;
   if (addr.startsWith('127.') || addr.startsWith('169.254.')) return null;
-  return '${parts[0]}.${parts[1]}.255.255';
+  return '${octets[0]}.${octets[1]}.255.255';
 }
 
 /// All beacon targets: limited broadcast plus directed guesses per
@@ -152,11 +154,10 @@ bool _isCellularIface(String name) {
 }
 
 bool _isPrivateV4(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return false;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return false;
-  final a = nums[0]!, b = nums[1]!;
+  // Shared dotted-quad parse (M2 protocol helper); policy unchanged.
+  final octets = parseIpv4(addr);
+  if (octets == null) return false;
+  final a = octets[0], b = octets[1];
   return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
 }
 

@@ -29,7 +29,10 @@ import 'package:proximity_storage/storage.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
+import 'live_room.dart';
 import 'tls.dart';
+
+export 'live_room.dart';
 
 /// BLE sighting as seen by the host radio. Null = never heard over radio.
 class RadioSighting {
@@ -60,41 +63,6 @@ String _ip(Request req) {
 Response _json(Object o, [int status = 200]) => Response(status,
     body: jsonEncode(o), headers: {'content-type': 'application/json'});
 
-class WaitingEntry {
-  final String email;
-  final String name;
-  final String roll;
-  final DateTime ts;
-  const WaitingEntry(
-      {required this.email,
-      required this.name,
-      required this.roll,
-      required this.ts});
-  Map<String, dynamic> toJson() =>
-      {'email': email, 'name': name, 'roll': roll, 'ts': ts.toIso8601String()};
-}
-
-class ManualEntry {
-  final String email;
-  final String name;
-  final String roll;
-  final DateTime ts;
-  String status; // pending|approved|rejected
-  ManualEntry(
-      {required this.email,
-      required this.name,
-      required this.roll,
-      required this.ts,
-      this.status = 'pending'});
-  Map<String, dynamic> toJson() => {
-        'email': email,
-        'name': name,
-        'roll': roll,
-        'ts': ts.toIso8601String(),
-        'status': status,
-      };
-}
-
 class ProxServer {
   final String classLabel;
   final ed.PrivateKey profSk;
@@ -121,8 +89,7 @@ class ProxServer {
   int _windowNo = 1;
   late final WindowTls tls;
   String _bearer = '';
-  final Map<String, WaitingEntry> _waiting = {};
-  final Map<String, ManualEntry> _manual = {};
+  late final LiveRoom room;
 
   ProxServer({
     required this.classLabel,
@@ -132,6 +99,9 @@ class ProxServer {
     TallyStore? tally,
     this.onProve,
   }) : tally = tally ?? TallyStore() {
+    // Waiting/manual registry lives in LiveRoom; the server keeps the same
+    // public API by delegation (approve still marks current window/1 idle).
+    room = LiveRoom(tally: this.tally, windowNoOf: () => _windowNo);
     // One TLS identity per hosting session (bind needs a cert before any
     // window opens). Freshness still binds per window: the fingerprint is
     // delivered inside the per-sub-epoch signed /window descriptor, and
@@ -199,70 +169,34 @@ class ProxServer {
   int get windowNo => _windowNo;
 
   // ---- Waiting room (students join before the window opens) ----
-  void registerWaiting(String email, String name, [String roll = '']) {
-    final key = email.trim().toLowerCase();
-    if (key.isEmpty || !key.contains('@')) return;
-    _waiting[key] = WaitingEntry(
-        email: key, name: name, roll: roll, ts: DateTime.now().toUtc());
-    tally.ensure(key, name, roll);
-  }
+  // Delegated to LiveRoom (identical semantics; see live_room.dart).
+  void registerWaiting(String email, String name, [String roll = '']) =>
+      room.registerWaiting(email, name, roll);
 
   /// Explicit leave: the student backed out of the waiting room (Cancel /
   /// back navigation / dispose). Returns true when an entry was removed.
   /// Presence heartbeats stop with the room timers, so without this the
   /// professor's waiting count would stay stale.
-  bool removeWaiting(String email) {
-    final key = email.trim().toLowerCase();
-    if (key.isEmpty) return false;
-    return _waiting.remove(key) != null;
-  }
+  bool removeWaiting(String email) => room.removeWaiting(email);
 
-  List<WaitingEntry> get waitingRows {
-    final out = _waiting.values.toList()
-      ..sort((a, b) => a.ts.compareTo(b.ts));
-    return out;
-  }
+  List<WaitingEntry> get waitingRows => room.waitingRows;
 
-  int get waitingCount => _waiting.length;
+  int get waitingCount => room.waitingCount;
 
   // ---- Manual attendance over LAN ----
-  void requestManual(String email, String name, [String roll = '']) {
-    final key = email.trim().toLowerCase();
-    if (key.isEmpty || !key.contains('@')) return;
-    final prev = _manual[key];
-    _manual[key] = ManualEntry(
-        email: key,
-        name: name,
-        roll: roll,
-        ts: DateTime.now().toUtc(),
-        status: prev?.status == 'approved' ? 'approved' : 'pending');
-    tally.ensure(key, name, roll);
-  }
+  void requestManual(String email, String name, [String roll = '']) =>
+      room.requestManual(email, name, roll);
 
-  List<ManualEntry> get manualRows {
-    final out = _manual.values.toList()
-      ..sort((a, b) => a.ts.compareTo(b.ts));
-    return out;
-  }
+  List<ManualEntry> get manualRows => room.manualRows;
 
-  List<ManualEntry> get manualPending =>
-      manualRows.where((e) => e.status == 'pending').toList();
+  List<ManualEntry> get manualPending => room.manualPending;
 
-  String manualStatus(String email) =>
-      _manual[email.trim().toLowerCase()]?.status ?? 'none';
+  String manualStatus(String email) => room.manualStatus(email);
 
   /// Prof decision. Approving marks the student present in the current
   /// window (or window 1 when idle) so manual marks count in the session.
-  bool decideManual(String email, bool approve) {
-    final key = email.trim().toLowerCase();
-    final e = _manual[key];
-    if (e == null) return false;
-    e.status = approve ? 'approved' : 'rejected';
-    if (approve) {
-      tally.mark(key, e.name, _windowNo == 0 ? 1 : _windowNo, roll: e.roll);
-    }
-    return true;
-  }
+  bool decideManual(String email, bool approve) =>
+      room.decideManual(email, approve);
 
   Future<HttpServer> start({String host = '0.0.0.0', int port = 8443}) async {
     final ctx = SecurityContext()
