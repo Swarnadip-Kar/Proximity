@@ -2,8 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../core/sync/store/record_helpers.dart' as rh;
-
 const _kWeekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const _kMonths = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -72,11 +70,6 @@ String formatTime(DateTime t) =>
     '${t.hour.toString().padLeft(2, '0')}:'
     '${t.minute.toString().padLeft(2, '0')}:'
     '${t.second.toString().padLeft(2, '0')}';
-
-/// yyyy-MM-dd for a calendar date. Track 6: delegates to the pure-core
-/// canonical ([rh.dateIsoOf]) so core never imports widgets; UI call
-/// sites keep importing this file unchanged.
-String dateIsoOf(DateTime t) => rh.dateIsoOf(t);
 
 /// Tight session title: short weekday + day/month, time when known
 /// ('CS201 · Thu, 3 Sep · 10:00'). Shared by the course overview and the

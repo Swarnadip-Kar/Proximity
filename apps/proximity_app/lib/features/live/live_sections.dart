@@ -22,7 +22,6 @@ import '../../core/device_store.dart';
 import '../../core/host_driver.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
-import '../../widgets/clock.dart';
 import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
 import '../debug/debug_log_screen.dart';

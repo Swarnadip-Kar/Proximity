@@ -36,8 +36,9 @@ bool recordInCourse(ClassRecord record, String course) =>
     (record.courseId.isEmpty && record.classLabel == course);
 
 /// Calendar date as yyyy-MM-dd (course stamps, claim copy, trust labels,
-/// export filenames). Pure — the canonical home; widgets/clock.dart
-/// re-exports the same value for UI call sites.
+/// export filenames). Pure — the single canonical definition; UI call
+/// sites resolve it via the device_store barrel (core never imports
+/// widgets/, so no widget file may redefine it).
 String dateIsoOf(DateTime t) =>
     '${t.year.toString().padLeft(4, '0')}-'
     '${t.month.toString().padLeft(2, '0')}-'
