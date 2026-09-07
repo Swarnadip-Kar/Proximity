@@ -26,6 +26,7 @@ import 'package:proximity_ble/ble.dart';
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/sync_hook.dart';
 import '../../mode.dart';
 
 /// Mounted check from the calling State. Every helper that awaits and then
@@ -156,7 +157,8 @@ Future<void> entryMergeProfCloud(
     final res = await syncEngine.flush(
         store: store,
         cloud: cloud,
-        prof: (uid: uid, email: email, name: name, org: org));
+        prof: (uid: uid, email: email, name: name, org: org),
+        attest: await readAttestLocal(ref));
     BleLog.log('STATE',
         'entry prof cloud merged (${res.pushed} pushed, ${res.remaining} remaining)');
   } catch (_) {}

@@ -51,6 +51,36 @@ Future<SyncProf?> readSyncProf(WidgetRef ref) async {
   return (uid: id.uid, email: id.email, name: id.name, org: org);
 }
 
+/// Student verify identity for [syncEngine] attestation heartbeats, or
+/// null when there is no signed-in student (prof-only, signed out,
+/// offline-skipped, web records) — the engine then skips verification
+/// with zero cloud reads. Student-only check is role-cache-local; the
+/// engine fetches the binding and gates on attestationVerifyDue.
+Future<AttestLocal?> readAttestLocal(WidgetRef ref) async {
+  final AuthService auth;
+  final DeviceStore store;
+  try {
+    auth = ref.read(authServiceProvider);
+    store = ref.read(deviceStoreProvider);
+  } catch (_) {
+    return null;
+  }
+  SignedAccount? acct;
+  try {
+    acct = auth.current;
+  } catch (_) {}
+  if (acct == null || acct.email.isEmpty) return null;
+  Map<String, String>? role;
+  try {
+    role = await store.readRole();
+  } catch (_) {}
+  if (role == null || !roleHas(role, 'student', email: acct.email)) {
+    return null;
+  }
+  final org = acct.org.isNotEmpty ? acct.org : (role['org'] ?? '');
+  return (emailLower: acct.email.toLowerCase(), org: org);
+}
+
 /// One-line flush for screens (pull-merge on open, retry buttons).
 Future<SyncFlushResult> flushNow(WidgetRef ref) async {
   final DeviceStore store;
@@ -62,8 +92,10 @@ Future<SyncFlushResult> flushNow(WidgetRef ref) async {
     return const SyncFlushResult(online: false, remaining: -1);
   }
   final prof = await readSyncProf(ref);
+  final attest = await readAttestLocal(ref);
   try {
-    return await syncEngine.flush(store: store, cloud: cloud, prof: prof);
+    return await syncEngine.flush(
+        store: store, cloud: cloud, prof: prof, attest: attest);
   } catch (_) {
     return const SyncFlushResult(online: false, remaining: -1);
   }

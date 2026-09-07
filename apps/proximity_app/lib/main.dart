@@ -234,6 +234,8 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
 
   Future<SyncProf?> _profOf() => readSyncProf(ref);
 
+  Future<AttestLocal?> _attestOf() => readAttestLocal(ref);
+
   /// Arms the connectivity-hint subscription only where the platform
   /// plugin actually answers: a missing plugin (widget tests, Linux
   /// desktop) reports through FlutterError at EventChannel-listen time,
@@ -246,8 +248,8 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
     try {
       final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
-      syncEngine.startBackstop(
-          store: store, cloud: cloud, profOf: _profOf);
+       syncEngine.startBackstop(
+           store: store, cloud: cloud, profOf: _profOf, attestOf: _attestOf);
       try {
         await Connectivity().checkConnectivity();
       } catch (_) {
@@ -263,10 +265,11 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
         final hintOnline =
             results.any((r) => r != ConnectivityResult.none);
         try {
-          syncEngine.onConnectivityHint(hintOnline,
-              store: ref.read(deviceStoreProvider),
-              cloud: ref.read(cloudSyncProvider),
-              profOf: _profOf);
+           syncEngine.onConnectivityHint(hintOnline,
+               store: ref.read(deviceStoreProvider),
+               cloud: ref.read(cloudSyncProvider),
+               profOf: _profOf,
+               attestOf: _attestOf);
         } catch (_) {}
         // Channel errors must never surface: the hint is advisory, the
         // server probe is ground truth.
@@ -293,10 +296,11 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       try {
-        syncEngine.onAppResume(
-            store: ref.read(deviceStoreProvider),
-            cloud: ref.read(cloudSyncProvider),
-            profOf: _profOf);
+         syncEngine.onAppResume(
+             store: ref.read(deviceStoreProvider),
+             cloud: ref.read(cloudSyncProvider),
+             profOf: _profOf,
+             attestOf: _attestOf);
       } catch (_) {}
     }
   }

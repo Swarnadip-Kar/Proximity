@@ -40,6 +40,7 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../../design/tokens.dart';
+import 'claim.dart';
 import 'cloud_api.dart';
 import 'org.dart';
 import 'queue.dart';
@@ -49,6 +50,12 @@ import 'store/store_base.dart';
 /// Professor push identity for a flush (null = local-only: student mode,
 /// offline-skipped prof, signed out — outbox stays queued, queue replays).
 typedef SyncProf = ({String uid, String email, String name, String org});
+
+/// Student verify identity for a flush (null = no signed-in student —
+/// prof-only, signed out, web records — the attestation heartbeat is
+/// skipped with zero cloud reads). The engine fetches the binding itself
+/// and gates on [attestationVerifyDue], so callers pass identity only.
+typedef AttestLocal = ({String emailLower, String org});
 
 /// Result of one flush (single-flight: concurrent callers get the remaining
 /// count without interleaving, same discipline as SyncQueue).
@@ -232,10 +239,14 @@ class SyncEngine {
   /// union-merge-before-push) -> manual queue (SyncQueue) -> pull + union
   /// converge. Partial failure: acked entries drop, the remainder (with
   /// bumped attempts/nextRetryAt) is rewritten ONCE at the end.
+  /// [attest] triggers the attestation heartbeat (verifyAttestationChain)
+  /// when online — gated, deferred, never blocking (see
+  /// [_maybeVerifyAttestation]); null skips it with zero cloud reads.
   Future<SyncFlushResult> flush(
       {required DeviceStore store,
       required CloudSync cloud,
-      SyncProf? prof}) async {
+      SyncProf? prof,
+      AttestLocal? attest}) async {
     if (_running) {
       return SyncFlushResult(
           online: _lastOnline ?? true,
@@ -243,7 +254,8 @@ class SyncEngine {
     }
     _running = true;
     try {
-      return await _flushInner(store: store, cloud: cloud, prof: prof);
+      return await _flushInner(
+          store: store, cloud: cloud, prof: prof, attest: attest);
     } finally {
       _running = false;
     }
@@ -252,7 +264,8 @@ class SyncEngine {
   Future<SyncFlushResult> _flushInner(
       {required DeviceStore store,
       required CloudSync cloud,
-      SyncProf? prof}) async {
+      SyncProf? prof,
+      AttestLocal? attest}) async {
     final now = nowUtc();
     var online = false;
     try {
@@ -295,6 +308,9 @@ class SyncEngine {
       // Still converge pulls (other devices may have written meanwhile).
       await _converge(store, cloud, prof);
       await _maybeSignalBackfillComplete(store, discoveredLegacy);
+      // Steady-state flush: still the heartbeat moment for dual-role
+      // phones (empty outbox, professor converged).
+      await _maybeVerifyAttestation(cloud: cloud, attest: attest);
       return const SyncFlushResult(online: true);
     }
 
@@ -348,6 +364,9 @@ class SyncEngine {
       await _converge(store, cloud, prof);
       await _maybeSignalBackfillComplete(store, discoveredLegacy);
     }
+    // Heartbeat path, last: attendance sync first, verification after.
+    // Never throws, never blocks pushes, never touches local data.
+    await _maybeVerifyAttestation(cloud: cloud, attest: attest);
     final remaining = await pendingCount(store);
     BleLog.log(ProxLogTags.sync,
         'SYNC flush done: $pushed pushed, $deleted deleted, $resolvedQueue queue-resolved, $remaining remaining');
@@ -680,6 +699,59 @@ class SyncEngine {
     }
   }
 
+  /// Attestation heartbeat: SyncEngine's sync-on-reconnect invocation of
+  /// verifyAttestationChain for the local student device. Runs ONLY here
+  /// (online flush) — never in the live/offline marking path, never
+  /// blocking it: every failure mode defers with a SYNC log and leaves the
+  /// flush result, the outbox, and attendance untouched. A completed
+  /// anomaly verdict is already admin-written to the device doc by the
+  /// endpoint; this method changes no local state (flag-don't-invalidate:
+  /// review is Track 5's screen, fed by the exposed fields).
+  Future<void> _maybeVerifyAttestation(
+      {required CloudSync cloud, AttestLocal? attest}) async {
+    if (attest == null || attest.emailLower.isEmpty) return;
+    final email = attest.emailLower.toLowerCase();
+    StudentDeviceDoc? binding;
+    try {
+      binding = await cloud
+          .fetchStudentDevice(email)
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      BleLog.log(ProxLogTags.sync,
+          'attest verify deferred (binding unreadable): $e');
+      return;
+    }
+    if (binding == null) return; // not enrolled: nothing to verify.
+    if (!attestationVerifyDue(
+        attestedUntilMillis: binding.attestedUntilMillis,
+        serverVerifiedAtMillis: binding.serverVerifiedAtMillis,
+        now: nowUtc())) {
+      return; // stamped + fresh window: cheap skip, zero verify calls.
+    }
+    AttestationVerifyOutcome outcome;
+    try {
+      outcome = await cloud
+          .verifyAttestationChain(
+              emailLower: email,
+              org: attest.org.isNotEmpty ? attest.org : binding.org)
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      BleLog.log(
+          ProxLogTags.sync, 'attest verify deferred (endpoint unreachable)');
+      return;
+    }
+    if (!outcome.ok) {
+      BleLog.log(ProxLogTags.sync,
+          'attest verify deferred (${outcome.reason}) — will retry next flush');
+      return;
+    }
+    BleLog.log(
+        ProxLogTags.sync,
+        outcome.anomaly
+            ? 'attest re-verify ANOMALY (${outcome.reason}) — device flagged for professor/admin review, attendance untouched'
+            : 'attest re-verify ok (${outcome.reason})');
+  }
+
   bool _due(String nextRetryAtIso, DateTime now) {
     if (nextRetryAtIso.isEmpty) return true;
     try {
@@ -697,7 +769,8 @@ class SyncEngine {
   void onConnectivityHint(bool hintOnline,
       {required DeviceStore store,
       required CloudSync cloud,
-      FutureOr<SyncProf?> Function()? profOf}) {
+      FutureOr<SyncProf?> Function()? profOf,
+      FutureOr<AttestLocal?> Function()? attestOf}) {
     _debounce?.cancel();
     if (!hintOnline) {
       _lastOnline = false;
@@ -715,10 +788,13 @@ class SyncEngine {
         BleLog.log(ProxLogTags.sync,
             'SYNC connectivity returned (hint + server probe) — flushing');
         SyncProf? prof;
+        AttestLocal? attest;
         try {
           prof = await profOf?.call();
+          attest = await attestOf?.call();
         } catch (_) {}
-        unawaited(flush(store: store, cloud: cloud, prof: prof));
+        unawaited(
+            flush(store: store, cloud: cloud, prof: prof, attest: attest));
       }
       _lastOnline = online;
     });
@@ -729,20 +805,25 @@ class SyncEngine {
   void onAppResume(
       {required DeviceStore store,
       required CloudSync cloud,
-      FutureOr<SyncProf?> Function()? profOf}) {
-    unawaited(_resumeFlush(store: store, cloud: cloud, profOf: profOf));
+      FutureOr<SyncProf?> Function()? profOf,
+      FutureOr<AttestLocal?> Function()? attestOf}) {
+    unawaited(
+        _resumeFlush(store: store, cloud: cloud, profOf: profOf, attestOf: attestOf));
   }
 
   Future<void> _resumeFlush(
       {required DeviceStore store,
       required CloudSync cloud,
-      FutureOr<SyncProf?> Function()? profOf}) async {
+      FutureOr<SyncProf?> Function()? profOf,
+      FutureOr<AttestLocal?> Function()? attestOf}) async {
     SyncProf? prof;
+    AttestLocal? attest;
     try {
       prof = await profOf?.call();
+      attest = await attestOf?.call();
     } catch (_) {}
     try {
-      await flush(store: store, cloud: cloud, prof: prof);
+      await flush(store: store, cloud: cloud, prof: prof, attest: attest);
     } catch (_) {}
   }
 
@@ -753,6 +834,7 @@ class SyncEngine {
       {required DeviceStore store,
       required CloudSync cloud,
       FutureOr<SyncProf?> Function()? profOf,
+      FutureOr<AttestLocal?> Function()? attestOf,
       Duration interval = const Duration(minutes: 15)}) {
     _backstop?.cancel();
     _backstop = Timer.periodic(interval, (_) async {
@@ -760,10 +842,12 @@ class SyncEngine {
         if (await pendingCount(store) > 0) {
           BleLog.log(ProxLogTags.sync, 'SYNC backstop tick — flushing');
           SyncProf? prof;
+          AttestLocal? attest;
           try {
             prof = await profOf?.call();
+            attest = await attestOf?.call();
           } catch (_) {}
-          await flush(store: store, cloud: cloud, prof: prof);
+          await flush(store: store, cloud: cloud, prof: prof, attest: attest);
         }
       } catch (_) {}
     });

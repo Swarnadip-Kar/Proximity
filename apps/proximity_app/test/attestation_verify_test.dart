@@ -6,8 +6,40 @@
 // deny for kAttestationServerFields (see firestore.rules).
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_app/core/device_store.dart';
+import 'package:proximity_app/core/sync_hook.dart';
+
+/// Captures readAttestLocal(ref) inside a real widget (the hook takes a
+/// WidgetRef, like readSyncProf — so the test goes through pumpWidget,
+/// not a bare container).
+class _AttestProbe extends ConsumerStatefulWidget {
+  final void Function(AttestLocal?, Object?) onDone;
+  const _AttestProbe({required this.onDone});
+  @override
+  ConsumerState<_AttestProbe> createState() => _AttestProbeState();
+}
+
+class _AttestProbeState extends ConsumerState<_AttestProbe> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      readAttestLocal(ref).then(
+        (a) => widget.onDone(a, null),
+        onError: (Object e) => widget.onDone(null, e),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox();
+}
 
 StudentDeviceDoc dev(String email) => StudentDeviceDoc(
       email: email,
@@ -214,6 +246,91 @@ void main() {
       expect(deferred.reason, 'unreachable');
       expect((await fake.fetchStudentDevice('s@x.in'))!.serverVerifiedAtMillis,
           before);
+    });
+  });
+
+  group('readAttestLocal (flush identity, zero reads when skipped)', () {
+    Future<AttestLocal?> probe(
+        WidgetTester tester, List<Override> overrides,
+        {String label = ''}) async {
+      AttestLocal? got;
+      Object? err;
+      var done = false;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: overrides,
+          child: _AttestProbe(onDone: (a, e) {
+            got = a;
+            err = e;
+            done = true;
+          }),
+        ),
+      );
+      // Deterministic settle: timed pumps run post-frame callbacks and
+      // flush hook microtasks (pumpAndSettle alone can exit with no frame
+      // scheduled, stranding the callback).
+      for (var i = 0; i < 20 && !done; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(err, isNull, reason: '[$label] readAttestLocal threw: $err');
+      expect(done, isTrue, reason: '[$label] hook never completed');
+      return got;
+    }
+
+    Future<List<Override>> overridesFor(
+        {SignedAccount? account, Map<String, String>? role}) async {
+      final store = InMemoryDeviceStore();
+      if (role != null) await store.writeRole(role);
+      return [
+        authServiceProvider.overrideWithValue(FakeAuthService(account)),
+        deviceStoreProvider.overrideWithValue(store),
+      ];
+    }
+
+    testWidgets('student account yields identity (org via account)',
+        (tester) async {
+      final attest = await probe(
+          tester,
+          await overridesFor(
+            account: const SignedAccount(
+                email: 'S@Univ.edu', displayName: 'S', uid: 'u9'),
+            role: const {'roles': 'student', 'email': 's@univ.edu'},
+          ));
+      expect(attest, isNotNull);
+      expect(attest!.emailLower, 's@univ.edu');
+      expect(attest.org, 'univ.edu'); // FakeAuthService derives via orgOf
+    });
+
+    testWidgets('signed out skips (null)', (tester) async {
+      expect(await probe(tester, await overridesFor(), label: 'signed-out'),
+          isNull);
+    });
+
+    testWidgets('prof-only skips (null)', (tester) async {
+      expect(
+          await probe(
+              tester,
+              await overridesFor(
+                account: const SignedAccount(
+                    email: 'p@univ.edu', displayName: 'P', uid: 'u1'),
+                role: const {'roles': 'prof', 'email': 'p@univ.edu'},
+              ),
+              label: 'prof-only'),
+          isNull);
+    });
+
+    testWidgets('role-mismatch skips (null)', (tester) async {
+      // Role cache for a DIFFERENT gmail: never verify as the wrong user.
+      expect(
+          await probe(
+              tester,
+              await overridesFor(
+                account: const SignedAccount(
+                    email: 's@univ.edu', displayName: 'S', uid: 'u9'),
+                role: const {'roles': 'student', 'email': 'other@univ.edu'},
+              ),
+              label: 'role-mismatch'),
+          isNull);
     });
   });
 
