@@ -102,16 +102,10 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         }
         return;
       }
-      final myOrg = (acct.org.isNotEmpty)
-          ? acct.org
-          : (() {
-              final e = email.trim().toLowerCase();
-              final at = e.lastIndexOf('@');
-              if (at <= 0 || at == e.length - 1) return '';
-              var domain = e.substring(at + 1).trim();
-              if (domain == 'googlemail.com') return 'gmail.com';
-              return domain;
-            })();
+      // Track 6: was an inline domain-parse closure (missing the
+      // space/'@'/dot guards) — [orgOf] is the tested canonical.
+      final myOrg =
+          acct.org.isNotEmpty ? acct.org : orgOf(email);
       final sessions = await cloud.pullStudentSessions(email, org: myOrg);
       // Device copy: same docs, same order (newest first). Professor
       // attendance pushes and course renames land here on every pull.

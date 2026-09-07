@@ -23,6 +23,7 @@ import '../features/face_identity/face_verifier.dart';
 import '../mode.dart';
 import 'device_store.dart';
 import 'platformx.dart';
+import 'sync/org.dart';
 
 enum StudentResult { marked, late, faceFailed, noSignal, error }
 
@@ -230,27 +231,13 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   }
 
   /// Student org for the join-gate: explicit identity org wins, else the
-  /// Gmail domain (same derivation as sign-in; never user-entered).
+  /// Gmail domain via [orgOf] (same derivation as sign-in; never
+  /// user-entered). Track 6: local `_orgOf` deleted (was a line-for-line
+  /// copy of orgOf minus the empty-domain guard).
   static String studentOrgOf(LinkedIdentity identity) => identity
           .org.isNotEmpty
       ? identity.org
-      : _orgOf(identity.gmail);
-
-  static String _orgOf(String email) {
-    final e = email.trim().toLowerCase();
-    final at = e.lastIndexOf('@');
-    if (at <= 0 || at == e.length - 1) return '';
-    var domain = e.substring(at + 1).trim();
-    if (domain.isEmpty ||
-        domain.contains(' ') ||
-        domain.contains('@') ||
-        domain.startsWith('.') ||
-        domain.endsWith('.')) {
-      return '';
-    }
-    if (domain == 'googlemail.com') return 'gmail.com';
-    return domain;
-  }
+      : orgOf(identity.gmail);
 
   /// Advisory beacon pre-check: logs cross-org beacons (the _prove gate
   /// below remains the enforcer). Legacy beacons without org pass with a
