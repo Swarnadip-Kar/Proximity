@@ -57,6 +57,7 @@ import 'features/records/course_overview_screen.dart';
 import 'features/records/export_center_screen.dart';
 import 'features/records/my_attendance_screen.dart';
 import 'features/records/prof_courses_screen.dart';
+import 'features/live/live_sections.dart';
 import 'features/records/session_detail_screen.dart';
 import 'features/records/session_edit_screen.dart';
 import 'features/review/flagged_devices_screen.dart';
@@ -454,8 +455,9 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
     );
   }
 
-  // Prof live: every section builds the host screen (sections split out
-  // on the live track's migration); the section rides along as NAV context.
+  // Prof live: the host owns hosting/window/draft orchestration; each
+  // section is a focused screen (Track 5 split — one purpose each) reading
+  // the same host driver. Recover stays on the host (it owns the draft).
   if (name.startsWith('live/')) {
     final rest = name.substring('live/'.length);
     final course =
@@ -465,6 +467,31 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
         args.section.isNotEmpty ? args.section : rest.split('/').skip(1).join('/');
     BleLog.log(ProxLogTags.nav,
         'live deep-link course=$course${section.isEmpty ? '' : ' section=$section'}');
+    final s = section.trim().toLowerCase();
+    if (s == 'roster') {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => LiveRosterScreen(course: course),
+      );
+    }
+    if (s == 'inbox') {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => LiveInboxScreen(course: course),
+      );
+    }
+    if (s == 'add') {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => LiveAddScreen(course: course),
+      );
+    }
+    if (s == 'setup') {
+      return MaterialPageRoute(
+        settings: settings,
+        builder: (_) => LiveSetupScreen(course: course),
+      );
+    }
     return MaterialPageRoute(
       settings: settings,
       builder: (_) => TakeAttendanceScreen(courseName: course),
