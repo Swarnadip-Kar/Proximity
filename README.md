@@ -182,40 +182,49 @@ the shared closure fails it loudly.
 
 ## Firestore data + rules
 
-Collections (`apps/proximity_app/firestore.rules` — deploy with
-`firebase deploy --only firestore:rules --project proximity-attendence`):
+Collections (`apps/proximity_app/firestore.rules` + `firestore.indexes.json` —
+deploy with `firebase deploy --only firestore:rules,firestore:indexes
+--project proximity-attendence`; Track 1 org redeploy REQUIRED: the
+org-scoped queries fail without the new composite indexes, cross-org
+writes fail without the new rules; legacy docs without `org` stay
+owner-visible until the backfill stamps them, then remove `missingOrg()`):
 
-- `users/{uid}`: `{email, roles[prof|student], lastMode}` validated
+- `users/{uid}`: `{email, roles[prof|student], lastMode, org}` validated
   (name/displayName pass through unvalidated) — one doc per Firebase uid;
   the same Gmail can
   hold BOTH roles (professor multi-device, student single-device).
   `lastMode` is the last-used mode (landing + relaunch default). Owner
   read/write only; roles merge (array union), never overwrite. Email
-  comparisons are case-insensitive on both sides (rules `lower()`).
+  comparisons are case-insensitive on both sides (rules `lower()`); `org`
+  must equal the caller's Google-account domain (`tokenOrg()`).
 - `studentDevices/{emailLower}`: `{email, uid, pkHex, installId, name,
-  roll, modelVer, platform, createdAtMillis/lastMoveAtMillis/lastSeenAtMillis/updatedAtMillis,
+  roll, modelVer, platform, org, createdAtMillis/lastMoveAtMillis/lastSeenAtMillis/updatedAtMillis,
   moveCount}` — one enrolled student device per Gmail. Same-install
   re-keys free; moves need the 7-day cooldown (server-enforced; a bare
   pkHex match from another install is a move, not the same device);
   pre-timestamp docs migrate once. Claimed in one transaction
-  (`studentDevices` + `deviceInstalls` + directory row) so racing devices
+  (`studentDevices` + `deviceInstalls` + directory row, all three stamped
+  with `org`) so racing devices
   resolve to exactly one winner. **No delete for anyone** (reset would be
   self-service while professor registration is self-asserted).
-- `deviceInstalls/{installId}`: `{email, pkHex, updatedAtMillis}` — one
+- `deviceInstalls/{installId}`: `{email, pkHex, org, updatedAtMillis}` — one
   student Gmail per app install (secure-storage UUID; clones/dual-apps get
-  their own). Unguessable ids; writes bound to the signing-in Gmail.
-- `studentDirectory/{emailLower}`: `{email, name, roll, nameLower,
+  their own). Unguessable ids; writes bound to the signing-in Gmail + org.
+- `studentDirectory/{emailLower}`: `{email, name, roll, nameLower, org,
   updatedAtMillis}` — minimal professor-searchable directory, maintained
-  by the claim transaction. Prefix search on ID/name/email (single-field
-  range queries merged client-side, no composite index). Professor reads
-  are **advisory** until professor roles are institute-verified.
+  by the claim transaction. Prefix search on ID/name/email, each
+  org-scoped (`where org == myOrg`, indexes org+email/roll/nameLower).
+  Professor reads are **advisory** until professor roles are institute-verified.
 - `classSessions/{sessionId}`: `{courseId, courseName, classLabel, profUid,
-  profEmail, profName, dateIso, timestampIso, startIso, windows, names,
+  profEmail, profName, org, dateIso, timestampIso, startIso, windows, names,
   rolls, studentEmails[], updatedAt}` — professors own their sessions;
-  students read sessions listing their Gmail (lowercased both sides).
-  Create validates profUid/profEmail + courseId/studentEmails/names/rolls
-  types; readers coerce numeric names/rolls to strings. Single-filter queries, sort
-  client-side, no composite index. Doc ids are lowercased Gmails throughout;
+  students read same-org sessions listing their Gmail (lowercased both sides).
+  Session org = prof org at creation, immutable on update (rules enforce).
+  Reads: org match AND (owner OR member) + legacy owner-only grace.
+  Queries filter `where org == myOrg` (indexes profUid+org,
+  studentEmails+org). Create validates profUid/profEmail/org +
+  courseId/studentEmails/names/rolls
+  types; readers coerce numeric names/rolls to strings. Doc ids are lowercased Gmails throughout;
   rules compare `lower()` on both sides so mixed-case accounts work.
 
 Timelines: device moves unlimited lifetime, ≤1 per 7 days, exact
@@ -268,7 +277,7 @@ flutter build web --no-pub                  # records-build guard
 cp requirements/google-services.json apps/proximity_app/android/app/
 cp requirements/GoogleService-Info.plist apps/proximity_app/ios/Runner/
 cd apps/proximity_app && flutterfire configure --project=proximity-attendence
-firebase deploy --only firestore:rules --project proximity-attendence
+firebase deploy --only firestore:rules,firestore:indexes --project proximity-attendence
 # Android SHAs: cd android && ./gradlew signingReport  (paste into console)
 
 flutter build apk --debug

@@ -359,7 +359,8 @@ class ProxServer {
     try {
       final id = (body['ID'] as String).toLowerCase();
       // Org join-gate (Track 1): cross-domain proofs never reach crypto or
-      // the tally. Legacy '' on either side passes (migration).
+      // the tally. Legacy '' on either side passes (migration). The shape
+      // mirrors _fail so ProxClient.prove parses without retrying.
       final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
       if (sessionOrg.isNotEmpty &&
           bodyOrg.isNotEmpty &&
@@ -367,8 +368,12 @@ class ProxServer {
         try {
           onProve?.call(id, 'invalid', 'org-mismatch');
         } catch (_) {}
-        return _json(
-            {'decision': 'invalid', 'reason': 'org-mismatch'}, 200);
+        return _json({
+          'decision': 'invalid',
+          'reason': 'org-mismatch',
+          'serverTime': now.toUtc().toIso8601String(),
+          'sigAck': hexEncode(Uint8List(64)),
+        }, 200);
       }
       final wid = Uint8List.fromList(hexDecode(body['windowID'] as String));
       final j = body['j'] as int;

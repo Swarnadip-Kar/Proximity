@@ -1,0 +1,45 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "classSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "profUid", "order": "ASCENDING"},
+        {"fieldPath": "org", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "classSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "org", "order": "ASCENDING"},
+        {"fieldPath": "studentEmails", "arrayConfig": "CONTAINS"}
+      ]
+    },
+    {
+      "collectionGroup": "studentDirectory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "org", "order": "ASCENDING"},
+        {"fieldPath": "email", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "studentDirectory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "org", "order": "ASCENDING"},
+        {"fieldPath": "roll", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "studentDirectory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "org", "order": "ASCENDING"},
+        {"fieldPath": "nameLower", "order": "ASCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,14 +1,20 @@
 rules_version = '2';
 // Proximity — Campus Attendance System (project: proximity-attendence).
 //
-// Identity is the Google account itself.
+// Identity is the Google account itself. Track 1 org = the lowercased
+// Google-account domain (gmail.com is a normal org; subdomains exact-match).
+// Every doc below stamps `org`; cross-org reads/writes are denied. Legacy
+// docs without org ('') keep a temporary owner-only grace (classSessions
+// reads + stamp-on-update) so the upgrade does not strand data — remove the
+// grace once the backfill lands (see README redeploy note).
+//
 //   users/{uid}: {email, name, roles[prof|student], displayName, lastMode,
-//     updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
+//     org, updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
 //     roles (professor on many devices, student on exactly one). lastMode
 //     is the last-used mode (landing + relaunch default). Gets (not lists)
 //     so a missing doc reads as not-found, never denied.
 //   studentDevices/{lowercased-email}: {email, uid, pkHex, installId, name,
-//     roll, modelVer, platform, createdAt/lastMoveAt/lastSeenAt/
+//     roll, modelVer, platform, org, createdAt/lastMoveAt/lastSeenAt/
 //     updatedAtMillis, moveCount} — one enrolled student device per Gmail.
 //     Same-install re-keys are always allowed; a move to a different
 //     install needs the 7-day cooldown (a bare pkHex match from another
@@ -17,23 +23,23 @@ rules_version = '2';
 //     timestamps (one migration move). Clients claim via a transaction so
 //     racing devices resolve to exactly one winner. Face photos/templates
 //     are NEVER written here — only the device public key + install id.
-//   deviceInstalls/{installId}: {email, pkHex, updatedAtMillis} — one
+//   deviceInstalls/{installId}: {email, pkHex, org, updatedAtMillis} — one
 //     student Gmail per app install. The installId lives in secure storage,
 //     so app clones / dual-app copies / work profiles get their own: the
 //     same phone can never hold two student enrollments. Deletes are never
 //     needed (a wipe generates a fresh installId).
-//   studentDirectory/{emailLower}: {email, name, roll, nameLower,
+//   studentDirectory/{emailLower}: {email, name, roll, nameLower, org,
 //     updatedAtMillis} — minimal professor-searchable directory, maintained
 //     by the claim transaction. Professors (role-gated) prefix-search it to
 //     add students to records; students read only their own doc. NOTE: the
 //     prof gate is advisory until professor roles are institute-verified —
 //     any self-registered prof can list it (emails/names/rolls only).
 //   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
-//     profEmail, profName, dateIso, timestampIso, startIso, windows, names,
+//     profEmail, profName, org, dateIso, timestampIso, startIso, windows, names,
 //     rolls, studentEmails[], updatedAt} — professors own their sessions; a student
-//     reads only sessions listing their Gmail (array-contains). Queries use
-//     a single where clause and sort client-side, so no composite index is
-//     needed.
+//     reads only same-org sessions listing their Gmail (array-contains). Queries
+//     filter where('org', == myOrg) plus the single owner/membership filter
+//     and sort client-side (composite indexes in firestore.indexes.json).
 service cloud.firestore {
   match /databases/{db}/documents {
     function signedIn() {
@@ -51,6 +57,13 @@ service cloud.firestore {
     function tokenEmailLower() {
       return tokenEmail().lower();
     }
+    // Track 1 org: the caller's Google-account domain. gmail.com is a
+    // normal org; subdomains exact-match server-side exactly as orgOf does
+    // client-side (no stripping, no blocklist).
+    function tokenOrg() {
+      let parts = tokenEmailLower().split('@');
+      return parts.size() > 1 ? parts[1] : '';
+    }
     function validRoles(rs) {
       return rs is list && rs.size() >= 1 && rs.size() <= 2 &&
         rs.hasOnly(['prof', 'student']);
@@ -64,18 +77,27 @@ service cloud.firestore {
         'prof' in get(/databases/$(db)/documents/users/$(request.auth.uid))
           .data.get('roles', []);
     }
+    // Legacy grace: docs stamped before Track 1 carry no org (missing key
+    // or ''). They stay owner-visible until the backfill stamps them.
+    function missingOrg(data) {
+      return !('org' in data) || data.org == '';
+    }
 
     match /users/{uid} {
       allow get: if ownUid(uid);
       allow list: if false;
       allow create: if ownUid(uid)
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
         && validRoles(request.resource.data.roles)
         && (!('lastMode' in request.resource.data) ||
             validLastMode(request.resource.data.lastMode));
       allow update: if ownUid(uid)
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && (missingOrg(resource.data) ||
+            resource.data.org == tokenOrg())
         && validRoles(request.resource.data.roles)
         && (!('lastMode' in request.resource.data) ||
             validLastMode(request.resource.data.lastMode));
@@ -115,15 +137,20 @@ service cloud.firestore {
       allow list: if false;
       allow create: if signedIn()
         && id == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg();
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 7-day cooldown (server-enforced: clients cannot
       // bypass it, even with a hand-built write). Pre-timestamp docs move
       // once freely (migration), stamping lastMoveAtMillis as they go.
+      // Org stamps once and never blanks: legacy docs stamp on update.
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && (missingOrg(resource.data) ||
+            resource.data.org == tokenOrg())
         && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed());
       // No delete, for anyone: professor registration is self-asserted this
       // phase, so any reset permission (even prof-gated) would let a student
@@ -135,56 +162,81 @@ service cloud.firestore {
     match /deviceInstalls/{id} {
       // Ids are unguessable 128-bit install UUIDs; the email-equality
       // checks below bind every write to the signing-in Gmail.
-      allow get: if signedIn();
+      allow get: if signedIn() &&
+        (missingOrg(resource.data) || resource.data.org == tokenOrg());
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg();
       allow update: if signedIn()
         && resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && (missingOrg(resource.data) ||
+            resource.data.org == tokenOrg());
       allow delete: if false;
     }
 
     match /studentDirectory/{id} {
       // Professors prefix-search enrolled students to add them to records
-      // (single-field range queries; client merges email/roll/name hits, so
-      // no composite index is needed). Owner reads their own row. The prof
-      // gate is advisory until professor roles are institute-verified.
+      // (org-scoped prefix queries; client merges email/roll/name hits).
+      // Owner reads their own row. The prof gate is advisory until
+      // professor roles are institute-verified. Cross-org rows are
+      // invisible: prof reads require org match (legacy rows stay
+      // owner-visible + prof-visible for the backfill window).
       allow get: if signedIn() &&
-        (id == tokenEmailLower() || callerIsProf());
+        ((id == tokenEmailLower()) ||
+         (callerIsProf() &&
+          (missingOrg(resource.data) ||
+           resource.data.org == tokenOrg())));
       allow list: if callerIsProf();
       allow create: if signedIn()
         && id == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg();
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && (missingOrg(resource.data) ||
+            resource.data.org == tokenOrg());
       allow delete: if false;
     }
 
     match /classSessions/{id} {
-      // Per-document read gate. The two client queries each mirror one arm
-      // with a single filter (professors: where profUid == uid; students:
-      // where studentEmails arrayContains email) and sort client-side, so
-      // no composite index is needed and each query provably stays within
-      // readable docs.
+      // Org-scoped read: same-org owner OR same-org member, plus a
+      // temporary legacy owner-only grace for docs stamped before Track 1
+      // (missing/'' org). Cross-org direct-ID fetches deny (T3).
       allow read: if signedIn() && (
-        resource.data.profUid == request.auth.uid ||
-        tokenEmailLower() in resource.data.studentEmails
+        ((!missingOrg(resource.data) &&
+          resource.data.org == tokenOrg()) && (
+          resource.data.profUid == request.auth.uid ||
+          tokenEmailLower() in resource.data.studentEmails
+        )) ||
+        ((missingOrg(resource.data)) &&
+         resource.data.profUid == request.auth.uid)
       );
       allow create: if signedIn()
         && request.resource.data.profUid == request.auth.uid
         && request.resource.data.profEmail.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
         && request.resource.data.courseId is string
         && request.resource.data.studentEmails is list
         && request.resource.data.names is map
         && request.resource.data.rolls is map;
+      // Session org immutable on update: the stamp survives every merge;
+      // legacy docs stamp once (missing/'' -> tokenOrg).
       allow update: if signedIn()
         && resource.data.profUid == request.auth.uid
-        && request.resource.data.profUid == request.auth.uid;
+        && request.resource.data.profUid == request.auth.uid
+        && request.resource.data.org == tokenOrg()
+        && (missingOrg(resource.data) ||
+            request.resource.data.org == resource.data.org);
       allow delete: if signedIn()
-        && resource.data.profUid == request.auth.uid;
+        && resource.data.profUid == request.auth.uid
+        && (missingOrg(resource.data) ||
+            resource.data.org == tokenOrg());
     }
   }
 }
