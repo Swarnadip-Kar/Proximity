@@ -190,6 +190,14 @@ class FirestoreCloudSync implements CloudSync {
         attestedAtMillis: (d['attestedAtMillis'] as num?)?.toInt() ?? 0,
         attestedUntilMillis:
             (d['attestedUntilMillis'] as num?)?.toInt() ?? 0,
+        // Server-verdict fields are READ here (for the cheap-trigger gate
+        // + Track 5 review queries) but never written by clients — see
+        // kAttestationServerFields; the claim write below omits them.
+        attestationAnomaly: (d['attestationAnomaly'] as bool?) ?? false,
+        serverVerifiedAtMillis:
+            (d['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
+        serverVerifyReason: d['serverVerifyReason'] as String? ?? '',
+        attestMaterialJson: d['attestMaterialJson'] as String? ?? '',
       );
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('device lookup');
@@ -367,6 +375,11 @@ class FirestoreCloudSync implements CloudSync {
         attestedAtMillis: (d?['attestedAtMillis'] as num?)?.toInt() ?? 0,
         attestedUntilMillis:
             (d?['attestedUntilMillis'] as num?)?.toInt() ?? 0,
+        attestationAnomaly: (d?['attestationAnomaly'] as bool?) ?? false,
+        serverVerifiedAtMillis:
+            (d?['serverVerifiedAtMillis'] as num?)?.toInt() ?? 0,
+        serverVerifyReason: d?['serverVerifyReason'] as String? ?? '',
+        attestMaterialJson: d?['attestMaterialJson'] as String? ?? '',
       );
 
   @override
@@ -420,11 +433,16 @@ class FirestoreCloudSync implements CloudSync {
           'lastSeenAtMillis': atMillis,
           'updatedAtMillis': atMillis,
           'moveCount': claim.moveCount,
-          // Tracks 2+3 extended claim (offline-verifiable device binding).
+          // Tracks 2+3 extended claim (offline-verifiable device binding)
+          // + client-written attestation material. The server-verdict
+          // fields (kAttestationServerFields) are deliberately ABSENT:
+          // only the endpoint's admin writes may set them (rules deny
+          // client writes that change them).
           'pkDHex': doc.pkDHex,
           'attestationLevel': doc.attestationLevel,
           'attestedAtMillis': doc.attestedAtMillis,
           'attestedUntilMillis': doc.attestedUntilMillis,
+          'attestMaterialJson': doc.attestMaterialJson,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {

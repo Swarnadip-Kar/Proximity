@@ -90,7 +90,11 @@ class FakeCloudSync implements CloudSync {
             pkDHex: doc.pkDHex,
             attestationLevel: doc.attestationLevel,
             attestedAtMillis: doc.attestedAtMillis,
-            attestedUntilMillis: doc.attestedUntilMillis);
+            attestedUntilMillis: doc.attestedUntilMillis,
+            attestationAnomaly: doc.attestationAnomaly,
+            serverVerifiedAtMillis: doc.serverVerifiedAtMillis,
+            serverVerifyReason: doc.serverVerifyReason,
+            attestMaterialJson: doc.attestMaterialJson);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -176,6 +180,13 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: doc.attestationLevel,
       attestedAtMillis: doc.attestedAtMillis,
       attestedUntilMillis: doc.attestedUntilMillis,
+      // A move/re-key carries fresh client material but never a server
+      // verdict: the verdict belongs to the new binding and starts unknown
+      // (the heartbeat path re-verifies). attestMaterialJson rides along.
+      attestationAnomaly: false,
+      serverVerifiedAtMillis: 0,
+      serverVerifyReason: '',
+      attestMaterialJson: doc.attestMaterialJson,
     );
     installs[installId] = key;
     dir[key] =
@@ -219,6 +230,11 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: binding.attestationLevel,
       attestedAtMillis: binding.attestedAtMillis,
       attestedUntilMillis: binding.attestedUntilMillis,
+      // Heartbeat touches recency only — the server verdict survives.
+      attestationAnomaly: binding.attestationAnomaly,
+      serverVerifiedAtMillis: binding.serverVerifiedAtMillis,
+      serverVerifyReason: binding.serverVerifyReason,
+      attestMaterialJson: binding.attestMaterialJson,
     );
     return true;
   }

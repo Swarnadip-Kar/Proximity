@@ -43,6 +43,24 @@ class StudentDeviceDoc {
   final String attestationLevel;
   final int attestedAtMillis;
   final int attestedUntilMillis;
+  // --- Server attestation re-verification (verifyAttestationChain, see
+  // functions/ + PROXIMITY_DESIGN.md amendment). The endpoint admin-writes
+  // ONLY these three fields; clients must never set them (firestore.rules
+  // denies any client write that changes them — see kAttestationServerFields
+  // + the rules header for where enforcement lives and why it suffices).
+  // [attestMaterialJson] IS client-written (enrollment stores the chain /
+  // object here; '' = none — the state of every current build until the HW
+  // keystore/Enclave track lands).
+  /// Server verdict: true = chain failed re-verification, flagged for
+  /// professor/admin review. Never retroactively invalidates attendance.
+  final bool attestationAnomaly;
+  /// UTC epoch ms of the last completed server verification (0 = never).
+  final int serverVerifiedAtMillis;
+  /// Machine-readable reason of the last server verdict (e.g. 'chain-ok',
+  /// 'challenge-mismatch', 'missing-material', 'skipped-none').
+  final String serverVerifyReason;
+  /// Platform-interpreted attestation material JSON ('' = none).
+  final String attestMaterialJson;
   const StudentDeviceDoc(
       {required this.email,
       required this.uid,
@@ -61,7 +79,11 @@ class StudentDeviceDoc {
       this.pkDHex = '',
       this.attestationLevel = 'NONE',
       this.attestedAtMillis = 0,
-      this.attestedUntilMillis = 0});
+      this.attestedUntilMillis = 0,
+      this.attestationAnomaly = false,
+      this.serverVerifiedAtMillis = 0,
+      this.serverVerifyReason = '',
+      this.attestMaterialJson = ''});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.
@@ -301,6 +323,64 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
     await store.writeInstallId(id);
   } catch (_) {}
   return id;
+}
+
+// --- Server attestation re-verification: outcome + cheap-trigger gate ---
+//
+// The sync-side audit half of verifyAttestationChain lives HERE (same seam
+// as the double-pkD flag above): the endpoint does the cryptography, the
+// client only decides WHEN to ask and how to report reachability failures.
+
+/// Fields on studentDevices that ONLY the verifyAttestationChain endpoint
+/// (Admin SDK, bypasses rules) may write. firestore.rules denies any client
+/// create/update that sets or changes them; the claim writes in
+/// firestore_sync.dart / fake_sync.dart must never include them (a
+/// rules-text regression test pins this). The endpoint authenticates via
+/// Auth and verifies only the caller's own same-org doc, and it computes
+/// the verdict itself from stored material — there is no client-controlled
+/// input that could forge a flag, which is why the rules deny is
+/// sufficient (no allowlist bypass exists through the function either).
+const kAttestationServerFields = {
+  'attestationAnomaly',
+  'serverVerifiedAtMillis',
+  'serverVerifyReason',
+};
+
+/// Outcome of one verifyAttestationChain call. [ok]=false means the
+/// endpoint was UNREACHABLE (offline discipline: defer, retry later) — it
+/// is never an anomaly. A completed verification always has ok=true with
+/// [anomaly] carrying the verdict.
+class AttestationVerifyOutcome {
+  final bool ok;
+  final bool anomaly;
+  final String reason;
+  final int serverVerifiedAtMillis;
+  const AttestationVerifyOutcome(
+      {required this.ok,
+      this.anomaly = false,
+      this.reason = '',
+      this.serverVerifiedAtMillis = 0});
+}
+
+/// Lead time before [attestedUntilMillis] at which the heartbeat-path
+/// re-verification starts firing (cheap: one call per window, not per
+/// flush — see [attestationVerifyDue]).
+const kAttestReverifyLead = Duration(days: 30);
+
+/// Cheap trigger gate for SyncEngine's flush: verify ONLY when the server
+/// verdict is unknown (never stamped) or the attestation window is near
+/// (or past) expiry. Flag state itself never triggers a call — a flagged
+/// device re-verifies on its next window approach, not every flush — and
+/// reachability failures never change the stored flag.
+bool attestationVerifyDue({
+  required int attestedUntilMillis,
+  required int serverVerifiedAtMillis,
+  required DateTime now,
+}) {
+  if (serverVerifiedAtMillis <= 0) return true;
+  if (attestedUntilMillis <= 0) return true;
+  return attestedUntilMillis <=
+      now.toUtc().millisecondsSinceEpoch + kAttestReverifyLead.inMilliseconds;
 }
 
 // --- Track 3 device-proof seam (beside evaluateStudentClaim) ---
