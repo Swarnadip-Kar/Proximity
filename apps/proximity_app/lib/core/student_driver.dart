@@ -56,12 +56,14 @@ class WindowProbe {
   final String classLabel;
   final int waiting;
   final String display; // window code when open (round identity)
+  final String org; // prof org from /window, '' = legacy host
   const WindowProbe(
       {required this.reachable,
       required this.windowOpen,
       required this.classLabel,
       this.waiting = 0,
-      this.display = ''});
+      this.display = '',
+      this.org = ''});
 }
 
 abstract class StudentDriver {
@@ -195,6 +197,38 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     }
   }
 
+  /// Student org for the join-gate: explicit identity org wins, else the
+  /// Gmail domain (same derivation as sign-in; never user-entered).
+  static String studentOrgOf(LinkedIdentity identity) => identity
+          .org.isNotEmpty
+      ? identity.org
+      : _orgOf(identity.gmail);
+
+  static String _orgOf(String email) {
+    final e = email.trim().toLowerCase();
+    final at = e.lastIndexOf('@');
+    if (at <= 0 || at == e.length - 1) return '';
+    var domain = e.substring(at + 1).trim();
+    if (domain.isEmpty ||
+        domain.contains(' ') ||
+        domain.contains('@') ||
+        domain.startsWith('.') ||
+        domain.endsWith('.')) {
+      return '';
+    }
+    if (domain == 'googlemail.com') return 'gmail.com';
+    return domain;
+  }
+
+  /// Advisory beacon pre-check: logs cross-org beacons (the _prove gate
+  /// below remains the enforcer). Legacy beacons without org pass with a
+  /// log line. Never blocks — the waiting room still opens.
+  static bool beaconOrgAllows(
+      {required String beaconOrg, required String myOrg}) {
+    if (beaconOrg.isEmpty || myOrg.isEmpty) return true;
+    return beaconOrg == myOrg;
+  }
+
   @override
   Future<WindowProbe> probeWindow(ClassBeacon target) async {
     final client = ProxClient(host: target.host, port: target.port);
@@ -208,7 +242,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           windowOpen: r.windowOpen,
           classLabel: r.classLabel,
           waiting: r.waiting,
-          display: r.display);
+          display: r.display,
+          org: r.org);
     } finally {
       client.close();
     }
@@ -218,10 +253,21 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   Future<void> sendPresence(
       {required ClassBeacon target,
       required LinkedIdentity identity}) async {
+    final myOrg = studentOrgOf(identity);
+    if (target.org.isEmpty) {
+      BleLog.log('LAN',
+          'presence beacon legacy (no org) — allowed, _prove enforces');
+    } else if (!beaconOrgAllows(beaconOrg: target.org, myOrg: myOrg)) {
+      BleLog.log('LAN',
+          'presence cross-org advisory (${identity.gmail} $myOrg vs class ${target.org}) — waiting allowed, marking enforces');
+    }
     final client = ProxClient(host: target.host, port: target.port);
     try {
       await client.postWaiting(
-          email: identity.gmail, name: identity.name, roll: identity.roll);
+          email: identity.gmail,
+          name: identity.name,
+          roll: identity.roll,
+          org: myOrg);
       BleLog.log('LAN', 'presence sent → waiting room (${target.host})');
     } catch (e) {
       BleLog.log('LAN', 'presence FAILED (${target.host}): $e');
@@ -239,7 +285,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     final client = ProxClient(host: target.host, port: target.port);
     try {
       await client.postManualRequest(
-          email: identity.gmail, name: identity.name, roll: identity.roll);
+          email: identity.gmail,
+          name: identity.name,
+          roll: identity.roll,
+          org: studentOrgOf(identity));
       BleLog.log('LAN', 'manual request sent, waiting for prof decision');
     } finally {
       client.close();
@@ -541,6 +590,23 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         throw _TryNext('window fetch ($e)', suspicious: suspicious);
       }
       BleLog.log('NET', 'window ok code=${desc.display} j=${desc.jNow}');
+      // Org join-gate (Track 1): descriptor org is compared BEFORE any radio
+      // response or POST — a mismatch returns a wrong-org receipt and sends
+      // no PII. Legacy '' on either side passes (migration). Crypto
+      // preimages untouched (Track E authority).
+      final myOrg = studentOrgOf(identity);
+      if (myOrg.isNotEmpty &&
+          desc.org.isNotEmpty &&
+          desc.org != myOrg) {
+        BleLog.log('NET',
+            'wrong org (class ${desc.org} vs $myOrg) — no proof sent');
+        return const MarkedReceipt(
+            detail: 'Wrong organization for this class — join your institute class',
+            result: StudentResult.error);
+      }
+      if (desc.org.isEmpty) {
+        BleLog.log('NET', 'window legacy (no org) — allowed');
+      }
       final j = desc.jNow;
       // Holder gate: the face pass that authorized THIS listen must still
       // be fresh — otherwise the key stays locked and the student re-scans
@@ -577,6 +643,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         name: identity.name,
         roll: identity.roll,
         pkS: pk32,
+        org: myOrg,
         sigSFor: (c, jj) => ProxCrypto.signStudentProve(
           studentSk: sk,
           sessionId: desc.sessionId,

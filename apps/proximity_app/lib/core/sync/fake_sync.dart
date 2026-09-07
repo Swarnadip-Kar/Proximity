@@ -9,6 +9,7 @@ import 'package:proximity_storage/storage.dart';
 import 'claim.dart';
 import 'cloud_api.dart';
 import 'directory.dart';
+import 'org.dart';
 import 'roles.dart';
 import 'sessions.dart';
 
@@ -46,6 +47,11 @@ class FakeCloudSync implements CloudSync {
     final lastMode = (doc.lastMode == 'prof' || doc.lastMode == 'student')
         ? doc.lastMode
         : (prev?.lastMode ?? '');
+    // Org stamps once (creation) and never blanks: an explicit org wins,
+    // else the previous stamp survives, else derive from the email.
+    final org = doc.org.isNotEmpty
+        ? doc.org
+        : ((prev?.org ?? '').isNotEmpty ? prev!.org : orgOf(doc.email));
     roles[doc.uid] = RoleDoc(
         uid: doc.uid,
         email: doc.email,
@@ -53,7 +59,8 @@ class FakeCloudSync implements CloudSync {
         roles: set.toList(),
         displayName:
             doc.displayName.isNotEmpty ? doc.displayName : (prev?.displayName ?? ''),
-        lastMode: lastMode);
+        lastMode: lastMode,
+        org: org);
   }
 
   @override
@@ -63,12 +70,32 @@ class FakeCloudSync implements CloudSync {
   @override
   Future<void> writeStudentDevice(StudentDeviceDoc doc) async {
     _needOnline();
-    devices[doc.email.toLowerCase()] = doc;
-    if (doc.installId.isNotEmpty) {
-      installs[doc.installId] = doc.email.toLowerCase();
+    final withOrg = doc.org.isNotEmpty
+        ? doc
+        : StudentDeviceDoc(
+            email: doc.email,
+            uid: doc.uid,
+            pkHex: doc.pkHex,
+            name: doc.name,
+            roll: doc.roll,
+            modelVer: doc.modelVer,
+            installId: doc.installId,
+            platform: doc.platform,
+            org: orgOf(doc.email),
+            createdAtMillis: doc.createdAtMillis,
+            lastMoveAtMillis: doc.lastMoveAtMillis,
+            lastSeenAtMillis: doc.lastSeenAtMillis,
+            updatedAtMillis: doc.updatedAtMillis,
+            moveCount: doc.moveCount);
+    devices[withOrg.email.toLowerCase()] = withOrg;
+    if (withOrg.installId.isNotEmpty) {
+      installs[withOrg.installId] = withOrg.email.toLowerCase();
     }
-    dir[doc.email.toLowerCase()] = StudentDirectoryEntry(
-        email: doc.email.toLowerCase(), name: doc.name, roll: doc.roll);
+    dir[withOrg.email.toLowerCase()] = StudentDirectoryEntry(
+        email: withOrg.email.toLowerCase(),
+        name: withOrg.name,
+        roll: withOrg.roll,
+        org: withOrg.org);
   }
 
   @override
@@ -80,7 +107,8 @@ class FakeCloudSync implements CloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     _needOnline();
     final eq = emailPrefix.trim().toLowerCase();
     final rq = rollPrefix.trim();
@@ -88,6 +116,8 @@ class FakeCloudSync implements CloudSync {
     if (eq.isEmpty && rq.isEmpty && nq.isEmpty) return const [];
     final seen = <String, StudentDirectoryEntry>{};
     for (final e in dir.values) {
+      if (org.isNotEmpty && e.org.isNotEmpty && e.org != org) continue;
+      if (org.isNotEmpty && e.org.isEmpty) continue;
       if (eq.isNotEmpty && e.email.startsWith(eq)) seen[e.email] = e;
       if (rq.isNotEmpty && e.roll.startsWith(rq)) seen[e.email] = e;
       if (nq.isNotEmpty && e.name.toLowerCase().startsWith(nq)) {
@@ -120,6 +150,7 @@ class FakeCloudSync implements CloudSync {
         now: at);
     final isFirst = claim.isFirst;
     final isMove = claim.isMove;
+    final org = doc.org.isNotEmpty ? doc.org : orgOf(key);
     devices[key] = StudentDeviceDoc(
       email: key,
       uid: doc.uid,
@@ -129,6 +160,7 @@ class FakeCloudSync implements CloudSync {
       modelVer: doc.modelVer,
       installId: installId,
       platform: doc.platform,
+      org: org,
       createdAtMillis: claim.createdAtMillis,
       lastMoveAtMillis: claim.lastMoveAtMillis,
       lastSeenAtMillis: atMillis,
@@ -136,7 +168,8 @@ class FakeCloudSync implements CloudSync {
       moveCount: claim.moveCount,
     );
     installs[installId] = key;
-    dir[key] = StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll);
+    dir[key] =
+        StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll, org: org);
     return ClaimOutcome(isFirst: isFirst, isMove: isMove);
   }
 
@@ -166,6 +199,7 @@ class FakeCloudSync implements CloudSync {
       modelVer: binding.modelVer,
       installId: binding.installId,
       platform: binding.platform,
+      org: binding.org,
       createdAtMillis: binding.createdAtMillis,
       lastMoveAtMillis: binding.lastMoveAtMillis,
       lastSeenAtMillis: at,
@@ -180,21 +214,49 @@ class FakeCloudSync implements CloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record}) async {
+      required ClassRecord record,
+      String? profOrg}) async {
     _needOnline();
     lastPushedBy = profUid;
+    // Session org immutable on update: a stamped doc keeps its org.
+    final prev = sessions[record.id];
+    final prevOrg = prev?['org'] as String? ?? '';
+    final wantOrg = record.org.isNotEmpty
+        ? record.org
+        : (prevOrg.isNotEmpty
+            ? prevOrg
+            : ((profOrg != null && profOrg.isNotEmpty)
+                ? profOrg
+                : orgOf(profEmail)));
+    final stamped = wantOrg.isNotEmpty && record.org != wantOrg
+        ? ClassRecord(
+            id: record.id,
+            courseId: record.courseId,
+            classLabel: record.classLabel,
+            dateIso: record.dateIso,
+            timestampIso: record.timestampIso,
+            startIso: record.startIso,
+            windows: record.windows,
+            names: record.names,
+            rolls: record.rolls,
+            org: wantOrg)
+        : record;
     sessions[record.id] = sessionToDoc(
         profUid: profUid,
         profEmail: profEmail,
         profName: profName,
-        record: record);
+        record: stamped,
+        profOrg: wantOrg);
   }
 
   @override
-  Future<List<ClassRecord>> pullProfSessions(String profUid) async {
+  Future<List<ClassRecord>> pullProfSessions(String profUid,
+      {String org = ''}) async {
     final docs = [
       for (final e in sessions.entries)
-        if ((e.value['profUid'] as String? ?? '') == profUid) e
+        if ((e.value['profUid'] as String? ?? '') == profUid &&
+            (org.isEmpty || (e.value['org'] as String? ?? '') == org))
+          e
     ];
     final out = [for (final e in docs) docToRecord(e.key, e.value)]
       ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
@@ -202,13 +264,15 @@ class FakeCloudSync implements CloudSync {
   }
 
   @override
-  Future<List<ClassRecord>> pullStudentSessions(String emailLower) async {
+  Future<List<ClassRecord>> pullStudentSessions(String emailLower,
+      {String org = ''}) async {
     final key = emailLower.toLowerCase();
     final out = [
       for (final e in sessions.entries)
         if (((e.value['studentEmails'] as List? ?? const [])
                 .map((x) => '$x')
-                .contains(key)))
+                .contains(key)) &&
+            (org.isEmpty || (e.value['org'] as String? ?? '') == org))
           docToRecord(e.key, e.value)
     ]..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
     return out;

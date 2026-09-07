@@ -229,6 +229,13 @@ class RealHostDriver implements HostDriver {
     }
     _classLabel = classLabel;
     _sessionId = randBytes(kSessionIdBytes);
+    // Session org = prof org at creation (role cache stamped at sign-in;
+    // offline-skipped profs host legacy '' local-only).
+    var sessionOrg = '';
+    try {
+      final role = await _store.readRole();
+      sessionOrg = (role?['org'] ?? '').trim().toLowerCase();
+    } catch (_) {}
     // Rosterless: no roster fetch — students verify with presented device
     // keys (TOFU per class). Whoever proves presence over radio lands in
     // the union.
@@ -241,6 +248,7 @@ class RealHostDriver implements HostDriver {
       onProve: (email, decision, reason) =>
           BleLog.log('NET', 'prove $email -> $decision ($reason)'),
       tally: _tally,
+      sessionOrg: sessionOrg,
     );
     await _server!.start(port: port);
     _allIps = await _lanIps();
@@ -285,6 +293,7 @@ class RealHostDriver implements HostDriver {
         prof: _profName,
         windowOpen: _server?.windowOpen ?? false,
         ts: DateTime.now().toUtc(),
+        org: _server?.sessionOrg ?? '',
       );
     });
     final announcer = _announcer!;

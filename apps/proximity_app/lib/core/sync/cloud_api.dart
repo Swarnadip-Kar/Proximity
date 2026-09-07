@@ -44,21 +44,26 @@ abstract class CloudSync {
 
   /// Professor directory search over enrolled students (online). Each
   /// non-empty prefix runs a server-side prefix query (email / roll /
-  /// nameLower), results merged by email and capped at [limit]. Single-field
-  /// queries only — no composite index needed. Throws StateError offline or
-  /// when rules refuse (deploy them).
+  /// nameLower), results merged by email and capped at [limit]. When [org]
+  /// is non-empty each query additionally filters where('org', == org), so
+  /// cross-domain rows never list. Throws StateError offline or when rules
+  /// refuse (deploy them).
   Future<List<StudentDirectoryEntry>> searchStudents(
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10});
+      int limit = 10,
+      String org = ''});
   Future<void> pushSession(
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record});
-  Future<List<ClassRecord>> pullProfSessions(String profUid);
-  Future<List<ClassRecord>> pullStudentSessions(String emailLower);
+      required ClassRecord record,
+      String? profOrg});
+  Future<List<ClassRecord>> pullProfSessions(String profUid,
+      {String org = ''});
+  Future<List<ClassRecord>> pullStudentSessions(String emailLower,
+      {String org = ''});
   Future<void> renameCourseCloud(
       {required String profUid, required String oldName, required String newName});
   Future<void> deleteSessionsCloud(

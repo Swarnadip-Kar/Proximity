@@ -12,6 +12,7 @@ import 'package:proximity_storage/storage.dart';
 import 'claim.dart';
 import 'cloud_api.dart';
 import 'directory.dart';
+import 'org.dart';
 import 'roles.dart';
 import 'sessions.dart';
 
@@ -93,13 +94,17 @@ class FirestoreCloudSync implements CloudSync {
       if (roles.isEmpty && (legacy == 'prof' || legacy == 'student')) {
         roles.add(legacy!);
       }
+      final email = (d['email'] as String? ?? '').toLowerCase();
       return RoleDoc(
         uid: uid,
-        email: (d['email'] as String? ?? '').toLowerCase(),
+        email: email,
         name: d['name'] as String? ?? '',
         roles: roles,
         displayName: d['displayName'] as String? ?? '',
         lastMode: d['lastMode'] as String? ?? '',
+        org: (d['org'] as String? ?? '').isNotEmpty
+            ? (d['org'] as String)
+            : orgOf(email),
       );
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('role lookup');
@@ -117,11 +122,14 @@ class FirestoreCloudSync implements CloudSync {
     // Merge semantics: registering a second role unions it in — never drops
     // the first. lastMode only rides along when explicitly set (merge:true
     // would otherwise clobber it with '').
+    final org =
+        doc.org.isNotEmpty ? doc.org : orgOf(doc.email);
     final data = <String, dynamic>{
       'email': doc.email.toLowerCase(),
       'name': doc.name,
       'roles': FieldValue.arrayUnion(doc.roles),
       'displayName': doc.displayName,
+      'org': org,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
     if (doc.lastMode == 'prof' || doc.lastMode == 'student') {
@@ -169,6 +177,9 @@ class FirestoreCloudSync implements CloudSync {
         modelVer: d['modelVer'] as String? ?? '',
         installId: d['installId'] as String? ?? '',
         platform: d['platform'] as String? ?? '',
+        org: (d['org'] as String? ?? '').isNotEmpty
+            ? (d['org'] as String)
+            : orgOf(key),
         createdAtMillis: (d['createdAtMillis'] as num?)?.toInt() ?? 0,
         lastMoveAtMillis: (d['lastMoveAtMillis'] as num?)?.toInt() ?? 0,
         lastSeenAtMillis: (d['lastSeenAtMillis'] as num?)?.toInt() ?? 0,
@@ -200,7 +211,8 @@ class FirestoreCloudSync implements CloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record}) async {
+      required ClassRecord record,
+      String? profOrg}) async {
     _needAvailable();
     try {
       await _db
@@ -211,7 +223,8 @@ class FirestoreCloudSync implements CloudSync {
                   profUid: profUid,
                   profEmail: profEmail,
                   profName: profName,
-                  record: record),
+                  record: record,
+                  profOrg: profOrg),
               SetOptions(merge: true))
           .timeout(const Duration(seconds: 8));
     } on FirebaseException catch (e) {
@@ -248,14 +261,23 @@ class FirestoreCloudSync implements CloudSync {
   }
 
   @override
-  Future<List<ClassRecord>> pullProfSessions(String profUid) => _querySessions(
-      (col) => col.where('profUid', isEqualTo: profUid).limit(200));
+  Future<List<ClassRecord>> pullProfSessions(String profUid,
+          {String org = ''}) =>
+      _querySessions((col) {
+        var q = col.where('profUid', isEqualTo: profUid);
+        if (org.isNotEmpty) q = q.where('org', isEqualTo: org);
+        return q.limit(200);
+      });
 
   @override
-  Future<List<ClassRecord>> pullStudentSessions(String emailLower) =>
-      _querySessions((col) => col
-          .where('studentEmails', arrayContains: emailLower.toLowerCase())
-          .limit(200));
+  Future<List<ClassRecord>> pullStudentSessions(String emailLower,
+          {String org = ''}) =>
+      _querySessions((col) {
+        var q = col.where('studentEmails',
+            arrayContains: emailLower.toLowerCase());
+        if (org.isNotEmpty) q = q.where('org', isEqualTo: org);
+        return q.limit(200);
+      });
 
   @override
   Future<void> renameCourseCloud(
@@ -327,6 +349,9 @@ class FirestoreCloudSync implements CloudSync {
         modelVer: d?['modelVer'] as String? ?? '',
         installId: d?['installId'] as String? ?? '',
         platform: d?['platform'] as String? ?? '',
+        org: (d?['org'] as String? ?? '').isNotEmpty
+            ? (d?['org'] as String)
+            : orgOf(key),
         createdAtMillis: (d?['createdAtMillis'] as num?)?.toInt() ?? 0,
         lastMoveAtMillis: (d?['lastMoveAtMillis'] as num?)?.toInt() ?? 0,
         lastSeenAtMillis: (d?['lastSeenAtMillis'] as num?)?.toInt() ?? 0,
@@ -367,6 +392,7 @@ class FirestoreCloudSync implements CloudSync {
             now: at);
         final isFirst = claim.isFirst;
         final isMove = claim.isMove;
+        final org = doc.org.isNotEmpty ? doc.org : orgOf(key);
         tx.set(devRef, {
           'email': key,
           'uid': doc.uid,
@@ -376,6 +402,7 @@ class FirestoreCloudSync implements CloudSync {
           'roll': doc.roll,
           'modelVer': doc.modelVer,
           'platform': doc.platform,
+          'org': org,
           'createdAtMillis': claim.createdAtMillis,
           'lastMoveAtMillis': claim.lastMoveAtMillis,
           'lastSeenAtMillis': atMillis,
@@ -386,15 +413,17 @@ class FirestoreCloudSync implements CloudSync {
         tx.set(instRef, {
           'email': key,
           'pkHex': doc.pkHex,
+          'org': org,
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
-        // Professor-searchable directory row (name/roll/email only).
+        // Professor-searchable directory row (name/roll/email/org only).
         tx.set(_db.collection('studentDirectory').doc(key), {
           'email': key,
           'name': doc.name,
           'roll': doc.roll,
           'nameLower': doc.name.toLowerCase(),
+          'org': org,
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
@@ -480,11 +509,14 @@ class FirestoreCloudSync implements CloudSync {
   }
 
   Future<List<StudentDirectoryEntry>> _prefixQuery(
-      String field, String prefix, int limit) async {
-    final snap = await _db
+      String field, String prefix, int limit,
+      {String org = ''}) async {
+    var q = _db
         .collection('studentDirectory')
         .where(field, isGreaterThanOrEqualTo: prefix)
-        .where(field, isLessThan: '$prefix\uf8ff')
+        .where(field, isLessThan: '$prefix\uf8ff');
+    if (org.isNotEmpty) q = q.where('org', isEqualTo: org);
+    final snap = await q
         .limit(limit)
         .get(const GetOptions(source: Source.server))
         .timeout(const Duration(seconds: 8));
@@ -494,6 +526,7 @@ class FirestoreCloudSync implements CloudSync {
           email: (d.data()['email'] as String? ?? '').toLowerCase(),
           name: d.data()['name'] as String? ?? '',
           roll: d.data()['roll'] as String? ?? '',
+          org: d.data()['org'] as String? ?? '',
         ),
     ];
   }
@@ -503,7 +536,8 @@ class FirestoreCloudSync implements CloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     _needAvailable();
     final eq = emailPrefix.trim().toLowerCase();
     final rq = rollPrefix.trim();
@@ -511,12 +545,13 @@ class FirestoreCloudSync implements CloudSync {
     if (eq.isEmpty && rq.isEmpty && nq.isEmpty) return const [];
     try {
       // Perf: one round trip — the non-empty prefix queries fan out in
-      // parallel (independent single-field range queries, no composite
-      // index), then merge by email client-side.
+      // parallel (org-scoped prefix queries + client merge).
       final futures = <Future<List<StudentDirectoryEntry>>>[];
-      if (rq.isNotEmpty) futures.add(_prefixQuery('roll', rq, limit));
-      if (nq.isNotEmpty) futures.add(_prefixQuery('nameLower', nq, limit));
-      if (eq.isNotEmpty) futures.add(_prefixQuery('email', eq, limit));
+      if (rq.isNotEmpty) futures.add(_prefixQuery('roll', rq, limit, org: org));
+      if (nq.isNotEmpty) {
+        futures.add(_prefixQuery('nameLower', nq, limit, org: org));
+      }
+      if (eq.isNotEmpty) futures.add(_prefixQuery('email', eq, limit, org: org));
       final parts = await Future.wait(futures);
       final seen = <String, StudentDirectoryEntry>{};
       for (final list in parts) {

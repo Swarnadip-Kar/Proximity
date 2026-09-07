@@ -12,6 +12,7 @@ import 'package:proximity_storage/storage.dart';
 import '../../design/tokens.dart';
 import 'cloud_api.dart';
 import 'directory.dart';
+import 'org.dart';
 import 'store/store_base.dart';
 
 /// One offline manual-add task, waiting for internet to resolve the ID
@@ -129,51 +130,71 @@ class SyncQueue {
       var done = false;
       try {
         if (item.roll.isNotEmpty) {
-          final hits = await cloud.searchStudents(rollPrefix: item.roll);
-          final match = matchRollExact(hits, item.roll);
-          if (match != null) {
-            final m = match;
-            final history = await store.readHistory();
-            ClassRecord? target;
-            if (item.sessionId.isNotEmpty) {
-              for (final r in history) {
-                if (r.id == item.sessionId) {
-                  target = r;
-                  break;
-                }
+          final history = await store.readHistory();
+          ClassRecord? target;
+          if (item.sessionId.isNotEmpty) {
+            for (final r in history) {
+              if (r.id == item.sessionId) {
+                target = r;
+                break;
               }
             }
-            target ??= _latestCourseRecord(history, item.course);
-            // A live draft for this course means the visit is still open —
-            // leave the item queued rather than racing the live tally.
-            var live = false;
-            try {
-              live = item.course.isNotEmpty &&
-                  await store.readSession(item.course) != null;
-            } catch (_) {}
-            if (target != null && !live) {
-              final email = m.email.toLowerCase();
-              final names = Map<String, String>.from(target.names)
-                ..[email] = m.name;
-              final rolls = Map<String, String>.from(target.rolls)
-                ..[email] = m.roll;
-              final windows = [
-                for (final w in target.windows)
-                  Map<String, bool>.from(w)..[email] = true
-              ];
-              await store.upsertHistory(ClassRecord(
-                id: target.id,
-                courseId: target.courseId,
-                classLabel: target.classLabel,
-                dateIso: target.dateIso,
-                timestampIso: target.timestampIso,
-                startIso: target.startIso,
-                windows: windows,
-                names: names,
-                rolls: rolls,
-              ));
-              resolvedIds.add(target.id);
-              done = true;
+          }
+          target ??= _latestCourseRecord(history, item.course);
+          // Org gate: a queued add only lands on a session in its own org.
+          // Legacy ('' either side) still resolves locally.
+          if (target != null &&
+              !recordInMyOrg(target, item.org)) {
+            BleLog.log(ProxLogTags.sync,
+                'manual queue skip cross-org ${item.roll} (session ${target.org} vs queued ${item.org})');
+          } else if (target != null) {
+            final hits = await cloud.searchStudents(
+                rollPrefix: item.roll, org: item.org);
+            final match = matchRollExact(hits, item.roll);
+            if (match != null) {
+              final m = match;
+              // Cross-domain directory hit never lands (defense in depth:
+              // the org-scoped query already filters, this holds for fakes
+              // and legacy rows).
+              if (m.org.isNotEmpty &&
+                  target.org.isNotEmpty &&
+                  m.org != target.org) {
+                BleLog.log(ProxLogTags.sync,
+                    'manual queue skip cross-org hit ${m.email} (${m.org} vs ${target.org})');
+              } else {
+                // A live draft for this course means the visit is still open —
+                // leave the item queued rather than racing the live tally.
+                var live = false;
+                try {
+                  live = item.course.isNotEmpty &&
+                      await store.readSession(item.course) != null;
+                } catch (_) {}
+                if (!live) {
+                  final email = m.email.toLowerCase();
+                  final names = Map<String, String>.from(target.names)
+                    ..[email] = m.name;
+                  final rolls = Map<String, String>.from(target.rolls)
+                    ..[email] = m.roll;
+                  final windows = [
+                    for (final w in target.windows)
+                      Map<String, bool>.from(w)..[email] = true
+                  ];
+                  await store.upsertHistory(ClassRecord(
+                    id: target.id,
+                    courseId: target.courseId,
+                    classLabel: target.classLabel,
+                    dateIso: target.dateIso,
+                    timestampIso: target.timestampIso,
+                    startIso: target.startIso,
+                    windows: windows,
+                    names: names,
+                    rolls: rolls,
+                    org: target.org,
+                  ));
+                  resolvedIds.add(target.id);
+                  done = true;
+                }
+              }
             }
           }
         }
