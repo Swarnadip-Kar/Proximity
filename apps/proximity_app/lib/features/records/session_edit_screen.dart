@@ -253,8 +253,6 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                     padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
                   ),
                   for (final e in partials)
-                    // Track 6: was a bespoke dense ListTile copy — same
-                    // title/subtitle/trailing, now the shared dense row.
                     ProxListTile(
                       dense: true,
                       title: e.name,
@@ -288,8 +286,6 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                         ),
                   ),
                   for (final m in absent)
-                    // Track 6: was a bespoke dense ListTile copy — same
-                    // title/subtitle/trailing, now the shared dense row.
                     ProxListTile(
                       dense: true,
                       title: m.name,

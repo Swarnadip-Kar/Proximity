@@ -23,9 +23,7 @@ class MarkVerdictView extends StatelessWidget {
   final MarkVerdict kind;
   final String detail;
   final String infoDetail;
-  /// Real orgs for the wrong-org card (Track 6, from
-  /// [MarkedReceipt.classOrg]/[myOrg]); '' falls back to the generic
-  /// placeholders so older call sites keep compiling unchanged.
+  /// Real orgs for the wrong-org card ('' keeps the generic fallback).
   final String classOrg;
   final String myOrg;
   final List<String> roundMarks;

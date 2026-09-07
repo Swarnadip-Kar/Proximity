@@ -27,8 +27,7 @@ class SecureDeviceStore implements DeviceStore {
   SecureDeviceStore({FlutterSecureStorage? secure})
       : _secure = secure ?? const FlutterSecureStorage();
 
-  /// Single SharedPreferences acquisition point (Track 6: was 34 inline
-  /// `getInstance()` copies — one helper, same instance semantics).
+  /// Single SharedPreferences acquisition point (was 34 inline copies).
   Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
 
   @override

@@ -5,12 +5,8 @@
 //   - [recordInCourse]: the course-membership predicate used by both
 //     renameCourse impls and both deleteCourse impls (was 4 copies).
 //   - [todayIso]: the course creation stamp used by Secure addCourse.
-//     (Track 6: now a delegate of [dateIsoOf].)
-//   - [dateIsoOf]: the ONE yyyy-MM-dd formatter (Track 6 canonical home).
-//     Was copy-pasted as claim `_dayOf`, trust `trustDateLabel` body,
-//     clock `dateIsoOf` body, and the export-center `fmt` closure — all now
-//     delegate here so the pure core owns the format and widgets only wrap
-//     it (core must never import widgets/).
+//   - [dateIsoOf]: the ONE yyyy-MM-dd formatter (claim/trust/export all
+//     delegate here; core never imports widgets/).
 // Deliberately NOT collapsed (M3 verdict: documented-different, item
 // closed): renameCourse's record rebuild reuses the record's windows /
 // names / rolls references in Secure but defensively copies them in
@@ -35,10 +31,8 @@ bool recordInCourse(ClassRecord record, String course) =>
     record.courseId == course ||
     (record.courseId.isEmpty && record.classLabel == course);
 
-/// Calendar date as yyyy-MM-dd (course stamps, claim copy, trust labels,
-/// export filenames). Pure — the single canonical definition; UI call
-/// sites resolve it via the device_store barrel (core never imports
-/// widgets/, so no widget file may redefine it).
+/// Calendar date as yyyy-MM-dd (stamps, claim copy, trust labels, export
+/// filenames). Single definition — UI resolves it via device_store.
 String dateIsoOf(DateTime t) =>
     '${t.year.toString().padLeft(4, '0')}-'
     '${t.month.toString().padLeft(2, '0')}-'

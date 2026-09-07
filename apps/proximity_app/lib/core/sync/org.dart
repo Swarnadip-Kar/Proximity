@@ -75,12 +75,8 @@ bool inMyOrg(String sessionOrg, String myOrg) {
 bool recordInMyOrg(ClassRecord record, String myOrg) =>
     inMyOrg(record.org, myOrg);
 
-/// Preferred org for this device: explicit account org wins, else the
-/// role-cache stamp ('' = legacy / offline-skipped / unknown).
-/// Both sides arrive normalized from sign-in; the role side is defensively
-/// normalized here. Track 6: was `(acctOrg.isNotEmpty ? acctOrg :
-/// role?['org'] ?? '')` inline in sync_hook (×2, raw role side) + the
-/// take-attendance `_profOrgForSession` helper.
+/// Preferred org for this device: account org wins, else the role-cache
+/// stamp ('' = legacy/offline-skipped). Role side normalized here.
 String resolveMyOrg(String? acctOrg, Map<String, String>? role) {
   final a = (acctOrg ?? '').trim().toLowerCase();
   if (a.isNotEmpty) return a;

@@ -23,9 +23,7 @@ import 'prox_states.dart';
 import 'sync_badge.dart';
 import '../core/sync/store/record_helpers.dart' as rh;
 
-/// Formats UTC epoch millis as yyyy-MM-dd ('' when 0). Track 6: thin
-/// wrapper over the pure-core canonical ([rh.dateIsoOf]); the millis
-/// gate + UTC conversion stay here (presentation concern).
+/// UTC epoch millis as yyyy-MM-dd ('' when 0).
 String trustDateLabel(int millis) {
   if (millis <= 0) return '';
   return rh.dateIsoOf(DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true));
@@ -227,8 +225,7 @@ class SyncStatusStrip extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Track 6: shares [PendingCountChip] with the live [UnsyncedBadge]
-        // (was a duplicated Chip copy).
+        // Shared with the live badge (was a duplicated Chip).
         if (pending > 0) PendingCountChip(pending: pending, online: online),
         ProxSyncNote(
           note ??

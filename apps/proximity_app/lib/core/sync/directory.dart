@@ -25,11 +25,8 @@ class StudentDirectoryEntry {
       this.org = ''});
 }
 
-/// Normalized search prefixes shared by both backends (Track 6: was
-/// identical trim/lower + empty-guard copies in FirestoreCloudSync and
-/// FakeCloudSync — sharing guarantees fake/real parity by construction).
-/// Email + name match case-insensitively; roll is case-sensitive
-/// (numeric IDs) and only trimmed.
+/// Normalized search prefixes shared by both backends (roll is trimmed
+/// only — numeric IDs are case-sensitive; email/name lowercased).
 ({String email, String roll, String name}) normalizeSearchPrefixes({
   String emailPrefix = '',
   String rollPrefix = '',

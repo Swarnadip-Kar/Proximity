@@ -78,8 +78,7 @@ class DraftResumedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Track 6: was ProxCard(zero-padding) + bespoke ListTile — the same
-    // single card, now the shared row (no nested cards).
+    // Single card as the shared row (was ProxCard + bespoke ListTile).
     return ProxListTile(
       leading: const Icon(Icons.history),
       title: 'Resumed autosaved session',

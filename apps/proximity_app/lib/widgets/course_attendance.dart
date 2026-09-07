@@ -90,8 +90,6 @@ class CourseSummaryHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Track 6: was a bespoke Card+Padding copy — same 16dp padding as
-    // [ProxCard]'s default, so this is a straight swap.
     return ProxCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -137,8 +135,6 @@ class StudentSessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = sessionStatusOf(session, email);
     final present = status == 'Present';
-    // Track 6: was a bespoke Card+ListTile copy — same leading/title/
-    // subtitle/trailing, now the shared row.
     return ProxListTile(
       leading: Icon(
         present ? Icons.check_circle : Icons.circle_outlined,

@@ -69,11 +69,8 @@ String roleLastMode(Map<String, String>? role) {  if (role == null) return '';
   return '';
 }
 
-/// Org stamped on the role cache (Google-account domain, '' = legacy).
-/// Normalized (trimmed + lowercased): the cache is written lowercased at
-/// sign-in, this only defends against legacy/foreign entries. Track 6:
-/// was `(role?['org'] ?? '').trim().toLowerCase()` inline at 5+ call
-/// sites (host/take/manual-add/export/flagged).
+/// Org stamped on the role cache ('' = legacy), defensively normalized —
+/// the cache is written lowercased at sign-in.
 String roleOrg(Map<String, String>? role) =>
     (role?['org'] ?? '').trim().toLowerCase();
 

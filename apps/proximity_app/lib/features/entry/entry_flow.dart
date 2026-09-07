@@ -146,12 +146,9 @@ String entryHeldLabel(Map<String, String> role) {
 
 /// First-sign-in professor merge: SyncEngine flush (outbox pushes +
 /// pull-union converge + legacy org backfill). Best-effort — offline or
-/// failures keep local data untouched.
-/// Track 6: delegates to [flushNow] (the Track 4 call-site helper). The
-/// explicit uid/email/name/org params are retained for caller compat —
-/// the values are identical to what [readSyncProf] derives (callers write
-/// them to the auth session + role cache just before invoking), so the
-/// flush identity is unchanged.
+/// failures keep local data untouched. Delegates to [flushNow]: the
+/// explicit params match what [readSyncProf] derives (callers stamp the
+/// cache first), so the flush identity is unchanged.
 Future<void> entryMergeProfCloud(
     WidgetRef ref, String uid, String email, String name,
     {String org = ''}) async {

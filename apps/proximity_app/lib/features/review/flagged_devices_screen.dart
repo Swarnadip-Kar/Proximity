@@ -235,8 +235,7 @@ class _FlaggedRow extends StatelessWidget {
                     'Claimed ${doc.attestationLevel.isEmpty ? 'NONE' : doc.attestationLevel}',
               ),
               if (doc.platform.isNotEmpty)
-                // Track 6: was a raw Chip copy — same Wrap already speaks
-                // ProxStateBadge, so the platform tag joins it (neutral).
+                // Same Wrap already speaks ProxStateBadge: platform joins it.
                 ProxStateBadge(
                   state: ProxState.neutral,
                   label: doc.platform,

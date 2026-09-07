@@ -102,8 +102,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         }
         return;
       }
-      // Track 6: was an inline domain-parse closure (missing the
-      // space/'@'/dot guards) — [orgOf] is the tested canonical.
+      // Identity org wins, else the Gmail domain ([orgOf]).
       final myOrg =
           acct.org.isNotEmpty ? acct.org : orgOf(email);
       final sessions = await cloud.pullStudentSessions(email, org: myOrg);

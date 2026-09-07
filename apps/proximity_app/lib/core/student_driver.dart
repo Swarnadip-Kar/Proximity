@@ -55,16 +55,14 @@ class MarkedReceipt {
   /// next window carries a fresh code, so the student never re-faces the
   /// same open window).
   final String display;
-  /// Structured wrong-org refusal (Track 6): true when the Track 1 org
-  /// join-gate refused BEFORE any proof was sent. The UI branches on this
-  /// flag — never on matching [detail] text. [classOrg]/[myOrg] feed the
-  /// wrong-org card with the real orgs.
+  /// Structured wrong-org refusal: true when the org join-gate refused
+  /// BEFORE any proof was sent. The UI branches on this flag, never on
+  /// [detail] text. [classOrg]/[myOrg] feed the wrong-org card.
   final bool isWrongOrg;
   final String classOrg;
   final String myOrg;
-  /// Device-trust snapshot at mark time (Tracks 2+3 tiers + §3.4 host
-  /// anomaly flags): enrolled attestation level + host-reported flags.
-  /// Informational only — verdicts are driven by [result]/[isWrongOrg].
+  /// Device-trust snapshot at mark time (enrolled attestation level +
+  /// host-reported flags). Informational — verdicts use [result].
   final String attestationLevel;
   final List<String> attestationFlags;
   const MarkedReceipt(
@@ -250,9 +248,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   }
 
   /// Student org for the join-gate: explicit identity org wins, else the
-  /// Gmail domain via [orgOf] (same derivation as sign-in; never
-  /// user-entered). Track 6: local `_orgOf` deleted (was a line-for-line
-  /// copy of orgOf minus the empty-domain guard).
+  /// Gmail domain via [orgOf] (same derivation as sign-in).
   static String studentOrgOf(LinkedIdentity identity) => identity
           .org.isNotEmpty
       ? identity.org
@@ -707,8 +703,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           desc.org != myOrg) {
         BleLog.log('NET',
             'wrong org (class ${desc.org} vs $myOrg) — no proof sent');
-        // Track 6: structured refusal (UI branches on [isWrongOrg], never
-        // on the detail text). Detail copy kept verbatim for display.
+        // Structured refusal (UI branches on isWrongOrg, not the text).
         return MarkedReceipt(
             detail:
                 'Wrong organization for this class — join your institute class',

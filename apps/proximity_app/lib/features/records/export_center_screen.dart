@@ -106,7 +106,6 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    // Track 6: was a local `fmt` closure duplicating [dateIsoOf].
     final inRange =
         sessionsInRange(sessions, dateIsoOf(picked.start), dateIsoOf(picked.end));
     final rangeLabel =
