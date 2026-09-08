@@ -28,7 +28,7 @@ dependencies:
   path_provider: ^2.1.4
   ed25519_edwards: ^0.3.1
   camera: ^0.12.0
-  flutter_secure_storage: ^9.2.2
+  flutter_secure_storage: ^10.0.0
   shared_preferences: ^2.3.2
   universal_ble: ^2.2.0
   # Pinned to 12.x, NOT 13.x: permission_handler 13 pulls
