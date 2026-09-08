@@ -11,12 +11,13 @@
 // (whoever proves presence over radio lands in the class union); the cloud
 // claim only gates WHICH device may enroll as a Gmail.
 //
-// Face data: the plugin owns its on-device store keyed by
-// faceId=sha256(gmail+installId) — never the raw Gmail — AND, with
-// enrollment consent, ONE quantized face-code (int8 mean embedding +
-// simhash buckets, no images/names — protocol face_print.dart, privacy
-// flag there applies) is stored in cloud facePrints at claim time for the
-// same-face duplicate check. The app keeps only {faceId, verifierVer,
+// Face data never leaves the device, except student→professor-phone
+// vectors over the local network during the live session: the plugin owns
+// its on-device store keyed by faceId=sha256(gmail+installId) — never the
+// raw Gmail — and, during marking, the student's proof carries a compact
+// face vector to the professor's phone over the existing local HTTPS
+// channel (the professor already sees every face physically; nothing
+// reaches the cloud, ever). The app keeps only {faceId, verifierVer,
 // enrolledAt}; the SKey seed is DKey-sealed (ciphertext only at rest).
 //
 // Key seed lives in secure storage; production uses Keystore/StrongBox
@@ -90,24 +91,6 @@ class EnrollmentState {
         restored: restored ?? this.restored,
       );
 }
-
-/// Refusal copy when the claim-time duplicate face check flags this
-/// enrollment. Deliberately NEVER an accusation: twins, siblings and
-/// lookalikes are the known false-positive class, and nothing is recorded
-/// against anyone. Deliberately NEVER a dead end: the device key is kept
-/// (recapture in different light sometimes clears borderline flags) and
-/// manual attendance always works. Names NOBODY: the matched Gmail is
-/// known to the client transiently for self-exclusion only and is never
-/// shown, logged, or stored on a refusal (rejected captures leave no
-/// biometric behind).
-const kFaceDupRefusalMessage =
-    'This face looks very similar to another enrollment already on file — '
-    'this sometimes happens with siblings or lookalikes, and nothing is '
-    'recorded against you. To protect everyone\u2019s attendance, enrollment '
-    'on this device is paused. Your device key is kept: recapture in '
-    'different light and tap Save again, or ask your professor to mark your '
-    'attendance manually in class (Request manual attendance) — that always '
-    'works.';
 
 /// Cross-platform install label for the device binding (no hardware IDs —
 // the (pkHex, installId) pair is the identity; this is display/debug only).
@@ -494,10 +477,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
 
   /// Step 4: persist key + identity on this device AND claim the Gmail's
   /// single student-device slot online (one enrolled student device per
-  /// Gmail, one Gmail per app install — see cloud_sync claim logic), with
-  /// the claim-time same-face duplicate check first (one face must not
-  /// enroll as two Gmails — the stock-app proxy vector nothing else
-  /// detects; the print lands atomically in the claim tx).
+  /// Gmail, one Gmail per app install — see cloud_sync claim logic).
+  /// Enrollment stays 100% on-device (nothing leaves the phone); same-face
+  /// duplicates are caught later, in memory, on the professor's phone
+  /// during the live local session.
   /// Fail-closed: requires a validated face (faceDone) — the Save button
   /// is disabled until then, and this validates again for programmatic
   /// callers. Online-only: the claim needs internet, which stops students
@@ -591,40 +574,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           return null;
         }
         try {
-          // Same-face duplicate check (online, claim time — the ONLY place
-          // it can run: no backend exists, so the enrolling client pulls
-          // the org bucket shortlist (ONE capped query) and exact-compares
-          // locally. A hit refuses BEFORE the claim: nothing is stored
-          // locally and no print is written (rejected captures leave no
-          // biometric behind). Self-excluded (same-Gmail re-enroll never
-          // flags itself), pipeline-scoped (foreign-pipeline prints are
-          // incomparable). Residuals, stated: check-then-claim race between
-          // two simultaneous duplicate enrollments; custom clients can file
-          // garbage prints (same self-assertion posture as attestation,
-          // §3.4); twins/siblings are the known FP class (manual path).
-          FacePrintDoc? facePrint;
-          try {
-            final mean = await _verifier.embeddingFor(faceId);
-            facePrint = buildFacePrint(
-                org: org,
-                verifierVer: _verifier.verifierVer,
-                meanEmbedding: mean);
-            final shortlist = await cloud.queryFacePrints(
-                org: org, buckets: facePrint.buckets);
-            final dup = findFaceDuplicate(
-                myEmail: email, mine: facePrint, others: shortlist);
-            if (dup != null) {
-              BleLog.log('SYNC',
-                  'device claim refused: duplicate face (shortlist ${shortlist.length})');
-              throw StateError(kFaceDupRefusalMessage);
-            }
-            BleLog.log('SYNC',
-                'duplicate face check clear (shortlist ${shortlist.length})');
-          } on StateError {
-            rethrow; // refusal/offline/empty-gallery copy reaches UI verbatim
-          } catch (e) {
-            throw StateError('Save failed: $e');
-          }
           final outcome = await cloud.claimStudentDevice(
               doc: StudentDeviceDoc(
                   email: email,
@@ -645,8 +594,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   attestedUntilMillis: _deviceKey.attestedUntil
                       .toUtc()
                       .millisecondsSinceEpoch),
-              installId: installId,
-              facePrint: facePrint);
+              installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
         } on StateError catch (e) {

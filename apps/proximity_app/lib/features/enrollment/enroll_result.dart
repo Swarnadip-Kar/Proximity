@@ -32,7 +32,6 @@ enum _Refusal {
   none,
   cooldown,
   installConflict,
-  duplicate,
   offline,
   pipeline,
   partial,
@@ -47,7 +46,6 @@ _Refusal _classify(EnrollmentState st) {
   final m = st.message.toLowerCase();
   if (m.contains('another device')) return _Refusal.cooldown;
   if (m.contains('already enrolled')) return _Refusal.installConflict;
-  if (m.contains('looks very similar')) return _Refusal.duplicate;
   if (m.contains('internet')) return _Refusal.offline;
   if (m.contains('improved') || m.contains('scan your face again')) {
     return _Refusal.pipeline;
@@ -135,9 +133,8 @@ class EnrollResultScreen extends ConsumerWidget {
                   // non-match), so there is no measured score to show —
                   // the boundary value lives in the FACE debug log only.
                   Text(
-                    'Face matched on this phone — a compact face-code is '
-                    'stored online for duplicate checks (see enrollment '
-                    'info); photos never leave this phone.',
+                    'Face matched on this phone — '
+                    'face data never leaves this phone.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context)
                               .colorScheme
@@ -304,31 +301,6 @@ class EnrollResultScreen extends ConsumerWidget {
                   'enrollment. If you need attendance marked meanwhile, ask '
                   'your professor for manual attendance.',
                 ),
-              ),
-            ],
-          ),
-        );
-      case _Refusal.duplicate:
-        // Message carries the non-accusation + options; the action is
-        // recapture (key kept, borderline flags sometimes clear in
-        // different light) + the manual fallback that always works.
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Next step: your device key was kept — go back and recapture '
-                'in different light, then Save again. Or ask your professor '
-                'to mark your attendance manually in class (Request manual '
-                'attendance) — that always works, and nothing is recorded '
-                'against you either way.',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.face),
-                label: const Text('Back to face scan'),
-                expanded: true,
-                onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),

@@ -141,11 +141,7 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                       'one continuous camera session, fully automatic: just '
                       'rotate slowly with the glow around the oval, each '
                       'angle really angle-checked. '
-                      'Photos stay on this phone; one compact face-code '
-                      '(numbers only, no photo) is stored online with your '
-                      'enrollment so the same face cannot enroll twice — '
-                      'saving counts as consent, and manual attendance is '
-                      'always available instead.',
+                      'The template never leaves this phone.',
                 ),
                 SizedBox(height: ProxSpacing.sm),
                 _IntroStep(
@@ -167,7 +163,11 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                 Expanded(
                   child: Text(
                     'Needs internet once — the one-device-per-Gmail check '
-                    'runs online. Later attendance works fully offline.',
+                    'runs online. Later attendance works fully offline. '
+                    'During class your proof carries a compact face vector '
+                    '(numbers only, no photo) to the professor\u2019s phone '
+                    'over classroom WiFi — held in memory for that session '
+                    'only, never the cloud.',
                   ),
                 ),
               ],
