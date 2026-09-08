@@ -2,26 +2,31 @@
 // (Android-face-unlock-style). ONE camera session opened once and closed
 // on done/cancel. The preview subtree below — Scaffold > Column >
 // Expanded > Center > message/spinner/camera-Stack, plus the bottom
-// prompt bar — constructs the 5186c65 FaceCaptureScreen ancestor chain
-// identically (same widgets, same flex, same constraints path), because
-// the displayed ratio IS the preview-area ratio: StackFit.expand lays
-// non-positioned children tight(biggest) (SDK stack.dart) and AspectRatio
-// adopts tight sizes ignoring ratio (SDK proxy_box.dart), so any deleted
-// bottom bar enlarges the area and visibly elongates the feed. A parity
-// test pins the chain; the provenance note at the block lists the three
-// documented deltas. Overlay stays strictly Positioned/IgnorePointer
-// decoration with zero layout effect.
+// prompt bar — matches the FaceCaptureScreen boundary handling
+// (lib/screens/face_capture.dart) line by line: same Scaffold defaults
+// (no SafeArea in either camera path, resize true, extendBody false,
+// same AppBar height, same Padding(16) bottom slot), because the displayed
+// ratio IS the preview-area ratio: StackFit.expand lays non-positioned
+// children tight(biggest) (SDK stack.dart) and CameraPreview's internal
+// AspectRatio adopts tight sizes ignoring ratio (SDK proxy_box.dart), so a
+// shorter bottom bar enlarges the area and visibly elongates the feed.
+// Root cause was bottom-slot sizing (single prompt vs original
+// prompt+status+button); fixed by invisibly reserving the original extra
+// height below. A parity test pins the chain; the provenance note at the
+// block lists each kept deviation with a one-line reason. Overlay stays
+// strictly Positioned/IgnorePointer decoration with zero layout effect.
 //
-// Guidance is a slow clockwise sweep glow on the oval rim plus ONE static
-// prompt (rotate slowly, follow the glow) — no narrated checker state
-// (narrating "turn more / checking" while the user had turned is what
-// flickered). Provenance: Apple Face ID enrollment (one imperative + rim
-// progress) and Tobii "follow the target" calibration (one target, 5
-// points, repeat missing). Under the paint, buckets keep filling
+// Guidance is a slow rotating beacon on the oval rim (ONE bright head +
+// SHORT fading tail, fully transparent well before a full revolution — no
+// trails) plus ONE static prompt (rotate slowly, follow the glow) — no
+// narrated checker state (narrating "turn more / checking" while the user
+// had turned is what flickered). Provenance: Apple Face ID enrollment (one
+// imperative + rim progress) and Tobii "follow the target" calibration (one
+// target, 5 points, repeat missing). Under the paint, buckets keep filling
 // opportunistically (EnrollBucketFill.classifyInto on one readPose per
 // still); progress dots are the sole completion indicator. Rejects stay
-// SILENT in-UI (BleLog only). Under reduced motion the sweep timer never
-// starts and the rim shows a steady full glow.
+// SILENT in-UI (BleLog only). Under reduced motion the beacon timer never
+// starts and the rim shows a steady soft full glow.
 //
 // Gallery write is single + terminal (controller.enrollFace → plugin
 // enroll + centre self-check); marking verify untouched. HONESTY: five
@@ -189,12 +194,12 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   /// tokens vocabulary note): settle beat after open, steady still
   /// cadence while classifying. One-shot Future.delayeds (never
   /// periodic) so the capture loop always terminates — no stray timers
-  /// past teardown. The sweep glow runs on its own short periodic timer
+  /// past teardown. The beacon runs on its own short periodic timer
   /// (started/stopped with the loop, cancelled on save/dispose).
   static const _initialBeat = Duration(milliseconds: 600);
   static const _frameBeat = Duration(milliseconds: 600);
 
-  /// Sweep glow pace: one calm clockwise revolution per 4.5s (80 ticks).
+  /// Beacon pace: one calm clockwise revolution per 4.5s (80 ticks).
   static const _sweepTick = Duration(milliseconds: 50);
   static const _sweepRevolution = Duration(milliseconds: 4500);
 
@@ -203,9 +208,9 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   late final List<String?> _paths =
       List<String?>.filled(faceEnrollSlots.length, null);
 
-  /// Sweep glow angle (radians, east = 0, clockwise on screen). Advanced
-  /// by the sweep timer; paint-only (never guidance state — buckets fill
-  /// opportunistically regardless of where the glow is).
+  /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
+  /// by the beacon timer; paint-only (never guidance state — buckets fill
+  /// opportunistically regardless of where the beacon is).
   double _sweep = 0;
   Timer? _sweepTimer;
 
@@ -227,7 +232,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
 
   /// Dispose latch: set synchronously in dispose; every await below
   /// re-checks it alongside [mounted] so no async work (takePicture, pose
-  /// read, enroll, pop, setState) runs after dispose. The sweep timer is
+  /// read, enroll, pop, setState) runs after dispose. The beacon timer is
   /// cancelled here too (same latch).
   bool _cancelled = false;
   bool get _done => _cancelled || !mounted;
@@ -284,8 +289,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   void _startLoop() {
     if (_loopStarted) return;
     _loopStarted = true;
-    // Sweep glow: calm clockwise travel while classifying. Never started
-    // under reduced motion (steady full-rim glow instead) and always
+    // Beacon: calm clockwise travel while classifying. Never started
+    // under reduced motion (steady soft full-rim glow instead) and always
     // cancelled on save/dispose — a live periodic timer past teardown
     // fails widget tests, so its lifecycle is tied to the loop's.
     if (!ProxMotion.reduced(context)) {
@@ -345,7 +350,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                 reading.yaw, reading.pitch, reading.roll, _filled);
         // Fill is the ONLY setState in the loop: progress dots advance,
         // nothing else on screen ever changes mid-flow (the prompt is
-        // static, the sweep is paint-driven).
+        // static, the beacon is paint-driven).
         if (slot != null) {
           setState(() {
             _paths[faceEnrollSlots.indexOf(slot)] = still;
@@ -469,31 +474,27 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
       ),
       body: Column(
         children: [
-          // Preview provenance: this subtree — Scaffold > Column >
-          // Expanded(flex 1) > Center > message/spinner/camera-Stack, plus
-          // the bottom Padding(16) bar below — constructs the 5186c65
-          // FaceCaptureScreen ancestor chain identically (same widgets,
-          // same flex, same constraints path). That identity is the fix:
-          // StackFit.expand lays non-positioned children tight(biggest)
-          // (SDK stack.dart) and AspectRatio adopts tight sizes ignoring
-          // ratio (SDK proxy_box.dart), so the displayed ratio IS the
-          // preview-area ratio — and the area is set by this chain. A
-          // parity test pins the chain; documented deltas from the
-          // original, all outside the sizing path:
-          // (a) message text covers denied/failed/no-key (one extra state
-          //     vs the original's single status);
-          // (b) post-open with a null controller (tests use a
-          //     controller-less fake; on real devices open success implies
-          //     a non-null initialized controller) renders the FaceOval
-          //     placeholder as the Stack's first child;
-          // (c) the camera Stack gains ONE Positioned overlay child (dots
-          //     only) and the oval gains sweepAngle/sweepSpan — positioned
-          //     children and paint params never affect Stack sizing, so
-          //     the ratio is untouched (the original oval comment is kept
-          //     verbatim);
-          // (d) the bottom bar carries the single static prompt instead of
-          //     prompt + status + capture button (same Padding, same
-          //     Column, terminal states keep their own chrome).
+          // Preview boundaries (audit vs FaceCaptureScreen in
+          // lib/screens/face_capture.dart — Scaffold defaults identical: no
+          // SafeArea in either camera path (no double-apply), resize true,
+          // extendBody/extendBodyBehindAppBar false, same AppBar height,
+          // same Padding(16) bottom slot, no edge-to-edge flags, nothing
+          // drawing under/over system UI; shared chrome (theme/scaffold/nav)
+          // clean — no change there): StackFit.expand lays non-positioned
+          // children tight(biggest) and CameraPreview's internal AspectRatio
+          // adopts tight sizes ignoring ratio, so displayed ratio IS
+          // preview-area ratio — area set by this chain (Scaffold >
+          // Column(max) > Expanded(flex 1) > Center >
+          // message/spinner/camera-Stack) plus bottom-bar height. A parity
+          // test pins the chain; kept deviations, one line each:
+          // (a) AppBar title 'Face capture' (flow-specific, same height).
+          // (b) Preview message covers denied/failed/no-key (fail-closed gate).
+          // (c) Null-controller FaceOval placeholder (test fake only, never on-device).
+          // (d) ONE Positioned dots overlay + beacon params (positioned/paint-only).
+          // (e) Mid-flow single prompt + invisible height reservation (no flicker + parity).
+          // (f) Terminal Continue/Try-again chrome (fail-closed, loop stopped).
+          // (g) Blocked path uses ProxScreen (no camera, shared shell).
+          // (original oval comment kept verbatim below).
           Expanded(
             child: Center(
               child: _denied || _failed || (!_opening && noKey)
@@ -551,8 +552,11 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           ),
           // Bottom bar: the SAME slot as the original screen (Padding 16 >
           // Column min) so the constraints path above stays identical. The
-          // single static prompt is the only instructional text
-          // mid-flow; terminal states keep their own chrome (fail-closed).
+          // single static prompt is the only visible instructional text
+          // mid-flow; its invisible sibling below reserves the original
+          // prompt+status+button extra height (same widgets, hidden, no
+          // semantics) so the preview area — and the feed — match the
+          // original exactly. Terminal states keep their own chrome.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -579,7 +583,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                     label: const Text('Try again'),
                     onPressed: _saving ? null : _saveAll,
                   ),
-                ] else
+                ] else ...[
                   Text(
                     enrollCapturePrompt,
                     textAlign: TextAlign.center,
@@ -588,6 +592,31 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                         .titleSmall
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
+                  // Boundary parity: original slot carries prompt + status +
+                  // button; single prompt alone would enlarge the preview and
+                  // stretch the feed — reserve the extra height invisibly.
+                  Visibility(
+                    visible: false,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: ExcludeSemantics(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(height: ProxSpacing.xs),
+                          const Text('X'),
+                          const SizedBox(height: 8),
+                          FilledButton.icon(
+                            onPressed: null,
+                            icon: const Icon(Icons.face),
+                            label: const Text('X'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

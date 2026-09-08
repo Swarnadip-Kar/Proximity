@@ -394,7 +394,25 @@ void main() {
       expect(find.byType(EnrollAngleDots), findsOneWidget);
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
       expect(find.byType(ProxCard), findsNothing);
-      expect(find.byType(FilledButton), findsNothing);
+      // No VISIBLE buttons mid-flow (the boundary-parity reservation keeps
+      // one hidden FilledButton to hold the original bottom-slot height —
+      // invisible, no semantics, no interaction — so it never counts here).
+      final filled = find.byType(FilledButton);
+      if (filled.evaluate().isNotEmpty) {
+        for (final e in filled.evaluate()) {
+          var hidden = false;
+          e.visitAncestorElements((a) {
+            final w = a.widget;
+            if (w is Visibility && !w.visible && w.maintainSize) {
+              hidden = true;
+            }
+            return true;
+          });
+          expect(hidden, isTrue,
+              reason: 'visible button mid-flow (only the hidden parity '
+                  'reservation may exist)');
+        }
+      }
       // Exactly one instructional text during capture…
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       // …and no per-angle titles, hints, or status narration anywhere.
