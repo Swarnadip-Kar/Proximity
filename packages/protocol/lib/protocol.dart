@@ -12,6 +12,7 @@ export 'src/clock_drift.dart';
 export 'src/window.dart';
 export 'src/mesh.dart';
 export 'src/face_gate.dart';
+export 'src/face_print.dart';
 export 'src/transport_contract.dart';
 // M1 crypto kernel: canonical homes (same declarations as the barrels above).
 export 'src/crypto/primitives.dart';
