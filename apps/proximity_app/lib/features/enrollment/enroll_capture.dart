@@ -182,6 +182,40 @@ class FakeEnrollSessionCamera implements EnrollSessionCamera {
 final enrollSessionCameraProvider =
     Provider<EnrollSessionCamera>((ref) => RealEnrollSessionCamera());
 
+/// Hidden 52px top-up (prompt-height + gap + status-height + gap) shared by
+/// the terminal bottom variants so every variant totals the mid-flow slot.
+/// Same line heights as the visible pieces, hidden, no semantics, no
+/// buttons — pure boundary parity, zero visible or interactive effect.
+class _SlotTopUp extends StatelessWidget {
+  const _SlotTopUp();
+  @override
+  Widget build(BuildContext context) {
+    return Visibility(
+      visible: false,
+      maintainSize: true,
+      maintainAnimation: true,
+      maintainState: true,
+      child: ExcludeSemantics(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'X',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: ProxSpacing.xs),
+            const Text('X'),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class EnrollCaptureScreen extends ConsumerStatefulWidget {
   const EnrollCaptureScreen({super.key});
 
@@ -493,11 +527,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           // (c) Null-controller FaceOval placeholder (test fake only, never on-device).
           // (d) ONE Positioned dots overlay + beacon params (positioned/paint-only).
           // (e) Mid-flow single prompt + hidden status/button reservation (no flicker + parity).
-          // (f) Validated Continue + hidden prompt/status reservation (same total — back-nav stable).
+          // (f) Validated Continue / save-error Try-again + shared hidden top-up (same total — back-nav stable).
           // (g) Blocked path uses ProxScreen (no camera, shared shell).
-          // Save-error Notice+Try-again matches the same total for typical
-          // short messages; a long wrapping message grows the slot exactly
-          // as the original screen's wrapping status did (parity residual).
+          // Save-error Notice rides as a toast overlay (same widget/message,
+          // zero layout) so message length never moves the feed.
           // Layering (researched, deliberate): chrome stays OVERLAY — dots
           // Positioned in the preview Stack, prompt/buttons in the bottom
           // bar — never inline above the feed. Inline chrome would enter
@@ -563,6 +596,24 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                                 ),
                               ),
                             ),
+                            // Fail-closed error banner (save-error only):
+                            // toast-pattern overlay — same Notice widget and
+                            // message, zero layout effect, so the feed area
+                            // never moves on the error transition and long
+                            // messages wrap without resizing anything.
+                            // Touch-transparent (info only; retry lives in
+                            // the bottom bar); semantics kept so readers
+                            // still announce the error.
+                            if (saveError)
+                              Positioned(
+                                left: 16,
+                                right: 16,
+                                bottom: 12,
+                                child: IgnorePointer(
+                                  child: EnrollNotice(
+                                      message: st.message, isError: true),
+                                ),
+                              ),
                           ],
                         ),
             ),
@@ -572,10 +623,11 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           // validated-after-back-navigation) so transitions never resize the
           // feed. Mid-flow shows the single static prompt (the only visible
           // instructional text) plus a hidden status/button reservation;
-          // validated shows Continue plus a hidden prompt/status reservation
-          // to the same total; save-error shows Notice+Try-again (same total
-          // for short messages). Keyboard: N/A — this page has no editable
-          // text, so viewInsets stay zero in every variant.
+          // validated shows Continue plus the shared hidden top-up, save-error
+          // shows Try-again plus the same top-up — all to the same total.
+          // The save-error Notice floats as a toast overlay (zero layout).
+          // Keyboard: N/A — this page has no editable text, so viewInsets
+          // stay zero in every variant.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -587,36 +639,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                     label: const Text('Continue'),
                     onPressed: () => EnrollFlow.openResult(context),
                   ),
-                  // Area stability: Continue alone is shorter than the
-                  // mid-flow slot, so returning here (e.g. back from the
-                  // result step) would grow the preview and stretch the
-                  // feed — reserve the prompt+status extra height invisibly
-                  // (same line heights, hidden, no semantics, no buttons).
-                  Visibility(
-                    visible: false,
-                    maintainSize: true,
-                    maintainAnimation: true,
-                    maintainState: true,
-                    child: ExcludeSemantics(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'X',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: ProxSpacing.xs),
-                          const Text('X'),
-                          const SizedBox(height: 8),
-                        ],
-                      ),
-                    ),
-                  ),
-                ] else if (saveError) ...[                  EnrollNotice(message: st.message, isError: true),
-                  const SizedBox(height: ProxSpacing.sm),
+                  const _SlotTopUp(),
+                ] else if (saveError) ...[
                   ProxPrimaryButton(
                     icon: _saving
                         ? const SizedBox(
@@ -629,6 +653,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                     label: const Text('Try again'),
                     onPressed: _saving ? null : _saveAll,
                   ),
+                  const _SlotTopUp(),
                 ] else ...[
                   Text(
                     enrollCapturePrompt,
