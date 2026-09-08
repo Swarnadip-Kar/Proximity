@@ -1,14 +1,19 @@
 // Continuous-session enrollment contracts: pose-window math (pure),
-// angle progress (dots + count + per-angle instruction), live-preview oval,
-// gated advance (accept/reject/retake-without-loss), cancel, dispose
+// overlay-only preview composition at true ratio, no-tap auto-capture
+// advance (accept/reject/auto-retry with progress kept), cancel, dispose
 // safety, and fail-closed save.
 //
 // NOTE on the live preview: the camera plugin has no test double
 // (availableCameras + permission channels throw in flutter_test), so the
 // Stack(CameraPreview + FaceCaptureOvalOverlay) composition is verified
-// on-device; CI pumps the overlay standalone (renders + repaints) and the
+// on-device; CI pumps the placeholder Stack (same construction) and the
 // full session below through the FakeEnrollSessionCamera + FakePoseGate
 // seams (the real camera opens exactly once per session in production).
+//
+// NOTE on the clock: the auto-capture loop always has its next one-shot
+// beat scheduled while running, so tests drive it with bounded
+// [_pumpUntil]/[_drain] pumps — never pumpAndSettle mid-loop (it would
+// time out on the live loop instead of failing loudly).
 import 'dart:async';
 import 'dart:io';
 
@@ -25,6 +30,7 @@ import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
+import 'package:proximity_app/widgets/prox_cards.dart';
 
 class _EnrollBoom extends FakeFaceVerifier {
   _EnrollBoom() : super(match: true, score: 0.9);
@@ -63,6 +69,9 @@ Future<EnrollmentController> _keyReady(
   return ctl;
 }
 
+/// Pushed-route harness (production shape: capture is always pushed onto
+/// the bundle flow, never root — a root pop is a framework no-op, so a
+/// bare home: harness could never exercise Cancel-dispose).
 Widget _captureHarness(
         {required EnrollmentController ctl,
         EnrollSessionCamera? camera,
@@ -74,20 +83,49 @@ Widget _captureHarness(
             .overrideWithValue(camera ?? FakeEnrollSessionCamera()),
         poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
       ],
-      child: const MaterialApp(home: EnrollCaptureScreen()),
+      child: MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const EnrollCaptureScreen()),
+              ),
+              child: const Text('open-capture'),
+            ),
+          ),
+        ),
+      ),
     );
 
-/// Taps the primary capture button for the current angle.
-Future<void> _tapCapture(WidgetTester t, String slot) async {
-  final btn = find.ancestor(
-    of: find.textContaining('Capture $slot still'),
-    matching: find.byType(FilledButton),
-  );
-  await t.scrollUntilVisible(btn, 300,
-      scrollable: find.byType(Scrollable).first);
-  await t.pumpAndSettle();
-  await t.tap(btn);
-  await t.pumpAndSettle();
+/// Pushes the session and lets the camera open (loop still in its initial
+/// beat afterwards — deterministic overlay state). Two stepped pumps: the
+/// pushed route needs a second frame to materialize in the test binding.
+Future<void> _openSession(WidgetTester t) async {
+  await t.tap(find.text('open-capture'));
+  await t.pump(const Duration(milliseconds: 100));
+  await t.pump(const Duration(milliseconds: 300));
+}
+
+/// Clock driver for the auto-capture loop: bounded pumps that fail loudly
+/// if [f] never appears (never pumpAndSettle mid-loop — the loop always
+/// has its next beat scheduled while running).
+Future<void> _pumpUntil(WidgetTester t, Finder f, {int ticks = 60}) async {
+  for (var i = 0; i < ticks; i++) {
+    if (f.evaluate().isNotEmpty) return;
+    await t.pump(const Duration(milliseconds: 200));
+  }
+  fail('auto-capture loop never settled: $f');
+}
+
+/// Lets pending one-shot beats and pop transitions finish after
+/// cancel/dispose so teardown never sees a live timer. Stepped (never one
+/// big pump — transitions need successive frames). The loop schedules
+/// nothing further once done.
+Future<void> _drain(WidgetTester t) async {
+  for (var i = 0; i < 15; i++) {
+    await t.pump(const Duration(milliseconds: 200));
+  }
 }
 
 void main() {
@@ -211,42 +249,77 @@ void main() {
   });
 
   group('EnrollCaptureScreen continuous session', () {
-    testWidgets('camera opens once for the whole session', (t) async {
-      final camera = FakeEnrollSessionCamera();
-      final ctl = await _keyReady();
-      await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
-      await t.pumpAndSettle();
-      expect(camera.openCount, 1);
-      // All 5 captures ride the same open session — no fall-out-and-back.
-      for (final label in ['centre', 'left', 'right', 'up', 'down']) {
-        await _tapCapture(t, label);
-      }
-      expect(camera.openCount, 1);
-      expect(camera.closeCount, 0);
-      expect(t.takeException(), isNull);
-    });
-
-    testWidgets('angle 1 shows dots + instruction + capture', (t) async {
+    testWidgets('preview is overlay-only at self-sized ratio', (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
-      await t.pumpAndSettle();
-      expect(find.text('Angle 1 of 5'), findsOneWidget);
-      expect(find.textContaining('Step 1: Look straight'), findsOneWidget);
-      expect(find.textContaining('Capture centre still'), findsOneWidget);
+      // Camera open, loop still in its initial beat (600ms) — the overlay
+      // deterministically names angle 1.
+      await _openSession(t);
+      // Overlay ONLY in the preview Stack: dots + one instruction line +
+      // oval. No cards, no capture buttons, no slot rows, no progress bar.
+      expect(find.byType(EnrollAngleDots), findsOneWidget);
       expect(find.text('Look straight'), findsWidgets);
+      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
+      expect(find.byType(ProxCard), findsNothing);
+      expect(find.text('Retake'), findsNothing);
+      expect(find.textContaining('Capture'), findsNothing);
+      expect(find.byType(FilledButton), findsNothing);
+      // The overlay never affects preview layout: it hangs off Positioned
+      // + IgnorePointer inside the Stack (ancestor existence; Scaffold
+      // internals own other IgnorePointers, so this asserts presence).
+      expect(
+          find.ancestor(
+              of: find.byType(EnrollAngleDots),
+              matching: find.byType(IgnorePointer)),
+          findsWidgets);
+      expect(
+          find.ancestor(
+              of: find.byType(EnrollAngleDots),
+              matching: find.byType(Positioned)),
+          findsOneWidget);
+      // …and the preview area is constraint-loose (Expanded + Center, the
+      // certified FaceCaptureScreen construction — CameraPreview, an
+      // AspectRatio internally, sizes itself), never a fixed-height box.
+      expect(
+          find.ancestor(
+              of: find.byType(FaceCaptureOvalOverlay),
+              matching: find.byType(Center)),
+          findsOneWidget);
+      expect(
+          find.ancestor(
+              of: find.byType(FaceCaptureOvalOverlay),
+              matching: find.byType(Expanded)),
+          findsOneWidget);
+      expect(
+          find.byWidgetPredicate(
+              (w) => w is SizedBox && w.height == 300),
+          findsNothing);
+      expect(t.takeException(), isNull);
+      // Drain: cancel the live loop (pops back to the launcher), then
+      // let the beat fire post-dispose.
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(find.text('open-capture'), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('five gated captures advance to result', (t) async {
+    testWidgets('no taps: auto-capture advances all 5 gated angles',
+        (t) async {
+      final camera = FakeEnrollSessionCamera();
       final gate = FakePoseGate();
       final ctl = await _keyReady();
-      await t.pumpWidget(_captureHarness(ctl: ctl, gate: gate));
+      await t.pumpWidget(
+          _captureHarness(ctl: ctl, camera: camera, gate: gate));
+      await _openSession(t);
+      // No capture buttons exist at any point — the loop drives itself.
+      expect(find.byType(FilledButton), findsNothing);
+      // All 5 validate → auto-advance to the result step, one camera open.
+      await _pumpUntil(t, find.text('Save enrollment'));
+      // Result screen is static: settle its entrance before asserting.
       await t.pumpAndSettle();
-      for (final label in ['centre', 'left', 'right', 'up', 'down']) {
-        await _tapCapture(t, label);
-      }
-      // All 5 validated → auto-advance to the result step.
-      expect(find.text('Save enrollment'), findsWidgets);
+      expect(camera.openCount, 1);
+      expect(camera.closeCount, 0);
       // Every angle really went through the gate, in slot order.
       expect(
           gate.calls.map((c) => c.split(':').first),
@@ -254,7 +327,7 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('pose reject keeps progress with a targeted hint',
+    testWidgets('pose reject hints then auto-retries, progress kept',
         (t) async {
       final gate = FakePoseGate([
         const PoseDecision.retry(
@@ -264,87 +337,67 @@ void main() {
       final ctl = await _keyReady(verifier: verifier);
       await t.pumpWidget(
           _captureHarness(ctl: ctl, gate: gate));
-      await t.pumpAndSettle();
-      await _tapCapture(t, 'centre');
-      // Rejected: still on angle 1, targeted hint shown, gallery untouched.
-      expect(find.text('Angle 1 of 5'), findsOneWidget);
-      expect(find.textContaining('a little more to your left'),
-          findsOneWidget);
+      await _openSession(t);
+      // Rejected: the hint becomes the overlay line, gallery untouched.
+      await _pumpUntil(
+          t, find.textContaining('a little more to your left'));
       expect(verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
-      // Retry accepts (fallback) and advances without losing anything.
-      await _tapCapture(t, 'centre');
-      expect(find.text('Angle 2 of 5'), findsOneWidget);
-      expect(find.widgetWithText(TextButton, 'Retake'), findsOneWidget);
+      // Auto-retry accepts (fallback) and the session completes — centre
+      // went through the gate twice, nothing lost.
+      await _pumpUntil(t, find.text('Save enrollment'));
+      await t.pumpAndSettle();
+      expect(
+          gate.calls.map((c) => c.split(':').first),
+          ['centre', 'centre', 'left', 'right', 'up', 'down']);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('retake re-captures one slot without losing the rest',
-        (t) async {
-      var n = 0;
-      final camera = FakeEnrollSessionCamera();
-      final ctl = await _keyReady();
-      await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
-      await t.pumpAndSettle();
-      await _tapCapture(t, 'centre');
-      expect(find.text('Angle 2 of 5'), findsOneWidget);
-      // In-session retake of the accepted slot (no camera round-trip).
-      n = camera.captures;
-      final retake = find.widgetWithText(TextButton, 'Retake');
-      await t.scrollUntilVisible(retake, 300,
-          scrollable: find.byType(Scrollable).first);
-      await t.pumpAndSettle();
-      await t.tap(retake);
-      await t.pumpAndSettle();
-      expect(camera.captures, n + 1);
-      expect(camera.openCount, 1);
-      expect(find.text('Angle 2 of 5'), findsOneWidget);
-      expect(t.takeException(), isNull);
-    });
-
-    testWidgets('blank still keeps progress with a notice', (t) async {
+    testWidgets('blank capture auto-retries the slot', (t) async {
       final camera = FakeEnrollSessionCamera([StateError('blank')]);
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
+      await _openSession(t);
+      await _pumpUntil(t, find.textContaining('blank'));
+      // One wasted still, then the session completes on its own.
+      await _pumpUntil(t, find.text('Save enrollment'));
       await t.pumpAndSettle();
-      await _tapCapture(t, 'centre');
-      expect(find.text('Angle 1 of 5'), findsOneWidget);
-      expect(find.textContaining('blank'), findsOneWidget);
+      expect(camera.captures, 6);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('controller error shows verbatim + Save stays blocked',
+    testWidgets('controller error offers Try again, save stays blocked',
         (t) async {
       final ctl = await _keyReady(verifier: _EnrollBoom());
       await t.pumpWidget(_captureHarness(ctl: ctl));
-      await t.pumpAndSettle();
-      for (final label in ['centre', 'left', 'right', 'up', 'down']) {
-        await _tapCapture(t, label);
-      }
+      await _openSession(t);
+      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
       expect(find.textContaining('No face detected'), findsOneWidget);
-      // Still on capture (no auto-advance), progress kept for retake.
-      expect(find.text('5 of 5 captured — review below'), findsOneWidget);
-      expect(find.widgetWithText(TextButton, 'Retake'), findsWidgets);
+      // Still on capture (no auto-advance), all 5 accepted stills kept.
+      expect(find.text('Save enrollment'), findsNothing);
+      // Retrying a poisoned gallery fails closed again — never a save.
+      await t.tap(find.widgetWithText(FilledButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
+      expect(find.text('Save enrollment'), findsNothing);
+      await _drain(t);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('cancel disposes the session and enrolls nothing',
+    testWidgets('cancel mid-loop disposes the session, enrolls nothing',
         (t) async {
       final camera = FakeEnrollSessionCamera();
       final verifier = FakeFaceVerifier();
       final ctl = await _keyReady(verifier: verifier);
       await t.pumpWidget(
           _captureHarness(ctl: ctl, camera: camera));
-      await t.pumpAndSettle();
-      await _tapCapture(t, 'centre');
-      expect(find.text('Angle 2 of 5'), findsOneWidget);
-      final cancel = find.widgetWithText(OutlinedButton, 'Cancel');
-      await t.scrollUntilVisible(cancel, 300,
-          scrollable: find.byType(Scrollable).first);
-      await t.pumpAndSettle();
-      await t.tap(cancel);
-      await t.pumpAndSettle();
-      // Popped (session screen gone), camera closed, gallery untouched.
-      expect(find.textContaining('Angle'), findsNothing);
+      await _openSession(t);
+      // Wait for the first accept (dots semantics), then cancel.
+      await _pumpUntil(
+          t, find.bySemanticsLabel('Captured 1 of 5 angles'));
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      // Popped back to the launcher, camera closed, gallery untouched.
+      expect(find.text('open-capture'), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
       expect(camera.closeCount, 1);
       expect(verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
       expect(t.takeException(), isNull);
@@ -355,32 +408,29 @@ void main() {
       final gate = _HangingGate();
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl, gate: gate));
-      await t.pumpAndSettle();
-      final btn = find.ancestor(
-        of: find.textContaining('Capture centre still'),
-        matching: find.byType(FilledButton),
-      );
-      await t.scrollUntilVisible(btn, 300,
-          scrollable: find.byType(Scrollable).first);
-      await t.pumpAndSettle();
-      await t.tap(btn);
-      await t.pump(); // capture fired, validation now hangs in the gate
+      await _openSession(t);
+      // Initial beat + capture fire, validation now hangs in the gate.
+      await _pumpUntil(t, find.text('Checking angle…'));
       expect(gate.calls, 1);
       // Dispose mid-validation, then let the check complete late.
       await t.pumpWidget(const MaterialApp(home: Scaffold()));
       gate.completer.complete(const PoseDecision.ok());
-      await t.pumpAndSettle();
+      await _drain(t);
       expect(t.takeException(), isNull);
     });
 
     testWidgets('camera open failure is fail-closed, never a throw',
         (t) async {
+      final camera = FakeEnrollSessionCamera([], true);
       final ctl = await _keyReady();
-      await t.pumpWidget(_captureHarness(
-          ctl: ctl, camera: FakeEnrollSessionCamera([], true)));
+      await t.pumpWidget(
+          _captureHarness(ctl: ctl, camera: camera));
+      await _openSession(t);
       await t.pumpAndSettle();
-      expect(find.textContaining('Camera unavailable'), findsWidgets);
-      expect(find.text('Angle 1 of 5'), findsOneWidget);
+      // Message replaces the preview (no loop, no captures, no throw).
+      expect(find.textContaining('did not start'), findsWidgets);
+      expect(camera.captures, 0);
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
@@ -388,6 +438,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
       await t.pumpAndSettle();
       debugDefaultTargetPlatformOverride = null;
       expect(find.textContaining('needs the mobile app'), findsOneWidget);
