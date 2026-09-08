@@ -56,14 +56,19 @@ jobs:
       # (`package android.content does not exist` across plugin Java).
       # Refresh cmdline-tools first so the platform package is visible,
       # then install it — compileSdk stays at the plugin-required 37.
+      # NOTE: the refresh installs side-by-side (`latest-2`, inconsistent
+      # location) — pick the NEWEST tools dir by mtime, not by name
+      # (`sort -V` prefers the stale `latest/` over `latest-2/`).
       - name: Install Android API 37 platform (compileSdk 37)
         run: |
           SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDK" --licenses > /dev/null 2>&1 || true
-          "$SDK" --install "cmdline-tools;latest" > /dev/null
-          LATEST="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/ | sort -V | tail -1)/bin/sdkmanager"
-          yes | "$LATEST" --licenses > /dev/null 2>&1 || true
-          "$LATEST" "platforms;android-37"
+          "$SDK" --install "cmdline-tools;latest" > /dev/null 2>&1 || true
+          NEWEST="$(ls -dt "$ANDROID_HOME"/cmdline-tools/*/ | head -1)/bin/sdkmanager"
+          yes | "$NEWEST" --licenses > /dev/null 2>&1 || true
+          "$NEWEST" --list 2>/dev/null | grep -E "platforms;android-3[67]" || true
+          "$NEWEST" "platforms;android-37"
+          ls "$ANDROID_HOME/platforms"
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -76,25 +81,17 @@ jobs:
           path: apps/proximity_app/build/app/outputs/flutter-apk/app-debug.apk
 
   windows:
-    runs-on: windows-latest
+    # Pinned to windows-2022, not windows-latest: the win25-vs2026 image
+    # ships VS2026 whose BUNDLED CMake is 4.x, and flutter resolves cmake
+    # via the VS install — not PATH, so no PATH-level CMake 3.x pin can
+    # redirect it (verified: PATH cmake 3.31.6, build still used 4.x).
+    # CMake 4 removed `cmake_minimum_required` < 3.5 compat, which the
+    # Firebase C++ SDK bundled with firebase_core still declares.
+    # windows-2022 (VS2022, CMake 3.x) configures it fine.
+    runs-on: windows-2022
     needs: analyze-test
     steps:
       - uses: actions/checkout@v4
-      # windows-latest ships CMake 4.x, which removed compatibility with
-      # `cmake_minimum_required` < 3.5 — the Firebase C++ SDK bundled with
-      # firebase_core still declares an older minimum and configure fails
-      # (`Compatibility with CMake < 3.5 has been removed`). Pin CMake 3.x;
-      # upgrading Firebase to a re-declared C++ SDK is separate work.
-      # NOTE: choco PATH changes are invisible to later steps (the runner
-      # process env is captured at startup), so the 3.x bin dir is
-      # explicitly prepended via GITHUB_PATH — without this the build step
-      # still resolves the preinstalled CMake 4.
-      - name: Pin CMake 3.x (Firebase C++ SDK compat)
-        run: |
-          choco install cmake --version 3.31.6 --allow-downgrade -y
-          echo 'C:\Program Files\CMake\bin' >> $env:GITHUB_PATH
-      - name: Verify CMake 3.x wins on PATH
-        run: cmake --version
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
