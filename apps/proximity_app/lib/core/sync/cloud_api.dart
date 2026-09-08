@@ -5,7 +5,6 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';

@@ -4,7 +4,6 @@
 // now calls the shared pure helper [resolveStudentClaimWrite] (see claim.dart).
 library;
 
-import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';

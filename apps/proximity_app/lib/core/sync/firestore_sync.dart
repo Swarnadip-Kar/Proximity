@@ -8,7 +8,6 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';

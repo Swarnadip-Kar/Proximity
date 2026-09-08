@@ -12,7 +12,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
-import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 const _email = 's@x.in';
