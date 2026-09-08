@@ -9,7 +9,7 @@
 //     modelVer, platform, createdAt/lastMoveAt/lastSeenAt/updatedAtMillis,
 //     moveCount} — one enrolled student device per Gmail. Same-device writes
 //     (pkHex or installId unchanged) are always allowed; moves to a different
-//     device need a 7-day cooldown (request.time - lastMoveAtMillis > 7d)
+//     device need a 30-day cooldown (request.time - lastMoveAtMillis > 30d)
 //     unless the doc predates timestamps (one migration move). Clients claim
 //     via a transaction so racing devices resolve to exactly one winner.
 //     NO reset path exists by design: professor registration is

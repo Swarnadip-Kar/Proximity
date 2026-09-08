@@ -16,7 +16,7 @@
 // Cancel disposes the session and enrolls nothing;
 // fail-closed (no validated capture → no save; Save blocked till the 5
 // validate via self-check); atomic claim (one device per Gmail + install
-// binding + 7-day move + heartbeats); key always kept.
+// binding + 30-day move + heartbeats); key always kept.
 //
 // PROPOSALS (not applied — off-limits files, for the owner):
 // 1. Wire-up (lib/main.dart, lib/screens/student_home.dart,

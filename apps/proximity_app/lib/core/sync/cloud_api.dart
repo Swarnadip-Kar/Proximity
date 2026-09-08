@@ -29,7 +29,7 @@ abstract class CloudSync {
   /// move). Throws StateError with user-facing copy when refused
   /// (cooldown/install-conflict) — the second of two racing devices loses.
   /// [moveIntentValid]: old-DKey-signed MoveIntent verified by the caller —
-  /// instant move even inside the 7d cooldown.
+  /// instant move even inside the 30d cooldown.
   /// [facePrint]: when non-null the print lands in facePrints/{email} in the
   /// SAME transaction (atomic with the binding — a claimed device always
   /// leaves comparable material; see protocol face_print.dart, privacy flag

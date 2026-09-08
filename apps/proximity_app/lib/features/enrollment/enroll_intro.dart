@@ -2,7 +2,7 @@
 //
 // Gives the squeezed enrollment room to breathe: what happens
 // (account → key → 5 angles → online claim), the internet-once note, the
-// one-device-per-7-days explainer with its manual-attendance pointer, and
+// one-device-per-30-days explainer with its manual-attendance pointer, and
 // the friendly retry brief near the start. Then account pickup (silent —
 // students signed in on the landing) and the device key. The face scan
 // itself lives on EnrollCapture; the claim outcome on EnrollResult.
@@ -183,7 +183,7 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                 Expanded(
                   child: Text(
                     'One Gmail lives on one enrolled device at a time. A '
-                    'move to a new phone is allowed once every 7 days '
+                    'move to a new phone is allowed once every 30 days '
                     '(unlimited times) — the exact re-enroll date shows if '
                     'you try early. One phone holds one student Gmail. '
                     'Stuck in between? Ask your professor for manual '

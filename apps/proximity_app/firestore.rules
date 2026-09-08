@@ -26,9 +26,9 @@ rules_version = '2';
 //     consistency (not cryptographic proof) by offline verifiers — see
 //     the trust-model note in PROXIMITY_DESIGN.md.
 //     Same-install re-keys are always allowed; a move to a different
-//     install needs the 7-day cooldown (a bare pkHex match from another
+//     install needs the 30-day cooldown (a bare pkHex match from another
 //     install is a move, not the same device)
-//     (request.time - lastMoveAtMillis > 7d) unless the doc predates
+//     (request.time - lastMoveAtMillis > 30d) unless the doc predates
 //     timestamps (one migration move). Clients claim via a transaction so
 //     racing devices resolve to exactly one winner. Face photos are NEVER
 //     written here — only the device public key + install id + attestation
@@ -139,7 +139,7 @@ service cloud.firestore {
     }
     function moveCooldownElapsed() {
       return request.time.toMillis() - resource.data.lastMoveAtMillis >
-        7 * 24 * 60 * 60 * 1000;
+        30 * 24 * 60 * 60 * 1000;
     }
 
     match /studentDevices/{id} {
@@ -153,7 +153,7 @@ service cloud.firestore {
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg();
       // Same-device re-key/heartbeat always allowed; a move to a different
-      // device needs the 7-day cooldown (server-enforced: clients cannot
+      // device needs the 30-day cooldown (server-enforced: clients cannot
       // bypass it, even with a hand-built write). Pre-timestamp docs move
       // once freely (migration), stamping lastMoveAtMillis as they go.
       // Org stamps once and never blanks: legacy docs stamp on update.

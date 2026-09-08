@@ -94,8 +94,8 @@ There is no admin roster. Identity is the Google account itself; the ID
 number is compulsory but unverified display metadata. Attendance never
 consults a key list: whoever proves presence over radio lands in the
 per-course union, verified under the presented device key (TOFU per
-class). Revocation = the weekly device-move bound (a new phone enrolls at
-most once per 7 days); manual attendance covers any gap.
+class). Revocation = the monthly device-move bound (a new phone enrolls at
+most once per 30 days); manual attendance covers any gap.
 
 ### 3.2 Enrollment (online, ~2 min, once)
 
@@ -126,8 +126,8 @@ most once per 7 days); manual attendance covers any gap.
    (`studentDevices/{email}` + `deviceInstalls/{installId}` + a
    `studentDirectory` search row + a `facePrints` quantized face-code for
    the same-face duplicate check — §4). Same-install re-keys are free; moves
-   to a different install need a 7-day cooldown (unlimited moves,
-   ≤1/week, exact re-enroll date shown; an old-DKey-signed MoveIntent
+   to a different install need a 30-day cooldown (unlimited moves,
+   ≤1/month, exact re-enroll date shown; an old-DKey-signed MoveIntent
    moves instantly; no reset exists); an install enrolled as another
    Gmail hard-refuses. Every claim and online re-sign-in heartbeats
    last-online. (Web records builds skip the device gate: no key lives
@@ -193,7 +193,7 @@ What still holds without it (all offline, all tested):
 - Face-ticket anomaly flags (`detectFaceAnomalies`: saturated scores,
   future/reused stamps, unknown verifier, version flapping) ride every
   proof for professor-side visibility.
-- One-active-device accounting (claim tx, 7d cooldown, MoveIntent) and
+- One-active-device accounting (claim tx, 30d cooldown, MoveIntent) and
   the offline double-pkD audit (`findDoublePkD` / `auditDoublePkD`):
   a copied identity used on two installs leaves a permanent,
   attributable trace in the synced bindings.
@@ -210,7 +210,7 @@ Remains (scoped feature work, not stubs): on-device HW key production
 by the keystore/Enclave track (the step that makes FULL/STD mean
 silicon, not self-assertion); Apple App Attest root provisioning (moot
 until a backend exists to verify against it); revocation/CRL checks
-(theft response today: 7-day move bound + manual attendance).
+(theft response today: 30-day move bound + manual attendance).
 
 ---
 
@@ -547,7 +547,7 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
 - **Copied ID fails:** signatures verify against the presented device key for that Gmail (TOFU per class). Attacker's phone holds a different key (or none), verification fails.
 - **Cloned app fails:** the install UUID + sealed SKey envelope don't
   transfer — a backup-restore clone fails unwrap and must re-enroll
-  (subject to the 7-day move bound), and the old install's binding
+  (subject to the 30-day move bound), and the old install's binding
   still names the old install. (Residual: software DKey until §13 HW
   lands, so this is envelope+server-claim strength, not silicon.)
 - **Fake professor fails:** the student verifies `Sig_p(j)` over the
@@ -766,7 +766,7 @@ one-liner idioms and intentional seams (below).
    then at the claim layer.** No keystore/Enclave backend yet →
    DKey level `none` in practice; no server re-check exists at all
    (§3.4), so a claimed FULL/STD is consistency-checked, never proven.
-    Anti-clone strength today = sealed envelope + install UUID + 7d move
+    Anti-clone strength today = sealed envelope + install UUID + 30d move
     bound + offline double-pkD audit, not silicon. Live NONE marks carry
     the `device-none-fallback` flag so the lack of silicon stays visible
     per proof.

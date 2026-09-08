@@ -232,7 +232,7 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                         Text(
                           'Same Gmail can hold both roles — switch anytime. Professor '
                           'works on many devices; student enrollment lives on exactly '
-                          'one device (moves to a new phone once a week).',
+                          'one device (moves to a new phone once a month).',
                           textAlign: TextAlign.center,
                           style: Theme.of(context)
                               .textTheme

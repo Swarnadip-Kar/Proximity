@@ -222,12 +222,12 @@ void main() {
     expect(blocked.retryAfter, isNotNull);
     expect(studentClaimMessage(blocked, dev('aa', 'i1', movedAgoDays: 1)),
         contains('professor'));
-    // Different device, moved 8 days ago: allowed.
+    // Different device, moved 31 days ago: allowed.
     expect(
         evaluateStudentClaim(
                 localPkHex: 'zz',
                 localInstallId: 'i2',
-                binding: dev('aa', 'i1', movedAgoDays: 8),
+                binding: dev('aa', 'i1', movedAgoDays: 31),
                 installEmail: null,
                 email: email)
             .claim,
@@ -244,7 +244,7 @@ void main() {
         StudentClaim.allowedMove);
   });
 
-  test('FakeCloudSync claim: one Gmail one device, weekly move', () async {
+  test('FakeCloudSync claim: one Gmail one device, monthly move', () async {
     final fake = FakeCloudSync();
     const email = 's@x.in';
     // Phone A enrolls first.
@@ -292,10 +292,10 @@ void main() {
         await fake.touchStudentDevice(
             emailLower: email, pkHex: 'cc', installId: 'iB'),
         isFalse);
-    // Weekly move still works after a stale binding (genuine loss path):
-    // seed a second Gmail bound 8 days ago, then move it.
+    // Monthly move still works after a stale binding (genuine loss path):
+    // seed a second Gmail bound 31 days ago, then move it.
     const day = 24 * 60 * 60 * 1000;
-    final stale = DateTime.now().toUtc().millisecondsSinceEpoch - 8 * day;
+    final stale = DateTime.now().toUtc().millisecondsSinceEpoch - 31 * day;
     await fake.writeStudentDevice(StudentDeviceDoc(
         email: 'old@x.in',
         uid: 'u3',

@@ -24,7 +24,7 @@
 // unchanged (NONE still never *tiers*); only the live verify path falls
 // back, loudly.
 // Heartbeat rolls attestedUntil; old-DKey-signed MoveIntent = instant move
-// else 7d cooldown kept; backup-restore clone fails unwrap → 'restore
+// else 30-day cooldown kept; backup-restore clone fails unwrap → 'restore
 // detected — re-enroll'; double-pkD audit flag on sync.
 //
 // P-256 verification itself lives in the platform adapter (app layer):

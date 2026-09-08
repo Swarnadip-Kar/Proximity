@@ -66,11 +66,11 @@ class StudentDeviceDoc {
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.
-/// Genuine phone loss waits this out (unlimited moves, at most one per
-/// week); ping-ponging two phones cannot. No reset shortcut exists: any
+/// Genuine phone change waits this out (unlimited moves, at most one per
+/// 30 days); ping-ponging two phones cannot. No reset shortcut exists: any
 /// reset permission would be self-service since professor registration is
 /// self-asserted this phase.
-const kStudentMoveCooldown = Duration(days: 7);
+const kStudentMoveCooldown = Duration(days: 30);
 
 /// Verdict of [evaluateStudentClaim].
 enum StudentClaim {
@@ -111,7 +111,7 @@ class StudentClaimResult {
 /// [moveIntentValid]: an old-DKey-signed MoveIntent (verified by the
 /// caller against the PREVIOUS binding's pkD) grants an instant move even
 /// inside the cooldown — genuine phone change with the old phone at hand.
-/// Without it the 7d cooldown stands (lost/stolen path, manual attendance
+/// Without it the 30d cooldown stands (lost/stolen path, manual attendance
 /// covers the gap).
 StudentClaimResult evaluateStudentClaim({
   required String localPkHex,
@@ -166,7 +166,7 @@ StudentClaimResult evaluateStudentClaim({
 
 /// User-facing refusal copy for a non-ok [StudentClaimResult]. The cooldown
 /// path always names the re-enroll date (moves are unlimited lifetime, at
-/// most one per 7 days) and points at manual attendance for the gap — there
+/// most one per 30 days) and points at manual attendance for the gap — there
 /// is deliberately no reset shortcut (any reset permission would be
 /// self-service, since professor registration is self-asserted).
 String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
@@ -178,7 +178,7 @@ String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
           'If you need attendance marked meanwhile, ask your professor for manual attendance.';
     case StudentClaim.cooldownBlocked:
       final retry = r.retryAfter != null
-          ? ' You can re-enroll this device on ${dateIsoOf(r.retryAfter!)} — enrollment moves to a new phone once a week (unlimited times).'
+          ? ' You can re-enroll this device on ${dateIsoOf(r.retryAfter!)} — enrollment moves to a new phone once a month (unlimited moves, at most one per 30 days).'
           : '';
       final seen = binding != null && binding.lastSeenAtMillis > 0
           ? ' Its last online activity was ${dateIsoOf(DateTime.fromMillisecondsSinceEpoch(binding.lastSeenAtMillis, isUtc: true))}.'
@@ -270,7 +270,7 @@ ClaimWrite resolveStudentClaimWrite({
 // UUID persisted in secure storage (Keystore/Keychain). Properties:
 //   - stable across restarts and app updates on the same install;
 //   - app-data clear / reinstall regenerates it (counts as a device move,
-//     subject to the weekly cooldown);
+//     subject to the 30-day cooldown);
 //   - app clones, dual-app copies and work profiles hold SEPARATE secure
 //     storage, so a clone gets its own installId and counts as a different
 //     device — the same phone can never hold two student enrollments.

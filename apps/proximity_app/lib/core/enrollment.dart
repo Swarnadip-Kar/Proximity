@@ -502,7 +502,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// is disabled until then, and this validates again for programmatic
   /// callers. Online-only: the claim needs internet, which stops students
   /// from enrolling anywhere offline for false attendance. A Gmail held by
-  /// a different device refuses here (weekly cooldown with an exact
+  /// a different device refuses here (30-day move cooldown with an exact
   /// re-enroll date; manual attendance covers the gap), as does an install
   /// enrolled as another Gmail. Racing devices lose atomically: exactly
   /// one claim wins. Carries `org` into every new record (Track 1).

@@ -282,7 +282,7 @@ class EnrollResultScreen extends ConsumerWidget {
               Expanded(
                 child: Text(
                   'Next step: wait for the re-enroll date above — moves are '
-                  'unlimited, at most one per 7 days. Until then, ask your '
+                  'unlimited, at most one per 30 days. Until then, ask your '
                   'professor to mark your attendance manually (Request '
                   'manual attendance in class).',
                 ),

@@ -15,7 +15,7 @@
 // NONE claims no tier — until HW keys ship, the host applies the graceful
 // `device-none-fallback` (same ticket/Sig_s/face/sighting checks, flagged
 // confirm) so software-key students mark normally. Heartbeat rolls
-// attestedUntil; old-DKey-signed MoveIntent = instant move else 7d
+// attestedUntil; old-DKey-signed MoveIntent = instant move else 30-day
 // cooldown kept; backup-restore clone fails unwrap→'restore detected —
 // re-enroll' (on HW keys; software keys copy with their files —
 // SoftwareDeviceKey below is level `none` for exactly this reason, which

@@ -35,7 +35,7 @@ transaction).
 The claim enforces both sides: a Gmail enrolled on another phone refuses —
 the screen names the exact re-enroll date (`You can re-enroll this device
 on XYZ`) and the old device's last online day. Moves are unlimited over a
-lifetime but at most one per 7 days; there is deliberately no reset
+lifetime but at most one per 30 days; there is deliberately no reset
 shortcut (professor registration is self-asserted, so any reset permission
 would let a student self-reset around the wait). Until the date, attendance
 comes from the professor's manual path: manual adds need only the ID —
@@ -242,7 +242,7 @@ org-scoped queries fail without the new composite indexes, cross-org
 - `studentDevices/{emailLower}`: `{email, uid, pkHex, installId, name,
   roll, modelVer, platform, org, createdAtMillis/lastMoveAtMillis/lastSeenAtMillis/updatedAtMillis,
   moveCount}` — one enrolled student device per Gmail. Same-install
-  re-keys free; moves need the 7-day cooldown (server-enforced; a bare
+  re-keys free; moves need the 30-day cooldown (server-enforced; a bare
   pkHex match from another install is a move, not the same device);
   pre-timestamp docs migrate once. Claimed in one transaction
   (`studentDevices` + `deviceInstalls` + directory row, all three stamped
@@ -281,7 +281,7 @@ T3 direct-ID invisibility: with A's session id, B's device fetches
 `classSessions/{id}` directly → permission-denied (rules), and
 `studentDevices/b@other.edu` is unreadable to A.
 
-Timelines: device moves unlimited lifetime, ≤1 per 7 days, exact
+Timelines: device moves unlimited lifetime, ≤1 per 30 days, exact
 re-enroll date shown with the old device's last-online day; same-install
 re-key/re-enroll always free; first bind always free; manual attendance
 covers any gap; offline manual adds queue and resolve on the next course
@@ -541,14 +541,14 @@ Simulator UI walkthrough without taps/accounts:
   gates); professor hosting + records work on macOS/Windows/Linux.
 - [x] Firestore rules deployed 2026-09-06 (`firebase deploy --only
       firestore:rules --project proximity-attendence` — released, compiles
-      clean) + drill still to run: second student device refuses (re-enroll
-      date + last-online + manual pointer); stale (>7d) moves; same-phone
-      second Gmail (incl. clone) refuses; directory ID/name/email search;
-      offline ID queue resolves on sync; partial + absent edit lists;
-      student course totals match exports; rename/delete converge; offline
-      edits sync on reconnect.
-      NOTE: rules changed since the 09-06 deploy (install-anchored same
-      device, no deletes, directory reads) — redeploy before the drill.
+       clean) + drill still to run: second student device refuses (re-enroll
+       date + last-online + manual pointer); stale (>30d) moves; same-phone
+       second Gmail (incl. clone) refuses; directory ID/name/email search;
+       offline ID queue resolves on sync; partial + absent edit lists;
+       student course totals match exports; rename/delete converge; offline
+       edits sync on reconnect.
+       NOTE: rules changed since the 09-06 deploy (install-anchored same
+       device, 30-day cooldown, directory reads) — redeploy before the drill.
 - [ ] Web records: authorized domains → Google-popup sign in → student
       course totals + prof course/session/CSV views; native actions hidden
       with the download banner.
@@ -611,7 +611,7 @@ fact (the on-screen ring autoscrolls).
 - Hardware keystore/Secure Enclave DKey enrollment (interface +
   sealed-SKey + tiers ship; Kotlin/Swift platform work + persisted
   attestation material pending) + Apple App Attest root provisioning +
-  attestation revocation/CRL story (theft response today: 7-day move
+  attestation revocation/CRL story (theft response today: 30-day move
   bound + manual attendance).
 - Liveness-capable face plugin behind the existing adapter if photo
   fraud appears in the pilot.

@@ -224,7 +224,7 @@ class FirestoreCloudSync implements CloudSync {
   @override
   Future<void> writeStudentDevice(StudentDeviceDoc doc) async {
     // Dead in production on purpose: a raw set(merge:true) here would
-    // bypass the claim transaction (single-device verdict + 7-day cooldown
+    // bypass the claim transaction (single-device verdict + 30-day cooldown
     // + directory row). Enrollment goes through [claimStudentDevice]; the
     // fake keeps a working copy so tests can seed bindings.
     throw UnimplementedError(

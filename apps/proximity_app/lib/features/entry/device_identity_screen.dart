@@ -291,7 +291,7 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
             const ProxStateBadge(
                 state: ProxState.waiting, label: 'Eligible to move here'),
             const ProxSyncNote(
-                'The week since the last move has passed — enrolling here moves it (at most once a week).'),
+                'The 30 days since the last move have passed — enrolling here moves it (at most once a month).'),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,
