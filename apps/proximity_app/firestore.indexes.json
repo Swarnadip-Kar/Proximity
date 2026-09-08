@@ -40,14 +40,6 @@
         {"fieldPath": "nameLower", "order": "ASCENDING"}
       ]
     }
-    {
-      "collectionGroup": "facePrints",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {"fieldPath": "org", "order": "ASCENDING"},
-        {"fieldPath": "buckets", "arrayConfig": "CONTAINS"}
-      ]
-    }
   ],
   "fieldOverrides": []
 }

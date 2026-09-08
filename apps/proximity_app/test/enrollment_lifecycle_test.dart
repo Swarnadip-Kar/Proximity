@@ -239,12 +239,12 @@ void main() {
         () {
       expect(rules, contains('purgeStale(stamp)'));
       expect(rules, contains('180 * 24 * 60 * 60 * 1000'));
-      // Exactly the four user-data collections gate deletes on a stored
+      // Exactly the three user-data collections gate deletes on a stored
       // stamp; deviceInstalls rows linger (unlistable UUIDs) and
       // classSessions keep their owner-session delete only.
       final gated =
           RegExp(r'purgeStale\(resource\.data\.').allMatches(rules).length;
-      expect(gated, 4);
+      expect(gated, 3);
       expect(rules, contains('match /deviceInstalls/{id}'));
       // classSessions delete is still the professor-owner delete, with no
       // purge gate anywhere in its block.
@@ -284,12 +284,8 @@ void main() {
           roll: '9',
           org: 'x.in',
           updatedAtMillis: stamp);
-      fake.prints[email] = FacePrintDoc(
-          org: 'x.in',
-          verifierVer: 'v',
-          embQ: 'e',
-          buckets: List.generate(10, (i) => 'b$i'),
-          updatedAtMillis: stamp);
+      // No face data anywhere in the cloud path (local-session dedup only):
+      // the purge pair is binding + directory (+ users doc below).
       fake.roles[uid] = RoleDoc(
           uid: uid,
           email: email,
@@ -327,18 +323,15 @@ void main() {
           unorderedEquals([
             'studentDevices/gone@x.in',
             'studentDirectory/gone@x.in',
-            'facePrints/gone@x.in',
             'users/ug',
           ]));
       expect(out.purgedAny, isTrue);
       expect(fake.devices.containsKey('gone@x.in'), isFalse);
       expect(fake.dir.containsKey('gone@x.in'), isFalse);
-      expect(fake.prints.containsKey('gone@x.in'), isFalse);
       expect(fake.roles.containsKey('ug'), isFalse);
       // The other user is untouched…
       expect(fake.devices.containsKey('kept@x.in'), isTrue);
       expect(fake.dir.containsKey('kept@x.in'), isTrue);
-      expect(fake.prints.containsKey('kept@x.in'), isTrue);
       expect(fake.roles.containsKey('uk'), isTrue);
       // …and professors' past records stay (sessions never in scope).
       expect(await fake.pullProfSessions('uk'), hasLength(1));
@@ -385,76 +378,6 @@ void main() {
           emailLower: 'gone@x.in', uid: 'ug', now: fixedNow);
       expect(out.purgedAny, isFalse);
       expect(fake.devices.containsKey('gone@x.in'), isTrue);
-    });
-  });
-
-  group('face-print continuity across transfer', () {
-    final t0 = DateTime.utc(2026, 6, 1);
-    FacePrintDoc printFor(String tag) => FacePrintDoc(
-        org: 'x.in',
-        verifierVer: 'v',
-        embQ: tag,
-        buckets: List.generate(10, (i) => '$tag-$i'),
-        updatedAtMillis: 0);
-
-    StudentDeviceDoc docFor(String pk) => StudentDeviceDoc(
-        email: _email,
-        uid: 'u9',
-        pkHex: pk,
-        name: 'S',
-        roll: '1',
-        modelVer: 'v');
-
-    test('cooldown move refreshes the single print (no orphan/duplicate)',
-        () async {
-      final fake = FakeCloudSync();
-      await fake.claimStudentDevice(
-          doc: docFor('aa'), installId: 'iA', now: t0, facePrint: printFor('v1'));
-      expect(fake.prints[_email]?.embQ, 'v1');
-
-      final t1 = t0.add(const Duration(days: 31));
-      final moved = await fake.claimStudentDevice(
-          doc: docFor('bb'), installId: 'iB', now: t1, facePrint: printFor('v2'));
-      expect(moved.isMove, isTrue);
-      // One print per Gmail, refreshed — never orphaned, never duplicated.
-      expect(fake.prints.keys, [_email]);
-      expect(fake.prints[_email]?.embQ, 'v2');
-      expect(fake.prints[_email]?.updatedAtMillis,
-          t1.millisecondsSinceEpoch);
-      expect((await fake.fetchStudentDevice(_email))?.installId, 'iB');
-      expect((await fake.fetchStudentDevice(_email))?.moveCount, 1);
-    });
-
-    test('lost-phone move also carries the fresh print', () async {
-      final fake = FakeCloudSync();
-      await fake.claimStudentDevice(
-          doc: docFor('aa'), installId: 'iA', now: t0, facePrint: printFor('v1'));
-      // 5d later the old phone fell silent 61d ago (backdated seed models a
-      // genuinely stale stored lastSeen): exemption path, print refreshes.
-      final stale = t0.millisecondsSinceEpoch - 61 * _dayMs;
-      final binding = (await fake.fetchStudentDevice(_email))!;
-      fake.devices[_email] = StudentDeviceDoc(
-        email: binding.email,
-        uid: binding.uid,
-        pkHex: binding.pkHex,
-        name: binding.name,
-        roll: binding.roll,
-        modelVer: binding.modelVer,
-        installId: binding.installId,
-        platform: binding.platform,
-        org: binding.org,
-        createdAtMillis: binding.createdAtMillis,
-        lastMoveAtMillis: t0.millisecondsSinceEpoch,
-        lastSeenAtMillis: stale,
-        updatedAtMillis: stale,
-        moveCount: binding.moveCount,
-      );
-      final t1 = t0.add(const Duration(days: 5));
-      final moved = await fake.claimStudentDevice(
-          doc: docFor('cc'), installId: 'iC', now: t1, facePrint: printFor('v3'));
-      expect(moved.isMove, isTrue);
-      expect(fake.prints.keys, [_email]);
-      expect(fake.prints[_email]?.embQ, 'v3');
     });
   });
 }

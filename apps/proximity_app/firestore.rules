@@ -34,11 +34,11 @@ rules_version = '2';
 //     only; a move-time "I've been offline" is worthless, and the stored
 //     value is trustworthy because every write stamping it must land within
 //     1h of request.time or the write is refused). Clients claim via a
-//     transaction so racing devices resolve to exactly one winner. Face photos are NEVER
-//     written here — only the device public key + install id + attestation
-//     material. Face-derived MATH (quantized face-code, see facePrints
-//     below) IS written to its own collection with enrollment consent —
-//     that collection's header states the reversed guarantee plainly.
+//     transaction so racing devices resolve to exactly one winner. Face photos/templates
+//     are NEVER written here — only the device public key + install id +
+//     attestation material. NO face-derived data reaches ANY collection:
+//     duplicate detection runs in memory on the professor's phone during
+//     the live local session (vectors ride the LAN prove body, RAM-only).
 //   deviceInstalls/{installId}: {email, pkHex, org, updatedAtMillis} — one
 //     student Gmail per app install. The installId lives in secure storage,
 //     so app clones / dual-app copies / work profiles get their own: the
@@ -307,56 +307,6 @@ service cloud.firestore {
       allow delete: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
-        && resource.data.keys().hasAll(['updatedAtMillis'])
-        && purgeStale(resource.data.updatedAtMillis);
-    }
-
-//   facePrints/{lowercased-email}: {org, verifierVer, embQ, buckets[],
-//     updatedAtMillis} — ONE quantized face-code per enrolled Gmail for the
-//     claim-time same-face duplicate check (protocol face_print.dart).
-//     PRIVACY REVERSAL, STATED PLAINLY: this collection holds biometric
-//     data (an int8-quantized FaceNet mean embedding — published
-//     template-inversion work reconstructs recognizable faces from such
-//     embeddings, so treat every byte as sensitive personal data) and it is
-//     LISTABLE org-wide by any signed-in same-org user — client-side compare
-//     at claim time requires it, and rules cannot stop org-query paging
-//     (enumeration is inherent, not a bug). No images/names/rolls/keys here
-//     (pure math + tags; the doc id is the Gmail for one-print-per-Gmail
-//     overwrite). Owner-lazy purge past 180d stale (no Cloud Functions, no
-//     TTL policy — both billing-gated on Spark; the owner deletes their own
-//     print on next authenticated contact, server-time-gated). Otherwise
-//     prints live with the binding until re-enrolled. Written only with
-//     enrollment consent, only in the claim transaction.
-    match /facePrints/{id} {
-      // Owner reads their own print; shortlist queries list same-org
-      // prints (org equality + buckets arrayContainsAny, capped client-
-      // side). Cross-org rows are invisible (legacy-free collection: org
-      // is mandatory, never '').
-      allow get: if signedIn() && id == tokenEmailLower();
-      allow list: if signedIn() && resource.data.org == tokenOrg();
-      allow create: if signedIn()
-        && id == tokenEmailLower()
-        && request.resource.data.org == tokenOrg()
-        && request.resource.data.verifierVer is string
-        && request.resource.data.embQ is string
-        && request.resource.data.embQ.size() >= 600
-        && request.resource.data.embQ.size() <= 1024
-        && request.resource.data.buckets is list
-        && request.resource.data.buckets.size() == 10;
-      allow update: if signedIn()
-        && id == tokenEmailLower()
-        && request.resource.data.org == tokenOrg()
-        && request.resource.data.verifierVer is string
-        && request.resource.data.embQ is string
-        && request.resource.data.embQ.size() >= 600
-        && request.resource.data.embQ.size() <= 1024
-        && request.resource.data.buckets is list
-        && request.resource.data.buckets.size() == 10;
-      // Owner-lazy six-month purge: the owner deletes their own print past
-      // 180d stale (server-time-gated, undated docs deny) — biometric data
-      // must not linger forever on ex-students.
-      allow delete: if signedIn()
-        && id == tokenEmailLower()
         && resource.data.keys().hasAll(['updatedAtMillis'])
         && purgeStale(resource.data.updatedAtMillis);
     }

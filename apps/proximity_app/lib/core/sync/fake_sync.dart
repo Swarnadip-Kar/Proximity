@@ -23,7 +23,6 @@ class FakeCloudSync implements CloudSync {
   final Map<String, StudentDeviceDoc> devices = {};
   final Map<String, String> installs = {}; // installId -> emailLower
   final Map<String, StudentDirectoryEntry> dir = {}; // emailLower -> entry
-  final Map<String, FacePrintDoc> prints = {}; // emailLower -> face print
   final Map<String, Map<String, dynamic>> sessions = {};
   String? lastPushedBy;
   FakeCloudSync({this.available = true, this.online = true});
@@ -142,8 +141,7 @@ class FakeCloudSync implements CloudSync {
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false,
-      FacePrintDoc? facePrint}) async {
+      bool moveIntentValid = false}) async {
     _needOnline();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -185,36 +183,7 @@ class FakeCloudSync implements CloudSync {
     installs[installId] = key;
     dir[key] =
         StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll, org: org, updatedAtMillis: atMillis);
-    // Same atomicity as the Firestore tx: binding + print land together.
-    if (facePrint != null) {
-      prints[key] = FacePrintDoc(
-        org: org,
-        verifierVer: facePrint.verifierVer,
-        embQ: facePrint.embQ,
-        buckets: List<String>.from(facePrint.buckets),
-        updatedAtMillis: atMillis,
-      );
-    }
     return ClaimOutcome(isFirst: isFirst, isMove: isMove);
-  }
-
-  @override
-  Future<Map<String, FacePrintDoc>> queryFacePrints(
-      {required String org,
-      required List<String> buckets,
-      int limit = kFacePrintQueryLimit}) async {
-    _needOnline();
-    if (org.isEmpty || buckets.isEmpty) return const {};
-    final want = buckets.toSet();
-    final out = <String, FacePrintDoc>{};
-    final keys = prints.keys.toList()..sort();
-    for (final k in keys) {
-      final p = prints[k]!;
-      if (p.org != org) continue;
-      if (p.buckets.any(want.contains)) out[k] = p;
-      if (out.length >= limit) break;
-    }
-    return out;
   }
 
   @override
@@ -286,15 +255,6 @@ class FakeCloudSync implements CloudSync {
             stampMillis: row.updatedAtMillis, now: at, age: kStudentPurgeStale)) {
       dir.remove(key);
       deleted.add('studentDirectory/$key');
-    }
-    final print = prints[key];
-    if (print != null &&
-        stampOlderThan(
-            stampMillis: print.updatedAtMillis,
-            now: at,
-            age: kStudentPurgeStale)) {
-      prints.remove(key);
-      deleted.add('facePrints/$key');
     }
     if (uid.isNotEmpty) {
       final role = roles[uid];
