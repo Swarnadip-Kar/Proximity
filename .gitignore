@@ -1,2 +1,5 @@
 # Build + dependency outputs (never committed).
 **/.dart_tool/
+**/build/
+# (directory-only patterns: files like android/build.gradle.kts are source
+# and stay tracked).
