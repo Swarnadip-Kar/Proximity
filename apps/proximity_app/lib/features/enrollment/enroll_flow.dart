@@ -9,11 +9,11 @@
 // route back to the opener.
 //
 // Behavioral law (buckets really gated, plugin owns matching passively):
-// one continuous camera session (open once, close on done/cancel);
-// follow-the-dot guidance over the live preview (latched target, stable
-// line, silent auto-retry); every still classified into any matching
-// unfilled bucket (ML Kit euler windows on the still file — never
-// instruction-only); Cancel disposes the session and enrolls nothing;
+// one continuous camera session (open once, close on done/cancel); rim
+// sweep glow + one static prompt over the live preview (silent
+// auto-retry); every still classified into any matching unfilled bucket
+// (ML Kit euler windows on the still file — never instruction-only);
+// Cancel disposes the session and enrolls nothing;
 // fail-closed (no validated capture → no save; Save blocked till the 5
 // validate via self-check); atomic claim (one device per Gmail + install
 // binding + 7-day move + heartbeats); key always kept.

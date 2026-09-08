@@ -1,30 +1,33 @@
 // EnrollCapture — CONTINUOUS multi-angle face session
 // (Android-face-unlock-style). ONE camera session opened once and closed
-// on done/cancel. The preview block below follows the 5186c65
-// FaceCaptureScreen construction (Expanded > Center > loose-constraint
-// self-sizing CameraPreview); the ratio-critical lines are byte-identical
-// (parity test) — see the provenance note at the block for the three
-// documented deltas. Overlay and loop adapt to IT, never the reverse.
+// on done/cancel. The preview subtree below — Scaffold > Column >
+// Expanded > Center > message/spinner/camera-Stack, plus the bottom
+// prompt bar — constructs the 5186c65 FaceCaptureScreen ancestor chain
+// identically (same widgets, same flex, same constraints path), because
+// the displayed ratio IS the preview-area ratio: StackFit.expand lays
+// non-positioned children tight(biggest) (SDK stack.dart) and AspectRatio
+// adopts tight sizes ignoring ratio (SDK proxy_box.dart), so any deleted
+// bottom bar enlarges the area and visibly elongates the feed. A parity
+// test pins the chain; the provenance note at the block lists the three
+// documented deltas. Overlay stays strictly Positioned/IgnorePointer
+// decoration with zero layout effect.
 //
-// Guidance is follow-the-dot, never narrated checker state (narrating
-// "turn more / checking" while the user had already turned is what
-// flickered). Provenance: Apple Face ID enrollment (one stable imperative
-// + green rim progress) and Tobii "follow the dot" calibration (one
-// target at a time, 5 points, switch focus only on completion). The loop
-// captures continuously, reads each still's pose ONCE, and fills ANY
-// matching unfilled bucket; the green dot rides the oval at the current
-// missing bucket and travels as buckets complete. Rejects stay SILENT
-// in-UI (BleLog only).
+// Guidance is a slow clockwise sweep glow on the oval rim plus ONE static
+// prompt (rotate slowly, follow the glow) — no narrated checker state
+// (narrating "turn more / checking" while the user had turned is what
+// flickered). Provenance: Apple Face ID enrollment (one imperative + rim
+// progress) and Tobii "follow the target" calibration (one target, 5
+// points, repeat missing). Under the paint, buckets keep filling
+// opportunistically (EnrollBucketFill.classifyInto on one readPose per
+// still); progress dots are the sole completion indicator. Rejects stay
+// SILENT in-UI (BleLog only). Under reduced motion the sweep timer never
+// starts and the rim shows a steady full glow.
 //
-// STABILITY (hysteresis with memory): guidance derives from bucket-fill
-// state — the target moves ONLY on fill or stale eviction, so alternating
-// per-frame classifications cannot flip-flop dot or line; filled buckets
-// never re-request. Gallery write is single + terminal (controller
-// .enrollFace → plugin enroll + centre self-check); marking verify
-// untouched. HONESTY: five pose-diverse templates buy robustness + spoof
-// cost, NOT photo-spoof immunity (passive matcher residual, §4).
-// Mobile-only (L2, blocked card); fail-closed save; cancel enrolls
-// nothing and disposes the camera.
+// Gallery write is single + terminal (controller.enrollFace → plugin
+// enroll + centre self-check); marking verify untouched. HONESTY: five
+// pose-diverse templates buy robustness + spoof cost, NOT photo-spoof
+// immunity (passive matcher residual, §4). Mobile-only (L2, blocked
+// card); fail-closed save; cancel enrolls nothing and disposes camera.
 import 'dart:async';
 
 import 'package:camera/camera.dart';
@@ -185,35 +188,26 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   /// Loop beats (behavior timing, not motion — private consts per the
   /// tokens vocabulary note): settle beat after open, steady still
   /// cadence while classifying. One-shot Future.delayeds (never
-  /// periodic) so the loop always terminates — no stray timers past
-  /// teardown.
+  /// periodic) so the capture loop always terminates — no stray timers
+  /// past teardown. The sweep glow runs on its own short periodic timer
+  /// (started/stopped with the loop, cancelled on save/dispose).
   static const _initialBeat = Duration(milliseconds: 600);
   static const _frameBeat = Duration(milliseconds: 600);
 
-  /// Stale budget: wasted stills (unreadable / matching nothing unfilled)
-  /// before the dot moves on from a target the user cannot hit. ~30
-  /// stills ≈ 45–60s of steady trying — generous, deterministic, and
-  /// fake-clock testable (no wall-clock timers). The evicted bucket stays
-  /// fillable opportunistically; ANY fill clears evictions.
-  static const _staleBudget = 30;
+  /// Sweep glow pace: one calm clockwise revolution per 4.5s (80 ticks).
+  static const _sweepTick = Duration(milliseconds: 50);
+  static const _sweepRevolution = Duration(milliseconds: 4500);
 
   /// One accepted still per slot (null = bucket unfilled). Order matches
   /// [faceEnrollSlots] for the terminal gallery write.
   late final List<String?> _paths =
       List<String?>.filled(faceEnrollSlots.length, null);
 
-  /// Buckets the dot has moved on from (stale). Classification ignores
-  /// this set — evicted buckets still fill from lucky stills.
-  final Set<String> _skipped = {};
-  int _stale = 0;
-
-  /// Dot travel plumbing: [_dotTween] is replaced (new instance) ONLY on
-  /// target change, so unrelated rebuilds never restart the travel;
-  /// [_dotShown] caches the latest animated anchor for the next tween's
-  /// start (plain field, never triggers builds itself).
-  Tween<Offset> _dotTween =
-      Tween(begin: Offset.zero, end: Offset.zero);
-  Offset _dotShown = Offset.zero;
+  /// Sweep glow angle (radians, east = 0, clockwise on screen). Advanced
+  /// by the sweep timer; paint-only (never guidance state — buckets fill
+  /// opportunistically regardless of where the glow is).
+  double _sweep = 0;
+  Timer? _sweepTimer;
 
   /// Session camera, owned by this screen (opened once, closed on
   /// done/cancel). Null on records-only builds (blocked card, never a
@@ -227,14 +221,14 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   var _saving = false;
 
   /// Set when the loop must not continue: set complete (save ran) or
-  /// dispose. The loop schedules nothing further once set — one-shot
-  /// delays only, never a periodic timer.
+  /// dispose. The loop schedules nothing further once set.
   bool _finished = false;
   bool _loopStarted = false;
 
   /// Dispose latch: set synchronously in dispose; every await below
   /// re-checks it alongside [mounted] so no async work (takePicture, pose
-  /// read, enroll, pop, setState) runs after dispose.
+  /// read, enroll, pop, setState) runs after dispose. The sweep timer is
+  /// cancelled here too (same latch).
   bool _cancelled = false;
   bool get _done => _cancelled || !mounted;
 
@@ -243,22 +237,6 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
         for (var i = 0; i < _paths.length; i++)
           if (_paths[i] != null) faceEnrollSlots[i],
       };
-
-  /// Latched guidance target (hysteresis: MEMORY, not per-frame output):
-  /// first unfilled, unevicted slot. Changes ONLY on bucket fill or stale
-  /// eviction — alternating per-frame classifications cannot move it.
-  String get _target {
-    final filled = _filled;
-    for (final s in faceEnrollSlots) {
-      if (!filled.contains(s) && !_skipped.contains(s)) return s;
-    }
-    for (final s in faceEnrollSlots) {
-      if (!filled.contains(s)) return s;
-    }
-    return faceEnrollSlots.first; // complete (line shows captured)
-  }
-
-  int get _targetIndex => faceEnrollSlots.indexOf(_target);
 
   @override
   void initState() {
@@ -271,6 +249,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   @override
   void dispose() {
     _cancelled = true;
+    _stopSweep();
     unawaited(_camera?.close());
     super.dispose();
   }
@@ -305,7 +284,28 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   void _startLoop() {
     if (_loopStarted) return;
     _loopStarted = true;
+    // Sweep glow: calm clockwise travel while classifying. Never started
+    // under reduced motion (steady full-rim glow instead) and always
+    // cancelled on save/dispose — a live periodic timer past teardown
+    // fails widget tests, so its lifecycle is tied to the loop's.
+    if (!ProxMotion.reduced(context)) {
+      _sweepTimer?.cancel();
+      _sweepTimer = Timer.periodic(_sweepTick, (_) {
+        if (_done || _finished || _failed) return;
+        _sweep +=
+            2 * 3.141592653589793 * _sweepTick.inMilliseconds / _sweepRevolution.inMilliseconds;
+        if (_sweep > 2 * 3.141592653589793) {
+          _sweep -= 2 * 3.141592653589793;
+        }
+        setState(() {});
+      });
+    }
     unawaited(_autoLoop());
+  }
+
+  void _stopSweep() {
+    _sweepTimer?.cancel();
+    _sweepTimer = null;
   }
 
   /// The no-tap driver: take a still, read its pose ONCE, opportunistically
@@ -315,6 +315,13 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   /// Guidance ([_target], dot, line) changes only inside fill/evict
   /// setStates below, never on per-frame output. Stops on set-complete
   /// (save runs once), failure, or dispose.
+  /// The no-tap driver: take a still, read its pose ONCE, opportunistically
+  /// fill ANY matching unfilled bucket. Wasted stills (capture errors,
+  /// unreadable, matching nothing unfilled) are SILENT in-UI — BleLog
+  /// only — and the loop simply takes the next still. No target, no
+  /// eviction: with no dot to steer, every still is either progress or a
+  /// quiet retry. Stops on set-complete (save runs once), failure, or
+  /// dispose — every await re-checks [_done]/[_finished].
   Future<void> _autoLoop() async {
     await Future.delayed(_initialBeat);
     while (!_done && !_finished && !_failed) {
@@ -336,21 +343,18 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
             ? null
             : EnrollBucketFill.classifyInto(
                 reading.yaw, reading.pitch, reading.roll, _filled);
+        // Fill is the ONLY setState in the loop: progress dots advance,
+        // nothing else on screen ever changes mid-flow (the prompt is
+        // static, the sweep is paint-driven).
         if (slot != null) {
           setState(() {
             _paths[faceEnrollSlots.indexOf(slot)] = still;
-            _stale = 0;
-            _skipped.clear();
-            _retarget();
           });
           EnrollLog.face(
               'bucket $slot filled ($_doneCount/${_paths.length})');
         } else {
           EnrollLog.face('still classified nowhere (silent, continuing)');
-          _noteStale();
         }
-      } else {
-        _noteStale();
       }
       if (_done) return;
       if (_doneCount == _paths.length) {
@@ -380,37 +384,13 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
     }
   }
 
-  /// Stale accounting: after [_staleBudget] wasted stills the dot moves on
-  /// from a target the user cannot hit (eviction, NOT acceptance — the
-  /// bucket still fills opportunistically later). Guidance moves here or
-  /// on fill; nowhere else.
-  void _noteStale() {
-    _stale++;
-    if (_stale < _staleBudget || _done) return;
-    _stale = 0;
-    final evicted = _target;
-    setState(() {
-      _skipped.add(evicted);
-      _retarget();
-    });
-    EnrollLog.face(
-        'target $evicted stale ($_staleBudget wasted) — dot moves on');
-  }
-
-  /// Recompute the latched target and swing the dot if it moved. Called
-  /// ONLY from fill/evict setStates — never from per-frame output.
-  void _retarget() {
-    final unit = guideDotUnit(_target);
-    if (_dotTween.end != unit) {
-      _dotTween = Tween(begin: _dotShown, end: unit);
-    }
-  }
-
   /// Terminal gallery write (runs once per set; manual "Try again" re-runs
-  /// it without touching the accepted stills). Fail-closed: anything but
-  /// faceDone leaves the error on the controller with progress kept.
+  /// it without touching the accepted stills). Stops the sweep first (the
+  /// error/success UI is static). Fail-closed: anything but faceDone
+  /// leaves the error on the controller with progress kept.
   Future<void> _saveAll() async {
     if (_saving) return;
+    _stopSweep();
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     setState(() {
       _saving = true;
@@ -437,34 +417,6 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
     EnrollLog.face(
         'session cancelled — nothing enrolled ($_doneCount/${_paths.length} filled, discarded)');
     Navigator.of(context).pop();
-  }
-
-  /// THE overlay line: one short stable imperative naming the latched
-  /// target (changes only on fill/evict), or the captured state. NEVER a
-  /// narration of checker internals — no hold-still/checking/verifying
-  /// text anywhere user-facing (those states live in BleLog only).
-  String _overlayLine(bool validated, bool noKey) {
-    if (_failed || noKey || _opening) return '';
-    if (validated || _doneCount == _paths.length) return 'All angles captured';
-    return enrollAngleInstructions[_targetIndex].title;
-  }
-
-  /// Travelling dot: tweens between bucket anchors on target change
-  /// (that travel IS the revolving motion). Duration zero under reduced
-  /// motion (meaning is carried by dots + line, never motion alone).
-  Widget _guideOval(double fraction, bool complete, bool reduced) {
-    return TweenAnimationBuilder<Offset>(
-      tween: _dotTween,
-      duration: reduced ? Duration.zero : ProxDurations.medium,
-      curve: ProxCurves.standard,
-      builder: (context, unit, _) {
-        _dotShown = unit;
-        return FaceCaptureOvalOverlay(
-          progress: fraction,
-          dotUnit: complete ? null : unit,
-        );
-      },
-    );
   }
 
   @override
@@ -494,9 +446,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
         st.message.isNotEmpty &&
         _doneCount == _paths.length;
     final total = _paths.length;
-    final complete = _doneCount == total;
-    final line = _overlayLine(validated, noKey);
     final ctl = _camera?.controller;
+    final reduced = ProxMotion.reduced(context);
     // Message for the preview's fail branch (denied / failed / no-key).
     final previewMessage = _failed
         ? (_denied
@@ -518,23 +469,31 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
       ),
       body: Column(
         children: [
-          // Preview provenance: this block follows the 5186c65
-          // FaceCaptureScreen construction — Expanded gives the area,
-          // Center passes LOOSE constraints, CameraPreview (an AspectRatio
-          // internally) sizes itself, loading spinner while not ready. A
-          // parity test pins the ratio-critical lines byte-identical;
-          // documented deltas, all outside the sizing path:
+          // Preview provenance: this subtree — Scaffold > Column >
+          // Expanded(flex 1) > Center > message/spinner/camera-Stack, plus
+          // the bottom Padding(16) bar below — constructs the 5186c65
+          // FaceCaptureScreen ancestor chain identically (same widgets,
+          // same flex, same constraints path). That identity is the fix:
+          // StackFit.expand lays non-positioned children tight(biggest)
+          // (SDK stack.dart) and AspectRatio adopts tight sizes ignoring
+          // ratio (SDK proxy_box.dart), so the displayed ratio IS the
+          // preview-area ratio — and the area is set by this chain. A
+          // parity test pins the chain; documented deltas from the
+          // original, all outside the sizing path:
           // (a) message text covers denied/failed/no-key (one extra state
           //     vs the original's single status);
           // (b) post-open with a null controller (tests use a
           //     controller-less fake; on real devices open success implies
           //     a non-null initialized controller) renders the FaceOval
-          //     placeholder as the Stack's first child, so guidance and
-          //     dots render identically in tests and production;
+          //     placeholder as the Stack's first child;
           // (c) the camera Stack gains ONE Positioned overlay child (dots
-          //     + stable line) and the oval gains dotUnit — positioned
-          //     children never affect Stack sizing, so the ratio is
-          //     untouched (the original oval comment is kept verbatim).
+          //     only) and the oval gains sweepAngle/sweepSpan — positioned
+          //     children and paint params never affect Stack sizing, so
+          //     the ratio is untouched (the original oval comment is kept
+          //     verbatim);
+          // (d) the bottom bar carries the single static prompt instead of
+          //     prompt + status + capture button (same Padding, same
+          //     Column, terminal states keep their own chrome).
           Expanded(
             child: Center(
               child: _denied || _failed || (!_opening && noKey)
@@ -551,84 +510,61 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                             if (ctl != null)
                               CameraPreview(ctl)
                             else
-                              FaceOval(
-                                progress: _doneCount / total,
-                                prompt: line,
-                              ),
+                              const FaceOval(progress: 0, prompt: ''),
                             // The oval ACTUALLY renders on the preview: this
                             // overlay is inside the preview Stack (not beside
                             // it), pointer-transparent, repainting per shot.
-                            _guideOval(_doneCount / total, complete,
-                                ProxMotion.reduced(context)),
-                        // Overlay ONLY — dots + ONE stable imperative
-                        // naming the latched target, composited over
-                        // the preview, transparent to touch, zero
-                        // layout effect on the preview.
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: IgnorePointer(
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  EnrollAngleDots(
-                                    done: _doneCount,
-                                    total: total,
-                                    current: _targetIndex,
+                            FaceCaptureOvalOverlay(
+                              progress: _doneCount / total,
+                              sweepAngle: reduced ? 0.0 : _sweep,
+                              sweepSpan: reduced
+                                  ? 2 * 3.141592653589793
+                                  : 1.047,
+                            ),
+                            // Overlay ONLY — progress dots, composited over
+                            // the preview, transparent to touch, zero
+                            // layout effect on the preview.
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: IgnorePointer(
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.only(top: 12),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      EnrollAngleDots(
+                                        done: _doneCount,
+                                        total: total,
+                                        current: _doneCount,
+                                      ),
+                                    ],
                                   ),
-                                  if (line.isNotEmpty) ...[
-                                    const SizedBox(height: 6),
-                                    Container(
-                                      margin: const EdgeInsets.symmetric(
-                                          horizontal: 24),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black54,
-                                        borderRadius:
-                                            BorderRadius.circular(16),
-                                      ),
-                                      child: Text(
-                                        line,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                            color: Colors.white),
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                                ),
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
             ),
           ),
-          // Slim bottom bar, ONLY in terminal states (the session itself
-          // is chrome-free: Cancel lives in the AppBar, guidance in the
-          // overlay line + travelling dot). Never squeezes the preview
-          // mid-session.
-          if (validated)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: ProxPrimaryButton(
-                label: const Text('Continue'),
-                onPressed: () => EnrollFlow.openResult(context),
-              ),
-            )
-          else if (saveError)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+          // Bottom bar: the SAME slot as the original screen (Padding 16 >
+          // Column min) so the constraints path above stays identical. The
+          // single static prompt is the only instructional text
+          // mid-flow; terminal states keep their own chrome (fail-closed).
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (validated)
+                  ProxPrimaryButton(
+                    label: const Text('Continue'),
+                    onPressed: () => EnrollFlow.openResult(context),
+                  )
+                else if (saveError) ...[
                   EnrollNotice(message: st.message, isError: true),
                   const SizedBox(height: ProxSpacing.sm),
                   ProxPrimaryButton(
@@ -643,9 +579,18 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                     label: const Text('Try again'),
                     onPressed: _saving ? null : _saveAll,
                   ),
-                ],
-              ),
+                ] else
+                  Text(
+                    enrollCapturePrompt,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );
