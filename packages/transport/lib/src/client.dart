@@ -107,7 +107,9 @@ class ProxClient {
         int waiting,
         String display,
         String org
-      })> probeWindow({Duration timeout = const Duration(seconds: 4)}) async {
+      })> probeWindow(
+      {Duration timeout = const Duration(seconds: 4),
+      void Function(Object e)? onError}) async {
     try {
       _http.badCertificateCallback = (cert, h, p) => true;
       final req = await _http.getUrl(_uri('/window')).timeout(timeout);
@@ -115,6 +117,7 @@ class ProxClient {
       final body =
           await resp.transform(utf8.decoder).join().timeout(timeout);
       if (resp.statusCode != 200) {
+        onError?.call(StateError('HTTP ${resp.statusCode}'));
         return (
           reachable: false,
           windowOpen: false,
@@ -133,7 +136,8 @@ class ProxClient {
         display: (m['display'] as String?) ?? '',
         org: (m['org'] as String?) ?? '',
       );
-    } catch (_) {
+    } catch (e) {
+      onError?.call(e);
       return (
         reachable: false,
         windowOpen: false,

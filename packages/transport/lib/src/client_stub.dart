@@ -77,7 +77,9 @@ class ProxClient {
         int waiting,
         String display,
         String org
-      })> probeWindow({Duration timeout = const Duration(seconds: 4)}) =>
+      })> probeWindow(
+          {Duration timeout = const Duration(seconds: 4),
+          void Function(Object e)? onError}) =>
           _web();
 
   Future<void> postWaiting(

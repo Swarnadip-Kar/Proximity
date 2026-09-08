@@ -433,19 +433,24 @@ class ClassListener {
   void Function(ClassAnnouncement a, bool isNew)? onBeacon;
 
   Future<void> start({int port = kDiscoveryPort}) async {
-    // reusePort is unsupported on some platforms (Android throws
-    // "reusePort not supported"): without the fallback the UDP listener
-    // silently never starts and beacon discovery is dead.
+    // reusePort is unsupported on Android (native E/Dart log
+    // "reusePort not supported" even when caught): skip the attempt there
+    // instead of try/catch-spamming logcat. Other platforms keep the
+    // reusePort attempt with fallback so beacon discovery never dies.
     if (_sock == null) {
-      try {
-        _sock = await RawDatagramSocket.bind(
-            InternetAddress.anyIPv4, port,
-            reuseAddress: true, reusePort: true);
-      } catch (_) {
-        _sock = await RawDatagramSocket.bind(
-            InternetAddress.anyIPv4, port,
-            reuseAddress: true);
+      final wantReusePort = !Platform.isAndroid;
+      if (wantReusePort) {
+        try {
+          _sock = await RawDatagramSocket.bind(
+              InternetAddress.anyIPv4, port,
+              reuseAddress: true, reusePort: true);
+        } catch (_) {
+          _sock = null;
+        }
       }
+      _sock ??= await RawDatagramSocket.bind(
+          InternetAddress.anyIPv4, port,
+          reuseAddress: true);
     }
     _sub ??= _sock!.listen((e) {
       if (e == RawSocketEvent.read) {
@@ -504,10 +509,13 @@ Future<ClassAnnouncement?> probeHost(
   bool verboseMisses = false,
 }) async {
   final client = ProxClient(host: host, port: port);
+  String? err;
   try {
-    final r = await client.probeWindow(timeout: timeout).timeout(timeout * 2);
+    final r = await client
+        .probeWindow(timeout: timeout, onError: (e) => err = '$e')
+        .timeout(timeout + const Duration(seconds: 2));
     if (!r.reachable) {
-      if (verboseMisses) onMiss?.call('$host unreachable');
+      onMiss?.call(err == null ? '$host unreachable' : '$host: $err');
       return null;
     }
     return ClassAnnouncement(

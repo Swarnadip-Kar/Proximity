@@ -171,12 +171,18 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       return;
     }
     if (!mounted) return;
+    String? warn;
+    try {
+      warn = ref.read(hostDriverProvider).lanSelfCheckWarning;
+    } catch (_) {}
     final permWarn = permOk
         ? null
         : 'Bluetooth permission is required to announce this class over radio. Enable it in Settings — students can still join by IP until then.';
     setState(() {
       hosting = true;
-      serverError = permWarn;
+      // Firewall-blocked first start stays honest in the UI (non-blocking):
+      // hosting is up on loopback, but students will time out on the LAN IP.
+      serverError = permWarn ?? warn;
       _session = session;
       _ip = session.hostIp;
       serverLine = session.addressLine;
@@ -190,9 +196,24 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _restoreDraft();
     if (!mounted) return;
     _idlePoll?.cancel();
-    _idlePoll = Timer.periodic(const Duration(seconds: 2), (_) {
+    _idlePoll = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (!mounted || !hosting || live) return;
       _maybeAutosave();
+      // Heal late WiFi DHCP while idling: hosting opened on mobile data or
+      // before DHCP completed airs a stale/unreachable IP on FIRST start.
+      // refreshAnnounceIps never overrides an explicit professor pick.
+      try {
+        final driver = ref.read(hostDriverProvider);
+        await driver.refreshAnnounceIps();
+        final cur = driver.announceIp;
+        if (mounted && cur.isNotEmpty && cur != _ip) {
+          final session = _session;
+          setState(() {
+            _ip = cur;
+            if (session != null) serverLine = session.lineFor(cur);
+          });
+        }
+      } catch (_) {}
       // Rebuild only when the waiting set actually changed — an
       // unconditional setState here rebuilt the whole list every 2s
       // (scroll jank on big classes).

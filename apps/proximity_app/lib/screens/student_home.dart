@@ -268,8 +268,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   Future<void> _loadLastHost() async {
     // Last joined IP pre-fills the field (nothing to re-tap): it opens
     // exactly where the last class left off. Also background-probe it
-    // once: on first open (fresh install, radios quiet) this lists the
-    // class even before any beacon or BLE hint arrives.
+    // once through the loud hint path so the system log always shows the
+    // attempt + honest miss reason — a silent miss hides dead-AP vs
+    // starting-server. Live BLE hints cover discovery after this.
     try {
       final last = await ref.read(deviceStoreProvider).readLastHost();
       if (mounted && last != null && last.isNotEmpty) {
@@ -317,11 +318,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     _bleHintThrottle[key] = now;
     BleLog.log(ProxLogTags.ble, 'IP hint $key — background probe…');
-    final hit = await probeHost(host, port);
+    String missReason = 'unreachable';
+    final hit = await probeHost(host, port,
+        verboseMisses: true, onMiss: (r) => missReason = r);
     if (!mounted) return;
     if (hit == null) {
+      // Honest reason always logged: refused = starting-server, timeout =
+      // AP isolation/firewall, TLS = cert. Pending + heartbeat retry
+      // regardless — never one-and-done, never silent.
       BleLog.log(ProxLogTags.ble,
-          'IP hint $key unreachable — server may still be starting, retrying…');
+          'IP hint $key unreachable ($missReason) — retrying…');
       // Pending: heartbeat retries (see _refreshSessions). One fast retry
       // covers the professor-tapped-Start-seconds-ago case without waiting
       // a full 10 s throttle window.
@@ -408,11 +414,20 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _bleHintThrottle[key] = now;
       final slash = key.lastIndexOf(':');
       if (slash < 0) continue;
-      final hit = await probeHost(
-          key.substring(0, slash), int.tryParse(key.substring(slash + 1)) ?? 0);
+      String missReason = 'unreachable';
+      final hit = await probeHost(key.substring(0, slash),
+          int.tryParse(key.substring(slash + 1)) ?? 0,
+          verboseMisses: true,
+          onMiss: (r) => missReason = r);
       if (!mounted) return;
       if (hit == null) {
         _sessionFails[key] = (_sessionFails[key] ?? 0) + 1;
+        // Pending hints log honestly (starting vs isolated); acked-session
+        // misses stay quiet until the drop backstop fires below.
+        if (_pendingHints.containsKey(key)) {
+          BleLog.log(ProxLogTags.ble,
+              'IP hint $key retry miss ($missReason, ${(_sessionFails[key] ?? 0)}/$kSessionMaxFails)');
+        }
         // The listing otherwise keeps its LAST ANSWERED open flag while
         // the ack lingers — flip it closed on the first failed re-probe
         // so an ended class never shows (or auto-advances) as OPEN. The

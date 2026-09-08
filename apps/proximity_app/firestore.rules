@@ -72,7 +72,8 @@ service cloud.firestore {
     // client-side (no stripping, no blocklist).
     function tokenOrg() {
       let parts = tokenEmailLower().split('@');
-      return parts.size() > 1 ? parts[1] : '';
+      let domain = parts.size() > 1 ? parts[1] : '';
+      return domain == 'googlemail.com' ? 'gmail.com' : domain;
     }
     function validRoles(rs) {
       return rs is list && rs.size() >= 1 && rs.size() <= 2 &&
@@ -172,8 +173,12 @@ service cloud.firestore {
     match /deviceInstalls/{id} {
       // Ids are unguessable 128-bit install UUIDs; the email-equality
       // checks below bind every write to the signing-in Gmail.
-      allow get: if signedIn() &&
-        (missingOrg(resource.data) || resource.data.org == tokenOrg());
+      // A missing doc must read as not-found, never denied: the claim
+      // transaction tx.get()s this doc for fresh installs (first bind),
+      // where no doc exists yet. `resource == null` covers that read;
+      // existing docs stay org-scoped.
+      allow get: if signedIn() && (resource == null ||
+        missingOrg(resource.data) || resource.data.org == tokenOrg());
       allow list: if false;
       allow create: if signedIn()
         && request.resource.data.email.lower() == tokenEmailLower()
