@@ -382,19 +382,19 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     // Binding point (faceId derives from the account): refuse a draft the
     // session moved under — a stale-account faceId must never enroll.
     if (_requireLiveAccount() == null) return;
-    if (state.phase != EnrollPhase.keyReady &&
-        state.phase != EnrollPhase.error) {
+    // Key gate on genuine absence, never on phase: a recapture from
+    // faceDone/uploaded reuses the completed key (no repeated key
+    // ceremony). Fail closed only when the key is truly missing.
+    final acct = state.account;
+    if (acct == null) {
       state = state.copyWith(
-          phase: EnrollPhase.error,
-          message: state.account == null
-              ? 'Sign in first.'
-              : 'Generate the device key first, then scan.');
+          phase: EnrollPhase.error, message: 'Sign in first.');
       return;
     }
-    final acct = state.account;
-    if (acct == null || _keys == null) {
+    if (_keys == null || state.pkHex.isEmpty) {
       state = state.copyWith(
-          phase: EnrollPhase.error, message: 'Complete all steps first.');
+          phase: EnrollPhase.error,
+          message: 'Generate the device key first, then scan.');
       return;
     }
     if (imagePaths.length != faceEnrollSlots.length) {
@@ -449,6 +449,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         return;
       }
       _faceId = faceId;
+      // Numeric internals stay in the debug log only: the plugin returns
+      // identity (match vs non-match), so check.score carries the decision
+      // boundary, never a measured similarity — honest UI never shows it.
+      BleLog.log('FACE',
+          'enroll self-check match (boundary ${check.score.toStringAsFixed(2)})');
       state = state.copyWith(
           phase: EnrollPhase.faceDone, faceScore: check.score);
     } on StateError catch (e) {

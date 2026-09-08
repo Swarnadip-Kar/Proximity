@@ -129,8 +129,11 @@ class EnrollResultScreen extends ConsumerWidget {
                 ],
                 if (!restored) ...[
                   const SizedBox(height: ProxSpacing.xs),
+                  // Honest: the plugin returns identity only (match vs
+                  // non-match), so there is no measured score to show —
+                  // the boundary value lives in the FACE debug log only.
                   Text(
-                    'Match score ${st.faceScore.toStringAsFixed(2)} — '
+                    'Face matched on this phone — '
                     'face data never leaves this phone.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context)
@@ -198,10 +201,11 @@ class EnrollResultScreen extends ConsumerWidget {
                     '${st.account!.displayName}\n${st.account!.email}',
                   ),
                 const SizedBox(height: ProxSpacing.xs),
+                // Honest: progress state (angles captured) stays user-visible;
+                // the numeric boundary lives in the FACE debug log only.
                 Text(
                   'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}… · '
-                  'Face: ${hasFace ? '5 of 5 stills captured' : 'capture pending'}'
-                  '${st.faceScore > 0 ? ' · score ${st.faceScore.toStringAsFixed(2)}' : ''}',
+                  'Face: ${hasFace ? '5 of 5 stills captured' : 'capture pending'}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context)
                             .colorScheme

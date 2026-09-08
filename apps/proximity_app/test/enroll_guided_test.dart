@@ -689,4 +689,57 @@ void main() {
       expect(t.takeException(), isNull);
     });
   });
+
+  group('recapture key-gate (complete → back → recapture)', () {
+    Future<EnrollmentController> keyless() async {
+      final ctl = EnrollmentController(
+        auth: FakeAuthService(const SignedAccount(
+            email: 's@x.in', displayName: 'S', uid: 'u1')),
+        store: InMemoryDeviceStore(),
+        verifier: FakeFaceVerifier(),
+        deviceKey: FakeDeviceKey(),
+      );
+      await ctl.signIn();
+      return ctl;
+    }
+
+    testWidgets('recapture after faceDone proceeds, no key prompt',
+        (t) async {
+      // Complete once at the controller level (first capture session).
+      final ctl = await _keyReady();
+      await ctl.enrollFace(const ['c.jpg', 'l.jpg', 'r.jpg', 'u.jpg', 'd.jpg']);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      // Recapture: a fresh capture session reuses the completed key.
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      // No key gate on the way in (the key is genuinely present).
+      expect(
+          find.textContaining(
+              'Generate the device key on the previous screen'),
+          findsNothing);
+      // The session runs to completion again (no key error at save).
+      await _pumpUntil(t, find.text('Save enrollment'));
+      await t.pumpAndSettle();
+      expect(
+          find.textContaining('Generate the device key'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('truly keyless capture stays blocked, captures nothing',
+        (t) async {
+      final ctl = await keyless();
+      expect(ctl.state.pkHex, isEmpty);
+      final camera = FakeEnrollSessionCamera();
+      await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
+      await _openSession(t);
+      await t.pumpAndSettle();
+      // Fail-closed key prompt, loop never captures.
+      expect(
+          find.textContaining(
+              'Generate the device key on the previous screen'),
+          findsOneWidget);
+      expect(camera.captures, 0);
+      expect(t.takeException(), isNull);
+    });
+  });
 }

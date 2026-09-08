@@ -185,4 +185,106 @@ void main() {
       expect(await store.readEnrollment(), isNull);
     });
   });
+
+  group('recapture key-gate (faceDone reuses the completed key)', () {
+    test('recapture from faceDone succeeds without the key prompt',
+        () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      final keyBefore = ctl.state.pkHex;
+      expect(keyBefore.isNotEmpty, isTrue);
+      // Recapture: fresh 5 stills, no repeated key ceremony.
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.pkHex, keyBefore);
+      expect(ctl.state.message, isNot(contains('device key')));
+    });
+
+    test('recapture from uploaded succeeds without the key prompt',
+        () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      final id = await ctl.upload();
+      expect(id, isNotNull);
+      expect(ctl.state.phase, EnrollPhase.uploaded);
+      final keyBefore = ctl.state.pkHex;
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.pkHex, keyBefore);
+      expect(ctl.state.message, isNot(contains('device key')));
+    });
+
+    test('truly keyless enrollFace stays blocked with the key prompt',
+        () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = _ctl(auth, store);
+      await ctl.signIn();
+      // No generateKey: the key is genuinely absent.
+      expect(ctl.state.pkHex, isEmpty);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.state.message, contains('Generate the device key first'));
+    });
+
+    test('signed-out enrollFace stays put, enrolling nothing', () async {
+      final auth = FakeAuthService();
+      final store = InMemoryDeviceStore();
+      final ctl = _ctl(auth, store);
+      expect(ctl.state.account, isNull);
+      await ctl.enrollFace(_stills);
+      // Fail-closed: no account → no face, never faceDone.
+      expect(ctl.state.phase, isNot(EnrollPhase.faceDone));
+      expect(ctl.state.faceScore, 0);
+    });
+  });
+
+  group('honest score UI (no constant parades as a measurement)', () {
+    testWidgets('success shows match copy, never a numeric score', (t) async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(await ctl.upload(), isNotNull);
+      expect(ctl.state.phase, EnrollPhase.uploaded);
+      await t.pumpWidget(ProviderScope(
+        overrides: [enrollmentControllerProvider.overrideWith((ref) => ctl)],
+        child: const MaterialApp(home: EnrollResultScreen()),
+      ));
+      await t.pumpAndSettle();
+      // Honest copy: match (the real plugin signal) in words, no number.
+      expect(find.textContaining('Face matched on this phone'), findsOneWidget);
+      // The fake-score strings must never render.
+      expect(find.textContaining('Match score'), findsNothing);
+      expect(find.textContaining('score 0.'), findsNothing);
+      expect(find.textContaining('0.70'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('pending shows progress, never a numeric score', (t) async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      await t.pumpWidget(ProviderScope(
+        overrides: [enrollmentControllerProvider.overrideWith((ref) => ctl)],
+        child: const MaterialApp(home: EnrollResultScreen()),
+      ));
+      await t.pumpAndSettle();
+      // Progress state stays user-visible…
+      expect(find.textContaining('5 of 5 stills captured'), findsOneWidget);
+      // …but no numeric internal ever renders.
+      expect(find.textContaining('score'), findsNothing);
+      expect(find.textContaining('0.70'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
 }
