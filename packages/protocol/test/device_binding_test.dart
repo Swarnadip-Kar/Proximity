@@ -4,7 +4,7 @@
 // (score/faceValidAt/verifierVer/pkD/ticket), verifyProve bound-ticket
 // gates (tampered score, tampered timestamp, replay, unknown verifier),
 // device-proof tiers (FULL/STD fresh→confirmed, STALE grace→confirmed+
-// banner, NONE→invalid:device-unproven), and attestation anomaly flags
+// banner, NONE→fallback-flagged confirm at verifyProve), and attestation anomaly flags
 // (score==1.000 repeats, future/reused faceValidAt, verifierVer flapping).
 import 'dart:typed_data';
 
@@ -488,7 +488,11 @@ void main() {
       expect(r.confirms, isFalse);
     });
 
-    test('NONE at verifyProve surfaces invalid:device-unproven', () {
+    test('NONE at verifyProve falls back to legacy-equivalent confirm', () {
+      // Graceful fallback (HW keys don't ship): bound fields present but
+      // level NONE verifies like the legacy unbound proof — same
+      // ticket-bound Sig_s + sighting checks, no tier claimed. Logged via
+      // the fallback flag, never silent.
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       const score = 0.85;
@@ -531,8 +535,110 @@ void main() {
         freshWindow: true,
         singleUseOk: true,
       );
+      expect(out.decision, ProveDecision.confirmed);
+      expect(out.reason, 'ok');
+      expect(out.attestationFlags, contains('device-none-fallback'));
+    });
+
+    test('NONE fallback still rejects a tampered binding (bad-sig)', () {
+      // Transplant the ticket score without re-signing: the Sig_s bind
+      // must fail even though no tier is claimed.
+      final s = _setup(1);
+      final now = DateTime.now().toUtc();
+      const signedScore = 0.85;
+      final ticket = ProxCrypto.faceTicketHash(
+          faceScore: signedScore,
+          faceValidAtMs: now.millisecondsSinceEpoch,
+          verifierVer: _ver);
+      final pkD = randBytes(32);
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: s.stu.privateKey,
+        sessionId: s.sess,
+        windowId: s.wid,
+        j: 1,
+        challenge: s.cj,
+        studentId: 'a@x.in',
+        faceScore: signedScore,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+        pkD: pkD,
+        faceTicketHashBytes: ticket,
+      );
+      final out = verifyProve(
+        req: _boundReq(
+            id: 'a@x.in',
+            wid: s.wid,
+            j: 1,
+            cj: s.cj,
+            sigS: sig,
+            score: 0.99, // inflated POST body, signature unchanged
+            faceValidAt: now,
+            verifierVer: _ver,
+            pkD: pkD,
+            ticket: ticket,
+            now: now,
+            level: AttestationLevel.none,
+            dSigValid: false),
+        expectedCj: s.cj,
+        sessionId: s.sess,
+        windowIdExpected: s.wid,
+        studentPk: s.stu.publicKey,
+        revoked: false,
+        freshWindow: true,
+        singleUseOk: true,
+      );
       expect(out.decision, ProveDecision.invalid);
-      expect(out.reason, 'device-unproven');
+      expect(out.reason, 'bad-sig');
+    });
+
+    test('NONE fallback still gates sighting + face like legacy', () {
+      final s = _setup(1);
+      final now = DateTime.now().toUtc();
+      const score = 0.85;
+      final ticket = ProxCrypto.faceTicketHash(
+          faceScore: score,
+          faceValidAtMs: now.millisecondsSinceEpoch,
+          verifierVer: _ver);
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: s.stu.privateKey,
+        sessionId: s.sess,
+        windowId: s.wid,
+        j: 1,
+        challenge: s.cj,
+        studentId: 'a@x.in',
+        faceScore: score,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+        faceTicketHashBytes: ticket,
+      );
+      VerifyOutcome v({required int hop, required int rssi}) => verifyProve(
+            req: VerifyRequest(
+              id: 'a@x.in',
+              windowId: s.wid,
+              j: 1,
+              cClaimed: s.cj,
+              sigS: sig,
+              faceScore: score,
+              faceValidAt: now,
+              peerW: Uint8List(8),
+              rssiDbm: rssi,
+              relayHop: hop,
+              now: now,
+              verifierVer: _ver,
+              faceValidAtMs: now.millisecondsSinceEpoch,
+              faceTicketHashBytes: ticket,
+              attestationLevel: AttestationLevel.none,
+            ),
+            expectedCj: s.cj,
+            sessionId: s.sess,
+            windowIdExpected: s.wid,
+            studentPk: s.stu.publicKey,
+            revoked: false,
+            freshWindow: true,
+            singleUseOk: true,
+          );
+      expect(v(hop: 0, rssi: -55).decision, ProveDecision.confirmed);
+      expect(v(hop: 99, rssi: -127).reason, 'no-ble-sighting');
     });
   });
 

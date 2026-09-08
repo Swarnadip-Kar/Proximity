@@ -148,10 +148,15 @@ class VerifyOutcome {
 ///   (score/faceValidAt/verifierVer + pkD) or [requireBoundTicket] is true
 ///   (the professor server always sets it) — Sig_s is verified over the
 ///   extended preimage, the verifierVer allowlist + faceValid window apply,
-///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner,
-///   NONE→invalid:device-unproven), and attestation anomaly flags ride on
-///   the outcome. Legacy tickets fail closed here (`face-unbound` /
-///   `unknown-verifier`), never auto-present.
+///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner),
+///   and attestation anomaly flags ride on the outcome. Legacy tickets fail
+///   closed here (`face-unbound` / `unknown-verifier`), never auto-present.
+/// - bound with level NONE (graceful fallback — HW keys don't ship, so
+///   production `SoftwareDeviceKey` is always NONE): the ticket-bound Sig_s,
+///   face threshold/window, allowlist and sighting checks all still apply,
+///   but no device tier is claimed and `dSig` is not gated. Confirms with a
+///   `device-none-fallback` flag (logged, never silent). Tampered ticket/pkD
+///   bindings still fail as `bad-sig`; FULL/STD/expiry semantics unchanged.
 VerifyOutcome verifyProve({
   required VerifyRequest req,
   required Uint8List expectedCj,
@@ -246,8 +251,24 @@ VerifyOutcome verifyProve({
           : 'face-unbound';
       return VerifyOutcome(ProveDecision.invalid, reason, flags());
     }
+    // Graceful NONE fallback: HW keys don't ship, so production is
+    // always level NONE (`SoftwareDeviceKey`). A bound-NONE proof verifies
+    // exactly like the legacy unbound proof for everything EXCEPT the tier
+    // — same ticket-bound Sig_s (already verified above), same face
+    // threshold/window, same allowlist gate, same sighting gate — with no
+    // tier claimed and no dSig gate. Logged via the fallback flag.
+    if (req.attestationLevel == AttestationLevel.none) {
+      final fallbackFlags = [...flags(), 'device-none-fallback'];
+      final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
+      final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
+      if (!direct && !relayed) {
+        return VerifyOutcome(
+            ProveDecision.invalid, 'no-ble-sighting', fallbackFlags);
+      }
+      return VerifyOutcome(ProveDecision.confirmed, 'ok', fallbackFlags);
+    }
     // Device-proof tiers (Track 3): FULL/STD→confirmed,
-    // STALE (14d grace)→confirmed+banner, NONE→invalid:device-unproven.
+    // STALE (14d grace)→confirmed+banner, expired/bad-dSig→device-unproven.
     final proof = evaluateDeviceProof(
       level: req.attestationLevel,
       attestedAt: req.attestedAt,

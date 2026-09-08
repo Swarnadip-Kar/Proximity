@@ -94,7 +94,8 @@ const Duration kFaceRescanInterval = Duration(seconds: 12);
 const String kVerifierVerPrefix = 'face_verification/';
 
 /// Device attestation validity: +90d from attestation, with a 14d stale
-/// grace (STALE → confirmed+banner; NONE → invalid:device-unproven).
+/// grace (STALE → confirmed+banner; NONE claims no tier — see the
+/// `device-none-fallback` path in verify.dart).
 const Duration kDeviceAttestedValidity = Duration(days: 90);
 const Duration kDeviceStaleGrace = Duration(days: 14);
 
