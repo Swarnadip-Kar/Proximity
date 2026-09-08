@@ -124,8 +124,7 @@ most once per 30 days); manual attendance covers any gap.
    modelVer/verifierVer, attestationLevel, attestedAt,
    attestedUntil=+90d}` in one Firestore transaction
    (`studentDevices/{email}` + `deviceInstalls/{installId}` + a
-   `studentDirectory` search row + a `facePrints` quantized face-code for
-   the same-face duplicate check — §4). Same-install re-keys are free; moves
+   `studentDirectory` search row — §4). Same-install re-keys are free; moves
    to a different install need a 30-day cooldown (unlimited moves,
    ≤1/month, exact re-enroll date shown; an old-DKey-signed MoveIntent
    moves instantly; no reset exists); an install enrolled as another
@@ -261,11 +260,13 @@ enrollment, marking, and the SK-use stamp. Backend is the
  `face_verification` plugin (^0.3.9, MIT, Android/iOS, bundled FaceNet
  TFLite, offline) following its Quick Demo pattern: init once →
  `registerFromImagePath` per still → `verifyFromImagePath[Isolate]`.
- No IMAGES ever leave the device, and the plugin-owned gallery never does
- either — but ONE quantized face-code per Gmail DOES (see dedup below):
- the old "embeddings never leave the device, full stop" guarantee is
- narrowed to "photos and the gallery never leave; a consented,
- quantized face-code is stored for duplicate checks".
+ Face data never leaves the device, except student→professor-phone
+ vectors over the local network during the live session: no IMAGES ever
+ leave the phone, the plugin-owned gallery never does either, and NOTHING
+ face-derived reaches the cloud — during marking each proof carries a
+ compact face vector to the professor's phone over the existing
+ classroom-HTTPS channel (the professor already sees every face
+ physically), held in RAM for the open window only (see dedup below).
 
 - Enrollment: ONE continuous camera session (open once, close on
   done/cancel — never falls out and back per angle) over the 5186c65
@@ -322,27 +323,34 @@ enrollment, marking, and the SK-use stamp. Backend is the
   fail closed through `UnavailableFaceVerifier` (DI-wired, never the
   plugin) and the UI shows `FaceBlockedCard` instead. Records-only
   builds never touch face code (conditional-export stub throws).
-- Same-face dedup (claim-time, online): enrollment derives ONE canonical
-  face-code from the 5 stills (L2 mean → int8 quant, 512 B base64 — the
-  plugin exposes gallery embeddings via `getFacesForUser`, no fork) plus
-  10 simhash bucket strings (80-bit Rademacher projection, fixed seed —
-  integer math only, identical on every phone). The code lands in
-  `facePrints/{gmail}` atomically in the claim transaction; before the
-  claim the phone pulls the org bucket shortlist (ONE
-  org+arrayContainsAny query, limit 25) and exact-compares (cosine on
-  dequantized vectors, flag at 0.75 — stricter than the 0.70 marking
-  gate; self-excluded, pipeline-scoped). A hit refuses with
-  non-accusatory copy (siblings named as the FP class, nobody named,
-  nothing stored for the refusal) + recapture retry (key kept) + manual
-  attendance (never a dead end). Naive O(org) pull blows the Spark quota
-  at 150+ pilots (85k reads/day at N=500); bucketed costs ~20
-  reads/enrollment (~3.4k/day). Privacy cost, stated: quantized codes
-  are invertible biometric data (Mai TPAMI'19 et al.), org-listable by
-  design, kept indefinitely (no delete/TTL on Spark). Residuals: twins
-  flag each other (manual path); custom clients can file garbage codes
-  (self-assertion posture, §3.4); simultaneous duplicate claims can race;
-  no cloud professor-override exists (the prof gate is advisory, so any
-  override doc would be self-forgeable — manual attendance is the path).
+- Same-face dedup (professor phone, in-memory, live session only):
+  enrollment stays 100% on-device (nothing leaves the phone), but one
+  face could still enroll as two Gmails on two phones — so during marking
+  each proof carries ONE canonical face vector (L2 mean over the enrolled
+  stills → int8 quant, 512 B base64 — the plugin exposes gallery
+  embeddings via `getFacesForUser`, no fork; `FaceVerifier.embeddingFor`
+  seam) in the `face` ticket map over the ALREADY-EXISTING local HTTPS
+  channel (no new transport/port; same TLS + channel binding). The
+  professor's phone holds email→vector in RAM for the OPEN WINDOW ONLY
+  and compares each incoming vector against the rest (exact cosine on
+  dequantized vectors, flag at 0.80 — stricter than the 0.70 marking gate
+  because a group-flag's error cost differs from a rescan AND to keep
+  expected false pairs <1/session at pilot scale; blatant same-lecture
+  proxy scores 0.85+; pipeline-scoped, self-excluded). Pairs AND larger
+  groups (A/B/C…) all flag: every involved entry marks `DUPLICATE_FLAGGED`
+  — roster-visible ("Duplicate face detected between [A] and [B]"), 1-tap
+  professor override resolving on the spot (exempts the pair for the
+  session), never auto-absent. Window close AND hosting end wipe all
+  vectors from RAM (detection for the closing window completes first —
+  compare is incremental per prove; stop-grace proofs still compare
+  before the wipe). Cloud sync carries only final statuses
+  (`PRESENT`/`ABSENT`/`FLAGGED`): zero face data reaches Firestore — no
+  biometric store to breach, enumerate, or retain; no quota cost at all.
+  Residuals: twins in one class flag each other (1-tap resolve — the
+  professor SEES both faces); custom clients can omit/garbage vectors
+  (evasion only — transplanting another's vector merely self-flags, and
+  the face ticket + Sig_s crypto is untouched); proofs without vectors
+  (legacy) mark normally with no dup participation.
 
 ---
 

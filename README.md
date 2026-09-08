@@ -26,12 +26,10 @@ silently, no second tap) →
 device keypair (hardware DKey, non-exportable where silicon allows, sealing
 the Ed25519 attendance SKey — file copies unwrap to nothing) → on-device
 5-still face enrollment (Centre / Left / Right / Up / Down via the
-`face_verification` plugin, FaceNet gallery on the phone; photos never
-leave the phone, but ONE quantized face-code per Gmail IS stored online —
-see the face-dedup note below) → online
+`face_verification` plugin, FaceNet gallery on the phone — face data never
+leaves the phone) → online
 atomic
-device claim (`studentDevices` + `deviceInstalls` + `facePrints`, one
-transaction).
+device claim (`studentDevices` + `deviceInstalls`, one transaction).
 The claim enforces both sides: a Gmail enrolled on another phone refuses —
 the screen names the exact re-enroll date (`You can re-enroll this device
 on XYZ`) and the old device's last online day. Moves are unlimited over a
@@ -52,20 +50,19 @@ account status); the sign-in button remains only for fresh installs with
 no session — the claim binds to the Google identity, so it cannot run
 unsigned.
 
-**Face-dedup note (privacy reversal, stated plainly).** The claim also
-runs a same-face duplicate check: the phone derives one quantized
-face-code from the enrolled stills (int8 mean embedding + simhash
-buckets — numbers only, no photo) and compares it against same-org codes
-pulled in one capped query; a match refuses enrollment with a
-non-accusatory message (recapture retry + manual attendance — never a
-dead end, nobody named). This closes the stock-app proxy hole of one
-face enrolling as two Gmails on two phones, which nothing else detects.
-The cost, honestly: quantized embeddings are biometric data
-(template-inversion literature reconstructs faces from such vectors),
-listable org-wide by any signed-in same-org user, kept indefinitely (no
-delete/TTL on Spark). Saving counts as consent; manual attendance is
-always available instead. Details + quota math in `PROXIMITY_DESIGN.md`
-§4 and protocol `face_print.dart`.
+**Same-face duplicates (local-session, stated plainly).** Enrollment is
+100% on-device, but one face could still enroll as two Gmails on two
+phones — so during marking, each student's proof carries a compact face
+vector (numbers only, no photo) to the professor's phone over the
+existing classroom-HTTPS channel. The professor's phone holds
+email→vector in RAM for the open window only, compares each incoming
+vector against the rest (pairs AND larger groups flagged), and marks
+every involved entry `FLAGGED` — roster-visible, professor-overridable
+with one tap, never auto-absent. Window close and hosting end wipe all
+vectors from RAM. The cloud sync carries only final statuses
+(`PRESENT`/`ABSENT`/`FLAGGED`): zero face data reaches Firestore, so
+there is no biometric store to breach, enumerate, or retain. Details in
+`PROXIMITY_DESIGN.md` §4 and protocol `face_print.dart`.
 Professors may skip sign-in: classes stay on that device only until sign-in
 + sync. Keys, identity and the install ID persist in secure device storage
 — sign-in state survives restarts (account switches land on the landing
