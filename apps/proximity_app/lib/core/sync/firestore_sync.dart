@@ -8,6 +8,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';
@@ -393,7 +394,8 @@ class FirestoreCloudSync implements CloudSync {
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false}) async {
+      bool moveIntentValid = false,
+      FacePrintDoc? facePrint}) async {
     _needAvailable();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -465,6 +467,17 @@ class FirestoreCloudSync implements CloudSync {
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
+        // Same-face dedup material (see protocol face_print.dart — privacy
+        // flag applies): atomic with the binding so a claimed device always
+        // leaves comparable material. Pure math + scoping tags only.
+        if (facePrint != null) {
+          tx.set(_db.collection('facePrints').doc(key), {
+            ...facePrint.toMap(),
+            'org': org,
+            'updatedAtMillis': atMillis,
+            'updatedAt': at.toIso8601String(),
+          }, SetOptions(merge: false));
+        }
         outcome = ClaimOutcome(isFirst: isFirst, isMove: isMove);
       }).timeout(const Duration(seconds: 12));
       return outcome ?? const ClaimOutcome();
@@ -567,6 +580,44 @@ class FirestoreCloudSync implements CloudSync {
           org: d.data()['org'] as String? ?? '',
         ),
     ];
+  }
+
+  @override
+  Future<Map<String, FacePrintDoc>> queryFacePrints(
+      {required String org,
+      required List<String> buckets,
+      int limit = kFacePrintQueryLimit}) async {
+    _needAvailable();
+    if (org.isEmpty || buckets.isEmpty) return const {};
+    try {
+      // ONE round trip: org equality + buckets arrayContainsAny (composite
+      // index in firestore.indexes.json). Capped — bounds per-enrollment
+      // reads even on pathological bucket collisions.
+      final snap = await _db
+          .collection('facePrints')
+          .where('org', isEqualTo: org)
+          .where('buckets', arrayContainsAny: buckets.take(10).toList())
+          .limit(limit)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 8));
+      return {
+        for (final d in snap.docs)
+          d.id.toLowerCase(): FacePrintDoc.fromMap(d.data()),
+      };
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw _rulesError('face lookup');
+      if (_isOfflineError(e)) {
+        throw StateError('Student enrollment needs internet (the duplicate '
+            'face check runs online). Connect and tap Save again — your face capture is kept.');
+      }
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        throw StateError('Student enrollment needs internet (the duplicate '
+            'face check runs online). Connect and tap Save again — your face capture is kept.');
+      }
+      rethrow;
+    }
   }
 
   @override

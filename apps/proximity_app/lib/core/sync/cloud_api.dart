@@ -5,6 +5,7 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';
@@ -29,11 +30,26 @@ abstract class CloudSync {
   /// (cooldown/install-conflict) — the second of two racing devices loses.
   /// [moveIntentValid]: old-DKey-signed MoveIntent verified by the caller —
   /// instant move even inside the 7d cooldown.
+  /// [facePrint]: when non-null the print lands in facePrints/{email} in the
+  /// SAME transaction (atomic with the binding — a claimed device always
+  /// leaves comparable material; see protocol face_print.dart, privacy flag
+  /// applies). Null keeps legacy callers compiling (tests, seeds).
   Future<ClaimOutcome> claimStudentDevice(
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false});
+      bool moveIntentValid = false,
+      FacePrintDoc? facePrint});
+
+  /// Org-scoped bucket shortlist over facePrints for the claim-time
+  /// duplicate check: ONE query (org equality + buckets arrayContainsAny,
+  /// capped at [limit]). Empty [buckets] short-circuits to [] without I/O.
+  /// Returns lowercased-Gmail → print. Throws StateError offline or when
+  /// rules refuse (deploy them).
+  Future<Map<String, FacePrintDoc>> queryFacePrints(
+      {required String org,
+      required List<String> buckets,
+      int limit = kFacePrintQueryLimit});
 
   /// Best-effort last-online heartbeat: bumps lastSeenAtMillis only when
   /// this device still holds the binding. Returns true when touched.
