@@ -906,10 +906,13 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
     }
   });
 
-  test('bound e2e with NONE attestation fails device-unproven (manual path)',
+  test('bound e2e with NONE attestation marks via fallback flag',
       timeout: const Timeout(Duration(minutes: 2)), () async {
-    // Same bound proof but the binding was never attested: the host
-    // verdicts invalid:device-unproven — never auto-present.
+    // Graceful fallback (HW keys don't ship): production is always
+    // SoftwareDeviceKey/NONE, so a bound-NONE proof confirms like the
+    // legacy path — same ticket-bound Sig_s + sighting checks, no tier
+    // claimed — with the fallback flag logged, not a device-unproven
+    // reject. This is the live-marking path for genuine students today.
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
     final store = await enrolledStore(seedHex: hexEncode(seed));
@@ -965,9 +968,9 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
         verifierVer: check.verifierVer,
         onStatus: (_) {},
       );
-      expect(res.result, StudentResult.error);
-      expect(res.detail, contains('device-unproven'));
-      expect(server.tally.presentCount, 0);
+      expect(res.result, StudentResult.marked);
+      expect(res.attestationFlags, contains('device-none-fallback'));
+      expect(server.tally.presentCount, 1);
     } finally {
       await server.stop();
     }

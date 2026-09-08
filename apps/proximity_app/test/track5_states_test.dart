@@ -31,7 +31,7 @@ void main() {
       'FULL': 'Device trust FULL',
       'STD': 'Device trust STD',
       'STALE': 'Device trust STALE',
-      'NONE': 'Device unproven',
+      'NONE': 'Device NONE',
     }.entries) {
       await t.pumpWidget(MaterialApp(
         home: Scaffold(

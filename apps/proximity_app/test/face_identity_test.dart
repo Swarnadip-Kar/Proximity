@@ -146,7 +146,7 @@ void main() {
       final d = SoftwareDeviceKey();
       await d.ensure();
       expect(d.pkD.length, 32);
-      expect(d.level.name, 'none'); // never confirms at a real host
+      expect(d.level.name, 'none'); // no tier claimed (fallback-flagged confirm)
       final seed = Uint8List.fromList(List.filled(32, 9));
       final sealed = await d.seal(seed);
       expect(await d.unseal(sealed), seed);

@@ -11,16 +11,20 @@
 // signature offline (dSig + Sig_s + ticket + existing checks) and reads
 // the claimed level for tiering — chain→root verification exists
 // nowhere in this system (see the caveat below).
-// Tiers FULL/STD→confirmed, STALE (14d grace)→confirmed+banner,
-// NONE→invalid: device-unproven→manual path; heartbeat rolls
+// Tiers FULL/STD→confirmed, STALE (14d grace)→confirmed+banner;
+// NONE claims no tier — until HW keys ship, the host applies the graceful
+// `device-none-fallback` (same ticket/Sig_s/face/sighting checks, flagged
+// confirm) so software-key students mark normally. Heartbeat rolls
 // attestedUntil; old-DKey-signed MoveIntent = instant move else 7d
 // cooldown kept; backup-restore clone fails unwrap→'restore detected —
 // re-enroll' (on HW keys; software keys copy with their files —
-// SoftwareDeviceKey below is level `none` for exactly this reason).
+// SoftwareDeviceKey below is level `none` for exactly this reason, which
+// is why its proofs carry the fallback flag rather than a tier).
 //
 // What this file IS: the narrow Dart interface + sealed-SKey envelope
-// bookkeeping + software/fake backends (level `none`, dev/test only —
-// they can never confirm at a real host since NONE→device-unproven).
+// bookkeeping + software/fake backends (level `none`: no HW tier claimed —
+// live proofs confirm via the flagged `device-none-fallback`, never as
+// FULL/STD).
 // What it is NOT (deferred, noted as residual risk): the Kotlin/Swift HW
 // keystore/Enclave backend that would produce genuinely hardware-bound
 // keys. Deliberately absent: any server re-check — the project carries
@@ -76,8 +80,9 @@ abstract class DeviceKey {
 }
 
 /// Fail-closed stub for desktop/web (L3 DI wires this wherever
-/// [canUseFace] is false): no key, no signatures, level `none` — every
-/// proof from here verifies as device-unproven → manual path.
+/// [canUseFace] is false): no key, no signatures — every op throws before
+/// anything signs, so nothing from here can ever prove (fallback needs a
+/// real ticket-bound Sig_s first).
 class UnavailableDeviceKey implements DeviceKey {
   const UnavailableDeviceKey();
 
@@ -114,10 +119,11 @@ class UnavailableDeviceKey implements DeviceKey {
   Future<bool> heartbeat({DateTime? now}) async => false;
 }
 
-/// Software fallback (dev/test + no-HW phones): Ed25519 stand-in keypair,
-/// XOR envelope (NOT AES-GCM — documented, never HW-grade), level `none`
-/// so a real host always verdicts device-unproven. Lets the full
-/// enroll→seal→prove→verify loop run in tests without secure hardware.
+/// Software fallback (production until the HW keystore lands + tests):
+/// Ed25519 stand-in keypair, XOR envelope (NOT AES-GCM — documented,
+/// never HW-grade), level `none` (no tier claimed — live proofs confirm
+/// via the flagged `device-none-fallback`). Lets the full
+/// enroll→seal→prove→verify loop run without secure hardware.
 class SoftwareDeviceKey implements DeviceKey {
   ed.KeyPair? _keys;
   DateTime _attestedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);

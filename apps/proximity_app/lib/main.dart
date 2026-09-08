@@ -145,9 +145,10 @@ Future<void> main() async {
   };
   // Trust stack (Tracks 2+3 L3 DI): mobile-only plugin face verifier +
   // software DKey (the HW keystore/Enclave backend plugs into the
-  // DeviceKey interface — deferred platform work; until attested the
-  // level is NONE, so unproven devices take the manual path per the tier
-  // table). Desktop/web records builds get the fail-closed stubs: every
+  // DeviceKey interface — deferred platform work; until then the level is
+  // NONE, which claims no tier but still marks via the flagged
+  // `device-none-fallback` — same ticket/Sig_s/face/sighting checks).
+  // Desktop/web records builds get the fail-closed stubs: every
   // face/key op throws before anything signs — never a mock pass.
   final FaceVerifier faceVerifier;
   final DeviceKey deviceKey;
