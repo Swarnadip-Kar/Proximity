@@ -72,6 +72,19 @@ abstract class HostDriver {
   Future<void> addManualEntry(
       {required String email, required String name, String roll = ''});
 
+  /// Local same-face dup groups (email → matched peer emails, symmetric).
+  /// Session-scoped RAM (survives retakes; cleared on endHosting). The
+  /// roster renders these as "Duplicate face detected between [A] and
+  /// [B]" with a 1-tap override.
+  Map<String, Set<String>> get dupGroups;
+
+  /// 1-tap professor override: clears flags for [email] and its whole
+  /// group and exempts every pair in the group for the rest of the
+  /// session (the professor sees both faces in the room — the human
+  /// resolves what the matcher cannot). Never auto-absent: entries keep
+  /// their presence.
+  Future<void> resolveDupFlag(String email);
+
   /// Replaces the live tally with persisted draft data (back/app-kill
   /// resume). Window numbering continues from the restored [windowNo].
   Future<void> restoreTally({
@@ -129,6 +142,8 @@ class RealHostDriver implements HostDriver {
   ProxServer? _server;
   ClassAnnouncer? _announcer;
   String _lastBeaconTargets = '';
+  // Local same-face dup groups (session-scoped RAM — see [dupGroups]).
+  final Map<String, Set<String>> _dupGroups = {};
   Timer? _scanHold; // post-stop grace: scan lingers AND proofs still
   // accepted (cancelled by retake/end, which own both immediately).
 
@@ -167,6 +182,10 @@ class RealHostDriver implements HostDriver {
 
   @override
   TallyStore get tally => _tally;
+
+  /// Test-only reach-in to the live loopback server (port/window for
+  /// driving stock-app student marks in integration tests).
+  ProxServer? get debugServer => _server;
 
   @override
   bool get isHosting => _server != null;
@@ -341,8 +360,10 @@ class RealHostDriver implements HostDriver {
       profPk: _profKeys!.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
           matchResponse(_engine, expectedAirKey, expectedUuid),
-      onProve: (email, decision, reason) =>
-          BleLog.log('NET', 'prove $email -> $decision ($reason)'),
+      onProve: (email, decision, reason) {
+        BleLog.log('NET', 'prove $email -> $decision ($reason)');
+        _applyDupFaceToken(email, reason);
+      },
       tally: _tally,
       sessionOrg: sessionOrg,
     );
@@ -681,6 +702,55 @@ class RealHostDriver implements HostDriver {
     _server?.registerWaiting(key, name, roll);
   }
 
+  /// Parses the server's `dupface:a,b` reason token into roster flags +
+  /// groups. The token is machine-readable (never shown); the UI renders
+  /// neutral copy from [dupGroups]. Unknown/unmarked peers no-op (their
+  /// own prove plants the flag symmetrically when it lands).
+  void _applyDupFaceToken(String email, String reason) {
+    var peers = const <String>[];
+    for (final seg in reason.split('|')) {
+      if (seg.startsWith('dupface:')) {
+        peers = seg
+            .substring('dupface:'.length)
+            .split(',')
+            .map((e) => e.trim().toLowerCase())
+            .where((e) => e.isNotEmpty && e != email.toLowerCase())
+            .toList();
+      }
+    }
+    if (peers.isEmpty) return;
+    final me = email.toLowerCase();
+    _tally.setFaceFlag(me);
+    final mine = _dupGroups.putIfAbsent(me, () => <String>{});
+    for (final p in peers) {
+      _tally.setFaceFlag(p);
+      mine.add(p);
+      _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
+    }
+    BleLog.log(
+        'SEC', 'duplicate face flagged: $me ~ ${peers.join(', ')}');
+  }
+
+  @override
+  Map<String, Set<String>> get dupGroups => {
+        for (final e in _dupGroups.entries) e.key: Set<String>.from(e.value),
+      };
+
+  @override
+  Future<void> resolveDupFlag(String email) async {
+    final me = email.trim().toLowerCase();
+    final peers = Set<String>.from(_dupGroups[me] ?? const {});
+    for (final p in peers) {
+      _server?.exemptFacePair(me, p);
+      _tally.clearFaceFlag(p);
+      _dupGroups[p]?.remove(me);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    _tally.clearFaceFlag(me);
+    _dupGroups.remove(me);
+    BleLog.log('SEC', 'duplicate face resolved by professor: $me');
+  }
+
   @override
   Future<void> restoreTally({
     required List<Map<String, bool>> windows,
@@ -717,6 +787,13 @@ class RealHostDriver implements HostDriver {
     _announcer = null;
     final server = _server;
     _server = null;
+    // Hosting-end vector wipe, EXPLICIT (vectors would die with the server
+    // object anyway — this is the audited second teardown path alongside
+    // the window-close wipe in ProxServer.closeWindow).
+    try {
+      server?.clearFaceVectors();
+    } catch (_) {}
+    _dupGroups.clear();
     final wasHosting = announcer != null || server != null;
     if (announcer != null) {
       try {
@@ -772,6 +849,7 @@ class FakeHostDriver implements HostDriver {
   int _windowNo = 0;
   final List<WaitingRow> _waiting = [];
   final List<ManualRow> _manual = [];
+  final Map<String, Set<String>> _dupGroups = {};
 
   @override
   TallyStore get tally => _tally;
@@ -866,6 +944,36 @@ class FakeHostDriver implements HostDriver {
   }
 
   @override
+  Map<String, Set<String>> get dupGroups => {
+        for (final e in _dupGroups.entries) e.key: Set<String>.from(e.value),
+      };
+
+  @override
+  Future<void> resolveDupFlag(String email) async {
+    final me = email.trim().toLowerCase();
+    final peers = Set<String>.from(_dupGroups[me] ?? const {});
+    for (final p in peers) {
+      _tally.clearFaceFlag(p);
+      _dupGroups[p]?.remove(me);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    _tally.clearFaceFlag(me);
+    _dupGroups.remove(me);
+  }
+
+  /// Test helper: seed a dup group (mirrors the onProve token path).
+  void seedDupGroup(String email, List<String> peers) {
+    final me = email.trim().toLowerCase();
+    _tally.setFaceFlag(me);
+    final mine = _dupGroups.putIfAbsent(me, () => <String>{});
+    for (final p in peers.map((e) => e.trim().toLowerCase())) {
+      _tally.setFaceFlag(p);
+      mine.add(p);
+      _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
+    }
+  }
+
+  @override
   Future<void> restoreTally({
     required List<Map<String, bool>> windows,
     required Map<String, String> names,
@@ -914,6 +1022,7 @@ class FakeHostDriver implements HostDriver {
     _windowNo = 0;
     _waiting.clear();
     _manual.clear();
+    _dupGroups.clear();
     _tally = TallyStore();
   }
 }
