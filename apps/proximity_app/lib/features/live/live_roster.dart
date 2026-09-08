@@ -27,6 +27,7 @@ import 'package:proximity_storage/storage.dart';
 import '../../core/host_driver.dart';
 import '../../design/tokens.dart';
 import '../../widgets/partial_list.dart';
+import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
@@ -175,6 +176,143 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
                   '${r.late ? ' · late' : ''}',
             ),
         ],
+      ],
+    );
+  }
+}
+
+/// Roster-visible duplicate-face flags (local-session path): one neutral
+/// card per group — "Duplicate face detected between [A] and [B]" (+N for
+/// larger groups) — with a 1-tap professor override. Never an accusation
+/// (twins/siblings are the known false-positive class and both faces are
+/// in the room); never auto-absent (presence untouched — this only clears
+/// the flag + exempts the pair for the session). Renders nothing when
+/// there are no groups.
+class DupFlagSection extends StatefulWidget {
+  /// Symmetric email → peer emails, from [HostDriver.dupGroups].
+  final Map<String, Set<String>> groups;
+
+  /// Email → display name (falls back to the email).
+  final Map<String, String> names;
+
+  /// Called with ONE member email; the driver clears the whole group.
+  final Future<void> Function(String email) onResolve;
+
+  const DupFlagSection({
+    super.key,
+    required this.groups,
+    required this.names,
+    required this.onResolve,
+  });
+
+  @override
+  State<DupFlagSection> createState() => _DupFlagSectionState();
+
+  /// Distinct groups from the symmetric map (each pair stored twice).
+  @visibleForTesting
+  static List<List<String>> distinctGroups(Map<String, Set<String>> groups) {    final seen = <String>{};
+    final out = <List<String>>[];
+    final emails = groups.keys.toList()..sort();
+    for (final e in emails) {
+      final members = <String>{e, ...?groups[e]}.toList()..sort();
+      if (members.length < 2) continue;
+      final key = members.join('\x00');
+      if (seen.add(key)) out.add(members);
+    }
+    return out;
+  }
+}
+
+class _DupFlagSectionState extends State<DupFlagSection> {
+  /// Group keys hidden after a successful tap (the parent driver may not
+  /// rebuild immediately; the flag is already cleared driver-side).
+  final Set<String> _dismissed = {};
+  final Set<String> _resolving = {};
+
+  static String _key(List<String> members) => members.join('\x00');
+
+  @override
+  void didUpdateWidget(covariant DupFlagSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.groups != widget.groups) {
+      final live = {
+        for (final m in DupFlagSection.distinctGroups(widget.groups)) _key(m),
+      };
+      _dismissed.retainAll(live);
+      _resolving.retainAll(live);
+    }
+  }
+
+  Future<void> _resolve(List<String> members) async {
+    final key = _key(members);
+    if (!_resolving.add(key)) return;
+    try {
+      await widget.onResolve(members.first);
+      if (mounted) setState(() => _dismissed.add(key));
+    } catch (_) {
+      // Leave the card visible: the flag was not cleared.
+    } finally {
+      if (mounted) setState(() => _resolving.remove(key));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final found = [
+      for (final m in DupFlagSection.distinctGroups(widget.groups))
+        if (!_dismissed.contains(_key(m))) m,
+    ];
+    if (found.isEmpty) return const SizedBox.shrink();
+    String label(String email) {
+      final n = (widget.names[email] ?? '').trim();
+      return n.isNotEmpty ? '$n ($email)' : email;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ProxSectionHeader(
+          title: 'Needs review — duplicate face (${found.length})',
+          padding: EdgeInsets.zero,
+        ),
+        for (final members in found)
+          ProxCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.face_retouching_off_outlined,
+                      color: ProxStateColors.of(context, ProxState.waiting),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Duplicate face detected between '
+                        '${members.map(label).join(', ')} — '
+                        'both stay marked; this sometimes happens with '
+                        'siblings. Tap below if these are different people.',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ProxSecondaryButton(
+                  icon: const Icon(Icons.check),
+                  label: Text(_resolving.contains(_key(members))
+                      ? 'Resolving…'
+                      : 'Not a duplicate'),
+                  expanded: true,
+                  onPressed: _resolving.contains(_key(members))
+                      ? null
+                      : () => _resolve(members),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }

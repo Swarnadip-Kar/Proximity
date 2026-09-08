@@ -749,6 +749,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         MaterialPageRoute(builder: (_) => const DebugLogScreen()));
   }
 
+  /// 1-tap duplicate-face override: the driver clears the whole group and
+  /// exempts the pair for the session; presence is untouched.
+  Future<void> _resolveDup(String email) async {
+    try {
+      await _driver?.resolveDupFlag(email);
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final linked = ref.watch(linkedIdentityProvider);
@@ -852,6 +861,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   .any((r) => r.email == email.toLowerCase()),
             ),
             const SizedBox(height: 16),
+            DupFlagSection(
+              groups: _driver?.dupGroups ?? const {},
+              names: tally.nameMap(),
+              onResolve: _resolveDup,
+            ),
+            const SizedBox(height: 8),
             MarkedRosterSection(
               tally: tally,
             ),

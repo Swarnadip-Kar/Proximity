@@ -98,6 +98,13 @@ class LiveRosterScreen extends ConsumerWidget {
         children: [
           WaitingListSection(waitingRows: d.waitingRows),
           const SizedBox(height: ProxSpacing.sm),
+          DupFlagSection(
+            groups: d.dupGroups,
+            names: d.tally.nameMap(),
+            onResolve: (email) =>
+                ref.read(hostDriverProvider).resolveDupFlag(email),
+          ),
+          const SizedBox(height: ProxSpacing.sm),
           MarkedRosterSection(tally: d.tally),
         ],
       ),
