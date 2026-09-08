@@ -488,14 +488,21 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     await t.tap(find.text('Continue to face scan'));
     await t.pumpAndSettle();
-    // 3. capture: ONE tap captures 3 stills (centre/left/right) via the
-    // canned capturer; the fake verifier enrolls + self-checks → result.
-    expect(find.text('Scan your face'), findsOneWidget);
-    await t.scrollUntilVisible(find.text('Scan face'), 300,
-        scrollable: find.byType(Scrollable).first);
-    await t.pumpAndSettle();
-    await t.tap(find.text('Scan face'));
-    await t.pumpAndSettle();
+    // 3. capture: guided per-angle stills (centre → left → right) via
+    // the canned capturer; the fake verifier enrolls + self-checks → result.
+    expect(find.text('Angle 1 of 3'), findsOneWidget);
+    expect(find.textContaining('Step 1: Look straight'), findsOneWidget);
+    for (final label in ['centre', 'left', 'right']) {
+      final capBtn = find.ancestor(
+        of: find.textContaining('Capture $label still'),
+        matching: find.byType(FilledButton),
+      );
+      await t.scrollUntilVisible(capBtn, 300,
+          scrollable: find.byType(Scrollable).first);
+      await t.pumpAndSettle();
+      await t.tap(capBtn);
+      await t.pumpAndSettle();
+    }
     // 4. result: save → linked banner after Done (back on student home).
     expect(find.text('Save enrollment'), findsWidgets);
     final saveBtn =

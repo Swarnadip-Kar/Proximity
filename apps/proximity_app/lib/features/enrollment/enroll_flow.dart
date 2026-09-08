@@ -2,17 +2,16 @@
 //
 // Bundle (approved IA — each screen breathes on its own page):
 //   EnrollIntro   (enroll/intro)   — pre-context + account + device key
-//   EnrollCapture (enroll/capture) — 5-angle guided scan, missing-only resume
+//   EnrollCapture (enroll/capture) — 3-angle guided scan, per-slot retake
 //   EnrollResult  (enroll/result)  — save + claim outcome with next steps
 // Forward moves log NAV; Done (EnrollNav.finish) pops every `enroll/…`
 // route back to the opener.
 //
-// Behavioral law (preserved verbatim from the squeezed screen — the bundle
-// only re-layouts, never re-decides):
-// 5-angle thresholds 0.70 (live gate + within-slot) / 0.50 (hold-out) /
-// 0.35 (global floor); weakest-slot-only drop, never a wipe; camera stays
-// open till clear (bounded 3 fruitless); Cancel exits, never burns;
-// fail-closed (no template → no save; Save blocked till 5 validate);
+// Behavioral law (the plugin owns detection + matching passively):
+// guided centre → left → right stills, one capture per angle with dots +
+// oval guidance; per-slot retake (a failed capture keeps the other slots);
+// Cancel exits keeping progress, never burns; fail-closed (no validated
+// capture → no save; Save blocked till the 3 validate via self-check);
 // atomic claim (one device per Gmail + install binding + 7-day move +
 // heartbeats); key always kept.
 //

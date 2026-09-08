@@ -30,7 +30,74 @@ abstract final class EnrollLog {
   static void sync(String msg) => BleLog.log('SYNC', msg);
 }
 
-/// Bundle navigation helper: pops every `enroll/…` route back to whatever
+/// Guided-enrollment angle instructions, in [faceEnrollSlots] capture order.
+/// Short imperative copy per angle (Android-face-unlock-style): what to do
+/// with the head, held near-frontal throughout. The plugin owns pose
+/// tolerance — these are UX guidance, never measurement gates.
+class EnrollAngleInstruction {
+  final String title;
+  final String detail;
+  const EnrollAngleInstruction(this.title, this.detail);
+}
+
+const enrollAngleInstructions = <EnrollAngleInstruction>[
+  EnrollAngleInstruction(
+    'Look straight',
+    'Face the camera — eyes on the lens, face centred in the oval, hold still.',
+  ),
+  EnrollAngleInstruction(
+    'Turn slightly left',
+    'Small turn left — keep both eyes visible to the camera, hold still.',
+  ),
+  EnrollAngleInstruction(
+    'Turn slightly right',
+    'Small turn right — keep both eyes visible to the camera, hold still.',
+  ),
+];
+
+/// Angle progress dots: one dot per enrollment still (filled = captured,
+/// ring = current, dim = upcoming). Plain containers on the shared spacing
+/// scale — static, timer-free (unlike the pulsing [ProxDot]), so tests
+/// settle and idle screens stay cheap.
+class EnrollAngleDots extends StatelessWidget {
+  final int done;
+  final int total;
+  final int current;
+  const EnrollAngleDots(
+      {super.key, required this.done, required this.total, this.current = 0});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: 'Captured $done of $total angles',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < total; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: ProxSpacing.xs),
+              child: Container(
+                key: ValueKey('angle-dot-$i'),
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: i < done ? scheme.primary : Colors.transparent,
+                  border: Border.all(
+                    color: i == current && i >= done
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    width: i == current && i >= done ? 2.5 : 1.5,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
 /// opened the bundle. Forward pushes name their routes (see EnrollFlow) so
 /// Done lands on the opener, never mid-bundle.
 abstract final class EnrollNav {
