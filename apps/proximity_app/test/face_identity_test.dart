@@ -107,8 +107,8 @@ void main() {
       expect(kFaceVerifierVer.startsWith('face_verification/'), isTrue);
     });
 
-    test('enroll slots are centre/left/right (3 stills)', () {
-      expect(faceEnrollSlots, ['centre', 'left', 'right']);
+    test('enroll slots are centre/left/right/up/down (5 stills)', () {
+      expect(faceEnrollSlots, ['centre', 'left', 'right', 'up', 'down']);
     });
   });
 
@@ -117,7 +117,7 @@ void main() {
       const v = UnavailableFaceVerifier();
       expect(v.verifierVer, 'unavailable');
       expect(() => v.init(), throwsStateError);
-      expect(() => v.enroll('f', ['a', 'b', 'c']), throwsStateError);
+      expect(() => v.enroll('f', ['a', 'b', 'c', 'd', 'e']), throwsStateError);
       expect(() => v.verify('f', 'a'), throwsStateError);
       expect(() => v.remove('f'), throwsStateError);
     });
@@ -129,7 +129,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       final v = PluginFaceVerifier();
       expect(() => v.init(), throwsStateError);
-      expect(() => v.enroll('f', ['a', 'b', 'c']), throwsStateError);
+      expect(() => v.enroll('f', ['a', 'b', 'c', 'd', 'e']), throwsStateError);
       expect(() => v.verify('f', 'a'), throwsStateError);
     });
 

@@ -131,7 +131,7 @@ void main() {
     test('(b1) empty slot still never enrolls', () async {
       final ctl = await _keyReadyCtl(
           store: InMemoryDeviceStore(), verifier: FakeFaceVerifier());
-      await ctl.enrollFace(['a.jpg', '', 'c.jpg']);
+      await ctl.enrollFace(['a.jpg', '', 'c.jpg', 'd.jpg', 'e.jpg']);
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.state.faceScore, 0);
       // No face kept: Save stays blocked.
@@ -150,7 +150,7 @@ void main() {
       final verifier = _EnrollThrowVerifier();
       final ctl = await _keyReadyCtl(
           store: InMemoryDeviceStore(), verifier: verifier);
-      await ctl.enrollFace(['a.jpg', 'b.jpg', 'c.jpg']);
+      await ctl.enrollFace(['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', 'e.jpg']);
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.state.faceScore, 0);
       // Best-effort cleanup of the half-registered slots.
@@ -167,7 +167,7 @@ void main() {
           verifier: _NoFaceThrowVerifier()..match = true);
       // _NoFaceThrowVerifier throws on verify (self-check), enroll is a
       // no-op record: the controller must surface error, not propagate.
-      await ctl.enrollFace(['a.jpg', 'b.jpg', 'c.jpg']);
+      await ctl.enrollFace(['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', 'e.jpg']);
       expect(ctl.state.phase, EnrollPhase.error);
     });
   });
@@ -175,7 +175,9 @@ void main() {
   group('plugin guards throw before touching native (no init)', () {
     test('enroll rejects blank slots without init', () async {
       final v = PluginFaceVerifier();
-      expect(() => v.enroll('face-id', ['a.jpg', '', 'c.jpg']),
+      expect(
+          () => v.enroll(
+              'face-id', ['a.jpg', '', 'c.jpg', 'd.jpg', 'e.jpg']),
           throwsStateError);
     });
 

@@ -11,8 +11,10 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/features/enrollment/enroll_capture.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/main.dart';
@@ -51,6 +53,11 @@ ProviderScope testScope(
       // Canned stills (the camera plugin has no test double; verdicts
       // come from the FakeFaceVerifier above).
       stillCapturerProvider.overrideWithValue(const FakeStillCapturer()),
+      // Continuous enrollment session: one fake camera open + an
+      // accept-all pose gate (angle math is pinned in enroll_guided_test).
+      enrollSessionCameraProvider
+          .overrideWithValue(FakeEnrollSessionCamera()),
+      poseGateProvider.overrideWithValue(FakePoseGate()),
       hostDriverProvider.overrideWithValue(hostDriver ?? FakeHostDriver()),
       studentDriverProvider.overrideWithValue(
           studentDriver ?? FakeStudentDriver(windowOpenProbe: probeOpen)),
@@ -488,11 +495,12 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     await t.tap(find.text('Continue to face scan'));
     await t.pumpAndSettle();
-    // 3. capture: guided per-angle stills (centre → left → right) via
-    // the canned capturer; the fake verifier enrolls + self-checks → result.
-    expect(find.text('Angle 1 of 3'), findsOneWidget);
+    // 3. capture: continuous 5-angle session (centre → left → right →
+    // up → down) on one fake camera open; the fake verifier enrolls +
+    // self-checks → result.
+    expect(find.text('Angle 1 of 5'), findsOneWidget);
     expect(find.textContaining('Step 1: Look straight'), findsOneWidget);
-    for (final label in ['centre', 'left', 'right']) {
+    for (final label in ['centre', 'left', 'right', 'up', 'down']) {
       final capBtn = find.ancestor(
         of: find.textContaining('Capture $label still'),
         matching: find.byType(FilledButton),
