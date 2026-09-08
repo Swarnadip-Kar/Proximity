@@ -141,7 +141,11 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                       'one continuous camera session, fully automatic: just '
                       'rotate slowly with the glow around the oval, each '
                       'angle really angle-checked. '
-                      'The template never leaves this phone.',
+                      'Photos stay on this phone; one compact face-code '
+                      '(numbers only, no photo) is stored online with your '
+                      'enrollment so the same face cannot enroll twice — '
+                      'saving counts as consent, and manual attendance is '
+                      'always available instead.',
                 ),
                 SizedBox(height: ProxSpacing.sm),
                 _IntroStep(

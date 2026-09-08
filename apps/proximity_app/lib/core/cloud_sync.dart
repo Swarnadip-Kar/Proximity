@@ -15,8 +15,11 @@
 //     NO reset path exists by design: professor registration is
 //     self-asserted this phase, so any reset permission would let a student
 //     self-reset around the cooldown. Genuine loss waits out the week;
-//     manual attendance covers the gap. Face photos/templates are NEVER
-//     written here — only the device public key + install id.
+//     manual attendance covers the gap. Face photos are NEVER written
+//     here — only the device public key + install id. Face-derived MATH
+//     (one quantized face-code per Gmail, protocol face_print.dart) IS
+//     written to facePrints/{emailLower} in the claim transaction for the
+//     same-face duplicate check — privacy flag in that file applies.
 //   studentDirectory/{emailLower}: {email, name, roll, nameLower,
 //     updatedAtMillis} — minimal professor-searchable directory, maintained
 //     by the claim transaction. Professors (role-gated) prefix-search it to
