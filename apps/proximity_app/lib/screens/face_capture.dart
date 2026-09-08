@@ -71,19 +71,37 @@ final stillCapturerProvider =
 class FaceCaptureOvalOverlay extends StatelessWidget {
   final double progress; // 0..1 (angle progress inside this capture)
 
-  /// Slow clockwise sweep segment on the rim (radians, east = 0, positive
-  /// sweeps clockwise on screen). Null draws NO sweep — the marking-time
+  /// Slow rotating beacon on the rim (radians, east = 0, positive sweeps
+  /// clockwise on screen). Null draws NO beacon — the marking-time
   /// default, so the check screen's pixels are unchanged. Guided
   /// enrollment advances it (~one revolution per several seconds, calm);
   /// under reduced motion the session passes a fixed angle with
-  /// [sweepSpan] = full circle for a steady full-rim glow instead.
+  /// [sweepSpan] = full circle for a steady soft full-rim glow instead.
   final double? sweepAngle;
 
-  /// Sweep segment length. Defaults to a short rim segment; full circle
-  /// renders the steady reduced-motion glow.
+  /// Beacon tail length. Defaults to a short rim segment (well before a
+  /// full revolution — no remnant survives); full circle renders the
+  /// steady reduced-motion glow.
   final double sweepSpan;
   const FaceCaptureOvalOverlay(
       {super.key, this.progress = 0, this.sweepAngle, this.sweepSpan = 1.047});
+
+  /// Beacon tail slices (paint-only, zero layout effect).
+  static const beaconSlices = 16;
+
+  /// Beacon alpha profile: quadratic 0 (tail, fully transparent) → 1
+  /// (head, bright). Pure for unit tests (trail-fully-faded invariant).
+  static double beaconAlpha(int index) {
+    final t = index.clamp(0, beaconSlices - 1) / (beaconSlices - 1);
+    return t * t;
+  }
+
+  /// Full-circle span means reduced-motion steady glow (no animation).
+  static bool isSteadyGlow(double span) =>
+      span >= 2 * 3.141592653589793 - 0.01;
+
+  /// Steady soft glow alpha (reduced motion — visible but not harsh).
+  static const steadyGlowAlpha = 0.45;
 
   @override
   Widget build(BuildContext context) {
@@ -154,22 +172,57 @@ class _OvalOverlayPainter extends CustomPainter {
             ..strokeCap = StrokeCap.round
             ..color = color);
     }
-    // Rotating sweep (guided enrollment only; null at marking time): a
-    // short bright segment travelling clockwise around the rim — the
-    // "follow the glow" guide. Round caps, no blur (60fps note holds).
-    // Reduced motion passes a full-circle span: steady full-rim glow.
+    // Rotating beacon (guided enrollment only; null at marking time): ONE
+    // bright head + SHORT fading tail decaying to fully transparent well
+    // before a full revolution (tail << 2pi, alpha 0 at tail — no remnant
+    // survives to the next pass). Paint-only, zero layout, no blur (60fps
+    // note holds). Reduced motion passes a full-circle span: steady soft
+    // full-rim glow, no animation.
     final sweep = sweepAngle;
     if (sweep != null) {
-      canvas.drawArc(
-          rect,
-          sweep,
-          sweepSpan,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 7
-            ..strokeCap = StrokeCap.round
-            ..color = color);
+      if (FaceCaptureOvalOverlay.isSteadyGlow(sweepSpan)) {
+        canvas.drawArc(
+            rect,
+            0,
+            2 * 3.141592653589793,
+            false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 7
+              ..strokeCap = StrokeCap.butt
+              ..color = color.withValues(
+                  alpha: FaceCaptureOvalOverlay.steadyGlowAlpha));
+      } else {
+        final sliceSpan =
+            sweepSpan / FaceCaptureOvalOverlay.beaconSlices;
+        for (var i = 0;
+            i < FaceCaptureOvalOverlay.beaconSlices;
+            i++) {
+          final alpha = FaceCaptureOvalOverlay.beaconAlpha(i);
+          if (alpha <= 0) continue; // tail tip fully transparent — no remnant.
+          canvas.drawArc(
+              rect,
+              sweep + i * sliceSpan,
+              sliceSpan,
+              false,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 7
+                ..strokeCap = StrokeCap.butt
+                ..color = color.withValues(alpha: alpha));
+        }
+        // Head tip: bright round-cap for a distinct head.
+        canvas.drawArc(
+            rect,
+            sweep + sweepSpan - 0.06,
+            0.06,
+            false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 7
+              ..strokeCap = StrokeCap.round
+              ..color = color);
+      }
     }
   }
 
