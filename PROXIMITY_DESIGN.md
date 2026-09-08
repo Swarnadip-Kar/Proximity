@@ -229,9 +229,17 @@ No embeddings, templates, or images ever leave the device: the plugin
 owns its store; the app only sees `{score, match}` and binds them into
 Sig_s via the face ticket (§5.1).
 
-- Enrollment: 3 stills (centre/left/right — the plugin owns pose
-  tolerance, not five guided angles). Pass at the decision threshold per
-  slot; finalize failures rescan only the failing slot.
+- Enrollment: ONE continuous camera session (open once, close on
+  done/cancel — never falls out and back per angle) guided through 5
+  stills — centre + slight left/right turns + slight up/down tilts — with
+  progress dots + short instructions + the oval over the LIVE preview.
+  Every angle is REALLY gated: each still is pose-checked on-device by
+  ML Kit head-euler windows on the still file (yaw ±12° centre; 8–35°
+  side turns; 8–30° tilts; roll ≤20°; null/unreadable fails closed —
+  `PoseGate`, `features/face_identity/pose_gate.dart`), then the 5 go to
+  the plugin gallery with a centre-still self-check before advancing.
+  Fail-closed throughout (save blocked till all 5 validate; per-angle
+  in-session retake loses nothing else; cancel enrolls nothing).
 - Threshold: `kFaceThreshold = 0.70` (plugin scale). The old 0.60/0.80
   EdgeFace cosine numbers MUST NOT be reused — different embedding
   space, incomparable. **Residual: 0.70 FAR~0.01%/FRR<2% is the
@@ -248,9 +256,13 @@ Sig_s via the face ticket (§5.1).
   proves is flagged post-hoc.
 - Liveness: passive only, stated plainly — no blink/turn-head prompts,
   no stills heuristics (tried and removed: sparse stills can't catch
-  200ms blinks and either false-reject or are trivially weak). A
-  good-quality printed photo CAN pass the matcher; what stands behind
-  it is the 4-mismatch-session budget → needs-review → professor manual
+  200ms blinks and either false-reject or are trivially weak). The 5
+  pose-gated angles buy genuine-match robustness and raise the spoof
+  cost (a single frontal print no longer suffices — the attacker needs
+  five pose-consistent views), but they are NOT photo-spoof immunity: a
+  good-quality print or replay held at each asked angle CAN still pass
+  the passive matcher. What stands behind that residual is the
+  4-mismatch-session budget → needs-review → professor manual
   override, the 5-minute holder-freshness gate, and ticket binding
   (a replayed score can't cross tickets). If photo fraud appears in the
   pilot, the fix is video-stream liveness or a spoof-classifier model.
