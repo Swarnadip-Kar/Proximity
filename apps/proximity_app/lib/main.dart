@@ -23,6 +23,7 @@ import 'design/app_theme.dart';
 import 'features/enrollment/enroll_intro.dart';
 import 'features/face_identity/device_key.dart';
 import 'features/face_identity/face_verifier.dart';
+import 'features/face_identity/pose_gate.dart';
 import 'features/records/my_attendance_screen.dart';
 import 'features/records/prof_courses_screen.dart';
 import 'mode.dart';
@@ -179,6 +180,9 @@ Future<void> main() async {
         deviceStoreProvider.overrideWithValue(store),
         faceVerifierProvider.overrideWithValue(faceVerifier),
         deviceKeyProvider.overrideWithValue(deviceKey),
+        // Real pose gate: ML Kit on native, fail-closed stub on
+        // records builds (conditional export in pose_gate.dart).
+        poseGateProvider.overrideWithValue(MlkitPoseGate()),
         hostDriverProvider.overrideWith((ref) => kIsWeb
             ? FakeHostDriver()
             : RealHostDriver(

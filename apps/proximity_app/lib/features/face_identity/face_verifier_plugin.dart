@@ -74,7 +74,7 @@ class PluginFaceVerifier implements FaceVerifier {
     }
     if (imagePaths.length != faceEnrollSlots.length) {
       throw ArgumentError(
-          'enroll needs ${faceEnrollSlots.length} stills (centre/left/right), got ${imagePaths.length}');
+          'enroll needs ${faceEnrollSlots.length} stills (centre/left/right/up/down), got ${imagePaths.length}');
     }
     for (var i = 0; i < imagePaths.length; i++) {
       _requireReadableStill(imagePaths[i], faceEnrollSlots[i]);

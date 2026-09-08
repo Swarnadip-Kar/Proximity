@@ -40,6 +40,15 @@ dependencies:
   # deleteFaceRecord/deleteUserFaces. Example/Quick-Demo pattern followed
   # in features/face_identity/face_verifier.dart.
   face_verification: ^0.3.9
+  # Direct dep (already transitive via face_verification ^0.3.9 → same
+  # native ML Kit library, no new binary/permission/size): enrollment
+  # pose-gates each captured still via headEulerAngleY/X on the still FILE
+  # (InputImage.fromFilePath — no camera image-stream, no extra battery).
+  # The plugin API is image-path gallery only and never surfaces pose, so
+  # without this the angles would be instruction-only. Offline, Android/iOS
+  # only; records builds never construct the gate (canUseFace gate + web
+  # stub via conditional export in pose_gate.dart).
+  google_mlkit_face_detection: ^0.15.1
   share_plus: ^12.0.2
   wakelock_plus: ^1.5.2
   # Phase 1 visual identity: real font pairing (pure Dart, no native

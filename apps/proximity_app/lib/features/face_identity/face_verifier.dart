@@ -45,9 +45,15 @@ const kFacePluginAssetHash8 = 'b45ab893';
 /// ticket. Format: `face_verification/<pkgVer>+<assetHash8>`.
 const kFaceVerifierVer = 'face_verification/$kFacePluginVer+$kFacePluginAssetHash8';
 
-/// Enrollment still slots, in capture order: centre + slight left/right.
-/// Three stills, not five guided poses — the plugin owns pose tolerance.
-const faceEnrollSlots = ['centre', 'left', 'right'];
+/// Enrollment still slots, in capture order: frontal centre + slight
+/// left/right turns + slight up/down tilts. Five pose-diverse stills buy
+/// genuine-match robustness and raise the spoof cost (one frontal print no
+/// longer suffices) — but NOT photo-spoof immunity against the passive
+/// matcher (see the residual below and PROXIMITY_DESIGN.md §4). Each slot's
+/// angle is really gated at capture time by the PoseGate (ML Kit euler
+/// windows on the still file); the plugin owns detection + matching
+/// passively and never sees the angles.
+const faceEnrollSlots = ['centre', 'left', 'right', 'up', 'down'];
 
 /// Opaque face identity: SHA-256(lowercased Gmail || installId) hex.
 /// Never the raw Gmail — the plugin store is keyed by this, so the
@@ -69,8 +75,9 @@ abstract class FaceVerifier {
   /// Loads the bundled model + store. Idempotent.
   Future<void> init();
 
-  /// Enrolls [faceId] from exactly the 3 slot stills (centre/left/right).
-  /// Replaces any previous faces for [faceId] (clean re-enroll).
+  /// Enrolls [faceId] from exactly the 5 slot stills
+  /// (centre/left/right/up/down). Replaces any previous faces for [faceId]
+  /// (clean re-enroll).
   Future<void> enroll(String faceId, List<String> imagePaths);
 
   /// Verifies one still against [faceId]. Marking hot path uses the

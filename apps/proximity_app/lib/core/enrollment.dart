@@ -303,12 +303,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     }
   }
 
-  /// Step 3: on-device face enrollment from 3 stills (centre/left/right
-  /// image paths from the capture screen). The plugin owns detection +
-  /// matching passively — no pose gates, no liveness prompts here. A
-  /// self-check verify of the centre still must match before advancing
-  /// (fail-closed with faceScore 0). Mobile-only: records-only devices
-  /// fail closed via the verifier (never a mock pass).
+  /// Step 3: on-device face enrollment from 5 stills
+  /// (centre/left/right/up/down image paths from the continuous capture
+  /// session). Each still's angle was already pose-gated at capture (ML Kit
+  /// euler windows via the PoseGate — real gates, never instruction-only);
+  /// the plugin owns detection + matching passively. A self-check verify of
+  /// the centre still must match before advancing (fail-closed with
+  /// faceScore 0). Mobile-only: records-only devices fail closed via the
+  /// verifier (never a mock pass).
   Future<void> enrollFace(List<String> imagePaths) async {
     if (state.phase != EnrollPhase.keyReady &&
         state.phase != EnrollPhase.error) {
@@ -329,7 +331,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       state = state.copyWith(
           phase: EnrollPhase.error,
           message:
-              'Capture ${faceEnrollSlots.length} stills (centre, left, right) to enroll.');
+              'Capture ${faceEnrollSlots.length} stills (centre, left, right, up, down) to enroll.');
       return;
     }
     // Blank-frame guard (enrollment crash): a still that came out empty
