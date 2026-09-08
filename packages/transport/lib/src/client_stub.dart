@@ -123,6 +123,9 @@ class ProxClient {
     Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
+    // LAN-only session vector (`face:{vec}` — mirror of client.dart;
+    // web never proves).
+    String faceVecB64 = '',
   }) =>
       _web();
 }

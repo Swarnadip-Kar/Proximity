@@ -83,6 +83,7 @@ class ProxServer {
   Duration sightingGrace = const Duration(seconds: 4);
 
   int get port => _web();
+  String get boundAddress => _web();
   bool get windowOpen => _web();
   WindowParams? get window => _web();
   String get bearer => _web();
@@ -97,6 +98,14 @@ class ProxServer {
   void openWindow(WindowParams window, int windowNo) => _web();
 
   void closeWindow() => _web();
+
+  /// Drops all session vectors from RAM NOW (mirror of server.dart —
+  /// hosting teardown calls this explicitly; web never hosts).
+  void clearFaceVectors() => _web();
+
+  /// Professor override: this pair never flags again this session
+  /// (mirror of server.dart; web never hosts).
+  void exemptFacePair(String a, String b) => _web();
 
   void registerWaiting(String email, String name, [String roll = '']) =>
       _web();
