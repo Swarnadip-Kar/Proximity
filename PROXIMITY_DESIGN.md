@@ -232,14 +232,17 @@ Sig_s via the face ticket (§5.1).
 - Enrollment: ONE continuous camera session (open once, close on
   done/cancel — never falls out and back per angle) guided through 5
   stills — centre + slight left/right turns + slight up/down tilts — with
-  progress dots + short instructions + the oval over the LIVE preview.
-  Every angle is REALLY gated: each still is pose-checked on-device by
-  ML Kit head-euler windows on the still file (yaw ±12° centre; 8–35°
-  side turns; 8–30° tilts; roll ≤20°; null/unreadable fails closed —
-  `PoseGate`, `features/face_identity/pose_gate.dart`), then the 5 go to
-  the plugin gallery with a centre-still self-check before advancing.
-  Fail-closed throughout (save blocked till all 5 validate; per-angle
-  in-session retake loses nothing else; cancel enrolls nothing).
+  a full-page true-ratio preview carrying ONLY an overlay (thin oval +
+  dots + one instruction line, composited, never squeezing the preview).
+  No taps: an auto-capture loop takes one still per slot and pose-checks
+  it on-device by ML Kit head-euler windows on the still file
+  (yaw ±12° centre; 8–35° side turns; 8–30° tilts; roll ≤20°;
+  null/unreadable fails closed — `PoseGate`,
+  `features/face_identity/pose_gate.dart`); reject shows the hint as the
+  overlay line and auto-retries the slot, the rest intact. Then the 5 go
+  to the plugin gallery with a centre-still self-check before advancing.
+  Fail-closed throughout (save blocked till all 5 validate; cancel
+  enrolls nothing).
 - Threshold: `kFaceThreshold = 0.70` (plugin scale). The old 0.60/0.80
   EdgeFace cosine numbers MUST NOT be reused — different embedding
   space, incomparable. **Residual: 0.70 FAR~0.01%/FRR<2% is the
