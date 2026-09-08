@@ -34,5 +34,9 @@ class PluginFaceVerifier implements FaceVerifier {
   Future<void> remove(String faceId) async => throw _blocked();
 
   @override
+  Future<List<double>> embeddingFor(String faceId) async =>
+      throw _blocked('Face enrollment');
+
+  @override
   String get verifierVer => 'unavailable';
 }

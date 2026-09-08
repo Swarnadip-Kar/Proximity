@@ -88,6 +88,12 @@ abstract class FaceVerifier {
   /// Removes all faces for [faceId] (account switch / explicit reset).
   Future<void> remove(String faceId);
 
+  /// Mean embedding over [faceId]'s enrolled stills (one 512-d vector for
+  /// the cloud duplicate check — see protocol face_print.dart; the privacy
+  /// flag there applies). Throws StateError when nothing is enrolled
+  /// (fail-closed recapture, never an empty vector).
+  Future<List<double>> embeddingFor(String faceId);
+
   /// Opaque pipeline tag (`face_verification/<pkgVer>+<assetHash8>`).
   String get verifierVer;
 }
@@ -117,6 +123,10 @@ class UnavailableFaceVerifier implements FaceVerifier {
   Future<void> remove(String faceId) async => throw _blocked();
 
   @override
+  Future<List<double>> embeddingFor(String faceId) async =>
+      throw _blocked('Face enrollment');
+
+  @override
   String get verifierVer => 'unavailable';
 }
 
@@ -127,10 +137,17 @@ class FakeFaceVerifier implements FaceVerifier {
   double score;
   final List<String> calls = [];
   String version;
+
+  /// Scripted mean embedding for [embeddingFor] (dup-check tests set
+  /// explicit vectors; defaults to a fixed non-zero vector).
+  List<double> scriptedEmbedding;
   FakeFaceVerifier(
       {this.match = true,
       this.score = 0.85,
-      this.version = kFaceVerifierVer});
+      this.version = kFaceVerifierVer,
+      List<double>? scriptedEmbedding})
+      : scriptedEmbedding = scriptedEmbedding ??
+            List<double>.filled(512, 0.044);
 
   @override
   Future<void> init() async => calls.add('init');
@@ -148,6 +165,12 @@ class FakeFaceVerifier implements FaceVerifier {
 
   @override
   Future<void> remove(String faceId) async => calls.add('remove:$faceId');
+
+  @override
+  Future<List<double>> embeddingFor(String faceId) async {
+    calls.add('embeddingFor:$faceId');
+    return List<double>.from(scriptedEmbedding);
+  }
 
   @override
   String get verifierVer => version;

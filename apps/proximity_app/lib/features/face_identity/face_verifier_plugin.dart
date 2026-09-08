@@ -138,5 +138,29 @@ class PluginFaceVerifier implements FaceVerifier {
   }
 
   @override
+  Future<List<double>> embeddingFor(String faceId) async {
+    requireMobileFace();
+    if (faceId.trim().isEmpty) {
+      throw ArgumentError('embeddingFor needs a non-empty faceId');
+    }
+    await init();
+    // The plugin API is identity-only for VERIFY, but the gallery records
+    // (512-d FaceNet embeddings per enroll slot) are readable via
+    // getFacesForUser — no fork needed. Member access is inference-only on
+    // purpose: FaceRecord is not re-exported by the plugin's public
+    // library, so this couples to the method + `.embedding` member (breaks
+    // loudly on plugin upgrade, same as any API drift).
+    final records = await _plugin.getFacesForUser(faceId);
+    if (records.isEmpty) {
+      throw StateError(
+          'No enrolled face found on this phone — recapture in good light, holding still.');
+    }
+    return faceMeanEmbedding([
+      for (final r in records)
+        (r.embedding as List).map((e) => (e as num).toDouble()).toList(),
+    ]);
+  }
+
+  @override
   String get verifierVer => kFaceVerifierVer;
 }
