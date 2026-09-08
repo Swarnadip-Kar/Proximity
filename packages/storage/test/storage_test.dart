@@ -132,4 +132,39 @@ void main() {
       expect(rec.startIso, '2026-09-06T09:00:00.000Z');
     });
   });
+
+  group('duplicate-face flags (session-scoped, presence-neutral)', () {
+    test('set/clear roundtrip; presence untouched; sorted emails', () {
+      final t = TallyStore();
+      t.mark('b@x.in', 'B', 1);
+      t.mark('a@x.in', 'A', 1);
+      expect(t.flaggedEmails, isEmpty);
+      t.setFaceFlag('b@x.in');
+      t.setFaceFlag('A@X.IN'); // case-insensitive
+      expect(t.flaggedEmails, ['a@x.in', 'b@x.in']);
+      // Flagged entries stay marked (never auto-absent).
+      expect(t.presentCount, 2);
+      t.clearFaceFlag('a@x.in');
+      expect(t.flaggedEmails, ['b@x.in']);
+      // Unknown email: no-op, never throws.
+      t.setFaceFlag('ghost@x.in');
+      t.clearFaceFlag('ghost@x.in');
+      expect(t.flaggedEmails, ['b@x.in']);
+    });
+
+    test('toClassRecord carries flags; json roundtrips; legacy omits', () {
+      final t = TallyStore();
+      t.mark('a@x.in', 'A', 1);
+      t.mark('b@x.in', 'B', 1);
+      t.setFaceFlag('b@x.in');
+      final rec = t.toClassRecord(
+          courseId: 'c', classLabel: 'c', dateIso: '2026-09-06');
+      expect(rec.faceFlags, ['b@x.in']);
+      final rt = ClassRecord.fromJson(rec.toJson());
+      expect(rt.faceFlags, ['b@x.in']);
+      // Legacy JSON without the key reads as unflagged.
+      final m = rec.toJson()..remove('faceFlags');
+      expect(ClassRecord.fromJson(m).faceFlags, isEmpty);
+    });
+  });
 }

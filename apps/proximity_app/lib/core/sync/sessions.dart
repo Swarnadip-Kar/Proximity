@@ -37,6 +37,8 @@ class SessionTombstone {
 /// Additive union of two records with the SAME id (Track 4
 /// union-merge-before-push): window maps OR together (a mark is never
 /// unmarked by merge), names/rolls union (newer non-empty wins per email),
+/// faceFlags union (a flag is never unflagged by merge — override is an
+/// explicit professor action on the live tally, not a sync event),
 /// timestampIso = max (monotonic, so idempotent set(merge:true) pushes never
 /// go backwards), startIso = earliest non-empty (stable FIFO ordering).
 /// Header fields come from the newer record, falling back to the older when
@@ -88,6 +90,7 @@ ClassRecord unionMergeRecords(ClassRecord a, ClassRecord b) {
     names: unionStr(older.names, newer.names),
     rolls: unionStr(older.rolls, newer.rolls),
     org: pick(newer.org, older.org),
+    faceFlags: {...a.faceFlags, ...b.faceFlags}.toList(),
   );
 }
 
@@ -220,6 +223,9 @@ Map<String, dynamic> sessionToDoc(
     'names': Map<String, String>.from(record.names),
     'rolls': Map<String, String>.from(record.rolls),
     'studentEmails': emails,
+    // Final statuses only: PRESENT/ABSENT derive from windows, FLAGGED
+    // from faceFlags. No vectors, no biometrics — assert so in tests.
+    'faceFlags': List<String>.from(record.faceFlags),
     'updatedAt': record.timestampIso,
   };
 }
@@ -265,5 +271,8 @@ ClassRecord docToRecord(String id, Map<String, dynamic> d) {
     names: strMap(d['names']),
     rolls: strMap(d['rolls']),
     org: d['org'] as String? ?? '',
+    faceFlags: [
+      for (final e in (d['faceFlags'] as List? ?? const [])) '$e',
+    ],
   );
 }

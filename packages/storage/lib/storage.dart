@@ -127,6 +127,30 @@ class TallyStore {
   List<AttendanceRecord> get lateList =>
       _rows.values.where((r) => r.late).toList();
 
+  /// Local same-face dup flag (professor-phone, session-scoped): sets the
+  /// roster-visible `DUPLICATE_FLAGGED` state WITHOUT touching presence —
+  /// flagged entries are never auto-absent. The professor resolves via
+  /// [clearFaceFlag] (1-tap override); the tally itself is in-memory P0.
+  void setFaceFlag(String email) {
+    final r = _rows[email.toLowerCase()];
+    if (r != null) r.faceFlag = true;
+  }
+
+  void clearFaceFlag(String email) {
+    final r = _rows[email.toLowerCase()];
+    if (r != null) r.faceFlag = false;
+  }
+
+  /// Emails currently flagged, sorted (deterministic for records/exports).
+  List<String> get flaggedEmails {
+    final out = [
+      for (final e in _rows.entries)
+        if (e.value.faceFlag) e.key,
+    ];
+    out.sort();
+    return out;
+  }
+
   List<AttendanceRecord> search(String query) {
     final q = query.toLowerCase();
     return _rows.values
@@ -221,6 +245,7 @@ class TallyStore {
         names: nameMap(),
         rolls: rollMap(),
         org: org,
+        faceFlags: flaggedEmails,
       );
 }
 
@@ -300,6 +325,10 @@ class ClassRecord {
   final Map<String, String> names; // email -> name
   final Map<String, String> rolls; // email -> ID number
   final String org; // Google-account domain of the prof org, '' = legacy
+  /// Session duplicate-face flags (emails marked DUPLICATE_FLAGGED on the
+  /// professor phone during the live session). Statuses only — no vectors,
+  /// no biometrics, ever (see protocol face_print.dart).
+  final List<String> faceFlags;
   ClassRecord({
     String id = '',
     this.courseId = '',
@@ -313,6 +342,7 @@ class ClassRecord {
     Map<String, String>? names,
     Map<String, String>? rolls,
     this.org = '',
+    List<String>? faceFlags,
   })  : id = id.isEmpty ? _genId(courseId, classLabel, dateIso) : id,
         timestampIso = timestampIso.isEmpty
             ? '${dateIso}T00:00:00.000Z'
@@ -324,7 +354,8 @@ class ClassRecord {
             : startIso,
         windows = normalizeWindows(windows, w1, w2),
         names = Map<String, String>.from(names ?? const {}),
-        rolls = Map<String, String>.from(rolls ?? const {});
+        rolls = Map<String, String>.from(rolls ?? const {}),
+        faceFlags = [...?faceFlags]..sort();
 
   /// Legacy accessors (first two windows).
   Map<String, bool> get w1 => windows.isNotEmpty ? windows.first : const {};
@@ -381,6 +412,7 @@ class ClassRecord {
         'names': names,
         'rolls': rolls,
         'org': org,
+        'faceFlags': faceFlags,
       };
 
   factory ClassRecord.fromJson(Map<String, dynamic> j) {
@@ -421,6 +453,9 @@ class ClassRecord {
       rolls: Map<String, String>.from(
           (j['rolls'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
       org: j['org'] as String? ?? '',
+      faceFlags: [
+        for (final e in (j['faceFlags'] as List? ?? const [])) '$e',
+      ],
     );
   }
 }
