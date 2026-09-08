@@ -280,7 +280,7 @@ void main() {
       }
     });
 
-    test('exactly the three documented deltas, nothing else', () {
+    test('exactly the four documented deltas, nothing else', () {
       final session = File(
               'lib/features/enrollment/enroll_capture.dart')
           .readAsStringSync();
@@ -297,9 +297,12 @@ void main() {
               '                      ? const CircularProgressIndicator()'),
           isFalse);
       expect(session.contains('FaceOval('), isTrue);
-      // (c) ONE Positioned overlay child + sweep params on the oval, and
-      // no trace of the removed green dot…
-      expect('Positioned('.allMatches(session).length, 1);
+      // (c) TWO Positioned overlay children + sweep params on the oval, and
+      // no trace of the removed green dot: dots (top) + save-error toast
+      // (bottom, saveError-gated) — both positioned/paint-only, so overlay
+      // count stays pinned and no inline copy ever sneaks over the feed…
+      expect('Positioned('.allMatches(session).length, 2);
+      expect(session.contains('if (saveError)'), isTrue);
       expect(session.contains('sweepAngle:'), isTrue);
       expect(session.contains('sweepSpan:'), isTrue);
       expect(session.contains('dotUnit'), isFalse);

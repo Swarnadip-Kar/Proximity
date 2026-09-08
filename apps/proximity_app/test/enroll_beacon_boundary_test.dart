@@ -1,20 +1,27 @@
-// Enrollment boundary + beacon contracts (UI-boundary overflow fix).
+// Enrollment boundary + beacon + two-oval contracts.
+// (UI-boundary overflow fix, area stability, overlay layering verdict.)
 //
 // Elongation root cause was bottom-slot sizing (single prompt vs original
 // prompt+status+button enlarged the preview area; Stack tight +
 // CameraPreview AspectRatio-ignore stretches the feed to the area), so these
 // pin the device-boundary path: Scaffold defaults, no SafeArea double-apply,
 // no constraining wrappers/fixed boxes in the preview path, AppBar height,
-// and the invisible original-height reservation. Beacon painter tests pin the
-// trail-fully-faded invariant (tail alpha 0, head bright, tail << full rev)
-// and reduced-motion steady soft glow. Clock: beacon timer is periodic —
-// drive with bounded pumps, never pumpAndSettle with the session mounted.
+// identical preview area in EVERY lifecycle variant (mid-flow, validated,
+// save-error, after back-navigation), and the researched layering decision
+// (chrome stays overlay — dots Positioned in the preview Stack,
+// prompt/buttons in the bottom bar, never inline above the feed, never copy
+// inside the Stack). Two-oval tests pin green-outer/blue-inner distinctness
+// (colors, radii, jobs) and reduced-motion steady glows. Clock: the beacon
+// timer is periodic — drive live sessions with bounded pumps, never
+// pumpAndSettle with the session mounted (settle only once the loop and
+// sweep are stopped: result screen, validated-after-back, save-error).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/enrollment/enroll_capture.dart';
 import 'package:proximity_app/features/enrollment/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -22,12 +29,21 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 
-Future<EnrollmentController> _keyReady() async {
+/// Fail-closed gallery write that always throws (save-error variant).
+class _EnrollBoom extends FakeFaceVerifier {
+  _EnrollBoom() : super(match: true, score: 0.9);
+  @override
+  Future<void> enroll(String faceId, List<String> imagePaths) async {
+    throw StateError('No face detected');
+  }
+}
+
+Future<EnrollmentController> _keyReady({FaceVerifier? verifier}) async {
   final ctl = EnrollmentController(
     auth: FakeAuthService(const SignedAccount(
         email: 's@x.in', displayName: 'S', uid: 'u1')),
     store: InMemoryDeviceStore(),
-    verifier: FakeFaceVerifier(),
+    verifier: verifier ?? FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
   );
   await ctl.signIn();
@@ -69,6 +85,23 @@ Future<void> _drain(WidgetTester t) async {
     await t.pump(const Duration(milliseconds: 200));
   }
 }
+
+/// Bounded clock driver for the auto-capture loop (never pumpAndSettle
+/// mid-loop — the loop always has its next beat scheduled while running).
+Future<void> _pumpUntil(WidgetTester t, Finder f, {int ticks = 60}) async {
+  for (var i = 0; i < ticks; i++) {
+    if (f.evaluate().isNotEmpty) return;
+    await t.pump(const Duration(milliseconds: 200));
+  }
+  fail('auto-capture loop never settled: $f');
+}
+
+/// The preview Stack: the only StackFit.expand Stack carrying the oval
+/// overlay (Navigator/Overlay internals use loose fits, so this is unique).
+Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
+    w is Stack &&
+    w.fit == StackFit.expand &&
+    w.children.whereType<FaceCaptureOvalOverlay>().isNotEmpty);
 
 void main() {
   group('device-boundary parity (elongation fix)', () {
@@ -203,6 +236,190 @@ void main() {
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  group('two role-separated ovals (green progress, blue beacon)', () {
+    test('progress green is the token completion green, never beacon blue',
+        () {
+      expect(FaceCaptureOvalOverlay.progressGreen,
+          ProxStateColors.markedDark);
+      expect(FaceCaptureOvalOverlay.progressGreen, const Color(0xFF4ADE80));
+      // Distinct hues from the beacon blue in both brightnesses.
+      expect(FaceCaptureOvalOverlay.progressGreen,
+          isNot(ProxPalette.primaryLight));
+      expect(FaceCaptureOvalOverlay.progressGreen,
+          isNot(ProxPalette.primaryDark));
+    });
+
+    test('progress radius larger than beacon radius on both axes', () {
+      expect(FaceCaptureOvalOverlay.progressWidthFraction,
+          greaterThan(FaceCaptureOvalOverlay.beaconWidthFraction));
+      expect(FaceCaptureOvalOverlay.progressHeightFraction,
+          greaterThan(FaceCaptureOvalOverlay.beaconHeightFraction));
+      const size = Size(400, 600);
+      final beacon = FaceCaptureOvalOverlay.beaconRectFor(size);
+      final outer = FaceCaptureOvalOverlay.progressRectFor(size,
+          enrollment: true);
+      expect(outer.width, greaterThan(beacon.width));
+      expect(outer.height, greaterThan(beacon.height));
+      expect(outer.center, beacon.center);
+      // Marking path keeps the legacy rect (identical pixels).
+      expect(
+          FaceCaptureOvalOverlay.progressRectFor(size, enrollment: false),
+          beacon);
+    });
+
+    test('progress paint green in enrollment, legacy color at marking', () {
+      const fallback = Color(0xFF4340D6);
+      expect(
+          FaceCaptureOvalOverlay.progressColorFor(
+              enrollment: true, fallback: fallback),
+          FaceCaptureOvalOverlay.progressGreen);
+      expect(
+          FaceCaptureOvalOverlay.progressColorFor(
+              enrollment: false, fallback: fallback),
+          fallback);
+    });
+
+    testWidgets('enrollment green arc + beacon render together', (t) async {
+      await t.pumpWidget(const MaterialApp(
+        home: Scaffold(
+            body: FaceCaptureOvalOverlay(
+                progress: 0.6, sweepAngle: 1.0, sweepSpan: 1.047)),
+      ));
+      await t.pump();
+      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  group('preview area identical across lifecycle variants', () {
+    testWidgets('forward then back: validated area equals capturing area',
+        (t) async {
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      expect(_previewStackFinder(), findsOneWidget);
+      final capturingSize = t.getSize(_previewStackFinder());
+      // All 5 buckets validate → auto-advance to the result step.
+      await _pumpUntil(t, find.text('Save enrollment'));
+      // Result screen is static: settle its entrance before going back.
+      await t.pumpAndSettle();
+      // System back pops only the result: capture returns validated
+      // (loop stopped, sweep stopped — settle-safe) with Continue chrome.
+      await t.pageBack();
+      await t.pumpAndSettle();
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Continue'), findsOneWidget);
+      // Single-prompt rule: no instructional text in the terminal state.
+      expect(find.text(enrollCapturePrompt), findsNothing);
+      // The feed area never moved (no mid-flow expansion on return).
+      expect(_previewStackFinder(), findsOneWidget);
+      expect(t.getSize(_previewStackFinder()), capturingSize);
+      expect(t.takeException(), isNull);
+      // Drain via cancel (disposes the session camera).
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(find.text('open-capture'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('save-error area equals capturing area (short message)',
+        (t) async {
+      final ctl = await _keyReady(verifier: _EnrollBoom());
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      expect(_previewStackFinder(), findsOneWidget);
+      final capturingSize = t.getSize(_previewStackFinder());
+      // All 5 stills accepted, gallery write throws → fail-closed error bar
+      // (loop + sweep stopped — settle-safe), progress kept.
+      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
+      await t.pumpAndSettle();
+      // Fail-closed chrome kept: error shown, retry offered, no advance.
+      expect(find.textContaining('No face detected'), findsOneWidget);
+      expect(find.text('Save enrollment'), findsNothing);
+      // Notice rides as a toast overlay (zero layout — message length never
+      // moves the feed); retry lives in the bottom bar.
+      expect(
+          find.ancestor(
+              of: find.byType(EnrollNotice),
+              matching: find.byType(Positioned)),
+          findsOneWidget);
+      // Same feed area (no resize on the error transition).
+      expect(_previewStackFinder(), findsOneWidget);
+      expect(t.getSize(_previewStackFinder()), capturingSize);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(find.text('open-capture'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  group('layering decision (overlay refinement, never inline)', () {
+    testWidgets('dots ride Positioned in the preview Stack; prompt in bar',
+        (t) async {
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      // Dots: exactly one Positioned overlay child, touch-transparent.
+      expect(
+          find.ancestor(
+              of: find.byType(EnrollAngleDots),
+              matching: find.byType(Positioned)),
+          findsOneWidget);
+      expect(
+          find.ancestor(
+              of: find.byType(EnrollAngleDots),
+              matching: find.byType(IgnorePointer)),
+          findsWidgets);
+      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(stack.fit, StackFit.expand);
+      expect(stack.children.whereType<Positioned>(), hasLength(1));
+      // Prompt is bottom-bar chrome, never preview chrome: no Stack between
+      // the prompt text and the page Scaffold, and it sits in Padding(16).
+      final promptEl = find.text(enrollCapturePrompt).evaluate().single;
+      var stackBetween = false;
+      promptEl.visitAncestorElements((a) {
+        final w = a.widget;
+        if (w is Scaffold) return false;
+        if (w is Stack) stackBetween = true;
+        return true;
+      });
+      expect(stackBetween, isFalse);
+      expect(
+          find.ancestor(
+              of: find.text(enrollCapturePrompt),
+              matching: find.byWidgetPredicate((w) =>
+                  w is Padding && w.padding == const EdgeInsets.all(16))),
+          findsOneWidget);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('preview Stack carries no copy (overlay is paint-only)',
+        (t) async {
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      expect(_previewStackFinder(), findsOneWidget);
+      // Dots report via semantics, the ovals via paint, the placeholder via
+      // an empty prompt — no readable text is laid out over the feed.
+      for (final e in find
+          .descendant(
+              of: _previewStackFinder(), matching: find.byType(Text))
+          .evaluate()) {
+        final w = e.widget as Text;
+        final s = w.data ?? w.textSpan?.toPlainText() ?? '';
+        expect(s, isEmpty,
+            reason: 'copy inside preview Stack (overlay must be paint-only)');
+      }
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
       expect(t.takeException(), isNull);
     });
   });
