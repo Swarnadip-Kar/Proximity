@@ -94,7 +94,7 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
           const SizedBox(height: ProxSpacing.xs),
           Text(
             'One-time setup — about 2 minutes, online once. '
-            'Nothing to type: your identity imports from Gmail.',
+            'Your name imports from Gmail; type your ID number once below.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -231,11 +231,13 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                       '${st.account!.email}',
                     ),
                     const SizedBox(height: ProxSpacing.sm),
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'ID Number',
-                        helperText: 'Required. Saved with your profile.',
-                      ),
+                    // Single entry: typed once here, shown readonly on the
+                    // save step (shared component, keyed by account so a
+                    // switch rebuilds it empty, never with stale text).
+                    EnrollRollField(
+                      key: ValueKey(
+                          st.account!.email.toLowerCase()),
+                      initialValue: st.roll,
                       onChanged: ctl.setRoll,
                     ),
                   ],

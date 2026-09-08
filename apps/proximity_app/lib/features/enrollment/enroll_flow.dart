@@ -29,9 +29,10 @@
 //    `_AngleRow` / `_EnrollNotice` there line-for-line in motion language.
 //    Once the bundle replaces the old screen, delete it and repoint its two
 //    importers (main.dart, student_home.dart) — do not keep both.
-// 3. Roll-field dup: the ID Number field appears on Intro (entry) and
-//    Result (last-chance before Save). If that jars, extract a shared
-//    `EnrollRollField` here — deliberately left inline for now (lean).
+// 3. Roll-field single entry (applied): the ID Number is typed exactly
+//    once on Intro via the shared `EnrollRollField` (enroll_widgets.dart);
+//    Result shows it readonly. Validation stays single + fail-closed in
+//    the controller's Save path.
 import 'package:flutter/material.dart';
 
 import 'enroll_capture.dart';

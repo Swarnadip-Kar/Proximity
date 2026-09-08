@@ -209,12 +209,13 @@ class EnrollResultScreen extends ConsumerWidget {
                       ),
                 ),
                 const SizedBox(height: ProxSpacing.sm),
-                TextField(
-                  decoration: const InputDecoration(
-                    labelText: 'ID Number',
-                    helperText: 'Required. Saved with your profile.',
-                  ),
-                  onChanged: ctl.setRoll,
+                // Readonly flow-through of the single intro entry (no
+                // second prompt): Save reuses it, fail-closed when empty.
+                Text(
+                  st.roll.isNotEmpty
+                      ? 'ID: ${st.roll}'
+                      : 'ID: not entered — go back to the account step to '
+                          'enter it, then continue (your capture is kept).',
                 ),
               ],
             ),
@@ -360,9 +361,27 @@ class EnrollResultScreen extends ConsumerWidget {
           ),
         );
       case _Refusal.roll:
-        return const ProxCard(
-          child: Text(
-            'Next step: enter your ID number above, then tap Save enrollment.',
+        return ProxCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Next step: go back to the account step and enter your ID '
+                'number once, then continue — your capture is kept, no '
+                're-scan needed.',
+              ),
+              const SizedBox(height: ProxSpacing.sm),
+              ProxSecondaryButton(
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Back to account step'),
+                expanded: true,
+                onPressed: () => Navigator.of(context).popUntil(
+                    (route) =>
+                        route.isFirst ||
+                        route.settings.name ==
+                            '${EnrollNav.routePrefix}intro'),
+              ),
+            ],
           ),
         );
       case _Refusal.generic:

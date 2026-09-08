@@ -35,6 +35,55 @@ abstract final class EnrollLog {
 /// flickered — guidance now comes from the rim sweep + dots, both silent).
 const enrollCapturePrompt =
     'Rotate your face slowly, following the glow.';
+
+/// THE single ID-number entry of the bundle (entered exactly once, on the
+/// intro/account step; the result step shows it readonly). One entry, one
+/// validation (the controller's fail-closed roll check at Save) — never a
+/// second prompt. Owns its controller, seeded from [initialValue] and
+/// re-seeded when it changes externally (account switch clears the draft).
+class EnrollRollField extends StatefulWidget {
+  final String initialValue;
+  final ValueChanged<String> onChanged;
+  const EnrollRollField(
+      {super.key, this.initialValue = '', required this.onChanged});
+
+  @override
+  State<EnrollRollField> createState() => _EnrollRollFieldState();
+}
+
+class _EnrollRollFieldState extends State<EnrollRollField> {
+  late final TextEditingController _c =
+      TextEditingController(text: widget.initialValue);
+
+  @override
+  void didUpdateWidget(EnrollRollField old) {
+    super.didUpdateWidget(old);
+    if (old.initialValue != widget.initialValue &&
+        widget.initialValue != _c.text) {
+      _c.text = widget.initialValue;
+      _c.selection = TextSelection.collapsed(offset: _c.text.length);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _c,
+      decoration: const InputDecoration(
+        labelText: 'ID Number',
+        helperText: 'Required. Saved with your profile.',
+      ),
+      textInputAction: TextInputAction.done,
+      onChanged: widget.onChanged,
+    );
+  }
+}
 /// Angle progress dots: one dot per enrollment still (filled = captured,
 /// ring = current, dim = upcoming). Plain containers on the shared spacing
 /// scale — static, timer-free (unlike the pulsing [ProxDot]), so tests
