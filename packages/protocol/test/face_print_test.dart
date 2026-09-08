@@ -176,6 +176,35 @@ void main() {
       );
     });
 
+    test('plural matcher surfaces pairs AND triples, best-first', () {
+      final base = _unit(Random(81));
+      final mineV = _nearDup(base, 0.5, 82);
+      final mine = _doc('c@gmail.com', mineV, 'v1');
+      final others = {
+        'a@gmail.com': _doc('a@gmail.com', base, 'v1'),
+        'b@gmail.com': _doc('b@gmail.com', _nearDup(mineV, 0.5, 83), 'v1'),
+        's@gmail.com': _doc('s@gmail.com', _unit(Random(84)), 'v1'),
+      };
+      final hits = findFaceDuplicates(
+          myEmail: 'c@gmail.com', mine: mine, others: others);
+      expect(hits.map((h) => h.email), ['a@gmail.com', 'b@gmail.com']);
+      expect(hits[0].score, greaterThanOrEqualTo(hits[1].score));
+      // Singular agrees with plural-best.
+      expect(
+          findFaceDuplicate(myEmail: 'c@gmail.com', mine: mine, others: others)!
+              .email,
+          'a@gmail.com');
+    });
+
+    test('LAN wire helpers roundtrip; garbage decodes to null', () {
+      final v = _unit(Random(91));
+      final rt = faceVecDecode(faceVecEncode(v))!;
+      expect(cosineSimilarity(v, rt), greaterThan(0.998));
+      expect(faceVecEncode(v).length, 684);
+      expect(faceVecDecode('!!!not-base64!!!'), isNull);
+      expect(faceVecDecode(facePrintEncode(Uint8List(7))), isNull);
+    });
+
     test('custom threshold honored at the boundary', () {
       final base = _unit(Random(71));
       final mine = _doc('me@gmail.com', base, 'v1');

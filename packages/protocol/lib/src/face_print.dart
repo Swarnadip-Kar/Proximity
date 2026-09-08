@@ -1,49 +1,44 @@
-// FacePrint: cloud-comparable face representation for same-face enrollment
-// dedup (one face must not enroll as two Gmails on two devices). §4.
+// FacePrint: compact face representation for same-face duplicate
+// detection — LOCAL-SESSION ONLY (§4).
 //
-// PRIVACY FLAG (read before touching this file): storing a FacePrint in
-// cloud Firestore REVERSES the standing guarantee that face-derived data
-// never leaves the device. What is stored per enrolled Gmail is ONE
-// int8-quantized mean FaceNet embedding (512 bytes, base64) + 10 simhash
-// bucket strings + org/pipeline tags — no images, no names, no rolls.
-// Irreversibility: quantized embeddings are NOT one-way. Published
-// template-inversion work reconstructs recognizable faces from unprotected
-// deep embeddings (Mai et al., TPAMI 2019; Shahreza & Marcel black-box
-// reconstruction; diffusion-based inversion, 2026) and recovers
-// soft-biometrics (sex/age/race, Terhörst et al. 2020); int8 quantization
-// barely degrades inversion or identity matching. Treat every stored byte
-// as biometric personal data (GDPR sensitive-data class), readable by any
-// signed-in same-org user (claim-time compare runs client-side — there is
-// no backend), retained indefinitely (no delete API, no TTL on Spark),
-// enumerated by paging org queries. Why it is judged worth it: same-face
-// second-Gmail enrollment on a second phone is a stock-app proxy vector
-// (carry two phones, both pass holder check) that NOTHING else in the
-// system detects — install/cooldown/pkD-audit all key on Gmail+device,
-// never on the holder — and proxy-hard attendance is the entire point of
-// the app (§1 goal 1). Mitigations: explicit enrollment consent copy,
-// strict flag threshold (0.75, not the 0.70 marking gate), never a dead
-// end (recapture retry + manual attendance), never auto-accusation copy,
-// self-exclusion (re-enroll never flags itself), pipeline-scoped compare.
-// Follow-ups if this proves load-bearing: Blaze Function for server-side
-// compare (no client-readable biometrics), institute-domain orgs, TTL /
-// delete story, measured ROC retune.
+// NOTHING here reaches the cloud, ever: during marking the student's proof
+// carries ONE quantized vector to the professor's phone over the existing
+// local HTTPS channel; the professor holds email→vector in RAM for the
+// open window only, compares each incoming vector against the rest, and
+// wipes everything on window close / hosting end. The cloud sync carries
+// only final statuses (PRESENT/ABSENT/FLAGGED). There is no biometric
+// store to breach, enumerate, or retain — the entire cloud
+// read-quota/enumeration/retention analysis of the earlier claim-time
+// design is moot by construction (no queries, no collection, no quota).
 //
-// Design (Spark-only: queries + rules, no backend compute):
-// - Canonical pipeline (identical on every client): mean over the enrolled
-//   stills → L2 normalize → int8 quantize → buckets + embQ BOTH derived
+// What is carried per prove: ONE int8-quantized mean FaceNet embedding
+// (512 bytes, base64) — no images, no names, no rolls. Honesty notes
+// (unchanged from the earlier analysis): quantized embeddings are NOT
+// one-way (published template-inversion reconstructs recognizable faces
+// from such vectors), but the blast radius is one classroom LAN for one
+// window — the professor already sees every face physically — and RAM
+// lifetime is minutes. Proofs without vectors (legacy) mark normally
+// with no dup participation; custom clients can omit/garbage vectors
+// (evasion only: transplanting another holder's vector merely self-flags,
+// and the Sig_s face-ticket crypto is untouched).
+//
+// Design:
+// - Canonical pipeline (identical on every phone): mean over the enrolled
+//   stills → L2 normalize → int8 quantize → base64. Buckets + embQ derive
 //   from the QUANTIZED bytes (integer math only — bit-deterministic on
-//   native and web, unlike float-transcendental projections).
-// - Pre-filter: 80-bit simhash (Rademacher ±1 hyperplanes from a fixed
-//   xorshift32 seed — no stored matrix), banded 10×8. One Firestore query:
-//   where org == X AND buckets arrayContainsAny [10 values], limit 25.
-//   Recall ≈0.91 at cosine 0.85, ≈0.73 at 0.75; stranger shortlist ≈4% of
-//   org per enrollment (N=500 → ~20 reads vs 500 naive; enrollment-week
-//   170/day → ~3.4k reads/day vs 85k naive — naive blows the 50k/day Spark
-//   quota, bucketed fits with headroom).
-// - Exact compare client-side on the shortlist: cosine over dequantized
-//   vectors, flag at [kFaceDupThreshold]. Firestore bills per DOCUMENT
-//   read, not per byte — quantization saves storage/bandwidth, buckets
-//   save reads. Do not "optimize" by dropping the buckets.
+//   native and web).
+// - Session compare is EXACT cosine over dequantized vectors, O(session)
+//   per prove (~500×512 mult-adds ≈ single-digit ms — measured in the
+//   transport test, not asserted). No pre-filter, no index, no quota: the
+//   simhash buckets below stay as tested primitives but the local path
+//   does not need them (kept, not rewritten, per the shared-layer rule).
+// - Flag at [kFaceDupThreshold]: STRICTER than the 0.70 marking gate.
+//   Different error costs (a group-flag pages the professor mid-lecture;
+//   a marking reject costs a rescan), expected false pairs <1/session at
+//   pilot scale, and blatant same-lecture proxy (same holder, minutes
+//   apart, typically 0.85+) still caught. Residual misses (0.70–0.80 true
+//   dupes) and twin false flags (1-tap professor resolve — both faces are
+//   IN THE ROOM) are the accepted classes. Retune only from measured ROC.
 library;
 
 import 'dart:convert';
@@ -56,13 +51,10 @@ import 'face_gate.dart';
 /// registerFromEmbedding rejects anything else).
 const kFacePrintDim = 512;
 
-/// Cross-user duplicate flag threshold — STRICTER than the 0.70 marking
-/// gate on purpose. A marking false-reject costs a rescan; a duplicate
-/// false-flag blocks self-service enrollment (twins/siblings are the known
-/// FP class → manual path). 0.75 catches blatant same-face captures
-/// (same person, two phones: typically 0.80+) while keeping stranger FP
-/// near the vendor FAR tail. Retune only from measured ROC, never by feel.
-const kFaceDupThreshold = 0.75;
+/// Session duplicate flag threshold — STRICTER than the 0.70 marking
+/// gate on purpose (see file header: group-flag error costs, false-pair
+/// budget, blatant-proxy capture). Retune only from measured ROC.
+const kFaceDupThreshold = 0.80;
 
 /// Simhash banding: 10 bands × 8 rows = 80 bits. Fits one
 /// arrayContainsAny (max 10) — the whole pre-filter is ONE query.
@@ -149,6 +141,24 @@ String facePrintEncode(Uint8List quantized) => base64Encode(quantized);
 Uint8List facePrintDecode(String encoded) =>
     Uint8List.fromList(base64Decode(encoded));
 
+/// LAN prove-body encoding: quantize the mean embedding + base64 (684
+/// chars over the existing HTTPS channel — no new transport).
+String faceVecEncode(List<double> meanEmbedding) =>
+    facePrintEncode(faceQuantizeEmbedding(meanEmbedding));
+
+/// Inverse of [faceVecEncode]: dequantized floats, or null on garbage
+/// (fail-soft — a proof without a usable vector marks normally with no
+/// dup participation, same as a legacy proof).
+List<double>? faceVecDecode(String encoded) {
+  try {
+    final q = facePrintDecode(encoded);
+    if (q.length != kFacePrintDim) return null;
+    return faceDequantizeEmbedding(q);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Rademacher (±1) hyperplane signs, streamed from a fixed xorshift32 —
 /// pure integer math, bit-identical on every platform (Gaussian Box-Muller
 /// would drag in libm transcendentals that differ native-vs-web and split
@@ -195,10 +205,9 @@ List<String> facePrintBuckets(Uint8List quantized) {
   return out;
 }
 
-/// The cloud-stored duplicate-check record. Pure math + scoping tags —
-/// NEVER names, rolls, photos, or keys (the doc id carries the Gmail for
-/// one-print-per-Gmail overwrite semantics; readers of a shortlist see
-/// matched doc ids transiently — stated cost of client-side compare).
+/// The session duplicate-check record (RAM-only on the professor's phone
+/// during the open window; never serialized to the cloud). Pure math +
+/// scoping tags — NEVER names, rolls, photos, or keys.
 class FacePrintDoc {
   /// Org scope (Google-account domain), '' never stored (rules refuse).
   final String org;
@@ -269,24 +278,25 @@ class FaceDuplicate {
   const FaceDuplicate({required this.email, required this.score});
 }
 
-/// Exact compare over a bucket shortlist. Skips the caller's own doc
-/// (same-Gmail re-enroll must never flag itself) and foreign-pipeline
-/// prints (incomparable — the stale-pipeline re-face check bounds that
-/// window). Returns the best hit at/above [threshold], else null.
-/// [others] maps lowercased Gmail → print. Pure — no I/O.
-FaceDuplicate? findFaceDuplicate({
+/// Exact compare over one window's in-memory vectors. Skips the prover's
+/// own entry (same-device retries share the vector) and foreign-pipeline
+/// vectors (incomparable). Returns EVERY hit at/above [threshold],
+/// best-first — pairs AND larger groups (A/B/C…) all surface so the
+/// roster can flag every involved entry. [others] maps lowercased Gmail →
+/// print. Pure — no I/O.
+List<FaceDuplicate> findFaceDuplicates({
   required String myEmail,
   required FacePrintDoc mine,
   required Map<String, FacePrintDoc> others,
   double threshold = kFaceDupThreshold,
 }) {
   final mineQ = facePrintDecode(mine.embQ);
-  if (mineQ.length != kFacePrintDim) return null;
+  if (mineQ.length != kFacePrintDim) return const [];
   final mineF = faceDequantizeEmbedding(mineQ);
   final mineSelf = cosineSimilarity(mineF, mineF);
-  if (mineSelf < 0.99) return null; // corrupt own print: fail closed, no flag
+  if (mineSelf < 0.99) return const []; // corrupt own vector: fail closed
   final me = myEmail.toLowerCase();
-  FaceDuplicate? best;
+  final hits = <FaceDuplicate>[];
   for (final e in others.entries) {
     if (e.key.toLowerCase() == me) continue;
     if (e.value.verifierVer != mine.verifierVer) continue;
@@ -298,9 +308,24 @@ FaceDuplicate? findFaceDuplicate({
     }
     if (theirQ.length != kFacePrintDim) continue;
     final score = cosineSimilarity(mineF, faceDequantizeEmbedding(theirQ));
-    if (score >= threshold && (best == null || score > best.score)) {
-      best = FaceDuplicate(email: e.key, score: score);
-    }
+    if (score >= threshold) hits.add(FaceDuplicate(email: e.key, score: score));
   }
-  return best;
+  hits.sort((a, b) => b.score.compareTo(a.score));
+  return hits;
+}
+
+/// Exact compare over a bucket shortlist. Skips the caller's own doc
+/// (same-Gmail re-enroll must never flag itself) and foreign-pipeline
+/// prints (incomparable — the stale-pipeline re-face check bounds that
+/// window). Returns the best hit at/above [threshold], else null.
+/// [others] maps lowercased Gmail → print. Pure — no I/O.
+FaceDuplicate? findFaceDuplicate({
+  required String myEmail,
+  required FacePrintDoc mine,
+  required Map<String, FacePrintDoc> others,
+  double threshold = kFaceDupThreshold,
+}) {
+  final hits = findFaceDuplicates(
+      myEmail: myEmail, mine: mine, others: others, threshold: threshold);
+  return hits.isEmpty ? null : hits.first;
 }
