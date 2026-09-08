@@ -1,19 +1,17 @@
-// Continuous-session enrollment contracts: pose-window math (pure),
-// overlay-only preview composition at true ratio, no-tap auto-capture
-// advance (accept/reject/auto-retry with progress kept), cancel, dispose
-// safety, and fail-closed save.
+// Continuous-session enrollment contracts: pose windows, bucket
+// classification, dot anchors (all pure), preview parity with the 5186c65
+// original (source-to-source), overlay-only composition, bucket-fill
+// advance with latched guidance (no flicker), stale eviction,
+// cancel/dispose safety, fail-closed save.
 //
-// NOTE on the live preview: the camera plugin has no test double
-// (availableCameras + permission channels throw in flutter_test), so the
-// Stack(CameraPreview + FaceCaptureOvalOverlay) composition is verified
-// on-device; CI pumps the placeholder Stack (same construction) and the
-// full session below through the FakeEnrollSessionCamera + FakePoseGate
-// seams (the real camera opens exactly once per session in production).
-//
-// NOTE on the clock: the auto-capture loop always has its next one-shot
-// beat scheduled while running, so tests drive it with bounded
-// [_pumpUntil]/[_drain] pumps — never pumpAndSettle mid-loop (it would
-// time out on the live loop instead of failing loudly).
+// Guidance model (Apple Face ID + Tobii "follow the dot"): every still
+// classifies into ANY matching unfilled bucket; dot + line name the
+// latched target, moving ONLY on fill or eviction — never on per-frame
+// output. Camera plugin has no test double, so the live CameraPreview
+// composition is verified on-device; CI drives the placeholder Stack
+// (same shape) through the FakeEnrollSessionCamera + FakePoseGate seams.
+// Clock: the loop always has its next one-shot beat due — drive it with
+// bounded [_pumpUntil]/[_drain], never pumpAndSettle mid-loop.
 import 'dart:async';
 import 'dart:io';
 
@@ -40,14 +38,18 @@ class _EnrollBoom extends FakeFaceVerifier {
   }
 }
 
-/// Pose gate that hangs until released (dispose-safety: an in-flight angle
-/// check must never touch the screen after dispose).
+/// Pose gate that hangs until released (dispose-safety: an in-flight pose
+/// read must never touch the screen after dispose).
 class _HangingGate implements PoseGate {
-  final completer = Completer<PoseDecision>();
-  int calls = 0;
+  final completer = Completer<PoseReading?>();
+  int reads = 0;
   @override
-  Future<PoseDecision> checkSlot(String imagePath, String slot) async {
-    calls++;
+  Future<PoseDecision> checkSlot(String imagePath, String slot) async =>
+      const PoseDecision.ok();
+
+  @override
+  Future<PoseReading?> readPose(String imagePath) async {
+    reads++;
     return completer.future;
   }
 
@@ -209,6 +211,137 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       final gate = MlkitPoseGate();
       expect(() => gate.checkSlot('a.jpg', 'centre'), throwsStateError);
+      expect(() => gate.readPose('a.jpg'), throwsStateError);
+    });
+
+    test('readPose maps unreadable stills to null, never throws', () async {
+      final gate = MlkitPoseGate();
+      expect(await gate.readPose(''), isNull);
+      expect(await gate.readPose('   '), isNull);
+      expect(await gate.readPose('/nonexistent/still.jpg'), isNull);
+      // No ML Kit channel in flutter_test: the detector throw collapses
+      // to null (the loop wastes the beat silently), never propagates.
+      final f = File(
+          '${Directory.systemTemp.path}/prox-pose-garbage-${DateTime.now().microsecondsSinceEpoch}.jpg');
+      await f.writeAsBytes([0, 1, 2, 3]);
+      try {
+        expect(await gate.readPose(f.path), isNull);
+      } finally {
+        if (await f.exists()) await f.delete();
+      }
+    });
+  });
+
+  group('bucket classification (pure, no native calls)', () {
+    const empty = <String>{};
+    test('canonical views fill their own bucket first', () {
+      expect(
+          EnrollBucketFill.classifyInto(0, 0, 0, empty), 'centre');
+      expect(
+          EnrollBucketFill.classifyInto(-20, 0, 0, empty), 'left');
+      expect(
+          EnrollBucketFill.classifyInto(20, 0, 0, empty), 'right');
+      expect(
+          EnrollBucketFill.classifyInto(0, 15, 0, empty), 'up');
+      expect(
+          EnrollBucketFill.classifyInto(0, -15, 0, empty), 'down');
+    });
+
+    test('overlap resolves by slot priority, filled buckets skipped', () {
+      // yaw -10 sits in both centre (±12) and left (−35…−8) windows:
+      // centre wins while unfilled (it IS a valid frontal template)…
+      expect(EnrollBucketFill.classifyInto(-10, 0, 0, empty), 'centre');
+      // …then the same reading fills left once centre is taken.
+      expect(EnrollBucketFill.classifyInto(-10, 0, 0, {'centre'}), 'left');
+      // A reading matching only filled buckets fills nothing (wasted
+      // still — the loop stays silent, guidance never moves).
+      expect(
+          EnrollBucketFill.classifyInto(
+              0, 0, 0, {'centre', 'left', 'right', 'up'}),
+          isNull);
+    });
+
+    test('unreadable and out-of-window readings fill nothing', () {
+      expect(EnrollBucketFill.classifyInto(null, 0, 0, empty), isNull);
+      expect(EnrollBucketFill.classifyInto(0, null, 0, empty), isNull);
+      expect(EnrollBucketFill.classifyInto(null, null, null, empty), isNull);
+      // Overshoot past every window (too far left) is wasted, not forced.
+      expect(EnrollBucketFill.classifyInto(-40, 0, 0, empty), isNull);
+      expect(EnrollBucketFill.classifyInto(0, 35, 0, empty), isNull);
+      // Nothing left to fill.
+      expect(
+          EnrollBucketFill.classifyInto(
+              0, 0, 0, {'centre', 'left', 'right', 'up', 'down'}),
+          isNull);
+    });
+  });
+
+  group('guide-dot anchors (pure)', () {
+    test('turns sit on the rim toward the turn, centre sits centred', () {
+      expect(guideDotUnit('left'), const Offset(-1, 0));
+      expect(guideDotUnit('right'), const Offset(1, 0));
+      expect(guideDotUnit('up'), const Offset(0, -1));
+      expect(guideDotUnit('down'), const Offset(0, 1));
+      expect(guideDotUnit('centre'), Offset.zero);
+      expect(guideDotUnit('nope'), Offset.zero);
+    });
+  });
+
+  group('preview parity with the 5186c65 original', () {
+    // The ratio-critical lines of the FaceCaptureScreen preview block,
+    // byte-identical in the enrollment session (see the provenance note
+    // in enroll_capture.dart). If this fails, the preview construction
+    // drifted from the certified original — do not "fix" the test, fix
+    // the block. Paths are package-relative (flutter test runs at the
+    // package root). The CameraPreview line carries 2sp extra from the
+    // fake-guard `if` (documented delta b), so it is pinned unindented.
+    const originalLines = [
+      '          Expanded(',
+      '            child: Center(',
+      '                  ? Padding(',
+      '                      padding: const EdgeInsets.all(24),',
+      '                      ? const CircularProgressIndicator()',
+      '                          fit: StackFit.expand,',
+      'CameraPreview(ctl)',
+      '                            // The oval ACTUALLY renders on the preview: this',
+      '                            // overlay is inside the preview Stack (not beside',
+      '                            // it), pointer-transparent, repainting per shot.',
+    ];
+
+    test('ratio-critical lines survive verbatim, in order', () {
+      final session = File(
+              'lib/features/enrollment/enroll_capture.dart')
+          .readAsStringSync();
+      var from = 0;
+      for (final line in originalLines) {
+        final at = session.indexOf(line, from);
+        expect(at, isNot(-1), reason: 'missing verbatim line: $line');
+        from = at + line.length;
+      }
+    });
+
+    test('exactly the three documented deltas, nothing else', () {
+      final session = File(
+              'lib/features/enrollment/enroll_capture.dart')
+          .readAsStringSync();
+      // (a) three-state message instead of the single status…
+      expect(session.contains('child: Text(_status,'), isFalse);
+      expect(session.contains('previewMessage'), isTrue);
+      // (b) spinner branch restored verbatim, but its CONDITION now keys
+      // on opening — the original `ctl == null … ? spinner` two-liner is
+      // gone (that exact condition survives only in the camera seam's
+      // null-safe accessor, which short-circuits before any dereference).
+      expect(session.contains('const CircularProgressIndicator()'), isTrue);
+      expect(
+          session.contains('!ctl.value.isInitialized\n'
+              '                      ? const CircularProgressIndicator()'),
+          isFalse);
+      expect(session.contains('FaceOval('), isTrue);
+      // (c) ONE Positioned overlay child + dotUnit on the oval…
+      expect('Positioned('.allMatches(session).length, 1);
+      expect(session.contains('dotUnit:'), isTrue);
+      // …and the original single-status/progress expressions are gone.
+      expect(session.contains('_taken / widget.captures'), isFalse);
     });
   });
 
@@ -234,17 +367,35 @@ void main() {
           find.bySemanticsLabel('Captured 1 of 5 angles'), findsOneWidget);
     });
 
-    testWidgets('camera oval overlay renders + repaints', (t) async {
+    testWidgets('camera oval overlay renders + repaints (dot included)',
+        (t) async {
       await t.pumpWidget(const MaterialApp(
         home: Scaffold(body: FaceCaptureOvalOverlay(progress: 0)),
       ));
       expect(find.byType(CustomPaint), findsWidgets);
       await t.pumpWidget(const MaterialApp(
-        home: Scaffold(body: FaceCaptureOvalOverlay(progress: 0.5)),
+        home: Scaffold(
+            body: FaceCaptureOvalOverlay(
+                progress: 0.5, dotUnit: Offset(1, 0))),
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
       expect(t.takeException(), isNull);
+    });
+
+    test('fake gate cycles the five canonical views unscripted', () async {
+      // No readings scripted: the cycle drives a full bucket set in
+      // slot-priority order through classifyInto — the e2e default.
+      final gate = FakePoseGate();
+      final filled = <String>{};
+      for (var i = 0; i < 5; i++) {
+        final r = await gate.readPose('still-$i.jpg');
+        final slot = EnrollBucketFill.classifyInto(
+            r!.yaw, r.pitch, r.roll, filled);
+        expect(slot, faceEnrollSlots[i]);
+        filled.add(slot!);
+      }
+      expect(filled, faceEnrollSlots.toSet());
     });
   });
 
@@ -253,17 +404,19 @@ void main() {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       // Camera open, loop still in its initial beat (600ms) — the overlay
-      // deterministically names angle 1.
+      // deterministically names the latched target (centre first).
       await _openSession(t);
-      // Overlay ONLY in the preview Stack: dots + one instruction line +
-      // oval. No cards, no capture buttons, no slot rows, no progress bar.
+      // Overlay ONLY in the preview Stack: dots + one stable imperative +
+      // oval. No cards, no buttons, no narration of checker internals.
       expect(find.byType(EnrollAngleDots), findsOneWidget);
       expect(find.text('Look straight'), findsWidgets);
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
       expect(find.byType(ProxCard), findsNothing);
-      expect(find.text('Retake'), findsNothing);
-      expect(find.textContaining('Capture'), findsNothing);
       expect(find.byType(FilledButton), findsNothing);
+      // No checker-state narration anywhere user-facing (BleLog only).
+      expect(find.text('Hold still…'), findsNothing);
+      expect(find.text('Checking angle…'), findsNothing);
+      expect(find.text('Checking…'), findsNothing);
       // The overlay never affects preview layout: it hangs off Positioned
       // + IgnorePointer inside the Stack (ancestor existence; Scaffold
       // internals own other IgnorePointers, so this asserts presence).
@@ -304,7 +457,7 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('no taps: auto-capture advances all 5 gated angles',
+    testWidgets('no taps: buckets fill in gate order, one camera open',
         (t) async {
       final camera = FakeEnrollSessionCamera();
       final gate = FakePoseGate();
@@ -312,52 +465,80 @@ void main() {
       await t.pumpWidget(
           _captureHarness(ctl: ctl, camera: camera, gate: gate));
       await _openSession(t);
-      // No capture buttons exist at any point — the loop drives itself.
-      expect(find.byType(FilledButton), findsNothing);
-      // All 5 validate → auto-advance to the result step, one camera open.
+      // All 5 buckets validate → auto-advance to the result step.
       await _pumpUntil(t, find.text('Save enrollment'));
       // Result screen is static: settle its entrance before asserting.
       await t.pumpAndSettle();
       expect(camera.openCount, 1);
       expect(camera.closeCount, 0);
-      // Every angle really went through the gate, in slot order.
-      expect(
-          gate.calls.map((c) => c.split(':').first),
-          ['centre', 'left', 'right', 'up', 'down']);
+      // One pose read per still, nothing else touched the gate.
+      expect(gate.readCalls, hasLength(5));
+      expect(gate.calls, isEmpty);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('pose reject hints then auto-retries, progress kept',
+    testWidgets('alternating classifications never move latched guidance',
         (t) async {
-      final gate = FakePoseGate([
-        const PoseDecision.retry(
-            'Turn a little more to your left — keep both eyes visible.'),
-      ]);
+      // Stills arrive left/right/left/right… while the target is centre:
+      // buckets fill opportunistically, but the dot + line stay on centre
+      // until CENTRE fills — per-frame output never steers guidance.
+      const left = PoseReading(yaw: -20, pitch: 0, roll: 0);
+      const right = PoseReading(yaw: 20, pitch: 0, roll: 0);
+      final gate = FakePoseGate([], const PoseDecision.ok(), [left, right]);
+      final camera = FakeEnrollSessionCamera();
       final verifier = FakeFaceVerifier();
       final ctl = await _keyReady(verifier: verifier);
-      await t.pumpWidget(
-          _captureHarness(ctl: ctl, gate: gate));
+      await t.pumpWidget(_captureHarness(
+          ctl: ctl, gate: gate, camera: camera));
       await _openSession(t);
-      // Rejected: the hint becomes the overlay line, gallery untouched.
+      // Two buckets filled by "wrong"-order stills — guidance unmoved.
       await _pumpUntil(
-          t, find.textContaining('a little more to your left'));
+          t, find.bySemanticsLabel('Captured 2 of 5 angles'));
+      expect(find.text('Look straight'), findsWidgets);
+      expect(find.text('Turn slightly left'), findsNothing);
+      expect(find.text('Turn slightly right'), findsNothing);
       expect(verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
-      // Auto-retry accepts (fallback) and the session completes — centre
-      // went through the gate twice, nothing lost.
+      // The session still completes (centre fills from the cycle next).
       await _pumpUntil(t, find.text('Save enrollment'));
       await t.pumpAndSettle();
-      expect(
-          gate.calls.map((c) => c.split(':').first),
-          ['centre', 'centre', 'left', 'right', 'up', 'down']);
+      expect(camera.captures, 7);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('blank capture auto-retries the slot', (t) async {
+    testWidgets('stale target evicts the dot, bucket still fills later',
+        (t) async {
+      // 31 wasted stills (matching nothing) with centre missing: the dot
+      // moves on to left WITHOUT accepting anything — eviction, not a
+      // pass. Then the cycle's centre still fills centre opportunistically.
+      final gate = FakePoseGate(
+          [],
+          const PoseDecision.ok(),
+          List.filled(
+              31, const PoseReading(yaw: -40, pitch: 0, roll: 0)));
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(ctl: ctl, gate: gate));
+      await _openSession(t);
+      await _pumpUntil(t, find.text('Turn slightly left'), ticks: 250);
+      // Eviction accepted nothing: dots still empty, gallery untouched.
+      expect(
+          find.bySemanticsLabel('Captured 0 of 5 angles'), findsOneWidget);
+      // …and the evicted bucket fills the moment a matching still arrives.
+      await _pumpUntil(t, find.text('Save enrollment'), ticks: 120);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('blank capture stays silent, slot fills next still',
+        (t) async {
       final camera = FakeEnrollSessionCamera([StateError('blank')]);
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
       await _openSession(t);
-      await _pumpUntil(t, find.textContaining('blank'));
+      // First fill arrives with no error text ever shown (silent retry).
+      await _pumpUntil(
+          t, find.bySemanticsLabel('Captured 1 of 5 angles'));
+      expect(find.textContaining('blank'), findsNothing);
+      expect(find.byType(EnrollNotice), findsNothing);
       // One wasted still, then the session completes on its own.
       await _pumpUntil(t, find.text('Save enrollment'));
       await t.pumpAndSettle();
@@ -390,7 +571,7 @@ void main() {
       await t.pumpWidget(
           _captureHarness(ctl: ctl, camera: camera));
       await _openSession(t);
-      // Wait for the first accept (dots semantics), then cancel.
+      // Wait for the first fill (dots semantics), then cancel.
       await _pumpUntil(
           t, find.bySemanticsLabel('Captured 1 of 5 angles'));
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
@@ -403,18 +584,20 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('in-flight angle check after dispose never touches UI',
+    testWidgets('in-flight pose read after dispose never touches UI',
         (t) async {
       final gate = _HangingGate();
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl, gate: gate));
       await _openSession(t);
-      // Initial beat + capture fire, validation now hangs in the gate.
-      await _pumpUntil(t, find.text('Checking angle…'));
-      expect(gate.calls, 1);
-      // Dispose mid-validation, then let the check complete late.
+      // Initial beat + capture fire, the pose read now hangs in the gate.
+      for (var i = 0; i < 30 && gate.reads < 1; i++) {
+        await t.pump(const Duration(milliseconds: 200));
+      }
+      expect(gate.reads, 1);
+      // Dispose mid-read, then let the read complete late.
       await t.pumpWidget(const MaterialApp(home: Scaffold()));
-      gate.completer.complete(const PoseDecision.ok());
+      gate.completer.complete(const PoseReading(yaw: 0, pitch: 0, roll: 0));
       await _drain(t);
       expect(t.takeException(), isNull);
     });
