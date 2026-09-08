@@ -103,6 +103,19 @@ class ProxServer {
   final Set<int> _seenFaceStamps = {};
   final List<double> _recentScores = [];
   String _lastVerifierVer = '';
+  // Local same-face dup path (RAM-only, window-scoped): email → canonical
+  // int8 vector as received in `face:{vec}`. Planted only by
+  // confirmed/late proofs carrying a usable vector; wiped on window close
+  // AND window open (retake starts fresh) AND hosting teardown — vectors
+  // never outlive the open window. Exemptions are SESSION-scoped (they
+  // survive retakes; the server object lives for the whole hosting).
+  final Map<String, FacePrintDoc> _faceVecs = {};
+  final Set<String> _faceExemptPairs = {};
+  static String _facePairKey(String a, String b) {
+    final x = a.toLowerCase();
+    final y = b.toLowerCase();
+    return x.compareTo(y) <= 0 ? '$x\x00$y' : '$y\x00$x';
+  }
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
 
@@ -184,6 +197,10 @@ class ProxServer {
     _windowNo = windowNo;
     _bearer = hostBearer(window.secret);
     _once.clear();
+    // Fresh round = fresh vector map (a retake that skipped the grace
+    // close must not compare against the previous window's vectors).
+    // Exemptions survive: the professor's override is session-scoped.
+    _faceVecs.clear();
   }
 
   /// Closes the window. Proofs are rejected as `window-closed`; the HTTPS
@@ -196,8 +213,27 @@ class ProxServer {
   void closeWindow() {
     if (_windowNo > 0) tally.noteWindow(_windowNo);
     _window = null;
+    // Detection for the closing window is already complete (compare runs
+    // per prove, including stop-grace proofs) — vectors must not outlive it.
+    _faceVecs.clear();
   }
   int get windowNo => _windowNo;
+
+  /// Drops all session vectors from RAM NOW (hosting teardown calls this
+  /// explicitly before dropping the server — audit both paths).
+  void clearFaceVectors() => _faceVecs.clear();
+
+  /// Held vectors right now (observability/tests — count only, never the
+  /// bytes: vectors are never logged, never exported).
+  int get faceVectorCount => _faceVecs.length;
+
+  /// Professor override: this pair never flags again this session. The
+  /// professor SEES both faces in the room — the human resolves what the
+  /// matcher cannot (twins/siblings). Survives retakes (unlike vectors).
+  void exemptFacePair(String a, String b) {
+    if (a.trim().isEmpty || b.trim().isEmpty) return;
+    _faceExemptPairs.add(_facePairKey(a, b));
+  }
 
   // ---- Waiting room (students join before the window opens) ----
   // Delegated to LiveRoom (identical semantics; see live_room.dart).
@@ -443,13 +479,24 @@ class ProxServer {
       // Tracks 2+3 bound ticket: face:{score,faceValidAt,verifierVer} (no
       // images/embeddings leave the device) + pkD + dSig. Absent → legacy
       // path (migration). Bound → extended Sig_s + allowlist + tiers.
+      // `bound` keys on TICKET CONTENT, not map presence: the local dup
+      // vector rides `face:{vec}` on legacy proofs too, and a vec-only map
+      // must NOT flip a legacy-Sig_s proof into the bound path.
       final faceMap = body['face'] as Map<String, dynamic>?;
-      final bound = faceMap != null;
-      final ticketScore =
-          (faceMap?['score'] as num?)?.toDouble() ?? faceScore;
       final ticketStampMs =
           (faceMap?['faceValidAt'] as num?)?.toInt() ?? 0;
       final verifierVer = faceMap?['verifierVer'] as String? ?? '';
+      final bound = verifierVer.isNotEmpty || ticketStampMs != 0;
+      final ticketScore =
+          (faceMap?['score'] as num?)?.toDouble() ?? faceScore;
+      // Local dup vector (`face:{vec}` — base64 int8 mean embedding). Parse
+      // is fail-soft: absent/oversized/garbage means no dup participation
+      // for this proof (same as a legacy proof), never a 400.
+      var faceVecB64 = '';
+      try {
+        final v = faceMap?['vec'] as String? ?? '';
+        if (v.isNotEmpty && v.length <= 1024) faceVecB64 = v;
+      } catch (_) {}
       Uint8List pkD = Uint8List(0);
       Uint8List dSig = Uint8List(0);
       try {
@@ -637,6 +684,38 @@ class ProxServer {
         tally.mark(id, name, _windowNo,
             roll: roll, late: outcome.decision == ProveDecision.late);
       }
+      // Local same-face dup check (RAM-only, window-scoped): exact cosine
+      // over dequantized vectors, O(session) per prove. Runs on marked
+      // proofs carrying a usable vector — no bound ticket required
+      // (pipeline-equality inside the matcher is the comparability gate:
+      // '' == '' compares, 'x' vs 'y' skips). Invalid proofs plant nothing
+      // (no framing via junk POSTs); legacy proofs without vectors
+      // participate in nothing. The vector is stored VERBATIM as received
+      // (already canonical int8 base64 from the student's quantize — no
+      // float round-trip); compare-then-plant so a retry never self-flags.
+      // Residuals, stated: custom clients can omit/garbage vectors
+      // (evasion only — transplanting another holder's vector merely
+      // self-flags, and the Sig_s face-ticket crypto above is untouched);
+      // proofs without vectors mark normally.
+      final dupPeers = <String>[];
+      final markedNow = outcome.decision == ProveDecision.confirmed ||
+          outcome.decision == ProveDecision.late;
+      // Validate-before-plant: garbage own-vectors mark normally but plant
+      // nothing (no RAM noise, no count noise).
+      if (markedNow &&
+          faceVecB64.isNotEmpty &&
+          faceVecDecode(faceVecB64) != null) {
+        final mine = FacePrintDoc(
+            org: '', verifierVer: verifierVer, embQ: faceVecB64,
+            buckets: const [], updatedAtMillis: 0);
+        for (final h in findFaceDuplicates(
+            myEmail: id, mine: mine, others: _faceVecs)) {
+          if (!_faceExemptPairs.contains(_facePairKey(id, h.email))) {
+            dupPeers.add(h.email);
+          }
+        }
+        _faceVecs[id] = mine;
+      }
       // Tracks 2+3: feed the anomaly context (bounded) and surface flags
       // alongside the verdict. The signed ACK is unchanged; flags ride in
       // `flags` + the onProve reason suffix for the host log.
@@ -659,6 +738,11 @@ class ProxServer {
         outcome.reason,
         if (rule.isNotEmpty) rule,
         ...flags,
+        // Dup pair rides the host log line (never the wire verdict): the
+        // app parses it into roster flags + override. Peers only — the
+        // prover is the callback's first arg. Neutral copy at the UI, not
+        // here: this token is machine-readable, never shown.
+        if (dupPeers.isNotEmpty) 'dupface:${dupPeers.join(',')}',
       ].join('|');
       try {
         onProve?.call(id, outcome.decision.name, flaggedReason);

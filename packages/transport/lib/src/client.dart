@@ -299,7 +299,9 @@ class ProxClient {
   /// [verifierVer] emit the `face:{score,faceValidAt,verifierVer}` ticket
   /// (Sig_s binds them — no images/embeddings leave the device); [pkD] +
   /// [dSigFor] emit the device binding (`pkD` hex + `dSig` over
-  /// deviceProvePreimage with the ticket hash).
+  /// deviceProvePreimage with the ticket hash). [faceVecB64] attaches the
+  /// LAN-only session vector (`face:{vec}` — RAM-only on the professor
+  /// phone, never the cloud); empty means no dup participation.
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -321,6 +323,7 @@ class ProxClient {
     Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
+    String faceVecB64 = '',
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -347,6 +350,7 @@ class ProxClient {
           dSigFor: dSigFor,
           attestationLevel: attestationLevel,
           attestedUntilMs: attestedUntilMs,
+          faceVecB64: faceVecB64,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -374,6 +378,7 @@ class ProxClient {
     Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
+    String faceVecB64 = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
@@ -412,6 +417,7 @@ class ProxClient {
       dSig: dSig,
       attestationLevel: attestationLevel,
       attestedUntilMs: attestedUntilMs,
+      faceVecB64: faceVecB64,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =

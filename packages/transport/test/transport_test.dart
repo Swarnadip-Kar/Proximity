@@ -1,6 +1,7 @@
 // Real HTTPS loop over localhost: shelf server + TLS client + binding.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -1111,6 +1112,370 @@ void main() {
         client.close();
         await server.stop();
       }
+    });
+  });
+
+  group('local same-face dup path (RAM-only, window-scoped)', () {
+    List<double> tvec(int seed) {
+      final rng = math.Random(seed);
+      final v = List<double>.generate(
+          kFacePrintDim, (_) => rng.nextDouble() * 2 - 1);
+      var n = 0.0;
+      for (final x in v) {
+        n += x * x;
+      }
+      n = math.sqrt(n);
+      return [for (final x in v) x / n];
+    }
+
+    String tnear(int baseSeed, double eps, int noiseSeed) {
+      final base = tvec(baseSeed);
+      final r = tvec(noiseSeed);
+      final v = List<double>.generate(
+          kFacePrintDim, (i) => base[i] + eps * r[i]);
+      var n = 0.0;
+      for (final x in v) {
+        n += x * x;
+      }
+      n = math.sqrt(n);
+      return faceVecEncode([for (final x in v) x / n]);
+    }
+
+    Future<ProveResult> proveAs(
+      ProxClient client,
+      WindowDescriptor desc,
+      Uint8List cj, {
+      required ed.KeyPair key,
+      required String email,
+      String vec = '',
+      String verifierVer = '',
+      int? faceValidAtMs,
+    }) =>
+        client.prove(
+          desc: desc,
+          studentId: email,
+          challenge: cj,
+          j: 0,
+          faceScore: 0.9,
+          peerW: ProxCrypto.peerAlias(pk32(key.publicKey), desc.windowId),
+          pkS: pk32(key.publicKey),
+          name: email,
+          sigSFor: (c, j) => ProxCrypto.signStudentProve(
+            studentSk: key.privateKey,
+            sessionId: desc.sessionId,
+            windowId: desc.windowId,
+            j: j,
+            challenge: c,
+            studentId: email,
+            faceScore: 0.9,
+            faceValidAtMs: faceValidAtMs ?? 0,
+            verifierVer: verifierVer,
+          ),
+          sigBindFor: (fp, j) => ProxCrypto.sign(
+              key.privateKey,
+              bindPreimage(
+                  sessionId: desc.sessionId,
+                  windowId: desc.windowId,
+                  j: j,
+                  tlsFingerprint: fp)),
+          faceVecB64: vec,
+          verifierVer: verifierVer,
+          faceValidAtMs: faceValidAtMs,
+        );
+
+    test('pair flags on second prove; both marked; wire verdict clean',
+        () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final ka = ProxCrypto.generateEdKeypair();
+      final kb = ProxCrypto.generateEdKeypair();
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e $d $r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final vec = faceVecEncode(tvec(5));
+        final ra = await proveAs(client, desc, cj,
+            key: ka, email: 'a@x.in', vec: vec);
+        expect(ra.decision, ProveDecision.confirmed);
+        expect(ra.reason, isNot(contains('dupface')));
+        expect(server.faceVectorCount, 1);
+        final rb = await proveAs(client, desc, cj,
+            key: kb, email: 'b@x.in', vec: vec);
+        expect(rb.decision, ProveDecision.confirmed);
+        // Wire verdict carries no trace; the host log line carries peers.
+        expect(rb.reason, isNot(contains('dupface')));
+        expect(rb.flags.any((f) => f.contains('dupface')), isFalse);
+        expect(
+            log.any((l) =>
+                l.startsWith('b@x.in confirmed ') &&
+                l.contains('dupface:a@x.in')),
+            isTrue);
+        // BOTH entries marked (never auto-absent).
+        expect(server.tally.isMarked('a@x.in', 1), isTrue);
+        expect(server.tally.isMarked('b@x.in', 1), isTrue);
+        expect(server.faceVectorCount, 2);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('triple: newcomer matching two plants flags both', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final keys = [
+        for (var i = 0; i < 3; i++) ProxCrypto.generateEdKeypair()
+      ];
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: keys[0], onProve: (e, d, r) => log.add('$e|$d|$r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        // All three carry the same holder vector (A/B/C group): the
+        // newcomer's token must name BOTH earlier provers.
+        final vec = faceVecEncode(tvec(5));
+        await proveAs(client, desc, cj, key: keys[0], email: 'a@x.in', vec: vec);
+        await proveAs(client, desc, cj, key: keys[1], email: 'b@x.in', vec: vec);
+        final rc = await proveAs(client, desc, cj,
+            key: keys[2], email: 'c@x.in', vec: vec);
+        expect(rc.decision, ProveDecision.confirmed);
+        final line =
+            log.firstWhere((l) => l.startsWith('c@x.in|confirmed|'));
+        expect(line, contains('dupface:'));
+        expect(line, contains('a@x.in'));
+        expect(line, contains('b@x.in'));
+        // And b's earlier token named only a (incremental pairing).
+        final lineB =
+            log.firstWhere((l) => l.startsWith('b@x.in|confirmed|'));
+        expect(lineB, contains('dupface:a@x.in'));
+        expect(lineB, isNot(contains('c@x.in')));
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('strangers, legacy-no-vec, garbage-vec: mark, no token', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final ka = ProxCrypto.generateEdKeypair();
+      final kb = ProxCrypto.generateEdKeypair();
+      final kc = ProxCrypto.generateEdKeypair();
+      final kd = ProxCrypto.generateEdKeypair();
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        await proveAs(client, desc, cj,
+            key: ka, email: 'a@x.in', vec: faceVecEncode(tvec(5)));
+        final rb = await proveAs(client, desc, cj,
+            key: kb, email: 'b@x.in', vec: faceVecEncode(tvec(6)));
+        expect(rb.decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+        // No vector at all: marks, plants nothing.
+        final rc =
+            await proveAs(client, desc, cj, key: kc, email: 'c@x.in');
+        expect(rc.decision, ProveDecision.confirmed);
+        expect(server.faceVectorCount, 2);
+        // Garbage vector: marks normally, plants nothing.
+        final rd = await proveAs(client, desc, cj,
+            key: kd, email: 'd@x.in', vec: '!!!not-base64!!!');
+        expect(rd.decision, ProveDecision.confirmed);
+        expect(server.faceVectorCount, 2);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('invalid proofs plant nothing; retry never self-flags', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final stu = ProxCrypto.generateEdKeypair();
+      final evil = ProxCrypto.generateEdKeypair();
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: stu, onProve: (e, d, r) => log.add('$e|$d|$r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final vec = faceVecEncode(tvec(5));
+        // Forged Sig_s with a vector attached: invalid, plants nothing.
+        final forged = await client.prove(
+          desc: desc,
+          studentId: _email,
+          challenge: cj,
+          j: 0,
+          faceScore: 0.9,
+          peerW: ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId),
+          pkS: pk32(stu.publicKey),
+          sigSFor: (c, jj) => ProxCrypto.signStudentProve(
+            studentSk: evil.privateKey,
+            sessionId: desc.sessionId,
+            windowId: desc.windowId,
+            j: jj,
+            challenge: c,
+            studentId: _email,
+            faceScore: 0.9,
+          ),
+          sigBindFor: (fp, jj) => ProxCrypto.sign(
+              stu.privateKey,
+              bindPreimage(
+                  sessionId: desc.sessionId,
+                  windowId: desc.windowId,
+                  j: jj,
+                  tlsFingerprint: fp)),
+          faceVecB64: vec,
+        );
+        expect(forged.decision, ProveDecision.invalid);
+        expect(server.faceVectorCount, 0);
+        // Genuine prove as a DIFFERENT id (the forged attempt burned this
+        // ID's single-use slot for j=0): no ghost to match.
+        final ok = await proveAs(client, desc, cj,
+            key: stu, email: 'genuine@x.in', vec: vec);
+        expect(ok.decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+        // Identical retry (lost ACK): duplicate-confirmed, still no token.
+        final retry = await proveAs(client, desc, cj,
+            key: stu, email: 'genuine@x.in', vec: vec);
+        expect(retry.decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+        expect(server.faceVectorCount, 1);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('cross-pipeline vectors never compare', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final ka = ProxCrypto.generateEdKeypair();
+      final kb = ProxCrypto.generateEdKeypair();
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final vec = faceVecEncode(tvec(5));
+        // Same BYTES, different pipeline tags (both allowlisted, mutually
+        // incomparable) → no token, both plant.
+        // Bound signatures (explicit fresh stamp, matching ticket).
+        final stamp = DateTime.now().toUtc().millisecondsSinceEpoch;
+        await proveAs(client, desc, cj,
+            key: ka,
+            email: 'a@x.in',
+            vec: vec,
+            verifierVer: 'face_verification/pipe-A',
+            faceValidAtMs: stamp);
+        final rb = await proveAs(client, desc, cj,
+            key: kb,
+            email: 'b@x.in',
+            vec: vec,
+            verifierVer: 'face_verification/pipe-B',
+            faceValidAtMs: stamp);
+        expect(rb.decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+        expect(server.faceVectorCount, 2);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('wipe: closeWindow + openWindow drop vectors; exempt survives retake',
+        () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final ka = ProxCrypto.generateEdKeypair();
+      final kb = ProxCrypto.generateEdKeypair();
+      final log = <String>[];
+      final server = await makeServer(
+          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final vec = faceVecEncode(tvec(5));
+        Future<ProveResult> proveBoth() async {
+          final cj = server.window!.challengeFor(0);
+          final desc = await client.fetchWindow(cj);
+          await proveAs(client, desc, cj, key: ka, email: 'a@x.in', vec: vec);
+          return proveAs(client, desc, cj, key: kb, email: 'b@x.in', vec: vec);
+        }
+
+        expect((await proveBoth()).decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface:a@x.in')), isTrue);
+        expect(server.faceVectorCount, 2);
+        // Window close wipes: reopened window compares against nothing.
+        log.clear();
+        server.closeWindow();
+        expect(server.faceVectorCount, 0);
+        server.openWindow(
+            WindowParams(
+              sessionId: randBytes(16),
+              windowId: randBytes(6),
+              secret: randBytes(32),
+              t0: DateTime.now().toUtc(),
+              classLabel: 'CS201-Room301',
+            ),
+            2);
+        expect((await proveBoth()).decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface:a@x.in')), isTrue);
+        // Professor exempts the pair; next retake stays quiet (exempt is
+        // session-scoped, vectors are window-scoped).
+        server.exemptFacePair('a@x.in', 'b@x.in');
+        server.closeWindow();
+        server.openWindow(
+            WindowParams(
+              sessionId: randBytes(16),
+              windowId: randBytes(6),
+              secret: randBytes(32),
+              t0: DateTime.now().toUtc(),
+              classLabel: 'CS201-Room301',
+            ),
+            3);
+        log.clear();
+        expect((await proveBoth()).decision, ProveDecision.confirmed);
+        expect(log.any((l) => l.contains('dupface')), isFalse);
+        // Explicit teardown wipe (hosting-end path calls this).
+        server.clearFaceVectors();
+        expect(server.faceVectorCount, 0);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('per-prove compare cost is trivial (measured, not asserted)', () {
+      // 500-entry session map, exact cosine over dequantized vectors —
+      // the shape of one server-side compare at pilot scale.
+      final mine = FacePrintDoc(
+          org: '',
+          verifierVer: 'v',
+          embQ: faceVecEncode(tvec(5)),
+          buckets: const [],
+          updatedAtMillis: 0);
+      final others = {
+        for (var i = 0; i < 500; i++)
+          'u$i@x.in': FacePrintDoc(
+              org: '',
+              verifierVer: 'v',
+              embQ: faceVecEncode(tvec(1000 + i)),
+              buckets: const [],
+              updatedAtMillis: 0),
+      };
+      final sw = Stopwatch()..start();
+      final hits = findFaceDuplicates(
+          myEmail: 'me@x.in', mine: mine, others: others);
+      sw.stop();
+      expect(hits, isEmpty);
+      // ignore: avoid_print
+      print('dup-compare 1-vs-500: ${sw.elapsedMilliseconds}ms');
     });
   });
 }

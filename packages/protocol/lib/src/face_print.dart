@@ -290,7 +290,12 @@ List<FaceDuplicate> findFaceDuplicates({
   required Map<String, FacePrintDoc> others,
   double threshold = kFaceDupThreshold,
 }) {
-  final mineQ = facePrintDecode(mine.embQ);
+  Uint8List mineQ;
+  try {
+    mineQ = facePrintDecode(mine.embQ);
+  } catch (_) {
+    return const []; // garbage own vector: fail soft, no flag
+  }
   if (mineQ.length != kFacePrintDim) return const [];
   final mineF = faceDequantizeEmbedding(mineQ);
   final mineSelf = cosineSimilarity(mineF, mineF);

@@ -36,6 +36,13 @@ class ClassBeacon {
 /// `pkD` (hex) + `dSig` (hex over deviceProvePreimage). All four are
 /// optional so legacy bodies still encode (server applies the legacy
 /// path); bound clients always send them.
+///
+/// Local dup path: bound clients also attach `face:{vec}` — ONE base64
+/// int8 mean embedding (684 chars, protocol faceVecEncode) over this SAME
+/// local HTTPS channel. The professor's phone holds it in RAM for the open
+/// window only and exact-compares it against the session's other vectors.
+/// Optional like the rest: proofs without it mark normally with no dup
+/// participation.
 Map<String, dynamic> buildProveBody({
   required String id, // Gmail address (identity key, self-asserted offline)
   required Uint8List windowId,
@@ -56,6 +63,7 @@ Map<String, dynamic> buildProveBody({
   Uint8List? dSig, // device-key signature (bound path)
   String attestationLevel = 'NONE', // DKey attestation claim (bound path)
   int attestedUntilMs = 0, // attestation window end (bound path)
+  String faceVecB64 = '', // LAN-only session vector (local dup path)
 }) =>
     {
       'ID': id,
@@ -71,11 +79,12 @@ Map<String, dynamic> buildProveBody({
       'sigBind': hexEncode(sigBind),
       'pkS': hexEncode(pkS),
       'org': org,
-      if (faceValidAtMs != null || verifierVer.isNotEmpty)
+      if (faceValidAtMs != null || verifierVer.isNotEmpty || faceVecB64.isNotEmpty)
         'face': {
           'score': faceScore,
           'faceValidAt': faceValidAtMs ?? 0,
           'verifierVer': verifierVer,
+          if (faceVecB64.isNotEmpty) 'vec': faceVecB64,
         },
       if (pkD != null && pkD.isNotEmpty) 'pkD': hexEncode(pkD),
       if (dSig != null && dSig.isNotEmpty) 'dSig': hexEncode(dSig),
