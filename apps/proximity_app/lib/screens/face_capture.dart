@@ -86,6 +86,49 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   const FaceCaptureOvalOverlay(
       {super.key, this.progress = 0, this.sweepAngle, this.sweepSpan = 1.047});
 
+  /// Beacon (guidance) oval fractions of the preview size — the framing rect.
+  static const beaconWidthFraction = 0.72;
+  static const beaconHeightFraction = 0.58;
+
+  /// Progress (completion) oval fractions — slightly LARGER radius so the
+  /// green completion ring reads as its own element outside the blue
+  /// guidance oval, never one muddy ring. Different radii, different
+  /// colors, different jobs (progress = how much done, beacon = where to
+  /// move). Paint-only, zero layout effect.
+  static const progressWidthFraction = 0.78;
+  static const progressHeightFraction = 0.64;
+
+  /// Progress green: token markedDark (green-400) — reads on live camera
+  /// imagery in both themes (same rationale the old guide dot used). The
+  /// beacon stays theme-primary (the app blue), so the two ovals are
+  /// always different hues in both brightnesses.
+  static const progressGreen = ProxStateColors.markedDark;
+
+  /// Framing rect for the beacon oval (and the legacy single-oval path).
+  static Rect beaconRectFor(Size size) => Rect.fromCenter(
+        center: size.center(Offset.zero),
+        width: size.width * beaconWidthFraction,
+        height: size.height * beaconHeightFraction,
+      );
+
+  /// Progress rect: the larger outer oval in guided enrollment (beacon
+  /// present); the legacy framing rect at marking time (beacon absent) so
+  /// marking pixels are unchanged. Pure for unit tests.
+  static Rect progressRectFor(Size size, {required bool enrollment}) =>
+      enrollment
+          ? Rect.fromCenter(
+              center: size.center(Offset.zero),
+              width: size.width * progressWidthFraction,
+              height: size.height * progressHeightFraction,
+            )
+          : beaconRectFor(size);
+
+  /// Progress paint: green outer ring in guided enrollment, legacy theme
+  /// color at marking time (pixels unchanged there). Pure for unit tests.
+  static Color progressColorFor(
+          {required bool enrollment, required Color fallback}) =>
+      enrollment ? progressGreen : fallback;
+
   /// Beacon tail slices (paint-only, zero layout effect).
   static const beaconSlices = 16;
 
@@ -137,32 +180,37 @@ class _OvalOverlayPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..color = const Color(0x73000000),
     );
-    final rect = Rect.fromCenter(
-      center: size.center(Offset.zero),
-      width: size.width * 0.72,
-      height: size.height * 0.58,
-    );
-    // Soft glow behind the crisp ring.
+    // Two ovals, separated by role and color (guided enrollment): the GREEN
+    // outer ring is completion state per bucket (static fill, no motion);
+    // the BLUE inner ring carries the rotating guidance head (motion only
+    // here). At marking time (beacon absent) there is one legacy oval, as
+    // before — that path is pixel-identical.
+    final enrollment = sweepAngle != null;
+    final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
+    final progressRect =
+        FaceCaptureOvalOverlay.progressRectFor(size, enrollment: enrollment);
+    // Soft glow behind the crisp ring (framing rect, neutral — unchanged).
     canvas.drawOval(
-        rect,
+        beaconRect,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 10
           ..color = color.withValues(alpha: 0.22)
           ..maskFilter =
               const MaskFilter.blur(BlurStyle.normal, 10));
-    // Base ring.
+    // Base ring (framing guide, neutral white — unchanged).
     canvas.drawOval(
-        rect,
+        beaconRect,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3
           ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.85));
-    // Progress arc (guided enrollment: fills per captured angle).
+    // Progress arc: green outer completion ring in guided enrollment,
+    // legacy color-and-rect at marking time (unchanged pixels there).
     final p = progress.clamp(0.0, 1.0);
     if (p > 0) {
       canvas.drawArc(
-          rect,
+          progressRect,
           -3.141592653589793 / 2,
           2 * 3.141592653589793 * p,
           false,
@@ -170,19 +218,21 @@ class _OvalOverlayPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = 5
             ..strokeCap = StrokeCap.round
-            ..color = color);
+            ..color = FaceCaptureOvalOverlay.progressColorFor(
+                enrollment: enrollment, fallback: color));
     }
     // Rotating beacon (guided enrollment only; null at marking time): ONE
     // bright head + SHORT fading tail decaying to fully transparent well
     // before a full revolution (tail << 2pi, alpha 0 at tail — no remnant
     // survives to the next pass). Paint-only, zero layout, no blur (60fps
     // note holds). Reduced motion passes a full-circle span: steady soft
-    // full-rim glow, no animation.
+    // full-rim glow on the beacon rect (plus the static green progress and
+    // the ambient blur glow — steady glows, no animation).
     final sweep = sweepAngle;
     if (sweep != null) {
       if (FaceCaptureOvalOverlay.isSteadyGlow(sweepSpan)) {
         canvas.drawArc(
-            rect,
+            beaconRect,
             0,
             2 * 3.141592653589793,
             false,
@@ -201,7 +251,7 @@ class _OvalOverlayPainter extends CustomPainter {
           final alpha = FaceCaptureOvalOverlay.beaconAlpha(i);
           if (alpha <= 0) continue; // tail tip fully transparent — no remnant.
           canvas.drawArc(
-              rect,
+              beaconRect,
               sweep + i * sliceSpan,
               sliceSpan,
               false,
@@ -213,7 +263,7 @@ class _OvalOverlayPainter extends CustomPainter {
         }
         // Head tip: bright round-cap for a distinct head.
         canvas.drawArc(
-            rect,
+            beaconRect,
             sweep + sweepSpan - 0.06,
             0.06,
             false,
