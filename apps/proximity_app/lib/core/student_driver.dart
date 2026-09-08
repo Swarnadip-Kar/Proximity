@@ -212,15 +212,35 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       BleLog.log('SEC', 'face check blocked: records-only device');
       return const FaceCheckResult(FaceMatch.blocked);
     }
-    final stored = await _store.readEnrollment();
+    // Empty-frame guard (no-face crash): a blank capture path never reaches
+    // the native plugin (empty bytes crash it below the Dart catch) —
+    // inconclusive with rescan, never a pass, never a throw. Fast: no
+    // plugin call on this path.
+    if (imagePath.trim().isEmpty) {
+      BleLog.log('SEC', 'face check: empty still — rescan');
+      return const FaceCheckResult(FaceMatch.inconclusive);
+    }
+    // Enrollment + pipeline reads are fallible (corrupt store entry,
+    // missing model): any throw here means unreadable, never a mismatch —
+    // inconclusive, attempt kept. (Previously these reads sat outside the
+    // try and propagated as uncaught throws into the scan UI.)
+    StoredEnrollment? stored;
+    String currentVer = '';
+    try {
+      stored = await _store.readEnrollment();
+      currentVer = _verifier.verifierVer;
+    } catch (e) {
+      BleLog.log('SEC', 'face check ERROR (unreadable enrollment): $e');
+      return const FaceCheckResult(FaceMatch.inconclusive);
+    }
     if (stored == null) {
       BleLog.log('SEC', 'face check: no enrollment');
       return const FaceCheckResult(FaceMatch.inconclusive);
     }
     if (stored.faceId.isEmpty ||
-        stored.isFaceStale(_verifier.verifierVer)) {
+        stored.isFaceStale(currentVer)) {
       BleLog.log('SEC',
-          'face check: stale face ${stored.verifierVer} vs ${_verifier.verifierVer} — re-face, never match');
+          'face check: stale face ${stored.verifierVer} vs $currentVer — re-face, never match');
       return const FaceCheckResult(FaceMatch.staleTemplate);
     }
     try {

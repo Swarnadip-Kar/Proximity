@@ -6,6 +6,8 @@
 // stub does not mirror as fail-closed.
 library;
 
+import 'dart:io';
+
 import 'package:face_verification/face_verification.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -25,16 +27,57 @@ class PluginFaceVerifier implements FaceVerifier {
     requireMobileFace();
     if (_ready) return;
     // Quick-Demo pattern: init loads the bundled FaceNet TFLite + store.
-    await _plugin.init();
+    try {
+      await _plugin.init();
+    } catch (e) {
+      // Missing/corrupt model: fail closed with a rescan-safe StateError
+      // (callers map this to inconclusive/error, never a throw past them).
+      throw StateError('Face engine unavailable — reinstall and try again ($e)');
+    }
     _ready = true;
+  }
+
+  /// Fail-closed still validation BEFORE any native call: empty paths,
+  /// missing files and zero-byte frames crash the native detector below
+  /// the Dart catch, so they throw here as rescan-safe StateErrors the
+  /// driver/controller map to inconclusive/error (never a throw past them,
+  /// never a false pass). Native-only file (dart:io never reaches web).
+  void _requireReadableStill(String imagePath, String slot) {
+    if (imagePath.trim().isEmpty) {
+      throw StateError(
+          'The $slot still came out blank — recapture in good light, holding still.');
+    }
+    late final File f;
+    try {
+      f = File(imagePath);
+      if (!f.existsSync()) {
+        throw StateError(
+            'The $slot still is unreadable (file missing) — recapture in good light, holding still.');
+      }
+      if (f.lengthSync() == 0) {
+        throw StateError(
+            'The $slot still came out blank — recapture in good light, holding still.');
+      }
+    } on StateError {
+      rethrow;
+    } catch (e) {
+      throw StateError(
+          'The $slot still is unreadable — recapture in good light, holding still ($e)');
+    }
   }
 
   @override
   Future<void> enroll(String faceId, List<String> imagePaths) async {
     requireMobileFace();
+    if (faceId.trim().isEmpty) {
+      throw ArgumentError('enroll needs a non-empty faceId');
+    }
     if (imagePaths.length != faceEnrollSlots.length) {
       throw ArgumentError(
           'enroll needs ${faceEnrollSlots.length} stills (centre/left/right), got ${imagePaths.length}');
+    }
+    for (var i = 0; i < imagePaths.length; i++) {
+      _requireReadableStill(imagePaths[i], faceEnrollSlots[i]);
     }
     await init();
     // Clean re-enroll: previous faces for this id go first so a changed
@@ -45,11 +88,19 @@ class PluginFaceVerifier implements FaceVerifier {
       // No previous enrollment — nothing to clear.
     }
     for (var i = 0; i < imagePaths.length; i++) {
-      await _plugin.registerFromImagePath(
-        id: faceId,
-        imagePath: imagePaths[i],
-        imageId: faceEnrollSlots[i],
-      );
+      // Slot context on failure: the plugin reports 'No face detected'
+      // without saying which still — the wrapper names it so the UI can
+      // point the rescan at the right angle.
+      try {
+        await _plugin.registerFromImagePath(
+          id: faceId,
+          imagePath: imagePaths[i],
+          imageId: faceEnrollSlots[i],
+        );
+      } catch (e) {
+        throw StateError(
+            'The ${faceEnrollSlots[i]} still did not read clearly — recapture just that angle in good light, holding still ($e)');
+      }
     }
   }
 
@@ -57,14 +108,22 @@ class PluginFaceVerifier implements FaceVerifier {
   Future<FaceVerifyResult> verify(String faceId, String imagePath,
       {double threshold = kFaceThreshold}) async {
     requireMobileFace();
+    // Empty-frame guard first: never hand empty bytes to native.
+    _requireReadableStill(imagePath, 'captured');
     await init();
-    // Marking hot path: the isolate variant (per approved spec).
-    final hit = await _plugin.verifyFromImagePathIsolate(
+    // Marking hot path: the isolate variant (per approved spec). It returns
+    // the matched id or null — never a distance, never a throw for no-face
+    // (errors collapse to null inside the plugin).
+    final String? hit = await _plugin.verifyFromImagePathIsolate(
       imagePath: imagePath,
       threshold: threshold,
       staffId: faceId,
     );
-    final match = hit == faceId;
+    // Nullable plugin result, guarded WITHOUT `!`: null covers no-face,
+    // unreadable and below-threshold alike — all non-match. (The driver
+    // maps unreadable throws to inconclusive before this; a readable null
+    // here is a conservative non-match that never auto-presents.)
+    final match = hit != null && hit == faceId;
     // Plugin returns identity only, not a distance: carry the decision
     // boundary on match (see face_verifier.dart header — honest, host
     // re-checks).

@@ -332,10 +332,34 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
               'Capture ${faceEnrollSlots.length} stills (centre, left, right) to enroll.');
       return;
     }
+    // Blank-frame guard (enrollment crash): a still that came out empty
+    // never reaches the native plugin (empty bytes crash it below the Dart
+    // catch) — error naming the angle, nothing stored, Save stays blocked.
+    for (var i = 0; i < imagePaths.length; i++) {
+      if (imagePaths[i].trim().isEmpty) {
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            faceScore: 0,
+            message:
+                'The ${faceEnrollSlots[i]} still came out blank — recapture just that angle in good light, holding still.');
+        return;
+      }
+    }
     try {
       final installId = await getOrCreateInstallId(_store);
       final faceId = faceIdOf(acct.email.toLowerCase(), installId);
-      await _verifier.enroll(faceId, imagePaths);
+      try {
+        await _verifier.enroll(faceId, imagePaths);
+      } catch (e) {
+        // Mid-loop throw (e.g. slot 2 has no detectable face) leaves the
+        // earlier slots orphaned in the plugin gallery — clear them so a
+        // retry starts clean (best-effort; a delete miss just re-clears
+        // on the next enroll).
+        try {
+          await _verifier.remove(faceId);
+        } catch (_) {}
+        rethrow;
+      }
       // Self-check: the centre still must match what was just enrolled —
       // a failed capture leaves no face behind, so a bad scan can never
       // advance to upload.
