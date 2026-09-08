@@ -33,6 +33,24 @@ class MlkitPoseGate implements PoseGate {
 
   MlkitPoseGate();
 
+  /// One detection pass, shared by [checkSlot] and [readPose]. Null on
+  /// every non-usable outcome (blank/missing/unreadable file, anything but
+  /// exactly one face, detector/channel error) — callers map null to
+  /// retry/silent-skip, never a throw past the L1 gate, never an accept.
+  /// The nullable detector result is guarded WITHOUT `!`.
+  Future<Face?> _detect(String imagePath) async {
+    if (imagePath.trim().isEmpty) return null;
+    try {
+      if (!File(imagePath).existsSync()) return null;
+      final faces =
+          await _detector.processImage(InputImage.fromFilePath(imagePath));
+      if (faces.length != 1) return null;
+      return faces.first;
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Future<PoseDecision> checkSlot(String imagePath, String slot) async {
     requireMobileFace();
@@ -40,36 +58,33 @@ class MlkitPoseGate implements PoseGate {
       return const PoseDecision.retry(
           'The still came out blank — try that angle again.');
     }
-    try {
-      if (!File(imagePath).existsSync()) {
-        return const PoseDecision.retry(
-            'The still is unreadable (file missing) — try that angle again.');
-      }
-      final faces =
-          await _detector.processImage(InputImage.fromFilePath(imagePath));
-      // Nullable detector result, guarded WITHOUT `!`: an empty list is
-      // no-face (retake), never an accept.
-      if (faces.isEmpty) {
-        return const PoseDecision.retry(
-            'No face found — centre your face in the oval and try again.');
-      }
-      if (faces.length > 1) {
-        return const PoseDecision.retry(
-            'Only you in the oval — ask others to step out of frame.');
-      }
-      final face = faces.first;
-      return EnrollPoseWindows.check(
-        slot,
-        face.headEulerAngleY,
-        face.headEulerAngleX,
-        face.headEulerAngleZ,
-      );
-    } catch (e) {
-      // Detector/channel error (never a throw past here): retry the angle,
-      // the rest of the session is kept.
-      return PoseDecision.retry(
-          'Angle check failed — try that angle again. ($e)');
+    final face = await _detect(imagePath);
+    if (face == null) {
+      // Missing/unreadable file, no face, multiple faces, or detector
+      // error: one fail-closed retry (the caller keeps the session).
+      // NOTE: no-face vs multi-face copy merged here — the session's
+      // bucket loop stays silent and only needs retry/null, not reasons.
+      return const PoseDecision.retry(
+          'That still is unusable — centre your face in the oval, only you in frame, and hold still.');
     }
+    return EnrollPoseWindows.check(
+      slot,
+      face.headEulerAngleY,
+      face.headEulerAngleX,
+      face.headEulerAngleZ,
+    );
+  }
+
+  @override
+  Future<PoseReading?> readPose(String imagePath) async {
+    requireMobileFace();
+    final face = await _detect(imagePath);
+    if (face == null) return null;
+    return PoseReading(
+      yaw: face.headEulerAngleY,
+      pitch: face.headEulerAngleX,
+      roll: face.headEulerAngleZ,
+    );
   }
 
   @override

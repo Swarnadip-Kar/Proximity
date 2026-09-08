@@ -25,6 +25,8 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'face_verifier.dart';
+
 export 'pose_gate_mlkit.dart'
     if (dart.library.html) 'pose_gate_stub.dart';
 
@@ -149,30 +151,87 @@ abstract final class EnrollPoseWindows {
   }
 }
 
-/// Narrow pose interface: one still file + its slot → accept/retry.
-/// Never throws for unreadable/no-face/multi-face (those are retry
-/// decisions); only the records-only L1 gate throws, fail-closed.
+/// Raw head-pose reading for one still file. Null yaw/pitch means the
+/// detector could not estimate the angle — always fails closed downstream
+/// (never a silent accept). Roll null is tolerated (advisory, not gating).
+class PoseReading {
+  final double? yaw;
+  final double? pitch;
+  final double? roll;
+  const PoseReading({this.yaw, this.pitch, this.roll});
+}
+
+/// Narrow pose interface: one still file → accept/retry per slot, or a raw
+/// reading for bucket classification. Never throws for unreadable/no-face/
+/// multi-face (those are retry decisions / null readings); only the
+/// records-only L1 gate throws, fail-closed.
 abstract class PoseGate {
   Future<PoseDecision> checkSlot(String imagePath, String slot);
+
+  /// Single detection pass for one still file. Null when the still is
+  /// unreadable or holds anything but exactly one face — the caller
+  /// classifies (or silently retries), never throws past the L1 gate.
+  Future<PoseReading?> readPose(String imagePath);
   Future<void> close();
 }
 
+/// Bucket classifier (pure, no native calls): which UNFILLED slot does this
+/// reading satisfy, in [faceEnrollSlots] priority order (centre first)?
+/// Null when the reading fits nothing unfilled — a wasted still the loop
+/// silently skips (BleLog only), never a guidance change. Overlaps resolve
+/// by priority: a near-frontal still fills centre even mid-turn, which is
+/// honest (it IS a valid frontal template); the turn buckets fill from
+/// clearer turns. Filled buckets are skipped outright, so progress is
+/// monotonic and filled angles are never re-requested.
+abstract final class EnrollBucketFill {
+  static String? classifyInto(
+      double? yaw, double? pitch, double? roll, Set<String> filled) {
+    for (final slot in faceEnrollSlots) {
+      if (filled.contains(slot)) continue;
+      if (EnrollPoseWindows.check(slot, yaw, pitch, roll).ok) return slot;
+    }
+    return null;
+  }
+}
+
 /// Test-only fake: scripted per-call decisions (shifted in order) with an
-/// accept-all default, plus a call log. Never shipped (DI overrides it).
+/// accept-all default, plus call logs. [readings] scripts raw pose
+/// readings (shifted in order); when exhausted it cycles the five canonical
+/// bucket views, so an unscripted fake still drives a full session to
+/// completion deterministically. Never shipped (DI overrides it).
 class FakePoseGate implements PoseGate {
   final List<PoseDecision> _script;
   final PoseDecision fallback;
   final List<String> calls = [];
+  final List<PoseReading?> _readings;
+  final List<String> readCalls = [];
+  static const _cycle = [
+    PoseReading(yaw: 0, pitch: 0, roll: 0),
+    PoseReading(yaw: -20, pitch: 0, roll: 0),
+    PoseReading(yaw: 20, pitch: 0, roll: 0),
+    PoseReading(yaw: 0, pitch: 15, roll: 0),
+    PoseReading(yaw: 0, pitch: -15, roll: 0),
+  ];
+  int _cycled = 0;
   FakePoseGate(
       [List<PoseDecision> script = const [],
-      this.fallback = const PoseDecision.ok()])
-      : _script = List.of(script);
+      this.fallback = const PoseDecision.ok(),
+      List<PoseReading?> readings = const []])
+      : _script = List.of(script),
+        _readings = List.of(readings);
 
   @override
   Future<PoseDecision> checkSlot(String imagePath, String slot) async {
     calls.add('$slot:$imagePath');
     if (_script.isEmpty) return fallback;
     return _script.removeAt(0);
+  }
+
+  @override
+  Future<PoseReading?> readPose(String imagePath) async {
+    readCalls.add(imagePath);
+    if (_readings.isNotEmpty) return _readings.removeAt(0);
+    return _cycle[_cycled++ % _cycle.length];
   }
 
   @override

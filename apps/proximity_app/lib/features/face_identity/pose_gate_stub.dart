@@ -21,5 +21,8 @@ class MlkitPoseGate implements PoseGate {
       throw _blocked();
 
   @override
+  Future<PoseReading?> readPose(String imagePath) async => throw _blocked();
+
+  @override
   Future<void> close() async {}
 }
