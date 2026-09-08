@@ -121,29 +121,6 @@ abstract final class EnrollNav {
   }
 }
 
-/// Animated slot progress: sweeps toward the new fraction over
-/// [ProxDurations.medium] instead of jumping. Pure presentation.
-class EnrollProgress extends StatelessWidget {
-  final int done;
-  final int total;
-  const EnrollProgress({super.key, required this.done, required this.total});
-
-  @override
-  Widget build(BuildContext context) {
-    final target = total == 0 ? 0.0 : done / total;
-    if (ProxMotion.reduced(context)) {
-      return LinearProgressIndicator(value: target);
-    }
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: target),
-      duration: ProxDurations.medium,
-      curve: ProxCurves.standard,
-      builder: (context, value, _) =>
-          LinearProgressIndicator(value: value),
-    );
-  }
-}
-
 /// Bundle notice with two motion signatures, distinguishable before reading:
 /// - targeted rescan ("retry this angle") → amber, gentle slide+fade.
 /// - session failure (anything else) → error color, one short shake.
