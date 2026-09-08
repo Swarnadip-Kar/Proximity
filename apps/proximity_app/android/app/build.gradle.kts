@@ -7,8 +7,11 @@ plugins {
 
 android {
     namespace = "org.iitbhilai.proximity"
-    // 37: permission_handler_android requires compiling against API 37+.
-    compileSdk = 37
+    // Flutter default (36): permission_handler is pinned to 12.x, whose
+    // android impl needs only API 34 — nothing in the tree needs 37, and
+    // Google has not published platforms;android-37 (stable repo tops out
+    // at 36), so a hardcoded 37 compiles nowhere. See pubspec pin note.
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

@@ -31,7 +31,13 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.2
   universal_ble: ^2.2.0
-  permission_handler: ^13.0.1
+  # Pinned to 12.x, NOT 13.x: permission_handler 13 pulls
+  # permission_handler_android 14.x, which declares `compileSdk = 37` —
+  # but Google has not published `platforms;android-37` (stable repo tops
+  # out at 36, verified Sep 2026), so nothing compiles it, on CI or
+  # locally. Re-upgrade to 13.x once the API-37 platform ships. The BLE /
+  # camera / location APIs used here are unchanged since v10.
+  permission_handler: ^12.0.0
   # Tracks 2+3: on-device face verification (FaceNet TFLite bundled in the
   # plugin, offline; Android/iOS only — desktop/web get the fail-closed
   # UnavailableFaceVerifier via DI). Verified on pub.dev: MIT, Flutter

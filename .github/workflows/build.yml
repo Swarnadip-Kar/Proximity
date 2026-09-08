@@ -48,26 +48,16 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      # compileSdk 37 (Android 17, released June 2026; required by
-      # permission_handler_android, which declares `compileSdk = 37` in its
-      # own build script) is newer than the cmdline-tools pinned on the
-      # runner image, whose package list has no `platforms;android-37`.
-      # Without the platform, javac compiles against an empty android.jar
-      # (`package android.content does not exist` across plugin Java).
-      # Refresh cmdline-tools first so the platform package is visible,
-      # then install it — compileSdk stays at the plugin-required 37.
-      # NOTE: the refresh installs side-by-side (`latest-2`, inconsistent
-      # location) — pick the NEWEST tools dir by mtime, not by name
-      # (`sort -V` prefers the stale `latest/` over `latest-2/`).
-      - name: Install Android API 37 platform (compileSdk 37)
+      # The app compiles against `flutter.compileSdkVersion` (36) — ensure
+      # the platform is present even if a future runner image drops it.
+      # (History: compileSdk 37 was tried and reverted — Google has not
+      # published platforms;android-37, and permission_handler is pinned
+      # to 12.x until it ships. See the pubspec pin note.)
+      - name: Ensure Android API 36 platform (compileSdk 36)
         run: |
           SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDK" --licenses > /dev/null 2>&1 || true
-          "$SDK" --install "cmdline-tools;latest" > /dev/null 2>&1 || true
-          NEWEST="$(ls -dt "$ANDROID_HOME"/cmdline-tools/*/ | head -1)/bin/sdkmanager"
-          yes | "$NEWEST" --licenses > /dev/null 2>&1 || true
-          "$NEWEST" --list 2>/dev/null | grep -E "platforms;android-3[67]" || true
-          "$NEWEST" "platforms;android-37"
+          "$SDK" "platforms;android-36"
           ls "$ANDROID_HOME/platforms"
       - uses: subosito/flutter-action@v2
         with:
