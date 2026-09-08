@@ -18,7 +18,8 @@
 //
 // Guidance is a slow rotating beacon on the oval rim (ONE bright head +
 // SHORT fading tail, fully transparent well before a full revolution — no
-// trails) plus ONE static prompt (rotate slowly, follow the glow) — no
+// trails) on the blue inner oval, plus a green outer completion ring per
+// bucket, plus ONE static prompt (rotate slowly, follow the glow) — no
 // narrated checker state (narrating "turn more / checking" while the user
 // had turned is what flickered). Provenance: Apple Face ID enrollment (one
 // imperative + rim progress) and Tobii "follow the target" calibration (one
@@ -491,9 +492,25 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           // (b) Preview message covers denied/failed/no-key (fail-closed gate).
           // (c) Null-controller FaceOval placeholder (test fake only, never on-device).
           // (d) ONE Positioned dots overlay + beacon params (positioned/paint-only).
-          // (e) Mid-flow single prompt + invisible height reservation (no flicker + parity).
-          // (f) Terminal Continue/Try-again chrome (fail-closed, loop stopped).
+          // (e) Mid-flow single prompt + hidden status/button reservation (no flicker + parity).
+          // (f) Validated Continue + hidden prompt/status reservation (same total — back-nav stable).
           // (g) Blocked path uses ProxScreen (no camera, shared shell).
+          // Save-error Notice+Try-again matches the same total for typical
+          // short messages; a long wrapping message grows the slot exactly
+          // as the original screen's wrapping status did (parity residual).
+          // Layering (researched, deliberate): chrome stays OVERLAY — dots
+          // Positioned in the preview Stack, prompt/buttons in the bottom
+          // bar — never inline above the feed. Inline chrome would enter
+          // the layout path, shrink and redistribute the preview area, and
+          // re-elongate the feed through the same tight-stretch mechanism;
+          // overlays have zero layout effect, so the area is set by the
+          // bottom slot alone. Native viewfinders composite chrome the same
+          // way (CameraX PreviewView overlay siblings —
+          // developer.android.com/media/camera/camerax/preview; iOS
+          // AVCaptureVideoPreviewLayer with sibling overlay views, never
+          // subviews — developer.apple.com/avcapturevideopreviewlayer; the
+          // Flutter camera Stack-over-CameraPreview pattern), and the
+          // original screen used overlay + bottom bar too.
           // (original oval comment kept verbatim below).
           Expanded(
             child: Center(
@@ -550,26 +567,55 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                         ),
             ),
           ),
-          // Bottom bar: the SAME slot as the original screen (Padding 16 >
-          // Column min) so the constraints path above stays identical. The
-          // single static prompt is the only visible instructional text
-          // mid-flow; its invisible sibling below reserves the original
-          // prompt+status+button extra height (same widgets, hidden, no
-          // semantics) so the preview area — and the feed — match the
-          // original exactly. Terminal states keep their own chrome.
+          // Bottom bar: the SAME slot height in EVERY lifecycle variant
+          // (opening, capturing, message states, validated, save-error, and
+          // validated-after-back-navigation) so transitions never resize the
+          // feed. Mid-flow shows the single static prompt (the only visible
+          // instructional text) plus a hidden status/button reservation;
+          // validated shows Continue plus a hidden prompt/status reservation
+          // to the same total; save-error shows Notice+Try-again (same total
+          // for short messages). Keyboard: N/A — this page has no editable
+          // text, so viewInsets stay zero in every variant.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (validated)
+                if (validated) ...[
                   ProxPrimaryButton(
                     label: const Text('Continue'),
                     onPressed: () => EnrollFlow.openResult(context),
-                  )
-                else if (saveError) ...[
-                  EnrollNotice(message: st.message, isError: true),
+                  ),
+                  // Area stability: Continue alone is shorter than the
+                  // mid-flow slot, so returning here (e.g. back from the
+                  // result step) would grow the preview and stretch the
+                  // feed — reserve the prompt+status extra height invisibly
+                  // (same line heights, hidden, no semantics, no buttons).
+                  Visibility(
+                    visible: false,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: ExcludeSemantics(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'X',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: ProxSpacing.xs),
+                          const Text('X'),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ),
+                ] else if (saveError) ...[                  EnrollNotice(message: st.message, isError: true),
                   const SizedBox(height: ProxSpacing.sm),
                   ProxPrimaryButton(
                     icon: _saving
