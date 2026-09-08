@@ -139,7 +139,7 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                   detail: 'Centre · Left · Right · Up · Down — '
                       'small turns and tilts, head near-frontal throughout, '
                       'one continuous camera session, fully automatic: just '
-                      'follow the single line over the preview, each angle '
+                      'follow the green dot around the oval, each angle '
                       'really angle-checked. '
                       'The template never leaves this phone.',
                 ),

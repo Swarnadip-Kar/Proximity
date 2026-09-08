@@ -8,15 +8,15 @@
 // Forward moves log NAV; Done (EnrollNav.finish) pops every `enroll/…`
 // route back to the opener.
 //
-// Behavioral law (angles really gated, plugin owns matching passively):
-// one continuous camera session (open once, close on done/cancel) guided
-// centre → left → right → up → down, one capture per angle with dots +
-// oval guidance over the live preview; each angle pose-gated (ML Kit euler
-// windows on the still — never instruction-only); in-session retake (a
-// rejected angle keeps the other slots); Cancel disposes the session and
-// enrolls nothing; fail-closed (no validated capture → no save; Save
-// blocked till the 5 validate via self-check); atomic claim (one device
-// per Gmail + install binding + 7-day move + heartbeats); key always kept.
+// Behavioral law (buckets really gated, plugin owns matching passively):
+// one continuous camera session (open once, close on done/cancel);
+// follow-the-dot guidance over the live preview (latched target, stable
+// line, silent auto-retry); every still classified into any matching
+// unfilled bucket (ML Kit euler windows on the still file — never
+// instruction-only); Cancel disposes the session and enrolls nothing;
+// fail-closed (no validated capture → no save; Save blocked till the 5
+// validate via self-check); atomic claim (one device per Gmail + install
+// binding + 7-day move + heartbeats); key always kept.
 //
 // PROPOSALS (not applied — off-limits files, for the owner):
 // 1. Wire-up (lib/main.dart, lib/screens/student_home.dart,
