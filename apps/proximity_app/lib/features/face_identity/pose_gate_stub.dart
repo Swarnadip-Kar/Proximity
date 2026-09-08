@@ -17,10 +17,6 @@ class MlkitPoseGate implements PoseGate {
       'Face enrollment needs the mobile app (Android/iOS) — this device is records-only.');
 
   @override
-  Future<PoseDecision> checkSlot(String imagePath, String slot) async =>
-      throw _blocked();
-
-  @override
   Future<PoseReading?> readPose(String imagePath) async => throw _blocked();
 
   @override

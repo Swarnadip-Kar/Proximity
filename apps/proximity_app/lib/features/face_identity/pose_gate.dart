@@ -161,13 +161,11 @@ class PoseReading {
   const PoseReading({this.yaw, this.pitch, this.roll});
 }
 
-/// Narrow pose interface: one still file → accept/retry per slot, or a raw
-/// reading for bucket classification. Never throws for unreadable/no-face/
-/// multi-face (those are retry decisions / null readings); only the
-/// records-only L1 gate throws, fail-closed.
+/// Narrow pose interface: one still file → a raw reading for bucket
+/// classification. Null when unreadable or holding anything but exactly
+/// one face (the caller wastes the beat silently); only the records-only
+/// L1 gate throws, fail-closed.
 abstract class PoseGate {
-  Future<PoseDecision> checkSlot(String imagePath, String slot);
-
   /// Single detection pass for one still file. Null when the still is
   /// unreadable or holds anything but exactly one face — the caller
   /// classifies (or silently retries), never throws past the L1 gate.
@@ -194,15 +192,11 @@ abstract final class EnrollBucketFill {
   }
 }
 
-/// Test-only fake: scripted per-call decisions (shifted in order) with an
-/// accept-all default, plus call logs. [readings] scripts raw pose
-/// readings (shifted in order); when exhausted it cycles the five canonical
-/// bucket views, so an unscripted fake still drives a full session to
-/// completion deterministically. Never shipped (DI overrides it).
+/// Test-only fake: scripted raw pose readings (shifted in order); when
+/// exhausted it cycles the five canonical bucket views, so an unscripted
+/// fake still drives a full session to completion deterministically.
+/// Never shipped (DI overrides it).
 class FakePoseGate implements PoseGate {
-  final List<PoseDecision> _script;
-  final PoseDecision fallback;
-  final List<String> calls = [];
   final List<PoseReading?> _readings;
   final List<String> readCalls = [];
   static const _cycle = [
@@ -213,19 +207,8 @@ class FakePoseGate implements PoseGate {
     PoseReading(yaw: 0, pitch: -15, roll: 0),
   ];
   int _cycled = 0;
-  FakePoseGate(
-      [List<PoseDecision> script = const [],
-      this.fallback = const PoseDecision.ok(),
-      List<PoseReading?> readings = const []])
-      : _script = List.of(script),
-        _readings = List.of(readings);
-
-  @override
-  Future<PoseDecision> checkSlot(String imagePath, String slot) async {
-    calls.add('$slot:$imagePath');
-    if (_script.isEmpty) return fallback;
-    return _script.removeAt(0);
-  }
+  FakePoseGate({List<PoseReading?> readings = const []})
+      : _readings = List.of(readings);
 
   @override
   Future<PoseReading?> readPose(String imagePath) async {
