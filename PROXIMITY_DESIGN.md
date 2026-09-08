@@ -147,6 +147,27 @@ most once per 30 days); manual attendance covers any gap.
    Adjacent hardening in the same rules: lastMoveAt must be preserved or
    freshly stamped (rewind-to-legacy is a cooldown bypass, denied).
 
+   Six-month cloud purge, no backend (Spark has no billing-gated
+   backend: Cloud Functions deploys require Blaze, and TTL policy is
+   likewise out — verified against the 2026-09-01 TTL docs, whose delete
+   semantics (non-transactional, unordered, subcollection-blind) make it
+   the wrong tool even apart from billing). Candidates compared:
+   owner-executed delete on next authenticated contact (chosen — the only
+   scope that is both deletable and safe), professor-visible manual purge
+   (rejected: professor registration is self-asserted, so any delete of
+   someone else's data is a self-service mass-delete), any-client janitor
+   during sync (collapses to owner-only for the same reason). Scope per doc, each
+   delete individually server-gated past 180d stale on its stored stamp
+   (`users` by updatedAtMillis, binding by lastSeenAtMillis, directory row
+   + face print by updatedAtMillis; missing/zero stamps deny, so a live
+   enrollment can never be taken): users doc, binding, directory row, face
+   print. Sessions are excluded by construction (no rule change, no code
+   path — professors' past records stay). deviceInstalls rows linger
+   (unguessable UUID keys, unlistable — the mapping keeps enforcing
+   one-Gmail-per-install after a purge). Lazy semantics, stated: users who
+   never return are never purged (nothing else may delete for them); a
+   returner re-enrolls as firstBind with a fresh print.
+
 Professor cloud sync is session backup (offline-first, local history
 stays source of truth), not key distribution.
 

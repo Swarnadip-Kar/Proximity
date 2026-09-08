@@ -18,11 +18,15 @@ class StudentDirectoryEntry {
   final String name;
   final String roll;
   final String org; // Google-account domain (see orgOf), '' = legacy
+  /// Last claim touch (UTC epoch ms, 0 = legacy — never "stale" by itself;
+  /// drives the owner-lazy six-month purge gate).
+  final int updatedAtMillis;
   const StudentDirectoryEntry(
       {required this.email,
       required this.name,
       required this.roll,
-      this.org = ''});
+      this.org = '',
+      this.updatedAtMillis = 0});
 }
 
 /// Normalized search prefixes shared by both backends (roll is trimmed

@@ -132,6 +132,17 @@ Future<Map<String, String>?> entryRoleFor(
         await store.writeRole(merged);
         BleLog.log('STATE',
             'entry roles seeded from cloud $email: ${roleSet(merged).join('+')} lastMode=${roleLastMode(merged)}');
+        // Owner-lazy six-month purge (no backend): the users doc itself is
+        // this stale, so best-effort delete own user data (rules re-gate on
+        // server time; never throws past this point — the seed above stands).
+        if (stampOlderThan(
+            stampMillis: remote.updatedAtMillis,
+            now: DateTime.now().toUtc(),
+            age: kStudentPurgeStale)) {
+          try {
+            await cloud.purgeExpiredSelfData(emailLower: email, uid: uid);
+          } catch (_) {}
+        }
         return merged;
       }
     }
@@ -251,6 +262,23 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
       installEmail: installEmail,
       email: lower);
   BleLog.log('STATE', 'entry claim gate $lower → ${verdict.claim.name}');
+  // Owner-lazy six-month purge (no backend): a binding this stale is
+  // already purge-eligible, so best-effort delete own user data now (rules
+  // re-gate every delete on server time). Zero extra reads on the live
+  // path: the binding fetched above is the pre-check.
+  if (binding != null &&
+      stampOlderThan(
+          stampMillis: binding.lastSeenAtMillis,
+          now: DateTime.now().toUtc(),
+          age: kStudentPurgeStale)) {
+    try {
+      String uid = '';
+      try {
+        uid = ref.read(authServiceProvider).current?.uid ?? '';
+      } catch (_) {}
+      await cloud.purgeExpiredSelfData(emailLower: lower, uid: uid);
+    } catch (_) {}
+  }
   return StudentGate(
       verdict: verdict,
       binding: binding,

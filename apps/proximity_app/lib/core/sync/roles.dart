@@ -15,6 +15,9 @@ class RoleDoc {
   final String displayName;
   final String lastMode;
   final String org; // Google-account domain (see orgOf), '' = legacy
+  /// Last cloud touch (UTC epoch ms, 0 = pre-timestamp legacy — never
+  /// "stale" by itself; drives the owner-lazy six-month purge gate).
+  final int updatedAtMillis;
   RoleDoc(
       {required this.uid,
       required this.email,
@@ -23,7 +26,8 @@ class RoleDoc {
       String? role,
       this.displayName = '',
       this.lastMode = '',
-      this.org = ''})
+      this.org = '',
+      this.updatedAtMillis = 0})
       : roles = roles ??
             (role != null && role.isNotEmpty ? [role] : const <String>[]);
 

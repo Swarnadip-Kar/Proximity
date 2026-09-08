@@ -282,9 +282,12 @@ T3 direct-ID invisibility: with A's session id, B's device fetches
 `studentDevices/b@other.edu` is unreadable to A.
 
 Timelines: device moves unlimited lifetime, ≤1 per 30 days, exact
-re-enroll date shown with the old device's last-online day; same-install
+re-enroll date shown with the old device's last-online day (a binding
+silent 60d+ moves immediately — lost phone, server-time-gated); same-install
 re-key/re-enroll always free; first bind always free; manual attendance
-covers any gap; offline manual adds queue and resolve on the next course
+covers any gap; user data past 180d stale is owner-purged on next
+authenticated contact (no backend — professors' session records stay);
+offline manual adds queue and resolve on the next course
 sync (live drafts excluded so the queue never races the tally).
 
 ## Repo layout
@@ -548,7 +551,8 @@ Simulator UI walkthrough without taps/accounts:
        student course totals match exports; rename/delete converge; offline
        edits sync on reconnect.
        NOTE: rules changed since the 09-06 deploy (install-anchored same
-       device, 30-day cooldown, directory reads) — redeploy before the drill.
+       device, 30-day cooldown, lost-phone exemption + fresh-stamp chain,
+       owner-lazy purge deletes, directory reads) — redeploy before the drill.
 - [ ] Web records: authorized domains → Google-popup sign in → student
       course totals + prof course/session/CSV views; native actions hidden
       with the download banner.

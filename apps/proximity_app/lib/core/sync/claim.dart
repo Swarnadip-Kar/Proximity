@@ -308,8 +308,18 @@ ClaimWrite resolveStudentClaimWrite({
   );
 }
 
-// --- App-install identity (folded in from core/device_identity.dart) ---
+// --- Owner-lazy purge result (see CloudSync.purgeExpiredSelfData) ---
 //
+/// Outcome of the six-month purge: `collection/id` of every doc
+/// actually deleted. Empty = nothing eligible (or offline/denied — purge
+/// is best-effort and never blocks entry).
+class PurgeOutcome {
+  final List<String> deleted;
+  const PurgeOutcome([this.deleted = const []]);
+  bool get purgedAny => deleted.isNotEmpty;
+}
+
+// --- App-install identity (folded in from core/device_identity.dart) ---
 // No reliable cross-platform hardware ID exists (Android ANDROID_ID resets,
 // iOS offers nothing stable), so the binding key is an app-generated 128-bit
 // UUID persisted in secure storage (Keystore/Keychain). Properties:

@@ -12,6 +12,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_protocol/protocol.dart';
+import 'package:proximity_storage/storage.dart';
 
 const _email = 's@x.in';
 const _dayMs = 24 * 60 * 60 * 1000;
@@ -231,6 +233,228 @@ void main() {
       expect(rules, contains('storedMoveKeptOrFresh()'));
       // 1h skew both directions on both stamps:
       expect(rules, contains('60 * 60 * 1000'));
+    });
+
+    test('owner-lazy purge deletes gated on server time, sessions excluded',
+        () {
+      expect(rules, contains('purgeStale(stamp)'));
+      expect(rules, contains('180 * 24 * 60 * 60 * 1000'));
+      // Exactly the four user-data collections gate deletes on a stored
+      // stamp; deviceInstalls rows linger (unlistable UUIDs) and
+      // classSessions keep their owner-session delete only.
+      final gated =
+          RegExp(r'purgeStale\(resource\.data\.').allMatches(rules).length;
+      expect(gated, 4);
+      expect(rules, contains('match /deviceInstalls/{id}'));
+      // classSessions delete is still the professor-owner delete, with no
+      // purge gate anywhere in its block.
+      final sessionsBlock = rules.substring(
+          rules.indexOf('match /classSessions/{id}'));
+      expect(sessionsBlock, isNot(contains('purgeStale')));
+      expect(sessionsBlock, contains('resource.data.profUid'));
+    });
+  });
+
+  group('owner-lazy six-month purge (Fake backend)', () {
+    final fixedNow = DateTime.utc(2026, 9, 8);
+    int agoMs(int days) =>
+        fixedNow.millisecondsSinceEpoch - days * _dayMs;
+
+    Future<void> seedUser(FakeCloudSync fake,
+        {required String email,
+        required String uid,
+        required int staleDays}) async {
+      final stamp = agoMs(staleDays);
+      fake.devices[email] = StudentDeviceDoc(
+        email: email,
+        uid: uid,
+        pkHex: 'aa',
+        name: 'Gone',
+        roll: '9',
+        modelVer: 'v',
+        installId: 'iOld',
+        createdAtMillis: stamp,
+        lastMoveAtMillis: stamp,
+        lastSeenAtMillis: stamp,
+        updatedAtMillis: stamp,
+      );
+      fake.dir[email] = StudentDirectoryEntry(
+          email: email,
+          name: 'Gone',
+          roll: '9',
+          org: 'x.in',
+          updatedAtMillis: stamp);
+      fake.prints[email] = FacePrintDoc(
+          org: 'x.in',
+          verifierVer: 'v',
+          embQ: 'e',
+          buckets: List.generate(10, (i) => 'b$i'),
+          updatedAtMillis: stamp);
+      fake.roles[uid] = RoleDoc(
+          uid: uid,
+          email: email,
+          name: 'Gone',
+          roles: const ['student'],
+          updatedAtMillis: stamp);
+    }
+
+    test('purges stale user data only; sessions intact', () async {
+      final fake = FakeCloudSync();
+      await seedUser(fake, email: 'gone@x.in', uid: 'ug', staleDays: 200);
+      await seedUser(fake, email: 'kept@x.in', uid: 'uk', staleDays: 10);
+      await fake.pushSession(
+          profUid: 'uk',
+          profEmail: 'kept@x.in',
+          profName: 'Kept',
+          record: ClassRecord(
+            id: 's1',
+            courseId: 'CS201',
+            classLabel: 'CS201',
+            dateIso: '2026-09-06',
+            timestampIso: '2026-09-06T10:00:00.000Z',
+            startIso: '2026-09-06T09:00:00.000Z',
+            windows: const [
+              {'kept@x.in': true}
+            ],
+            names: const {'kept@x.in': 'Kept'},
+            rolls: const {'kept@x.in': '7'},
+          ));
+
+      final out = await fake.purgeExpiredSelfData(
+          emailLower: 'gone@x.in', uid: 'ug', now: fixedNow);
+      expect(
+          out.deleted,
+          unorderedEquals([
+            'studentDevices/gone@x.in',
+            'studentDirectory/gone@x.in',
+            'facePrints/gone@x.in',
+            'users/ug',
+          ]));
+      expect(out.purgedAny, isTrue);
+      expect(fake.devices.containsKey('gone@x.in'), isFalse);
+      expect(fake.dir.containsKey('gone@x.in'), isFalse);
+      expect(fake.prints.containsKey('gone@x.in'), isFalse);
+      expect(fake.roles.containsKey('ug'), isFalse);
+      // The other user is untouched…
+      expect(fake.devices.containsKey('kept@x.in'), isTrue);
+      expect(fake.dir.containsKey('kept@x.in'), isTrue);
+      expect(fake.prints.containsKey('kept@x.in'), isTrue);
+      expect(fake.roles.containsKey('uk'), isTrue);
+      // …and professors' past records stay (sessions never in scope).
+      expect(await fake.pullProfSessions('uk'), hasLength(1));
+      expect(await fake.pullStudentSessions('kept@x.in'), hasLength(1));
+    });
+
+    test('live data and undated legacy docs are never purged', () async {
+      final fake = FakeCloudSync();
+      await seedUser(fake, email: 'kept@x.in', uid: 'uk', staleDays: 10);
+      // 179d is inside the 180d bound; 0-stamp legacy is fail-closed.
+      await seedUser(fake, email: 'edge@x.in', uid: 'ue', staleDays: 179);
+      fake.devices['legacy@x.in'] = const StudentDeviceDoc(
+        email: 'legacy@x.in',
+        uid: 'ul',
+        pkHex: 'aa',
+        name: 'Legacy',
+        roll: '8',
+        modelVer: 'v',
+        installId: 'iL',
+      );
+
+      expect(
+          (await fake.purgeExpiredSelfData(
+                  emailLower: 'kept@x.in', uid: 'uk', now: fixedNow))
+              .purgedAny,
+          isFalse);
+      expect(
+          (await fake.purgeExpiredSelfData(
+                  emailLower: 'edge@x.in', uid: 'ue', now: fixedNow))
+              .purgedAny,
+          isFalse);
+      expect(
+          (await fake.purgeExpiredSelfData(
+                  emailLower: 'legacy@x.in', uid: 'ul', now: fixedNow))
+              .purgedAny,
+          isFalse);
+      expect(fake.devices, hasLength(3));
+    });
+
+    test('offline purge is a no-op', () async {
+      final fake = FakeCloudSync()..online = false;
+      await seedUser(fake, email: 'gone@x.in', uid: 'ug', staleDays: 200);
+      final out = await fake.purgeExpiredSelfData(
+          emailLower: 'gone@x.in', uid: 'ug', now: fixedNow);
+      expect(out.purgedAny, isFalse);
+      expect(fake.devices.containsKey('gone@x.in'), isTrue);
+    });
+  });
+
+  group('face-print continuity across transfer', () {
+    final t0 = DateTime.utc(2026, 6, 1);
+    FacePrintDoc printFor(String tag) => FacePrintDoc(
+        org: 'x.in',
+        verifierVer: 'v',
+        embQ: tag,
+        buckets: List.generate(10, (i) => '$tag-$i'),
+        updatedAtMillis: 0);
+
+    StudentDeviceDoc docFor(String pk) => StudentDeviceDoc(
+        email: _email,
+        uid: 'u9',
+        pkHex: pk,
+        name: 'S',
+        roll: '1',
+        modelVer: 'v');
+
+    test('cooldown move refreshes the single print (no orphan/duplicate)',
+        () async {
+      final fake = FakeCloudSync();
+      await fake.claimStudentDevice(
+          doc: docFor('aa'), installId: 'iA', now: t0, facePrint: printFor('v1'));
+      expect(fake.prints[_email]?.embQ, 'v1');
+
+      final t1 = t0.add(const Duration(days: 31));
+      final moved = await fake.claimStudentDevice(
+          doc: docFor('bb'), installId: 'iB', now: t1, facePrint: printFor('v2'));
+      expect(moved.isMove, isTrue);
+      // One print per Gmail, refreshed — never orphaned, never duplicated.
+      expect(fake.prints.keys, [_email]);
+      expect(fake.prints[_email]?.embQ, 'v2');
+      expect(fake.prints[_email]?.updatedAtMillis,
+          t1.millisecondsSinceEpoch);
+      expect((await fake.fetchStudentDevice(_email))?.installId, 'iB');
+      expect((await fake.fetchStudentDevice(_email))?.moveCount, 1);
+    });
+
+    test('lost-phone move also carries the fresh print', () async {
+      final fake = FakeCloudSync();
+      await fake.claimStudentDevice(
+          doc: docFor('aa'), installId: 'iA', now: t0, facePrint: printFor('v1'));
+      // 5d later the old phone fell silent 61d ago (backdated seed models a
+      // genuinely stale stored lastSeen): exemption path, print refreshes.
+      final stale = t0.millisecondsSinceEpoch - 61 * _dayMs;
+      final binding = (await fake.fetchStudentDevice(_email))!;
+      fake.devices[_email] = StudentDeviceDoc(
+        email: binding.email,
+        uid: binding.uid,
+        pkHex: binding.pkHex,
+        name: binding.name,
+        roll: binding.roll,
+        modelVer: binding.modelVer,
+        installId: binding.installId,
+        platform: binding.platform,
+        org: binding.org,
+        createdAtMillis: binding.createdAtMillis,
+        lastMoveAtMillis: t0.millisecondsSinceEpoch,
+        lastSeenAtMillis: stale,
+        updatedAtMillis: stale,
+        moveCount: binding.moveCount,
+      );
+      final t1 = t0.add(const Duration(days: 5));
+      final moved = await fake.claimStudentDevice(
+          doc: docFor('cc'), installId: 'iC', now: t1, facePrint: printFor('v3'));
+      expect(moved.isMove, isTrue);
+      expect(fake.prints.keys, [_email]);
+      expect(fake.prints[_email]?.embQ, 'v3');
     });
   });
 }

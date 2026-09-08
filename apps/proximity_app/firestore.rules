@@ -99,6 +99,15 @@ service cloud.firestore {
     function missingOrg(data) {
       return !('org' in data) || data.org == '';
     }
+    // Six-month purge gate (owner-lazy, no backend): the STORED stamp is
+    // past 180d by the SERVER clock (request.time — client clocks decide
+    // nothing). Callers must hasAll-guard the key first: reading a missing
+    // key errors instead of yielding false. Zero/undated stamps deny
+    // (fail-closed — a live enrollment can never be taken by this gate).
+    function purgeStale(stamp) {
+      return stamp is int && stamp > 0 &&
+        request.time.toMillis() - stamp > 180 * 24 * 60 * 60 * 1000;
+    }
 
     match /users/{uid} {
       allow get: if ownUid(uid);
@@ -115,10 +124,15 @@ service cloud.firestore {
         && request.resource.data.org == tokenOrg()
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg())
-        && validRoles(request.resource.data.roles)
-        && (!('lastMode' in request.resource.data) ||
-            validLastMode(request.resource.data.lastMode));
-      allow delete: if false;
+         && validRoles(request.resource.data.roles)
+         && (!('lastMode' in request.resource.data) ||
+             validLastMode(request.resource.data.lastMode));
+      // Owner-lazy six-month purge: the owner deletes their OWN users doc
+      // past 180d stale (server-time-gated, undated docs deny). Nobody —
+      // not even a (self-asserted) professor — deletes anyone else's.
+      allow delete: if ownUid(uid)
+        && resource.data.keys().hasAll(['updatedAtMillis'])
+        && purgeStale(resource.data.updatedAtMillis);
     }
 
     // studentDevices helpers. Field-missing guards come first: reading a
@@ -225,12 +239,17 @@ service cloud.firestore {
             isLostPhone())
         && incomingStampsFresh()
         && storedMoveKeptOrFresh();
-      // No delete, for anyone: professor registration is self-asserted this
-      // phase, so any reset permission (even prof-gated) would let a student
-      // register as prof and self-reset around the cooldown. Genuine loss
-      // with a live old phone waits out the 30 days (a silent 60d+ phone
-      // moves immediately via the exemption); manual attendance covers gaps.
-      allow delete: if false;
+      // Owner-lazy six-month purge (no backend): the owner deletes their own
+      // binding past 180d-stale lastSeen (server-time-gated, undated docs
+      // deny). This REPLACES the old never-delete posture for exactly this
+      // scope — owner-or-nobody still holds (a self-asserted professor can
+      // delete nothing but their own), and classSessions are untouched by
+      // every purge path (professors' past records stay).
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.keys().hasAll(['lastSeenAtMillis'])
+        && purgeStale(resource.data.lastSeenAtMillis);
     }
 
     match /deviceInstalls/{id} {
@@ -252,6 +271,9 @@ service cloud.firestore {
         && request.resource.data.org == tokenOrg()
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg());
+      // No delete, ever: install ids are unguessable UUIDs and unlistable,
+      // so stale rows linger by design (harmless — the install→email mapping
+      // keeps enforcing one-Gmail-per-install after a binding purge).
       allow delete: if false;
     }
 
@@ -279,7 +301,14 @@ service cloud.firestore {
         && request.resource.data.org == tokenOrg()
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg());
-      allow delete: if false;
+      // Owner-lazy six-month purge (no backend): the owner deletes their
+      // own directory row past 180d stale (server-time-gated, undated docs
+      // deny). Professors can READ rows (advisory gate) but delete none.
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.keys().hasAll(['updatedAtMillis'])
+        && purgeStale(resource.data.updatedAtMillis);
     }
 
 //   facePrints/{lowercased-email}: {org, verifierVer, embQ, buckets[],
@@ -293,9 +322,11 @@ service cloud.firestore {
 //     at claim time requires it, and rules cannot stop org-query paging
 //     (enumeration is inherent, not a bug). No images/names/rolls/keys here
 //     (pure math + tags; the doc id is the Gmail for one-print-per-Gmail
-//     overwrite). No delete, no TTL-on-Spark: prints live with the binding
-//     until re-enrolled. Written only with enrollment consent, only in the
-//     claim transaction.
+//     overwrite). Owner-lazy purge past 180d stale (no Cloud Functions, no
+//     TTL policy — both billing-gated on Spark; the owner deletes their own
+//     print on next authenticated contact, server-time-gated). Otherwise
+//     prints live with the binding until re-enrolled. Written only with
+//     enrollment consent, only in the claim transaction.
     match /facePrints/{id} {
       // Owner reads their own print; shortlist queries list same-org
       // prints (org equality + buckets arrayContainsAny, capped client-
@@ -321,7 +352,13 @@ service cloud.firestore {
         && request.resource.data.embQ.size() <= 1024
         && request.resource.data.buckets is list
         && request.resource.data.buckets.size() == 10;
-      allow delete: if false;
+      // Owner-lazy six-month purge: the owner deletes their own print past
+      // 180d stale (server-time-gated, undated docs deny) — biometric data
+      // must not linger forever on ex-students.
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.keys().hasAll(['updatedAtMillis'])
+        && purgeStale(resource.data.updatedAtMillis);
     }
 
     match /classSessions/{id} {

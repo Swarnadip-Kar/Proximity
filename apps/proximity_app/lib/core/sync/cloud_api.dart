@@ -59,6 +59,22 @@ abstract class CloudSync {
       required String installId,
       DateTime? now});
 
+  /// Owner-lazy six-month purge (the no-backend deleter — no Cloud
+  /// Functions, no TTL policy, both billing-gated on Spark): deletes the
+  /// caller's OWN enrollment triple (studentDevices + studentDirectory +
+  /// facePrints, keyed by email) plus their users doc (keyed by [uid])
+  /// when each doc's STORED stamp is past [kStudentPurgeStale] by the
+  /// client's clock (pre-check only — rules re-gate EVERY delete on
+  /// request.time, so clock games delete nothing early, and a live
+  /// enrollment can never be taken: missing/zero stamps deny).
+  /// Best-effort: offline, denied, or absent → empty outcome, never throws.
+  /// classSessions are never touched by any purge path (professors' past
+  /// records stay); deviceInstalls rows linger by design (unguessable
+  /// UUID keys, unlistable — the install→email mapping they hold keeps
+  /// enforcing one-Gmail-per-install after the binding is gone).
+  Future<PurgeOutcome> purgeExpiredSelfData(
+      {required String emailLower, String uid = '', DateTime? now});
+
   /// deviceInstalls/{installId} owner Gmail, or null when this install never
   /// enrolled. Drives the same-phone second-enrollment refusal.
   Future<String?> fetchInstallEmail(String installId);

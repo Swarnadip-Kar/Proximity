@@ -125,6 +125,7 @@ class FirestoreCloudSync implements CloudSync {
         org: (d['org'] as String? ?? '').isNotEmpty
             ? (d['org'] as String)
             : orgOf(email),
+        updatedAtMillis: (d['updatedAtMillis'] as num?)?.toInt() ?? 0,
       );
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('role lookup');
@@ -151,6 +152,9 @@ class FirestoreCloudSync implements CloudSync {
       'displayName': doc.displayName,
       'org': org,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      // Numeric twin of updatedAt: the owner-lazy purge gate compares it
+      // against request.time (ISO strings don't compare server-side).
+      'updatedAtMillis': DateTime.now().toUtc().millisecondsSinceEpoch,
     };
     if (doc.lastMode == 'prof' || doc.lastMode == 'student') {
       data['lastMode'] = doc.lastMode;
@@ -538,6 +542,75 @@ class FirestoreCloudSync implements CloudSync {
   }
 
   @override
+  Future<PurgeOutcome> purgeExpiredSelfData(
+      {required String emailLower, String uid = '', DateTime? now}) async {
+    if (!available) return const PurgeOutcome();
+    final at = (now ?? DateTime.now()).toUtc();
+    final key = emailLower.toLowerCase();
+    final deleted = <String>[];
+    // Eligibility here is a client-clock pre-check ONLY: every delete is
+    // re-gated by the rules on request.time, so a wrong clock deletes
+    // nothing early. Deletes run individually — a batch fails atomically,
+    // and one not-yet-stale doc must not spare the rest. Denied/offline
+    // per doc means "not eligible" and is swallowed (best-effort).
+    Future<void> tryDelete(
+        String label, DocumentReference<Map<String, dynamic>> ref) async {
+      try {
+        await ref.delete().timeout(const Duration(seconds: 8));
+        deleted.add(label);
+      } catch (_) {}
+    }
+
+    Future<int> storedStamp(String collection, String id, String field) async {
+      final snap = await _db
+          .collection(collection)
+          .doc(id)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 8));
+      if (!snap.exists) return 0;
+      return (snap.data()?[field] as num?)?.toInt() ?? 0;
+    }
+
+    try {
+      if (stampOlderThan(
+          stampMillis:
+              await storedStamp('studentDevices', key, 'lastSeenAtMillis'),
+          now: at,
+          age: kStudentPurgeStale)) {
+        await tryDelete(
+            'studentDevices/$key', _db.collection('studentDevices').doc(key));
+      }
+      if (stampOlderThan(
+          stampMillis:
+              await storedStamp('studentDirectory', key, 'updatedAtMillis'),
+          now: at,
+          age: kStudentPurgeStale)) {
+        await tryDelete('studentDirectory/$key',
+            _db.collection('studentDirectory').doc(key));
+      }
+      if (stampOlderThan(
+          stampMillis:
+              await storedStamp('facePrints', key, 'updatedAtMillis'),
+          now: at,
+          age: kStudentPurgeStale)) {
+        await tryDelete(
+            'facePrints/$key', _db.collection('facePrints').doc(key));
+      }
+      if (uid.isNotEmpty &&
+          stampOlderThan(
+              stampMillis:
+                  await storedStamp('users', uid, 'updatedAtMillis'),
+              now: at,
+              age: kStudentPurgeStale)) {
+        await tryDelete('users/$uid', _db.collection('users').doc(uid));
+      }
+    } catch (_) {
+      return PurgeOutcome(deleted);
+    }
+    return PurgeOutcome(deleted);
+  }
+
+  @override
   Future<String?> fetchInstallEmail(String installId) async {
     _needAvailable();
     if (installId.isEmpty) return null;
@@ -578,6 +651,8 @@ class FirestoreCloudSync implements CloudSync {
           name: d.data()['name'] as String? ?? '',
           roll: d.data()['roll'] as String? ?? '',
           org: d.data()['org'] as String? ?? '',
+          updatedAtMillis:
+              (d.data()['updatedAtMillis'] as num?)?.toInt() ?? 0,
         ),
     ];
   }

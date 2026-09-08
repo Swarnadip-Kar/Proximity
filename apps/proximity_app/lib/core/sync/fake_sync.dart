@@ -62,7 +62,8 @@ class FakeCloudSync implements CloudSync {
         displayName:
             doc.displayName.isNotEmpty ? doc.displayName : (prev?.displayName ?? ''),
         lastMode: lastMode,
-        org: org);
+        org: org,
+        updatedAtMillis: DateTime.now().toUtc().millisecondsSinceEpoch);
   }
 
   @override
@@ -183,7 +184,7 @@ class FakeCloudSync implements CloudSync {
     );
     installs[installId] = key;
     dir[key] =
-        StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll, org: org);
+        StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll, org: org, updatedAtMillis: atMillis);
     // Same atomicity as the Firestore tx: binding + print land together.
     if (facePrint != null) {
       prints[key] = FacePrintDoc(
@@ -260,6 +261,54 @@ class FakeCloudSync implements CloudSync {
   /// findDoublePkD in claim.dart): pkD values shared by 2+ Gmails.
   /// Offline and permanent: clone-or-shared-device signal for review.
   Map<String, List<String>> auditDoublePkD() => findDoublePkD(devices);
+
+  @override
+  Future<PurgeOutcome> purgeExpiredSelfData(
+      {required String emailLower, String uid = '', DateTime? now}) async {
+    if (!available || !online) return const PurgeOutcome();
+    final at = (now ?? DateTime.now()).toUtc();
+    final key = emailLower.toLowerCase();
+    final deleted = <String>[];
+    // Per-doc staleness on the STORED stamp (fail-closed on zero/missing);
+    // sessions are never in scope — professors' past records stay.
+    final binding = devices[key];
+    if (binding != null &&
+        stampOlderThan(
+            stampMillis: binding.lastSeenAtMillis,
+            now: at,
+            age: kStudentPurgeStale)) {
+      devices.remove(key);
+      deleted.add('studentDevices/$key');
+    }
+    final row = dir[key];
+    if (row != null &&
+        stampOlderThan(
+            stampMillis: row.updatedAtMillis, now: at, age: kStudentPurgeStale)) {
+      dir.remove(key);
+      deleted.add('studentDirectory/$key');
+    }
+    final print = prints[key];
+    if (print != null &&
+        stampOlderThan(
+            stampMillis: print.updatedAtMillis,
+            now: at,
+            age: kStudentPurgeStale)) {
+      prints.remove(key);
+      deleted.add('facePrints/$key');
+    }
+    if (uid.isNotEmpty) {
+      final role = roles[uid];
+      if (role != null &&
+          stampOlderThan(
+              stampMillis: role.updatedAtMillis,
+              now: at,
+              age: kStudentPurgeStale)) {
+        roles.remove(uid);
+        deleted.add('users/$uid');
+      }
+    }
+    return PurgeOutcome(deleted);
+  }
 
   @override
   Future<void> pushSession(
