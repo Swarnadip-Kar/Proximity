@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';
@@ -40,7 +41,11 @@ class FirestoreCloudSync implements CloudSync {
   @override
   final bool available;
 
-  FirestoreCloudSync({this.available = true});
+  /// DI seam for the online probe: resolves the signed-in uid. Defaults to
+  /// FirebaseAuth; tests inject a stub so no Firebase is needed.
+  final String? Function()? currentUid;
+
+  FirestoreCloudSync({this.available = true, this.currentUid});
 
   FirebaseFirestore get _db => FirebaseFirestore.instance;
 
@@ -54,13 +59,26 @@ class FirestoreCloudSync implements CloudSync {
   @override
   Future<bool> isOnline() async {
     if (!available) return false;
+    // Owner-doc probe: rules allow get users/<uid> for the owner while
+    // `allow list: if false` denies every collection query. The previous
+    // `.collection('users').limit(1).get(server)` was such a list
+    // (Query users order by __name__) — denied on every startup.
+    // Signed-out has no owner doc: return false without touching Firestore
+    // (callers' server gets still decide offline; sync stays local-only).
+    String? uid;
+    try {
+      uid = currentUid?.call() ?? FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      uid = null;
+    }
+    if (uid == null || uid.isEmpty) return false;
     // Any answer from the server counts as online — including
-    // permission-denied (rules reachable, e.g. signed-out probe) and
-    // unauthenticated. Only transport failures and timeouts mean offline.
+    // permission-denied (rules reachable) and unauthenticated. Only
+    // transport failures and timeouts mean offline.
     try {
       await _db
           .collection('users')
-          .limit(1)
+          .doc(uid)
           .get(const GetOptions(source: Source.server))
           .timeout(const Duration(seconds: 6));
       return true;

@@ -49,25 +49,27 @@ void main() {
 
   test('no collection-wide users listen/query in FirestoreCloudSync', () {
     final src = readLib('lib/core/sync/firestore_sync.dart');
+    // Strip line comments: the fix comment names the old shape in prose.
+    final code = src.replaceAll(RegExp(r'//.*'), '');
     // Every `collection('users')` must chain straight into `.doc(` —
     // any limit/where/orderBy/snapshots/get-without-doc is a list, which
     // `allow list: if false` denies (startup PERMISSION_DENIED).
     final collUse =
         RegExp(r'''\.collection\(\s*['"]users['"]\s*\)\s*\.\s*([A-Za-z_]+)''');
     final offenders = <String>[];
-    for (final m in collUse.allMatches(src)) {
+    for (final m in collUse.allMatches(code)) {
       final next = m.group(1);
       if (next != 'doc') offenders.add('collection(users).$next');
     }
     expect(offenders, isEmpty,
         reason:
             'collection-wide users query would LISTEN-deny (allow list: if false): $offenders');
-    // Belt-and-braces: the old probe shape must be gone entirely.
-    expect(src.contains('.limit(1)'), isFalse,
+    // Belt-and-braces: the old probe shape must be gone from CODE.
+    expect(code.contains('.limit(1)'), isFalse,
         reason: 'isOnline must not issue a users limit(1) list query');
-    expect(src.contains('snapshots('), isFalse,
+    expect(code.contains('snapshots('), isFalse,
         reason: 'no realtime users collection listen allowed');
-    expect(src.contains('snapshotsInSync'), isFalse);
+    expect(code.contains('snapshotsInSync'), isFalse);
   });
 
   test('rules keep the users list boundary (allow list: if false)', () {
