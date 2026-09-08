@@ -48,15 +48,22 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      # compileSdk 37 (permission_handler_android needs API 37+) is newer
-      # than what the runner image pre-installs — without the platform,
-      # javac compiles against an empty android.jar (`package
-      # android.content does not exist` across plugin Java). Install it
-      # explicitly instead of downgrading compileSdk.
+      # compileSdk 37 (Android 17, released June 2026; required by
+      # permission_handler_android, which declares `compileSdk = 37` in its
+      # own build script) is newer than the cmdline-tools pinned on the
+      # runner image, whose package list has no `platforms;android-37`.
+      # Without the platform, javac compiles against an empty android.jar
+      # (`package android.content does not exist` across plugin Java).
+      # Refresh cmdline-tools first so the platform package is visible,
+      # then install it — compileSdk stays at the plugin-required 37.
       - name: Install Android API 37 platform (compileSdk 37)
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37"
+          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDK" --licenses > /dev/null 2>&1 || true
+          "$SDK" --install "cmdline-tools;latest" > /dev/null
+          LATEST="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/ | sort -V | tail -1)/bin/sdkmanager"
+          yes | "$LATEST" --licenses > /dev/null 2>&1 || true
+          "$LATEST" "platforms;android-37"
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -78,8 +85,16 @@ jobs:
       # firebase_core still declares an older minimum and configure fails
       # (`Compatibility with CMake < 3.5 has been removed`). Pin CMake 3.x;
       # upgrading Firebase to a re-declared C++ SDK is separate work.
+      # NOTE: choco PATH changes are invisible to later steps (the runner
+      # process env is captured at startup), so the 3.x bin dir is
+      # explicitly prepended via GITHUB_PATH — without this the build step
+      # still resolves the preinstalled CMake 4.
       - name: Pin CMake 3.x (Firebase C++ SDK compat)
-        run: choco install cmake --version 3.31.6 --allow-downgrade -y
+        run: |
+          choco install cmake --version 3.31.6 --allow-downgrade -y
+          echo 'C:\Program Files\CMake\bin' >> $env:GITHUB_PATH
+      - name: Verify CMake 3.x wins on PATH
+        run: cmake --version
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -127,11 +142,24 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      - run: flutter build macos --debug
+      # Unsigned compile+link gate: `flutter build macos` codesigns with the
+      # bundle id and fails on a clean runner (no provisioning profiles).
+      # --config-only generates the Xcode project (incl. pod install);
+      # xcodebuild with CODE_SIGNING_ALLOWED=NO then compiles + links
+      # everything (Dart, Swift/ObjC plugins, Firebase pods) with no certs.
+      # Proven locally: full BUILD SUCCEEDED, same command.
+      - run: flutter build macos --config-only
+      - name: Build macOS app unsigned (compile gate, no certs)
+        run: >
+          xcodebuild -workspace macos/Runner.xcworkspace
+          -scheme Runner -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath build/xcode-derived
+          CODE_SIGNING_ALLOWED=NO build
       - uses: actions/upload-artifact@v4
         with:
           name: proximity-macos
-          path: apps/proximity_app/build/macos/Build/Products/Debug/proximity_app.app
+          path: apps/proximity_app/build/xcode-derived/Build/Products/Debug/proximity_app.app
 
   ios:
     runs-on: macos-latest
