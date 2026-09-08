@@ -644,6 +644,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// POST carries pkD + dSig (DKey over deviceProvePreimage) + lightweight
   /// attestation claims. Legacy unbound proofs (tests only) still encode
   /// when no ticket is present.
+  /// Local dup path: the POST also carries the LAN-only session vector
+  /// (`face:{vec}` — one base64 int8 mean embedding for the professor
+  /// phone's in-memory compare, RAM-only, never the cloud). Fail-soft:
+  /// extraction failure omits the vector (the proof marks normally with
+  /// no dup participation, same as legacy).
   Future<MarkedReceipt> _prove({
     required ClassBeacon target,
     required LinkedIdentity identity,
@@ -762,6 +767,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         BleLog.log('BLE', 'response ADV FAILED: $e');
       }
       BleLog.log('SEC', 'signing token (Ed25519 + channel binding)…');
+      // LAN-only session vector for the professor's in-memory dup compare
+      // (RAM-only there, never the cloud). Best-effort per prove: the
+      // plugin gallery read is local and cheap; failure omits the field.
+      var faceVecB64 = '';
+      try {
+        faceVecB64 =
+            faceVecEncode(await _verifier.embeddingFor(stored.faceId));
+      } catch (e) {
+        BleLog.log('SEC', 'session vector unavailable ($e) — proving bare');
+      }
       final res = await client.prove(
         desc: desc,
         studentId: identity.gmail.toLowerCase(),
@@ -798,6 +813,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
                 tlsFingerprint: fp)),
         faceValidAtMs: bound ? faceValidAtMs : null,
         verifierVer: verifierVer,
+        faceVecB64: faceVecB64,
         pkD: pkD.isNotEmpty ? pkD : null,
         dSigFor: bound
             ? (t, jj) async => _deviceKey.sign(
