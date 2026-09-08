@@ -1,4 +1,5 @@
-# Proximity CI: Android APK + Windows + Linux desktop builds.
+# Proximity CI: Android APK + Windows + Linux + macOS desktop builds,
+# iOS (unsigned) + web (records-only) compile gates.
 # Firebase config files are tracked in-repo (public identifiers, standard
 # FlutterFire practice), so no secrets are needed. Release signing
 # (keystore / App Store / MSIX) is intentionally out — debug/dev builds only.
@@ -47,6 +48,15 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
+      # compileSdk 37 (permission_handler_android needs API 37+) is newer
+      # than what the runner image pre-installs — without the platform,
+      # javac compiles against an empty android.jar (`package
+      # android.content does not exist` across plugin Java). Install it
+      # explicitly instead of downgrading compileSdk.
+      - name: Install Android API 37 platform (compileSdk 37)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37"
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -63,6 +73,13 @@ jobs:
     needs: analyze-test
     steps:
       - uses: actions/checkout@v4
+      # windows-latest ships CMake 4.x, which removed compatibility with
+      # `cmake_minimum_required` < 3.5 — the Firebase C++ SDK bundled with
+      # firebase_core still declares an older minimum and configure fails
+      # (`Compatibility with CMake < 3.5 has been removed`). Pin CMake 3.x;
+      # upgrading Firebase to a re-declared C++ SDK is separate work.
+      - name: Pin CMake 3.x (Firebase C++ SDK compat)
+        run: choco install cmake --version 3.31.6 --allow-downgrade -y
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -96,3 +113,60 @@ jobs:
         with:
           name: proximity-linux
           path: apps/proximity_app/build/linux/x64/debug/bundle/
+
+  macos:
+    runs-on: macos-latest
+    needs: analyze-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build macos --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proximity-macos
+          path: apps/proximity_app/build/macos/Build/Products/Debug/proximity_app.app
+
+  ios:
+    runs-on: macos-latest
+    needs: analyze-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Unsigned compile gate only: --no-codesign needs no certificates and
+      # produces an uninstallable .app, so there is deliberately no artifact
+      # upload — the build itself is the gate (Dart + iOS plugin code must
+      # compile; face/ML Kit are iOS-native here, unlike the macOS stubs).
+      - run: flutter build ios --debug --no-codesign
+
+  web:
+    runs-on: ubuntu-latest
+    needs: analyze-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Records-only target: the ONLY job that compiles the
+      # dart.library.html conditional-export variants (transport stubs,
+      # BlueZ stub, net_if/file_saver web, face_verifier + pose_gate stubs).
+      # `flutter analyze` resolves the native variants, so without this job
+      # stub drift ships silently (it did: boundAddress/exemptFacePair/
+      # clearFaceVectors/faceVecB64).
+      - run: flutter build web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proximity-web
+          path: apps/proximity_app/build/web
