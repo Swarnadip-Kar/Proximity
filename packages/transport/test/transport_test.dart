@@ -1128,18 +1128,6 @@ void main() {
       return [for (final x in v) x / n];
     }
 
-    String tnear(int baseSeed, double eps, int noiseSeed) {
-      final base = tvec(baseSeed);
-      final r = tvec(noiseSeed);
-      final v = List<double>.generate(
-          kFacePrintDim, (i) => base[i] + eps * r[i]);
-      var n = 0.0;
-      for (final x in v) {
-        n += x * x;
-      }
-      n = math.sqrt(n);
-      return faceVecEncode([for (final x in v) x / n]);
-    }
 
     Future<ProveResult> proveAs(
       ProxClient client,
