@@ -72,6 +72,39 @@ class StudentDeviceDoc {
 /// self-asserted this phase.
 const kStudentMoveCooldown = Duration(days: 30);
 
+/// Lost-phone exemption window: when the STORED binding's last-seen is
+/// older than this, a different device may re-enroll immediately — the old
+/// phone is probably lost (a live phone heartbeats lastSeen on every
+/// online return, so a genuinely old stamp proves real silence).
+/// Keys off the stored value ONLY: there is deliberately no parameter for
+/// asserting "I've been offline" at move time (worthless — self-forged),
+/// and the stored value is trustworthy only because every write stamping
+/// it must prove fresh against the server clock (see
+/// [kClaimTimestampSkew] + the rules' fresh-stamp gate). Mirrored
+/// server-side with request.time, so local-clock games change nothing.
+const kStudentLostPhoneStale = Duration(days: 60);
+
+/// Cloud-expiry window: owner-lazy purge eligibility per doc (see
+/// CloudSync.purgeExpiredSelfData). Six months as a fixed 180-day bound —
+/// not calendar months — so client pre-check and rules agree bit-exactly.
+const kStudentPurgeStale = Duration(days: 180);
+
+/// Freshness skew for incoming binding stamps: rules reject a binding
+/// write whose lastSeen/updated stamps stray further than this from
+/// request.time. 60x smaller than the lost-phone window it protects
+/// (forging a stale lastSeen is impossible), generous next to NTP drift;
+/// TLS already fails closed on grossly wrong clocks before any write.
+const kClaimTimestampSkew = Duration(hours: 1);
+
+/// True when [stampMillis] (UTC epoch ms) is older than [age] before [now].
+/// Zero/missing stamps are NEVER old (fail-closed: unknown age must unlock
+/// neither the lost-phone exemption nor the purge).
+bool stampOlderThan(
+    {required int stampMillis, required DateTime now, required Duration age}) {
+  if (stampMillis <= 0) return false;
+  return now.toUtc().millisecondsSinceEpoch - stampMillis > age.inMilliseconds;
+}
+
 /// Verdict of [evaluateStudentClaim].
 enum StudentClaim {
   /// No binding yet and this install holds no other Gmail: bind freely.
@@ -111,8 +144,9 @@ class StudentClaimResult {
 /// [moveIntentValid]: an old-DKey-signed MoveIntent (verified by the
 /// caller against the PREVIOUS binding's pkD) grants an instant move even
 /// inside the cooldown — genuine phone change with the old phone at hand.
-/// Without it the 30d cooldown stands (lost/stolen path, manual attendance
-/// covers the gap).
+/// Without it the 30d cooldown stands, EXCEPT the lost-phone exemption:
+/// a binding whose STORED lastSeen is past [kStudentLostPhoneStale] moves
+/// immediately (lost/stolen path, manual attendance covers the gap).
 StudentClaimResult evaluateStudentClaim({
   required String localPkHex,
   required String localInstallId,
@@ -150,6 +184,17 @@ StudentClaimResult evaluateStudentClaim({
   }
   // Old-DKey-signed MoveIntent: instant move (the old phone vouches).
   if (moveIntentValid) {
+    return const StudentClaimResult(StudentClaim.allowedMove);
+  }
+  // Lost-phone exemption (stored lastSeen ONLY — no move-time assertion
+  // exists to forge: the trust chain is freshness-checked writes →
+  // trustworthy stored lastSeen → this read, re-evaluated server-side
+  // with request.time). Runs before the cooldown, after the install gate
+  // (a stale binding never frees the install's one-Gmail rule).
+  if (stampOlderThan(
+      stampMillis: binding.lastSeenAtMillis,
+      now: at,
+      age: kStudentLostPhoneStale)) {
     return const StudentClaimResult(StudentClaim.allowedMove);
   }
   final base = binding.lastMoveAtMillis;

@@ -29,8 +29,12 @@ rules_version = '2';
 //     install needs the 30-day cooldown (a bare pkHex match from another
 //     install is a move, not the same device)
 //     (request.time - lastMoveAtMillis > 30d) unless the doc predates
-//     timestamps (one migration move). Clients claim via a transaction so
-//     racing devices resolve to exactly one winner. Face photos are NEVER
+//     timestamps (one migration move) or the STORED lastSeen proves the
+//     old phone lost (request.time - lastSeenAtMillis > 60d — server clock
+//     only; a move-time "I've been offline" is worthless, and the stored
+//     value is trustworthy because every write stamping it must land within
+//     1h of request.time or the write is refused). Clients claim via a
+//     transaction so racing devices resolve to exactly one winner. Face photos are NEVER
 //     written here — only the device public key + install id + attestation
 //     material. Face-derived MATH (quantized face-code, see facePrints
 //     below) IS written to its own collection with enrollment consent —
@@ -141,6 +145,54 @@ service cloud.firestore {
       return request.time.toMillis() - resource.data.lastMoveAtMillis >
         30 * 24 * 60 * 60 * 1000;
     }
+    // Lost-phone exemption (server clock ONLY): the STORED lastSeen is
+    // older than 60d, so the old phone is probably lost. Reads
+    // resource.data (the stored value), never request.resource.data — a
+    // move-time "I've been offline" assertion is worthless — and the
+    // stored value is trustworthy only because incomingStampsFresh()
+    // below forced every write stamping it to prove fresh against
+    // request.time. Local-clock games change nothing.
+    function isLostPhone() {
+      return resource.data.keys().hasAll(['lastSeenAtMillis']) &&
+        resource.data.lastSeenAtMillis is int &&
+        resource.data.lastSeenAtMillis > 0 &&
+        request.time.toMillis() - resource.data.lastSeenAtMillis >
+          60 * 24 * 60 * 60 * 1000;
+    }
+    // Trust anchor for the stored lastSeen: any binding write carrying
+    // lastSeen/updated stamps must place them within 1h of the server
+    // clock, or the write is refused outright. Forging a 60d-stale
+    // lastSeen (to unlock the exemption early) is therefore impossible;
+    // a genuinely stale stored value proves 60d of real silence. (TLS
+    // already fails closed on grossly wrong clocks before any write.)
+    function incomingStampsFresh() {
+      return request.resource.data.keys()
+          .hasAll(['lastSeenAtMillis', 'updatedAtMillis']) &&
+        request.resource.data.lastSeenAtMillis is int &&
+        request.resource.data.updatedAtMillis is int &&
+        request.time.toMillis() - request.resource.data.lastSeenAtMillis <
+          60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.lastSeenAtMillis >
+          -60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.updatedAtMillis <
+          60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.updatedAtMillis >
+          -60 * 60 * 1000;
+    }
+    // Adjacent hardening on the same chain: lastMoveAt is preserved by
+    // same-device writes and freshly stamped by moves — rewinding it to
+    // 0/ancient (a cooldown bypass via a hand-built write) is denied.
+    // Legacy docs without the key migrate freely (isLegacyDevice).
+    function storedMoveKeptOrFresh() {
+      return !(resource.data.keys().hasAll(['lastMoveAtMillis'])) ||
+        request.resource.data.lastMoveAtMillis ==
+          resource.data.lastMoveAtMillis ||
+        (request.resource.data.lastMoveAtMillis is int &&
+         request.time.toMillis() - request.resource.data.lastMoveAtMillis <
+           60 * 60 * 1000 &&
+         request.time.toMillis() - request.resource.data.lastMoveAtMillis >
+           -60 * 60 * 1000);
+    }
 
     match /studentDevices/{id} {
       // Doc id IS the lowercased Gmail (client writes it so): the owner can
@@ -151,11 +203,16 @@ service cloud.firestore {
       allow create: if signedIn()
         && id == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.org == tokenOrg();
+        && request.resource.data.org == tokenOrg()
+        && incomingStampsFresh();
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 30-day cooldown (server-enforced: clients cannot
-      // bypass it, even with a hand-built write). Pre-timestamp docs move
-      // once freely (migration), stamping lastMoveAtMillis as they go.
+      // bypass it, even with a hand-built write) UNLESS the stored lastSeen
+      // proves the old phone lost (isLostPhone, 60d, server clock). A
+      // forged-stale lastSeen at move time still waits: the exemption reads
+      // the stored value, and the fresh-stamp gate below refused the forgery
+      // at write time. Pre-timestamp docs move once freely (migration),
+      // stamping lastMoveAtMillis as they go.
       // Org stamps once and never blanks: legacy docs stamp on update.
       allow update: if signedIn()
         && id == tokenEmailLower()
@@ -164,11 +221,15 @@ service cloud.firestore {
         && request.resource.data.org == tokenOrg()
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg())
-        && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed());
+        && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed() ||
+            isLostPhone())
+        && incomingStampsFresh()
+        && storedMoveKeptOrFresh();
       // No delete, for anyone: professor registration is self-asserted this
       // phase, so any reset permission (even prof-gated) would let a student
       // register as prof and self-reset around the cooldown. Genuine loss
-      // waits out the week; manual attendance covers the gap.
+      // with a live old phone waits out the 30 days (a silent 60d+ phone
+      // moves immediately via the exemption); manual attendance covers gaps.
       allow delete: if false;
     }
 

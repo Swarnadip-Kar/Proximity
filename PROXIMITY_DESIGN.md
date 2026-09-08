@@ -133,6 +133,20 @@ most once per 30 days); manual attendance covers any gap.
    last-online. (Web records builds skip the device gate: no key lives
    there, sign-in lands on records.)
 
+   Lost-phone exemption + trust chain (no local-clock trust anywhere): a
+   binding whose STORED lastSeen is older than 60d moves immediately
+   (probably lost — a live phone heartbeats on every online return). The
+   chain is freshness-checked writes → trustworthy stored lastSeen →
+   exemption read: rules refuse any binding write whose lastSeen/updated
+   stamps stray more than 1h from request.time (so a forged-stale lastSeen
+   at move time still waits out the 30d), and the exemption itself reads
+   only the stored value with request.time. The pure verdict
+   (`evaluateStudentClaim`, `lib/core/sync/claim.dart`) mirrors it for the
+   entry pre-check, sharing the `allowedMove` outcome (a move is a move:
+   stamps lastMove, bumps moveCount, atomically refreshes the face print).
+   Adjacent hardening in the same rules: lastMoveAt must be preserved or
+   freshly stamped (rewind-to-legacy is a cooldown bypass, denied).
+
 Professor cloud sync is session backup (offline-first, local history
 stays source of truth), not key distribution.
 
