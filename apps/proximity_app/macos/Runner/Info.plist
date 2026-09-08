@@ -29,7 +29,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Proximity uses the camera once to enroll your face on this device, and briefly during each attendance window to confirm the holder. Face data never leaves your device.</string>
+	<string>Proximity uses the camera once to enroll your face on this device, and briefly during each attendance window to confirm the holder. Photos never leave your device; one compact face-code (numbers only, no photo) is stored online with your enrollment so the same face cannot enroll twice.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Proximity discovers live classes and exchanges signed attendance proofs with the professor over the classroom WiFi or hotspot.</string>
 	<!-- Google Sign-In (macOS uses the iOS client via google_sign_in_ios).

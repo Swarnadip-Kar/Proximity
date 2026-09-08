@@ -25,10 +25,13 @@ of devices); students enroll one device per Gmail — account (picked up
 silently, no second tap) →
 device keypair (hardware DKey, non-exportable where silicon allows, sealing
 the Ed25519 attendance SKey — file copies unwrap to nothing) → on-device
-3-still face enrollment (Centre / Left / Right via the `face_verification`
-plugin, FaceNet gallery on the phone, embeddings never leave it) → online
+5-still face enrollment (Centre / Left / Right / Up / Down via the
+`face_verification` plugin, FaceNet gallery on the phone; photos never
+leave the phone, but ONE quantized face-code per Gmail IS stored online —
+see the face-dedup note below) → online
 atomic
-device claim (`studentDevices` + `deviceInstalls`, one transaction).
+device claim (`studentDevices` + `deviceInstalls` + `facePrints`, one
+transaction).
 The claim enforces both sides: a Gmail enrolled on another phone refuses —
 the screen names the exact re-enroll date (`You can re-enroll this device
 on XYZ`) and the old device's last online day. Moves are unlimited over a
@@ -48,6 +51,21 @@ in the background at start (token refreshed when online, proving live
 account status); the sign-in button remains only for fresh installs with
 no session — the claim binds to the Google identity, so it cannot run
 unsigned.
+
+**Face-dedup note (privacy reversal, stated plainly).** The claim also
+runs a same-face duplicate check: the phone derives one quantized
+face-code from the enrolled stills (int8 mean embedding + simhash
+buckets — numbers only, no photo) and compares it against same-org codes
+pulled in one capped query; a match refuses enrollment with a
+non-accusatory message (recapture retry + manual attendance — never a
+dead end, nobody named). This closes the stock-app proxy hole of one
+face enrolling as two Gmails on two phones, which nothing else detects.
+The cost, honestly: quantized embeddings are biometric data
+(template-inversion literature reconstructs faces from such vectors),
+listable org-wide by any signed-in same-org user, kept indefinitely (no
+delete/TTL on Spark). Saving counts as consent; manual attendance is
+always available instead. Details + quota math in `PROXIMITY_DESIGN.md`
+§4 and protocol `face_print.dart`.
 Professors may skip sign-in: classes stay on that device only until sign-in
 + sync. Keys, identity and the install ID persist in secure device storage
 — sign-in state survives restarts (account switches land on the landing
