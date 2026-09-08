@@ -32,8 +32,10 @@ abstract final class EnrollLog {
 
 /// Guided-enrollment angle instructions, in [faceEnrollSlots] capture order.
 /// Short imperative copy per angle (Android-face-unlock-style): what to do
-/// with the head, held near-frontal throughout. The plugin owns pose
-/// tolerance — these are UX guidance, never measurement gates.
+/// with the head, held near-frontal throughout. Each angle is REALLY gated
+/// at capture (PoseGate euler windows on the still) — the copy tells the
+/// user what the gate will check, it never pretends detection that isn't
+/// there. The plugin owns match tolerance, not the angles.
 class EnrollAngleInstruction {
   final String title;
   final String detail;
@@ -52,6 +54,14 @@ const enrollAngleInstructions = <EnrollAngleInstruction>[
   EnrollAngleInstruction(
     'Turn slightly right',
     'Small turn right — keep both eyes visible to the camera, hold still.',
+  ),
+  EnrollAngleInstruction(
+    'Tilt slightly up',
+    'Chin up just a touch — eyes still on the lens, hold still.',
+  ),
+  EnrollAngleInstruction(
+    'Tilt slightly down',
+    'Chin down just a touch — eyes still on the lens, hold still.',
   ),
 ];
 

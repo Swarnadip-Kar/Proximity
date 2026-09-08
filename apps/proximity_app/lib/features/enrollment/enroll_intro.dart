@@ -135,10 +135,11 @@ class _EnrollIntroScreenState extends ConsumerState<EnrollIntroScreen> {
                 SizedBox(height: ProxSpacing.sm),
                 _IntroStep(
                   n: '3',
-                  title: 'Three guided face angles',
-                  detail: 'Centre · Left · Right — '
-                      'small turns, head near-frontal throughout, one still '
-                      'per angle with dots + oval guidance. '
+                  title: 'Five guided face angles',
+                  detail: 'Centre · Left · Right · Up · Down — '
+                      'small turns and tilts, head near-frontal throughout, '
+                      'one continuous camera session with dots + oval '
+                      'guidance, each angle really angle-checked. '
                       'The template never leaves this phone.',
                 ),
                 SizedBox(height: ProxSpacing.sm),

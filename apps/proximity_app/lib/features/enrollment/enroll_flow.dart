@@ -2,18 +2,21 @@
 //
 // Bundle (approved IA — each screen breathes on its own page):
 //   EnrollIntro   (enroll/intro)   — pre-context + account + device key
-//   EnrollCapture (enroll/capture) — 3-angle guided scan, per-slot retake
+//   EnrollCapture (enroll/capture) — continuous 5-angle session, per-slot
+//   in-session retake
 //   EnrollResult  (enroll/result)  — save + claim outcome with next steps
 // Forward moves log NAV; Done (EnrollNav.finish) pops every `enroll/…`
 // route back to the opener.
 //
-// Behavioral law (the plugin owns detection + matching passively):
-// guided centre → left → right stills, one capture per angle with dots +
-// oval guidance; per-slot retake (a failed capture keeps the other slots);
-// Cancel exits keeping progress, never burns; fail-closed (no validated
-// capture → no save; Save blocked till the 3 validate via self-check);
-// atomic claim (one device per Gmail + install binding + 7-day move +
-// heartbeats); key always kept.
+// Behavioral law (angles really gated, plugin owns matching passively):
+// one continuous camera session (open once, close on done/cancel) guided
+// centre → left → right → up → down, one capture per angle with dots +
+// oval guidance over the live preview; each angle pose-gated (ML Kit euler
+// windows on the still — never instruction-only); in-session retake (a
+// rejected angle keeps the other slots); Cancel disposes the session and
+// enrolls nothing; fail-closed (no validated capture → no save; Save
+// blocked till the 5 validate via self-check); atomic claim (one device
+// per Gmail + install binding + 7-day move + heartbeats); key always kept.
 //
 // PROPOSALS (not applied — off-limits files, for the owner):
 // 1. Wire-up (lib/main.dart, lib/screens/student_home.dart,

@@ -17,8 +17,9 @@ requirements are preserved — restructuring only, no weakening.
 ## Enroll (mobile-only; desktop/web records-only — no dead routes)
 - `enroll/intro` EXISTS — reason: pre-context (2 min, online once,
   1-device rule) + account + device key.
-- `enroll/capture` EXISTS — reason: 3-still face capture (centre/left/
-  right), plugin-owned matching, fail-closed.
+- `enroll/capture` EXISTS — reason: continuous 5-angle face session
+  (centre/left/right/up/down, one camera open, ML Kit pose-gated per
+  angle), plugin-owned matching, fail-closed.
 - `enroll/result` EXISTS — reason: online claim outcome (done vs
   cooldown/install/offline/pipeline) with next step each.
 - Desktop enrollment UI REMOVED (not disabled): records-only devices render

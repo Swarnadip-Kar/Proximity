@@ -7,7 +7,7 @@
 // - install-as-other-Gmail refusal: wipe-to-switch;
 // - pipeline recapture: key kept, fresh face scan;
 // - offline retry: progress kept, Save again on reconnect.
-// Fail-closed throughout: Save needs the validated 3-still capture
+// Fail-closed throughout: Save needs the validated 5-still capture
 // (controller re-validates); a refused claim stores nothing locally.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -200,7 +200,7 @@ class EnrollResultScreen extends ConsumerWidget {
                 const SizedBox(height: ProxSpacing.xs),
                 Text(
                   'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}… · '
-                  'Face: ${hasFace ? '3 of 3 stills captured' : 'capture pending'}'
+                  'Face: ${hasFace ? '5 of 5 stills captured' : 'capture pending'}'
                   '${st.faceScore > 0 ? ' · score ${st.faceScore.toStringAsFixed(2)}' : ''}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context)
@@ -236,7 +236,7 @@ class EnrollResultScreen extends ConsumerWidget {
           ),
           if (!hasFace)
             const ProxSyncNote(
-              'Complete the 3-still face capture on the previous screen '
+              'Complete the 5-angle face session on the previous screen '
               'to enable Save — a failed capture cannot save.',
             )
           else
@@ -346,7 +346,7 @@ class EnrollResultScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Next step: go back and capture the 3 stills — '
+                'Next step: go back and capture the 5 stills — '
                 'a failed capture stores nothing, so just retry.',
               ),
               const SizedBox(height: ProxSpacing.sm),
