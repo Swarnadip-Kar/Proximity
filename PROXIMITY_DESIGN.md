@@ -230,19 +230,22 @@ owns its store; the app only sees `{score, match}` and binds them into
 Sig_s via the face ticket (§5.1).
 
 - Enrollment: ONE continuous camera session (open once, close on
-  done/cancel — never falls out and back per angle) guided through 5
-  stills — centre + slight left/right turns + slight up/down tilts — with
-  a full-page true-ratio preview carrying ONLY an overlay (thin oval +
-  dots + one instruction line, composited, never squeezing the preview).
-  No taps: an auto-capture loop takes one still per slot and pose-checks
-  it on-device by ML Kit head-euler windows on the still file
-  (yaw ±12° centre; 8–35° side turns; 8–30° tilts; roll ≤20°;
-  null/unreadable fails closed — `PoseGate`,
-  `features/face_identity/pose_gate.dart`); reject shows the hint as the
-  overlay line and auto-retries the slot, the rest intact. Then the 5 go
-  to the plugin gallery with a centre-still self-check before advancing.
-  Fail-closed throughout (save blocked till all 5 validate; cancel
-  enrolls nothing).
+  done/cancel — never falls out and back per angle) over the 5186c65
+  full-page true-ratio preview carrying ONLY an overlay (thin oval with
+  a travelling GREEN DOT + dots + one stable line). No taps, no
+  narrated checker state: the loop takes stills continuously, reads each
+  still's pose ONCE (PoseGate.readPose), and opportunistically fills ANY
+  matching unfilled bucket (centre/left/right/up/down — ML Kit euler
+  windows: yaw ±12° centre; 8–35° side turns; 8–30° tilts; roll ≤20°;
+  null/unreadable fails closed). Guidance is latched (hysteresis with
+  memory): the dot + line name the first unfilled bucket and move ONLY
+  on bucket fill or stale eviction (30 wasted stills); rejects stay
+  silent (BleLog only). Then the 5 go to the plugin gallery with a
+  centre-still self-check before advancing. Fail-closed throughout (save
+  blocked till all 5 validate; cancel enrolls nothing). Patterns
+  followed: Apple Face ID enrollment (one imperative + green rim
+  progress), Tobii "follow the dot" calibration (one target, 5 points,
+  switch on completion, repeat missing).
 - Threshold: `kFaceThreshold = 0.70` (plugin scale). The old 0.60/0.80
   EdgeFace cosine numbers MUST NOT be reused — different embedding
   space, incomparable. **Residual: 0.70 FAR~0.01%/FRR<2% is the
