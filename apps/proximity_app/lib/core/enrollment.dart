@@ -128,37 +128,63 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 : EnrollPhase.signedIn,
             account: preseed));
 
-  /// Background account pickup for the enrollment page (NO sign-in tap):
-  /// adopts the persisted Firebase session when one exists — the common
-  /// case, since students sign in on the landing BEFORE reaching here —
-  /// and best-effort refreshes the token when online, proving live
-  /// account status at start. Offline (or a stale session) the persisted
-  /// account still stands for key+face; Save re-verifies online. Fresh
-  /// installs with no session keep the manual sign-in button: the cloud
-  /// claim binds to the Google identity, so it cannot run unsigned.
-  Future<void> pickUpAccount() async {
-    if (state.account != null) return;
-    SignedAccount? acct;
+  /// Reconciles the draft with the CURRENT signed-in account (identity ==
+  /// token — the join-gate/org design binds claim + org to the live
+  /// session, never to a cached copy). Same email is a no-op preserving
+  /// in-progress key/face/roll; a changed email (or sign-out) wipes the
+  /// whole draft (keys, face, roll, restore) and adopts the current
+  /// account fresh, so the card/claim/org can never ride a stale preseed.
+  /// Call on every enroll entry + after sign-out/switch.
+  Future<void> refreshFromAuth() async {
+    SignedAccount? current;
     try {
-      acct = _auth.current;
+      current = _auth.current;
     } catch (_) {
       return;
     }
-    if (acct == null) return;
-    state = state.copyWith(
-        phase: EnrollPhase.signedIn, account: acct, message: '');
+    final prev = state.account?.email.toLowerCase() ?? '';
+    final next = current?.email.toLowerCase() ?? '';
+    if (prev == next) {
+      // Same session: adopt only when the draft holds nothing yet (a
+      // preseed-less controller opened straight onto the page).
+      if (current != null && state.account == null) {
+        state = state.copyWith(
+            phase: EnrollPhase.signedIn, account: current, message: '');
+        await _tryRestore(current);
+      }
+      return;
+    }
+    _keys = null;
+    _faceId = null;
+    _restoredRoll = null;
+    if (current == null) {
+      state = const EnrollmentState(phase: EnrollPhase.signedOut);
+      return;
+    }
+    state = EnrollmentState(phase: EnrollPhase.signedIn, account: current);
     try {
       await _auth.getIdToken().timeout(const Duration(seconds: 6));
     } catch (_) {
       // Offline: the persisted account still stands; Save re-checks.
     }
-    await _tryRestore(acct);
+    await _tryRestore(current);
   }
+
+  /// Background account pickup for the enrollment page (NO sign-in tap):
+  /// adopts the persisted Firebase session when one exists — the common
+  /// case, since students sign in on the landing BEFORE reaching here —
+  /// and best-effort refreshes the token when online, proving live
+  /// account status at start. Reconciles (see [refreshFromAuth]): a stale
+  /// preseed never blocks the current account. Fresh installs with no
+  /// session keep the manual sign-in button: the cloud claim binds to the
+  /// Google identity, so it cannot run unsigned.
+  Future<void> pickUpAccount() => refreshFromAuth();
 
   /// Step 1 (manual fallback): Google sign-in (persists via Firebase
   /// Auth), then same-device restore when this phone already holds a key
   /// for the account. Only needed on fresh installs with no session —
-  /// [pickUpAccount] covers everyone else silently.
+  /// [pickUpAccount] covers everyone else silently. A different email
+  /// than the draft wipes it first (same rule as [refreshFromAuth]).
   Future<void> signIn() async {
     try {
       final acct = await _auth.signInWithGoogle();
@@ -167,13 +193,54 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             phase: EnrollPhase.signedOut, message: 'Sign-in cancelled.');
         return;
       }
-      state = state.copyWith(
-          phase: EnrollPhase.signedIn, account: acct, message: '');
+      if (acct.email.toLowerCase() !=
+          (state.account?.email.toLowerCase() ?? '')) {
+        _keys = null;
+        _faceId = null;
+        _restoredRoll = null;
+        state = EnrollmentState(phase: EnrollPhase.signedIn, account: acct);
+      } else {
+        state = state.copyWith(
+            phase: EnrollPhase.signedIn, account: acct, message: '');
+      }
       await _tryRestore(acct);
     } catch (e) {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Sign-in failed: $e');
     }
+  }
+
+  /// Identity==token gate for the binding points (faceId + claim + org
+  /// all derive from [state.account]): refuses when the Firebase session
+  /// moved under an opened draft, adopting the current account fresh so a
+  /// stale-account claim can never file. Returns the live account when it
+  /// matches the draft, null after refusing (fail-closed).
+  SignedAccount? _requireLiveAccount() {
+    SignedAccount? current;
+    try {
+      current = _auth.current;
+    } catch (_) {
+      return state.account;
+    }
+    final prev = state.account?.email.toLowerCase() ?? '';
+    final next = current?.email.toLowerCase() ?? '';
+    if (prev == next) return state.account;
+    _keys = null;
+    _faceId = null;
+    _restoredRoll = null;
+    if (current == null) {
+      state = const EnrollmentState(
+          phase: EnrollPhase.error,
+          message: 'Signed out — sign in again to enroll this device.');
+    } else {
+      state = EnrollmentState(
+          phase: EnrollPhase.error,
+          account: current,
+          message: 'Signed-in account changed to ${current.email} — '
+              'restart enrollment as the new account '
+              '(previous progress was cleared).');
+    }
+    return null;
   }
 
   Future<void> _tryRestore(SignedAccount acct) async {
@@ -312,6 +379,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// faceScore 0). Mobile-only: records-only devices fail closed via the
   /// verifier (never a mock pass).
   Future<void> enrollFace(List<String> imagePaths) async {
+    // Binding point (faceId derives from the account): refuse a draft the
+    // session moved under — a stale-account faceId must never enroll.
+    if (_requireLiveAccount() == null) return;
     if (state.phase != EnrollPhase.keyReady &&
         state.phase != EnrollPhase.error) {
       state = state.copyWith(
@@ -408,6 +478,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// enrolled as another Gmail. Racing devices lose atomically: exactly
   /// one claim wins. Carries `org` into every new record (Track 1).
   Future<LinkedIdentity?> upload() async {
+    // Binding point (claim email + org derive from the account): refuse a
+    // draft the session moved under — a stale-account claim must never
+    // file, even if the UI raced the switch.
+    final live = _requireLiveAccount();
+    if (live == null) return null;
     final acct = state.account;
     final kp = _keys;
     final faceId = _faceId;

@@ -26,6 +26,7 @@ import 'package:proximity_ble/ble.dart';
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
+import '../../core/enrollment.dart';
 import '../../core/sync_hook.dart';
 import '../../mode.dart';
 
@@ -57,9 +58,10 @@ Future<SignedAccount?> entrySignIn(WidgetRef ref) async {
   return acct;
 }
 
-/// Sign-out: auth session + role cache + linked identity all go, so the
-/// next launch (or the account stream) lands on Welcome — never on the
-/// previous account's home.
+/// Sign-out: auth session + role cache + linked identity + enrollment
+/// draft all go, so the next launch (or the account stream) lands on
+/// Welcome — never on the previous account's home, and the enroll card
+/// can never rebuild from a stale preseed.
 Future<void> entrySignOut(WidgetRef ref) async {
   String email = '';
   try {
@@ -69,6 +71,12 @@ Future<void> entrySignOut(WidgetRef ref) async {
   await ref.read(authServiceProvider).signOut();
   try {
     await ref.read(deviceStoreProvider).clearRole();
+  } catch (_) {}
+  // Enrollment draft holds its own cached identity (preseed/account +
+  // roll + key + face): reconcile to the now-null session so a later
+  // sign-in as another Gmail starts clean.
+  try {
+    await ref.read(enrollmentControllerProvider.notifier).refreshFromAuth();
   } catch (_) {}
   // Post-await provider touch: never throw on a dead screen.
   try {
