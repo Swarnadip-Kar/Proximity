@@ -70,7 +70,16 @@ final stillCapturerProvider =
 /// renders + repaints on progress.
 class FaceCaptureOvalOverlay extends StatelessWidget {
   final double progress; // 0..1 (angle progress inside this capture)
-  const FaceCaptureOvalOverlay({super.key, this.progress = 0});
+
+  /// Follow-the-dot guide anchor (unit oval space: rim radius = 1 per
+  /// axis, centre = Offset.zero). Null hides the dot — the marking-time
+  /// default, so the check screen's pixels are unchanged. Guided
+  /// enrollment passes the current missing bucket's anchor (Tobii-style
+  /// "follow the dot": one stable target, user turns toward it); the dot
+  /// travels between anchors as buckets complete.
+  final Offset? dotUnit;
+  const FaceCaptureOvalOverlay(
+      {super.key, this.progress = 0, this.dotUnit});
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +88,7 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
         painter: _OvalOverlayPainter(
           progress: progress,
           color: Theme.of(context).colorScheme.primary,
+          dotUnit: dotUnit,
         ),
         child: const SizedBox.expand(),
       ),
@@ -89,7 +99,9 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
 class _OvalOverlayPainter extends CustomPainter {
   final double progress;
   final Color color;
-  _OvalOverlayPainter({required this.progress, required this.color});
+  final Offset? dotUnit;
+  _OvalOverlayPainter(
+      {required this.progress, required this.color, this.dotUnit});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -133,11 +145,34 @@ class _OvalOverlayPainter extends CustomPainter {
             ..strokeCap = StrokeCap.round
             ..color = color);
     }
+    // Follow-the-dot guide (guided enrollment only; null at marking
+    // time): a bright green dot with a white halo riding the oval at the
+    // current missing bucket's anchor — centre target sits at the oval
+    // centre ("face here, look straight"), turns sit on the rim toward
+    // the turn. Two flat circles, no blur (60fps note above holds).
+    final dot = dotUnit;
+    if (dot != null) {
+      final c = Offset(
+        rect.center.dx + dot.dx * rect.width / 2,
+        rect.center.dy + dot.dy * rect.height / 2,
+      );
+      canvas.drawCircle(
+          c,
+          15,
+          Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: 0.9));
+      canvas.drawCircle(
+          c, 10, Paint()..color = const Color(0xFF4ADE80)); // == markedDark
+      // (green-400, ProxStateColors.markedDark — hard-coded because a
+      // CustomPainter has no BuildContext for the brightness lookup; the
+      // dark value reads on live camera imagery in both themes).
+    }
   }
 
   @override
   bool shouldRepaint(_OvalOverlayPainter old) =>
-      old.progress != progress || old.color != color;
+      old.progress != progress ||
+      old.color != color ||
+      old.dotUnit != dotUnit;
 }
 
 /// Still-capture sheet. Pops `List<String>` (captured image paths, oldest

@@ -30,41 +30,56 @@ abstract final class EnrollLog {
   static void sync(String msg) => BleLog.log('SYNC', msg);
 }
 
-/// Guided-enrollment angle instructions, in [faceEnrollSlots] capture order.
-/// Short imperative copy per angle (Android-face-unlock-style): what to do
-/// with the head, held near-frontal throughout. Each angle is REALLY gated
-/// at capture (PoseGate euler windows on the still) — the copy tells the
-/// user what the gate will check, it never pretends detection that isn't
-/// there. The plugin owns match tolerance, not the angles.
+/// Guided-enrollment imperatives, in [faceEnrollSlots] order. ONE short
+/// stable line per bucket — this is the entire user-facing guidance
+/// vocabulary (the overlay line names the latched target; details live
+/// nowhere — narrating more is what flickered).
 class EnrollAngleInstruction {
   final String title;
-  final String detail;
-  const EnrollAngleInstruction(this.title, this.detail);
+  const EnrollAngleInstruction(this.title);
 }
 
 const enrollAngleInstructions = <EnrollAngleInstruction>[
-  EnrollAngleInstruction(
-    'Look straight',
-    'Face the camera — eyes on the lens, face centred in the oval, hold still.',
-  ),
-  EnrollAngleInstruction(
-    'Turn slightly left',
-    'Small turn left — keep both eyes visible to the camera, hold still.',
-  ),
-  EnrollAngleInstruction(
-    'Turn slightly right',
-    'Small turn right — keep both eyes visible to the camera, hold still.',
-  ),
-  EnrollAngleInstruction(
-    'Tilt slightly up',
-    'Chin up just a touch — eyes still on the lens, hold still.',
-  ),
-  EnrollAngleInstruction(
-    'Tilt slightly down',
-    'Chin down just a touch — eyes still on the lens, hold still.',
-  ),
+  EnrollAngleInstruction('Look straight'),
+  EnrollAngleInstruction('Turn slightly left'),
+  EnrollAngleInstruction('Turn slightly right'),
+  EnrollAngleInstruction('Tilt slightly up'),
+  EnrollAngleInstruction('Tilt slightly down'),
 ];
 
+/// Follow-the-dot guide anchors, in unit oval space (rim radius = 1 per
+/// axis, centre = Offset.zero — matches FaceCaptureOvalOverlay.dotUnit).
+///
+/// Provenance (researched, not invented):
+/// - Apple Face ID enrollment: ONE stable imperative ("move your head to
+///   complete the circle") + rim progress turning green as angles capture
+///   (Apple Support, "Use Face ID"). No per-frame narration.
+/// - Tobii eye-tracker calibration: "follow the dot", one small animated
+///   target shown one point at a time; 5 points is the sweet spot; the
+///   animation is slow enough to settle on before capture; missing points
+///   are repeated; focus switches only on completion
+///   (developer.tobiipro.com, Calibration).
+/// - Hysteresis/deadband (thermostat; Meta Oculus pose-threshold docs):
+///   guidance output has MEMORY — it changes only on committed events
+///   (bucket fill / stale-budget elapse), never on per-frame input.
+/// Turns sit on the rim toward the turn; centre sits at the oval centre
+/// ("face here, look straight"). The session tweens the dot between
+/// anchors as buckets complete — that travel IS the "revolving" motion.
+Offset guideDotUnit(String slot) {
+  switch (slot) {
+    case 'left':
+      return const Offset(-1, 0);
+    case 'right':
+      return const Offset(1, 0);
+    case 'up':
+      return const Offset(0, -1);
+    case 'down':
+      return const Offset(0, 1);
+    case 'centre':
+    default:
+      return Offset.zero;
+  }
+}
 /// Angle progress dots: one dot per enrollment still (filled = captured,
 /// ring = current, dim = upcoming). Plain containers on the shared spacing
 /// scale — static, timer-free (unlike the pulsing [ProxDot]), so tests
