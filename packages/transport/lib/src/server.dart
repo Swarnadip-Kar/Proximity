@@ -1,5 +1,7 @@
 // Professor HTTPS server (shelf, foreground): §6.3 endpoints.
 //
+//   GET  /                human status page (no auth, no PII — class,
+//                          window state, counts; diagnostics only)
 //   GET  /window          {class, sessionID, windowID, j_now, pkP, sigP,
 //                          tlsFp, display}
 //   POST /prove           {ID,windowID,j,C_j,Sig_s,faceScore,peerW,roll,
@@ -138,6 +140,7 @@ class ProxServer {
   }
 
   int get port => _http?.port ?? -1;
+  String get boundAddress => _http?.address.address ?? '?';
   bool get windowOpen => _window != null;
   WindowParams? get window => _window;
   String get bearer => _bearer;
@@ -292,10 +295,39 @@ class ProxServer {
       if (req.method == 'GET' && path.length == 1 && path[0] == 'export') {
         return _guarded(req, _getExport);
       }
+      // Human reachability page on the SAME port (deliberately not a
+      // second port: no extra bind, no extra firewall hole, no new
+      // attack surface). No auth, no PII — class label (already in
+      // beacons), window state, counts, server time. If a phone browser
+      // loads this, unicast reaches the host; if not, the break is the
+      // network/firewall, not the app. Unrate-limited by design: a
+      // diagnostic must answer even under prove load.
+      if (req.method == 'GET' && path.isEmpty) {
+        return _statusPage();
+      }
       return _json({'error': 'not-found'}, 404);
     } catch (e) {
       return _json({'error': '$e'}, 500);
     }
+  }
+
+  /// Human status page (see route comment): class label is escaped
+  /// (professor-typed); roster data never leaves guarded endpoints.
+  Response _statusPage() {
+    const esc = HtmlEscape();
+    final cls = esc.convert(classLabel);
+    final state = windowOpen ? 'window OPEN — marking' : 'idle — waiting room open';
+    final body = '<!doctype html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Proximity attendance — running</title></head><body>'
+        '<h1>Proximity attendance system running</h1>'
+        '<p>Class: <b>$cls</b><br>State: <b>$state</b><br>'
+        'Waiting: <b>$waitingCount</b><br>'
+        'Server time (UTC): <b>${DateTime.now().toUtc().toIso8601String()}</b></p>'
+        '<p>Students mark attendance in the Proximity app (same WiFi + '
+        'Bluetooth on). This page only proves your device reaches the host.</p>'
+        '</body></html>';
+    return Response.ok(body, headers: {'content-type': 'text/html'});
   }
 
   Response _getWindow() {

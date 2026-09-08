@@ -16,6 +16,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -83,6 +85,19 @@ abstract class HostDriver {
   /// when several show up, e.g. VPN vs WiFi). Next beacons use it.
   Future<void> setAnnounceHost(String ip);
 
+  /// Re-resolves NICs and heals a stale announce IP (late WiFi DHCP).
+  /// Called on window start and by the idle poll while hosting.
+  Future<void> refreshAnnounceIps();
+
+  /// Live announce state for UI sync after a refresh.
+  String get announceIp;
+  List<String> get announceCandidates;
+
+  /// Non-blocking LAN reachability warning from the last startHosting
+  /// self-check (null = reachable). The Take screen renders it under the
+  /// address line so a firewall-blocked first start is honest, not silent.
+  String? get lanSelfCheckWarning;
+
   /// Updates the professor display name announced with the class.
   Future<void> setDisplayName(String name);
   Future<void> endHosting();
@@ -123,7 +138,19 @@ class RealHostDriver implements HostDriver {
 
   /// Single-flight guard: concurrent startHosting calls (double-tap,
   /// re-entry) must not interleave server/announcer/engine setup.
+  /// Also serializes against fire-and-forget endHosting from dispose:
+  /// without this the first startHosting after a quick re-entry binds
+  /// port 8443 while the previous HttpServer.close is still in flight
+  /// (EADDRINUSE on first tap, success only on the second).
   bool _hostingBusy = false;
+  Future<void> _lifecycle = Future.value();
+
+  Future<T> _serial<T>(Future<T> Function() fn) {
+    final next = _lifecycle.then((_) => fn());
+    // Keep the chain alive across failures; callers still see their error.
+    _lifecycle = next.then((_) {}, onError: (_) {});
+    return next;
+  }
   TallyStore _tally = TallyStore();
   Uint8List? _sessionId;
   ed.KeyPair? _profKeys;
@@ -199,19 +226,87 @@ class RealHostDriver implements HostDriver {
   }
 
   @override
-  Future<HostSession> startHosting({required String classLabel, int port = 8443}) async {
-    if (_hostingBusy) throw StateError('Already starting hosting.');
-    _hostingBusy = true;
-    try {
-      return await _startHostingInner(classLabel: classLabel, port: port);
-    } finally {
-      _hostingBusy = false;
+  Future<HostSession> startHosting({required String classLabel, int port = 8443}) {
+    return _serial(() async {
+      if (_hostingBusy) throw StateError('Already starting hosting.');
+      _hostingBusy = true;
+      try {
+        return await _startHostingInner(classLabel: classLabel, port: port);
+      } finally {
+        _hostingBusy = false;
+      }
+    });
+  }
+
+  /// Binds the HTTPS server with retries: a quick re-entry after back-nav
+  /// (or a lingering OS socket) leaves port 8443 busy for ~hundreds of ms.
+  /// Without this the FIRST Take open throws EADDRINUSE and only the second
+  /// navigation hosts — the student meanwhile probes a dead hint.
+  Future<void> _bindWithRetry(ProxServer server, int port) async {
+    Object? lastErr;
+    for (var attempt = 1; attempt <= 6; attempt++) {
+      try {
+        await server.start(port: port);
+        return;
+      } catch (e) {
+        lastErr = e;
+        final msg = '$e';
+        final busy = msg.contains('Address already in use') ||
+            msg.contains('EADDRINUSE') ||
+            e is SocketException;
+        BleLog.log('NET',
+            'HTTPS bind attempt $attempt/6 on $port failed ($e)${busy ? ' — retrying…' : ''}');
+        if (!busy || attempt == 6) rethrow;
+        // Force any lingering socket closed, then back off briefly.
+        try {
+          await server.stop();
+        } catch (_) {}
+        await Future.delayed(Duration(milliseconds: 150 * attempt));
+      }
     }
+    throw StateError('HTTPS bind failed: $lastErr');
+  }
+
+  /// Loopback readiness gate: the socket accepting ≠ TLS serving. Poll
+  /// 127.0.0.1/window until it answers 200 (self-signed accepted) so the
+  /// BLE IP-hint + UDP beacons below never air before the server actually
+  /// answers — students must never probe a "still starting" host.
+  Future<void> _awaitHttpsReady(int port) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    Object? lastErr;
+    while (DateTime.now().isBefore(deadline)) {
+      HttpClient? client;
+      try {
+        client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+        client.badCertificateCallback = (cert, h, p) => true;
+        final req = await client
+            .getUrl(Uri(scheme: 'https', host: '127.0.0.1', port: port, path: '/window'))
+            .timeout(const Duration(seconds: 1));
+        final resp = await req.close().timeout(const Duration(seconds: 1));
+        final body =
+            await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 1));
+        if (resp.statusCode == 200) {
+          try {
+            jsonDecode(body);
+          } catch (_) {}
+          return;
+        }
+        lastErr = StateError('HTTP ${resp.statusCode}');
+      } catch (e) {
+        lastErr = e;
+      } finally {
+        try {
+          client?.close(force: true);
+        } catch (_) {}
+      }
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+    throw StateError('HTTPS not ready on $port: $lastErr');
   }
 
   Future<HostSession> _startHostingInner(
       {required String classLabel, int port = 8443}) async {
-    await endHosting();
+    await _endHostingInner();
     final stored = await _store.readEnrollment();
     String manual = '';
     try {
@@ -251,12 +346,32 @@ class RealHostDriver implements HostDriver {
       tally: _tally,
       sessionOrg: sessionOrg,
     );
-    await _server!.start(port: port);
+    await _bindWithRetry(_server!, port);
+    // Readiness BEFORE any hint/beacon: the port must answer TLS locally.
+    // On failure tear the half-started server down so the next attempt
+    // (or re-entry) binds clean — never advertise a dead host:port.
+    try {
+      await _awaitHttpsReady(_server!.port);
+    } catch (e) {
+      BleLog.log('NET', 'HTTPS readiness FAILED: $e');
+      try {
+        await _server?.stop();
+      } catch (_) {}
+      _server = null;
+      rethrow;
+    }
     _allIps = await _lanIps();
     _announceIp = _allIps.first;
     final ip = _announceIp;
-    BleLog.log('NET', 'HTTPS up on port ${_server!.port}');
-    BleLog.log('LAN', 'announcing as $ip (${_allIps.length} NICs)');
+    BleLog.log('NET',
+        'HTTPS up on ${_server!.boundAddress}:${_server!.port} (ready)');
+    BleLog.log('LAN',
+        'announcing as $ip (${_allIps.length} NICs: ${_allIps.join(", ")})');
+    BleLog.log('LAN',
+        'reachability check: open https://$ip:${_server!.port}/ in a phone browser (accept the self-signed cert once) — page loads = unicast reaches this host');
+    // First-start honesty: loopback-ready ≠ LAN-reachable (firewall /
+    // wrong NIC). Self-probe the aired IP before students do.
+    await _lanSelfCheck(ip, _server!.port);
     // Air format per platform: v2 packets (challenge+IP) where the stack
     // delivers manufacturer data intact (Android/Linux); legacy v1
     // single-UUID ticks alternating challenge and IP-hint where it doesn't
@@ -401,10 +516,62 @@ class RealHostDriver implements HostDriver {
     }
   }
 
+  @override
+  String get announceIp => _announceIp;
+
+  @override
+  List<String> get announceCandidates => List.of(_allIps);
+
+  /// Last LAN self-check failure (null = reachable). Surfaced in the Take
+  /// UI as a non-blocking warning: loopback-ready but own-LAN-IP Timeout
+  /// means macOS Firewall is dropping inbound (allow the app) or AP client
+  /// isolation — students will time out exactly like the student log shows.
+  String? lanSelfCheckError;
+
+  @override
+  String? get lanSelfCheckWarning => lanSelfCheckError;
+
+  /// Best-effort LAN self-check: GET our own announce IP (not loopback) to
+  /// catch OS firewall / wrong-NIC picks on FIRST start. Never throws: a
+  /// failure logs AND arms [lanSelfCheckError] for the UI — students would
+  /// see the same TimeoutException, so the prof screen must say so instead
+  /// of a clean "HTTPS up".
+  Future<void> _lanSelfCheck(String ip, int port) async {
+    lanSelfCheckError = null;
+    if (ip == 'this-device' || ip.startsWith('127.')) return;
+    HttpClient? client;
+    try {
+      client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      client.badCertificateCallback = (cert, h, p) => true;
+      final req = await client
+          .getUrl(Uri(scheme: 'https', host: ip, port: port, path: '/window'))
+          .timeout(const Duration(seconds: 2));
+      final resp = await req.close().timeout(const Duration(seconds: 2));
+      await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 2));
+      if (resp.statusCode != 200) {
+        lanSelfCheckError =
+            'Students on WiFi can\'t reach https://$ip:$port from this Mac (HTTP ${resp.statusCode}) — check Firewall / announce-IP pick.';
+        BleLog.log('NET', 'LAN self-check $ip:$port HTTP ${resp.statusCode} — $lanSelfCheckError');
+      }
+    } catch (e) {
+      final short = e is TimeoutException
+          ? 'timed out (SYN dropped: macOS Firewall blocking inbound, or AP client isolation)'
+          : '$e';
+      lanSelfCheckError =
+          'Students on WiFi can\'t reach https://$ip:$port from this Mac itself ($short) — allow incoming connections for this app (System Settings → Network → Firewall) or pick another announce IP.';
+      BleLog.log('NET', 'LAN self-check $ip:$port FAILED ($e) — $lanSelfCheckError');
+    } finally {
+      try {
+        client?.close(force: true);
+      } catch (_) {}
+    }
+  }
+
   /// Re-resolves local IPs and switches the announce host when the current
   /// one vanished or a better (non-VPN, non-cellular) candidate appeared.
   /// Never overrides an explicit professor pick of a still-present IP —
   /// only heals stale (gone) or mobile-data addresses.
+  @override
   Future<void> refreshAnnounceIps() async {
     List<LanAddress> cands;
     try {
@@ -536,17 +703,40 @@ class RealHostDriver implements HostDriver {
   }
 
   @override
-  Future<void> endHosting() async {
+  Future<void> endHosting() => _serial(_endHostingInner);
+
+  /// Inner teardown: snapshot + null the live refs SYNCHRONOUSLY before
+  /// any await, so a concurrent dispose/start pair can't double-close or
+  /// rebind while the old socket is still closing. Only logs 'serve down'
+  /// when something was actually hosting (kills the misleading
+  /// radio-stop/serve-down lines on every fresh Take open).
+  Future<void> _endHostingInner() async {
     _scanHold?.cancel();
-    await _announcer?.stop();
+    _scanHold = null;
+    final announcer = _announcer;
     _announcer = null;
+    final server = _server;
+    _server = null;
+    final wasHosting = announcer != null || server != null;
+    if (announcer != null) {
+      try {
+        await announcer.stop();
+      } catch (_) {}
+    }
     try {
       await _engine.stop();
     } catch (_) {}
-    _engine.clearServerIp();
-    await _server?.stop();
-    _server = null;
-    BleLog.log('TRANSPORT', 'serve down (hosting ended)');
+    try {
+      _engine.clearServerIp();
+    } catch (_) {}
+    if (server != null) {
+      try {
+        await server.stop();
+      } catch (_) {}
+    }
+    if (wasHosting) {
+      BleLog.log('TRANSPORT', 'serve down (hosting ended)');
+    }
     _tally = TallyStore();
     _sessionId = null;
     _profKeys = null;
@@ -701,6 +891,18 @@ class FakeHostDriver implements HostDriver {
 
   @override
   Future<void> setAnnounceHost(String ip) async {}
+
+  @override
+  Future<void> refreshAnnounceIps() async {}
+
+  @override
+  String get announceIp => 'demo';
+
+  @override
+  List<String> get announceCandidates => const ['demo'];
+
+  @override
+  String? get lanSelfCheckWarning => null;
 
   @override
   Future<void> setDisplayName(String name) async {}

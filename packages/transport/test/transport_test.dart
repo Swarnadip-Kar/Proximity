@@ -47,6 +47,31 @@ void main() {
     expect(a.keyPem, contains('PRIVATE KEY'));
   });
 
+  test('GET / status page: reachable, no auth, no PII', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final server = await makeServer(prof: prof, stu: stu);
+    final client = HttpClient()
+      ..badCertificateCallback = (cert, host, port) => true;
+    try {
+      final req = await client.getUrl(Uri(
+          scheme: 'https', host: '127.0.0.1', port: server.port, path: '/'));
+      final resp = await req.close();
+      expect(resp.statusCode, 200);
+      expect(resp.headers.contentType?.mimeType, 'text/html');
+      final body = await resp.transform(utf8.decoder).join();
+      expect(body, contains('Proximity attendance system running'));
+      expect(body, contains('CS201-Room301'));
+      expect(body, contains('window OPEN'));
+      // Roster data never leaves guarded endpoints.
+      expect(body, isNot(contains(_email)));
+      expect(body, isNot(contains('Sig_s')));
+    } finally {
+      client.close(force: true);
+      await server.stop();
+    }
+  });
+
   test('full loop: window -> prove -> confirmed -> ACK verifies', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
