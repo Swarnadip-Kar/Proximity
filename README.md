@@ -7,8 +7,10 @@ sign-in and records read everywhere (macOS/Windows/Linux/web, org-scoped),
 and professor hosting runs on any platform. Plus a records-only web build.
 Foreground-only during windows — no background-attendance promises on any
 OS. Trust is tiered, not identical: hardware-backed mobile (FULL/STD),
-stale-attestation grace (STALE), and records-only devices (NONE, manual
-path only) — see design §3.4/§4.
+stale-attestation grace (STALE), software-key mobile (NONE — no tier
+claimed, marks via the flagged `device-none-fallback` until HW keys
+ship), and records-only devices (no key at all, manual path only) — see
+design §3.4/§4.
 
 Design source of truth: [`PROXIMITY_DESIGN.md`](PROXIMITY_DESIGN.md).
 This README describes the system as built.

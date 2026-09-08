@@ -109,11 +109,12 @@ most once per 7 days); manual attendance covers any gap.
 3. Generate keys (dual-key, Tracks 2+3):
    - `SKey` Ed25519 (the signing key), sealed to `DKey` (AES-GCM `PXK1`
      envelope — ciphertext only at rest).
-   - `DKey` P-256: StrongBox→TEE / Secure Enclave on HW backends;
-     software/fake backends (level `none`, dev/test only) can never
-     confirm at a real host. **Residual: the HW keystore/Enclave backend
-     and its enrollment-time material persistence are deferred —
-     production DKeys are software until it lands (§13).**
+    - `DKey` P-256: StrongBox→TEE / Secure Enclave on HW backends;
+      software/fake backends (level `none`: no tier claimed — live proofs
+      confirm via the flagged `device-none-fallback`). **Residual: the HW
+      keystore/Enclave backend and its enrollment-time material
+      persistence are deferred — production DKeys are software until it
+      lands (§13).**
    - The install is the device identity: an app-install UUID in secure
      storage (clones/dual-apps get their own).
 4. Face enrollment on-device (§4). The plugin store is keyed by
@@ -141,10 +142,14 @@ stays source of truth), not key distribution.
   `{score, faceValidAt, verifierVer}` (hash-bound, no images leave the
   device). Professor verifies against the presented `PK_s` (TOFU per
   class, no roster lookup), checks `score >= T`, `faceValidAt` fresh,
-  `verifierVer` allowlisted, and evaluates the device tier
-  (`evaluateDeviceProof`: FULL/STD fresh → confirmed, FULL/STD past
-  `attestedUntil` within the 14d grace → confirmed+banner, NONE/expired/
-  bad-dSig → device-unproven → manual path).
+  `verifierVer` allowlisted, then: FULL/STD fresh → confirmed, FULL/STD
+  past `attestedUntil` within the 14d grace → confirmed+banner,
+  expired/bad-dSig → device-unproven → manual path, and level NONE →
+  graceful fallback (same ticket-bound `Sig_s` + face + sighting checks,
+  no tier claimed, `dSig` not gated) → confirmed with a
+  `device-none-fallback` flag. The fallback exists because HW keys don't
+  ship yet — production is always `SoftwareDeviceKey`/NONE, and gating it
+  hard-invalid stranded all live marking.
 - Professor to student: `Sign(SK_p, ...)` over the session descriptor,
   verified against the live window fetch (rotation-tolerant). Blocks
   Evil-Twin access points.
@@ -179,8 +184,11 @@ What still holds without it (all offline, all tested):
 - Sealed SKey: on hardware keys, file copies are ciphertext without the
   silicon DKey (restore detected → re-enroll). On software keys
   (everything shipped today — `SoftwareDeviceKey`, level NONE) the seal
-  travels with its files, which is exactly why software keys verify as
-  device-unproven and route to the manual path rather than confirming.
+  travels with its files: that is exactly why software keys claim NO tier
+  and confirm only via the flagged `device-none-fallback` rather than as
+  FULL/STD. The fallback flag (plus the ticket anomaly flags and the
+  double-pkD audit below) is the honest record that no silicon stood
+  behind the mark.
 - Face-ticket anomaly flags (`detectFaceAnomalies`: saturated scores,
   future/reused stamps, unknown verifier, version flapping) ride every
   proof for professor-side visibility.
@@ -188,11 +196,14 @@ What still holds without it (all offline, all tested):
   the offline double-pkD audit (`findDoublePkD` / `auditDoublePkD`):
   a copied identity used on two installs leaves a permanent,
   attributable trace in the synced bindings.
-- Live marking itself never depended on the endpoint: legacy unbound
-  proofs verify today exactly as before; bound proofs confirm only at
-  FULL/STD with valid dSig, which requires the HW keys that do not ship
-  yet — so the binding story today is architecture + enforced NONE-tier
-  routing, with confirmation reserved for hardware that earns it.
+- Live marking works on both shapes: legacy unbound proofs verify
+  exactly as before, and bound-NONE proofs (what every genuine mobile
+  student sends today) confirm via the flagged fallback — same
+  ticket-bound `Sig_s`, face, org, sighting and channel-binding gates,
+  only the device tier skipped. FULL/STD confirmation is reserved for the
+  HW keys that earn it; until they ship, the binding story is the ticket
+  binding + fallback flag + double-pkD audit, not a hard NONE gate (which
+  stranded all live marking — see fix note 2026-09-08).
 
 Remains (scoped feature work, not stubs): on-device HW key production
 by the keystore/Enclave track (the step that makes FULL/STD mean
@@ -712,8 +723,10 @@ one-liner idioms and intentional seams (below).
    then at the claim layer.** No keystore/Enclave backend yet →
    DKey level `none` in practice; no server re-check exists at all
    (§3.4), so a claimed FULL/STD is consistency-checked, never proven.
-   Anti-clone strength today = sealed envelope + install UUID + 7d move
-   bound + offline double-pkD audit, not silicon.
+    Anti-clone strength today = sealed envelope + install UUID + 7d move
+    bound + offline double-pkD audit, not silicon. Live NONE marks carry
+    the `device-none-fallback` flag so the lack of silicon stays visible
+    per proof.
 3. **Network failure modes:** isolating APs kill UDP (measured 0/5 on
    institute /18) → BLE hint + manual IP carry join; the /24 sweep was
    deleted for kicking phones off WiFi; hotspot is excluded by design
