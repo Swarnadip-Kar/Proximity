@@ -550,7 +550,7 @@ class RealHostDriver implements HostDriver {
       await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 2));
       if (resp.statusCode != 200) {
         lanSelfCheckError =
-            'Students on WiFi can\'t reach https://$ip:$port from this Mac (HTTP ${resp.statusCode}) — check Firewall / announce-IP pick.';
+            'Students on WiFi can\'t reach https://$ip:$port from this Mac (HTTP ${resp.statusCode}) — check Firewall / announce-IP pick, and VPN off (VPNs capture LAN traffic even to your own IP).';
         BleLog.log('NET', 'LAN self-check $ip:$port HTTP ${resp.statusCode} — $lanSelfCheckError');
       }
     } catch (e) {
@@ -558,7 +558,7 @@ class RealHostDriver implements HostDriver {
           ? 'timed out (SYN dropped: macOS Firewall blocking inbound, or AP client isolation)'
           : '$e';
       lanSelfCheckError =
-          'Students on WiFi can\'t reach https://$ip:$port from this Mac itself ($short) — allow incoming connections for this app (System Settings → Network → Firewall) or pick another announce IP.';
+          'Students on WiFi can\'t reach https://$ip:$port from this Mac itself ($short) — allow incoming connections for this app (System Settings → Network → Firewall), pick another announce IP, or turn VPN off (a VPN tunnel blocks LAN traffic even to your own IP).';
       BleLog.log('NET', 'LAN self-check $ip:$port FAILED ($e) — $lanSelfCheckError');
     } finally {
       try {

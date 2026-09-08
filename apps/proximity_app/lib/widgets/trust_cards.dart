@@ -171,8 +171,9 @@ class HonestUnreachableCard extends StatelessWidget {
                   ? 'Class at $host is unreachable — hosting likely ended. '
                       'Back to the live list; nothing was marked.'
                   : 'Professor unreachable at $host — check the IP and that '
-                      'both devices are on the same WiFi. Nothing was marked; '
-                      'retry when reachable.',
+                      'both devices are on the same WiFi (no VPN on either '
+                      'side: VPNs block local connections even on the same '
+                      'network). Nothing was marked; retry when reachable.',
             ),
           ),
         ],
