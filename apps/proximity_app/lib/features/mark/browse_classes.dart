@@ -142,6 +142,11 @@ class BrowseClassesView extends StatelessWidget {
                   title: live[i].last.classLabel,
                   subtitle: [
                     if (live[i].last.prof.isNotEmpty) live[i].last.prof,
+                    // Hosting professor's Gmail rides the same LAN
+                    // broadcast (owner decision — professional contact).
+                    // Empty on legacy beacons: the card reads as before.
+                    if (live[i].last.profEmail.isNotEmpty)
+                      live[i].last.profEmail,
                     live[i].last.host,
                     if (live[i].last.display.isNotEmpty)
                       'Code ${live[i].last.display}',
