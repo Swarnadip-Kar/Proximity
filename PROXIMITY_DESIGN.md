@@ -506,7 +506,7 @@ manual IP display with type-in join. Endpoints (as built,
 `packages/transport/lib/src/server.dart`):
 
 ```
-GET  /window               -> {class, sessionID, windowID, j_now, PK_p, Cert_p, Sig_p, Sig_p_prev, org, profEmail}
+GET  /window               -> {class, sessionID, windowID, j_now, PK_p, Cert_p, Sig_p, Sig_p_prev, org}
 POST /prove {ID,windowID,j,C_j,Sig_s,faceScore,peerW[, face:{score,faceValidAt,verifierVer}, pkD, dSig, attestationLevel]} -> {confirmed|late|invalid, serverTime, Sig_pAck}
 POST /waiting {email,name,roll}   -> presence heartbeat (waiting room)
 POST /leave {email}               -> explicit leave (count drops at once)
@@ -521,12 +521,7 @@ Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. I
 Discovery detail (as built + field-verified 2026-09): professors announce
 over UDP broadcast `:54545` (2 s beacons, 6 s expiry; targets: limited
 broadcast + /24 and /16 directed guesses; announced IP prefers non-VPN,
-non-cellular WiFi NICs and re-resolves on every window open). Beacons
-carry prof name + org + the hosting professor's Gmail (lowercased, ~199 B
-typical, budget 512 B), and `/window` mirrors the same two identity
-fields — LAN-broadcast by explicit product-owner decision so student live
-cards show professional-contact info (any passive LAN listener can learn
-it; the email never rides BLE air packets). Enterprise
+non-cellular WiFi NICs and re-resolves on every window open). Enterprise
 APs may suppress inter-client broadcasts entirely (measured on institute
 /18 WiFi: all broadcast variants 0/5) — for those networks classes surface
 through the BLE IP hint (Android/Linux profs publish `host:port` in the

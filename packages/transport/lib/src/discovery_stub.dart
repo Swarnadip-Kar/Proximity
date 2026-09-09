@@ -106,9 +106,6 @@ class ClassAnnouncement {
   final bool windowOpen;
   final DateTime ts;
   final String org;
-  /// Mirror of discovery.dart: hosting professor's Gmail, '' = legacy.
-  /// Web never announces (records only).
-  final String profEmail;
   const ClassAnnouncement({
     required this.classLabel,
     required this.host,
@@ -118,7 +115,6 @@ class ClassAnnouncement {
     required this.windowOpen,
     required this.ts,
     this.org = '',
-    this.profEmail = '',
   });
 
   String get key => '$host:$port';

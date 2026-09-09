@@ -2,16 +2,10 @@
 // students listen and render a LIVE list. Pure Dart (dart:io UDP).
 //
 // Announce payload (JSON, ≤512B, broadcast every 2s while hosting):
-//   {v:1, class, host, port, display, prof, profEmail, org, windowOpen, ts}
+//   {v:1, class, host, port, display, prof, org, windowOpen, ts}
 // Students dedup by host:port and expire entries unheard for 6s.
 // BLE RSSI sorting arrives with the radio slice; LAN entries sort by
 // first-seen (stable) until then. Manual IP join stays as fallback.
-//
-// Privacy (explicit product-owner decision, not an oversight): the beacon
-// carries the hosting professor's Gmail (professional-contact information,
-// lowercased). Any passive LAN listener — including wrong-org devices —
-// can learn it. The email rides the LAN broadcast ONLY (never BLE air
-// packets, never the cloud record beyond the existing session sync).
 library;
 
 import 'dart:async';
@@ -225,10 +219,6 @@ class ClassAnnouncement {
   final bool windowOpen;
   final DateTime ts;
   final String org; // prof org domain, '' = legacy beacon
-  /// Hosting professor's Gmail, lowercased, '' = legacy beacon without it.
-  /// LAN-broadcast by explicit owner decision (see file header) so student
-  /// live cards can show professional-contact info.
-  final String profEmail;
   const ClassAnnouncement({
     required this.classLabel,
     required this.host,
@@ -238,7 +228,6 @@ class ClassAnnouncement {
     required this.windowOpen,
     required this.ts,
     this.org = '',
-    this.profEmail = '',
   });
 
   String get key => '$host:$port';
@@ -253,7 +242,6 @@ class ClassAnnouncement {
         'windowOpen': windowOpen,
         'ts': ts.toUtc().toIso8601String(),
         'org': org,
-        'profEmail': profEmail,
       };
 
   static ClassAnnouncement? fromJson(Map<String, dynamic> j) {
@@ -268,9 +256,6 @@ class ClassAnnouncement {
         windowOpen: j['windowOpen'] as bool? ?? false,
         ts: DateTime.parse(j['ts'] as String),
         org: j['org'] as String? ?? '',
-        // Lowercased end to end: the host stamps it lowercased, and beacons
-        // from mixed-case senders normalize here so cards compare cleanly.
-        profEmail: (j['profEmail'] as String? ?? '').trim().toLowerCase(),
       );
     } catch (_) {
       return null;
@@ -542,7 +527,6 @@ Future<ClassAnnouncement?> probeHost(
       windowOpen: r.windowOpen,
       ts: DateTime.now().toUtc(),
       org: r.org,
-      profEmail: r.profEmail,
     );
   } catch (e) {
     onMiss?.call('$host: $e');

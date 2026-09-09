@@ -3,7 +3,7 @@
 //   GET  /                human status page (no auth, no PII — class,
 //                          window state, counts; diagnostics only)
 //   GET  /window          {class, sessionID, windowID, j_now, pkP, sigP,
-//                          tlsFp, display, org, profEmail}
+//                          tlsFp, display, org}
 //   POST /prove           {ID,windowID,j,C_j,Sig_s,faceScore,peerW,roll,
 //                          tlsFp,sigBind} -> {confirmed|late|invalid,...}
 //   GET  /live?token=     counts + rows           (host bearer)
@@ -92,13 +92,6 @@ class ProxServer {
   /// the window/prove path never mutates it.
   String sessionOrg;
 
-  /// Hosting professor's Gmail (lowercased) for the LAN broadcast path
-  /// (beacon + /window). '' = legacy host: student cards render exactly as
-  /// before. Set once at hosting start from the host account email; the
-  /// window/prove path never mutates it. LAN-only by explicit owner
-  /// decision (see discovery.dart header) — never in Sig_p/Sig_s.
-  String sessionProfEmail;
-
   /// Fired for every processed POST /prove (confirmed/late/invalid) so the
   /// host can log the verdict + reason live. Never throws (guarded).
   /// Also fires for org-mismatched /waiting + /manual-request rejects.
@@ -148,7 +141,6 @@ class ProxServer {
     TallyStore? tally,
     this.onProve,
     this.sessionOrg = '',
-    this.sessionProfEmail = '',
   }) : tally = tally ?? TallyStore() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
@@ -384,7 +376,6 @@ class ProxServer {
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
-        'profEmail': sessionProfEmail,
       });
     }
     // j is unbounded (the window closes only when the professor stops it).
@@ -399,7 +390,6 @@ class ProxServer {
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
-        'profEmail': sessionProfEmail,
       });
     }
     final j = jRaw.clamp(0, 1 << 30);
@@ -443,7 +433,6 @@ class ProxServer {
       'tlsFp': hexEncode(tls.fingerprint),
       'display': w.displayCode,
       'org': sessionOrg,
-      'profEmail': sessionProfEmail,
       if (prev != null) ...prev,
     });
   }

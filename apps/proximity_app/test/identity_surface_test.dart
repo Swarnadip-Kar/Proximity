@@ -1,16 +1,14 @@
 // Identity surfacing on cards (presentation only, nothing fetched).
 //
 // Student cards show already-available professor identity: the live tile
-// carries the announcement's prof name + Gmail + org, the waiting room
-// shows the tapped announcement's prof + Gmail + org, and history tiles
-// carry the synced record's org. Professor rows already carried the
-// student email via rosterSubtitle — locked here so a copy tweak can
-// never drop it silently.
+// carries the announcement's prof name + org, the waiting room shows the
+// tapped announcement's prof + org, and history tiles carry the synced
+// record's org. Professor rows already carried the student email via
+// rosterSubtitle — locked here so a copy tweak can never drop it silently.
 //
-// Privacy (explicit product-owner decision): the hosting professor's
-// Gmail rides the LAN broadcast (beacon + /window), so live cards render
-// it when the beacon carries it. Legacy beacons without it render exactly
-// as before — asserting both shapes is part of the contract.
+// Privacy: the professor EMAIL is in no student-side payload (beacon,
+// /window, ClassRecord all carry name/org only), so no card here renders
+// one — asserting its absence is part of the contract.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/host_driver.dart';
@@ -31,7 +29,6 @@ LiveClass _live({
   String prof = 'Prof X',
   bool open = false,
   String org = 'univ.edu',
-  String profEmail = '',
 }) {
   final now = DateTime.now().toUtc();
   return LiveClass(
@@ -44,7 +41,6 @@ LiveClass _live({
       windowOpen: open,
       ts: now,
       org: org,
-      profEmail: profEmail,
     ),
     firstSeen: now,
     lastSeen: now,
@@ -88,17 +84,6 @@ void main() {
     expect(find.textContaining('univ.edu'), findsNothing);
   });
 
-  testWidgets('browse tile shows the broadcast prof Gmail when present',
-      (t) async {
-    await t.pumpWidget(
-        _browse([_live(profEmail: 'prof.x@univ.edu')]));
-    await t.pumpAndSettle();
-    expect(
-      find.text('Prof X · prof.x@univ.edu · 10.0.0.5 · Code KQ7 · univ.edu'),
-      findsOneWidget,
-    );
-  });
-
   testWidgets('waiting room shows tapped announcement prof + org',
       (t) async {
     await t.pumpWidget(MaterialApp(
@@ -130,45 +115,6 @@ void main() {
       ),
     ));
     expect(find.textContaining('Hosted by'), findsNothing);
-  });
-
-  testWidgets('waiting room shows tapped announcement prof + Gmail + org',
-      (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
-          connected: true,
-          roomClass: 'CS201',
-          roomProf: 'Prof X',
-          roomProfEmail: 'prof.x@univ.edu',
-          roomOrg: 'univ.edu',
-          roundMarks: const [],
-          onRequestManual: () {},
-          onCancel: () {},
-        ),
-      ),
-    ));
-    expect(find.text('Hosted by Prof X · prof.x@univ.edu · univ.edu'),
-        findsOneWidget);
-  });
-
-  testWidgets('waiting room without the Gmail renders no dangling separator',
-      (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
-          connected: true,
-          roomClass: 'CS201',
-          roomProf: 'Prof X',
-          roomOrg: 'univ.edu',
-          roundMarks: const [],
-          onRequestManual: () {},
-          onCancel: () {},
-        ),
-      ),
-    ));
-    expect(find.text('Hosted by Prof X · univ.edu'), findsOneWidget);
-    expect(find.textContaining('@'), findsNothing);
   });
 
   testWidgets('history tile shows stamped record org', (t) async {

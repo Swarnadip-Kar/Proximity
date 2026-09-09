@@ -78,12 +78,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   bool _connected = false;
   bool _roomWindowOpen = false;
   String _roomClass = '';
-  // Waiting-room identity (presentation only): prof name + Gmail + org
-  // from the tapped announcement, shown on the waiting card. Typed-IP
-  // joins heard no announcement, so all stay empty there — nothing is
-  // fetched.
+  // Waiting-room identity (presentation only): prof name + org from the
+  // tapped announcement, shown on the waiting card. Typed-IP joins heard
+  // no announcement, so both stay empty there — nothing is fetched.
   String _roomProf = '';
-  String _roomProfEmail = '';
   String _roomOrg = '';
   // Consecutive unreachable room polls: hosting ended under a waiter
   // (End attendance stops the professor server) vs a network blip.
@@ -389,7 +387,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _connected = false;
     _roomMisses = 0;
     _roomProf = '';
-    _roomProfEmail = '';
     _roomOrg = '';
     setState(() {
       phase = StudentPhase.browsing;
@@ -454,7 +451,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               windowOpen: false,
               ts: now,
               org: prev.last.org,
-              profEmail: prev.last.profEmail,
             ),
             firstSeen: prev.firstSeen,
             lastSeen: prev.lastSeen,
@@ -691,16 +687,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// for the professor. When the window opens the room auto-advances.
   /// [immediateProbe] false skips the fast-path check (UDP idle beacons
   /// already say closed); timers still start for presence + polling.
-  /// [profName]/[profEmail]/[org] are the tapped announcement's
-  /// already-available identity, shown on the waiting card (absent =
-  /// typed-IP join with no announcement heard: the card shows the class
-  /// only; round rewaits pass the current values back to preserve them —
-  /// never fetched).
+  /// [profName]/[org] are the tapped announcement's already-available
+  /// identity, shown on the waiting card (absent = typed-IP join with no
+  /// announcement heard: the card shows the class only; round rewaits pass
+  /// the current values back to preserve them — never fetched).
   Future<void> _enterWaitingRoom(ClassBeacon target,
-      {bool immediateProbe = true,
-      String? profName,
-      String? profEmail,
-      String? org}) async {
+      {bool immediateProbe = true, String? profName, String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
     final linked = ref.read(linkedIdentityProvider)!;
@@ -718,7 +710,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _roomWindowOpen = false;
       _roomClass = target.classLabel;
       _roomProf = profName ?? '';
-      _roomProfEmail = profEmail ?? target.profEmail;
       _roomOrg = org ?? target.org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
@@ -1088,7 +1079,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       BleLog.log(ProxLogTags.lan,
           'round over (was $markedDisplay, now ${nextDisplay.isEmpty ? 'closed' : nextDisplay}) → waiting for next');
       await _enterWaitingRoom(target,
-          profName: _roomProf, profEmail: _roomProfEmail, org: _roomOrg);
+          profName: _roomProf, org: _roomOrg);
       return;
     }
     _rewaitAfterRound(target, run, markedDisplay);
@@ -1146,7 +1137,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           rssiDbm: 0,
           displayCode: c.last.display,
           org: c.last.org,
-          profEmail: c.last.profEmail,
         );
         final hp = '${c.last.host}:${c.last.port}';
         setState(() {
@@ -1161,7 +1151,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           _enterWaitingRoom(target,
               immediateProbe: false,
               profName: c.last.prof,
-              profEmail: c.last.profEmail,
               org: c.last.org);
         }
       },
@@ -1240,7 +1229,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     ? _roomClass
                     : (_waitingTarget?.classLabel ?? 'this class'),
                 roomProf: _roomProf,
-                roomProfEmail: _roomProfEmail,
                 roomOrg: _roomOrg,
                 roundMarks: _roundMarks,
                 onRequestManual: _requestManual,

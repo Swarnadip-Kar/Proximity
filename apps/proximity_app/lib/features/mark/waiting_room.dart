@@ -22,10 +22,6 @@ class WaitingRoomView extends StatelessWidget {
   /// room was joined by typed IP — no announcement was heard). surfaced
   /// only, never fetched: the announcement already broadcasts it.
   final String roomProf;
-  /// Hosting professor's Gmail from the tapped announcement ('' = legacy
-  /// beacon or typed-IP join). Same LAN broadcast as [roomProf], by
-  /// explicit owner decision — surfaced only, never fetched.
-  final String roomProfEmail;
   /// Institute org from the announcement / beacon target ('' = legacy).
   final String roomOrg;
   final List<String> roundMarks;
@@ -37,7 +33,6 @@ class WaitingRoomView extends StatelessWidget {
     required this.connected,
     required this.roomClass,
     this.roomProf = '',
-    this.roomProfEmail = '',
     this.roomOrg = '',
     required this.roundMarks,
     required this.onRequestManual,
@@ -77,14 +72,11 @@ class WaitingRoomView extends StatelessWidget {
                 'Attendance has not yet started for\n$roomClass.\nKeep this open — you will continue automatically when the professor starts marking.',
                 textAlign: TextAlign.center,
               ),
-              if (roomProf.isNotEmpty ||
-                  roomProfEmail.isNotEmpty ||
-                  roomOrg.isNotEmpty) ...[
+              if (roomProf.isNotEmpty || roomOrg.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
                   [
                     if (roomProf.isNotEmpty) 'Hosted by $roomProf',
-                    if (roomProfEmail.isNotEmpty) roomProfEmail,
                     if (roomOrg.isNotEmpty) roomOrg,
                   ].join(' · '),
                   textAlign: TextAlign.center,
