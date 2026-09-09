@@ -2,8 +2,14 @@
 //
 //   GET  /                human status page (no auth, no PII — class,
 //                          window state, counts; diagnostics only)
-//   GET  /window          {class, sessionID, windowID, j_now, pkP, sigP,
-//                          tlsFp, display, org}
+//   GET  /window?org=     gated unicast identity (see _getWindow): matching
+//                          or legacy org → {class, sessionID, windowID,
+//                          j_now, pkP, sigP, tlsFp, display, org, profEmail};
+//                          mismatched org → 403 {decision, reason, org}
+//                          (silence: no class, no email, no window).
+//                          profEmail (lowercased host Gmail, '' = unknown)
+//                          travels ONLY here — never in UDP beacons, never
+//                          in BLE air packets, never in Sig_p/Sig_s.
 //   POST /prove           {ID,windowID,j,C_j,Sig_s,faceScore,peerW,roll,
 //                          tlsFp,sigBind} -> {confirmed|late|invalid,...}
 //   GET  /live?token=     counts + rows           (host bearer)
@@ -92,6 +98,15 @@ class ProxServer {
   /// the window/prove path never mutates it.
   String sessionOrg;
 
+  /// Hosting professor's Gmail (lowercased) for the GATED unicast /window
+  /// only (see _getWindow). '' = unknown: the key is omitted so legacy
+  /// payloads stay byte-equal. NEVER in UDP beacons (ClassAnnouncement has
+  /// no such field by construction), NEVER in BLE air packets (IP:port
+  /// only — asserted by tests), never in Sig_p/Sig_s. Set once at hosting
+  /// start from the host account email; the window/prove path never
+  /// mutates it.
+  String sessionProfEmail;
+
   /// Fired for every processed POST /prove (confirmed/late/invalid) so the
   /// host can log the verdict + reason live. Never throws (guarded).
   /// Also fires for org-mismatched /waiting + /manual-request rejects.
@@ -141,6 +156,7 @@ class ProxServer {
     TallyStore? tally,
     this.onProve,
     this.sessionOrg = '',
+    this.sessionProfEmail = '',
   }) : tally = tally ?? TallyStore() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
@@ -287,7 +303,7 @@ class ProxServer {
         if (!_windowLimits.allow(_ip(req))) {
           return _json({'error': 'rate-limited'}, 429);
         }
-        return _getWindow();
+        return _getWindow(req);
       }
       if (req.method == 'POST' && path.length == 1 && path[0] == 'prove') {
         if (!_proveLimits.allow(_ip(req))) {
@@ -366,7 +382,40 @@ class ProxServer {
     return Response.ok(body, headers: {'content-type': 'text/html'});
   }
 
-  Response _getWindow() {
+  /// Gated unicast identity (org-gated discovery — the ONLY wire carrier
+  /// of [sessionProfEmail]).
+  ///
+  /// The student sends its org claim FIRST as `?org=` (the waitlist intent
+  /// for discovery); the professor org-checks it HERE and responds ONLY on
+  /// match — only then does the class (with the prof email) appear on that
+  /// student's phone. Foreign org gets silence: 403 with NO class, NO
+  /// email, NO window material (the `org` echo only feeds the wrong-org
+  /// card for typed-IP joins; beacons already broadcast it). Legacy '' on
+  /// either side passes (migration) and renders as before (email key
+  /// omitted when unknown so payloads stay byte-equal).
+  ///
+  /// Chosen over the POST /waiting reply because /window is already the
+  /// unicast identity path: pinned-TLS GET, idempotent, rate-limited,
+  /// already probed per hinted host (probeHost) and per waiting room
+  /// (probeWindow) — email rides zero new round-trips. /waiting stays a
+  /// presence heartbeat (403 on mismatch) and /prove stays the marking
+  /// gate: both remain as defense-in-depth behind this primary gate.
+  Response _getWindow(Request req) {
+    final queryOrg =
+        (req.url.queryParameters['org'] ?? '').trim().toLowerCase();
+    if (sessionOrg.isNotEmpty &&
+        queryOrg.isNotEmpty &&
+        queryOrg != sessionOrg) {
+      try {
+        onProve?.call(queryOrg, 'invalid', 'org-mismatch');
+      } catch (_) {}
+      return _json({
+        'decision': 'invalid',
+        'reason': 'org-mismatch',
+        'org': sessionOrg,
+      }, 403);
+    }
+    final email = sessionProfEmail.trim().toLowerCase();
     final w = _window;
     if (w == null) {
       return _json({
@@ -376,6 +425,7 @@ class ProxServer {
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
+        if (email.isNotEmpty) 'profEmail': email,
       });
     }
     // j is unbounded (the window closes only when the professor stops it).
@@ -390,6 +440,7 @@ class ProxServer {
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
+        if (email.isNotEmpty) 'profEmail': email,
       });
     }
     final j = jRaw.clamp(0, 1 << 30);
@@ -433,6 +484,7 @@ class ProxServer {
       'tlsFp': hexEncode(tls.fingerprint),
       'display': w.displayCode,
       'org': sessionOrg,
+      if (email.isNotEmpty) 'profEmail': email,
       if (prev != null) ...prev,
     });
   }

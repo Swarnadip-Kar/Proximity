@@ -1,11 +1,34 @@
-// LAN class discovery: professors announce live classes over local WiFi;
-// students listen and render a LIVE list. Pure Dart (dart:io UDP).
+// LAN class discovery: ORG-GATED (see below) professors host live classes
+// over local WiFi; matching-org students list them. Pure Dart (dart:io UDP).
+//
+// Gated model (steady-state, join-anytime):
+//   - Professors advertise CONTINUOUSLY while hosting: 2s UDP beacons
+//     (presence only: class/host/port/display/prof/org/windowOpen/ts —
+//     NEVER the prof email; ClassAnnouncement has no such field by
+//     construction) + BLE IP-hint rotation (host:port only, never email).
+//     One-time announce is NOT sufficient: late joiners depend on the next
+//     beacon/hint arriving within seconds.
+//   - Students solicit CHEAPLY and REPEATABLY: every beacon/hint (and every
+//     15s session refresh) triggers one unicast HTTPS GET /window?org=
+//     carrying the student's org claim FIRST. The professor org-checks it
+//     and responds ONLY on match (or legacy '' either side) — with the
+//     class identity + prof email (gated unicast only). Foreign org gets
+//     silence (403, no class, no email): the class never appears on that
+//     phone. Solicitation is one short TLS GET per host per refresh — no
+//     sweep, no broadcast storm.
+//   - Typed-IP manual join stays as the fallback (same gated GET; matching
+//     or legacy lists, mismatched gets silence). /waiting + /prove
+//     org-rejects stay as defense-in-depth behind this primary gate.
 //
 // Announce payload (JSON, ≤512B, broadcast every 2s while hosting):
 //   {v:1, class, host, port, display, prof, org, windowOpen, ts}
 // Students dedup by host:port and expire entries unheard for 6s.
 // BLE RSSI sorting arrives with the radio slice; LAN entries sort by
 // first-seen (stable) until then. Manual IP join stays as fallback.
+//
+// Privacy: the professor's Gmail travels ONLY in the gated /window
+// unicast response (matching/legacy org). It is NEVER in broadcast UDP
+// beacons and NEVER in BLE air packets (IP:port only — asserted by tests).
 library;
 
 import 'dart:async';
@@ -493,26 +516,33 @@ class ClassListener {
 }
 
 /// Probes one host's HTTPS /window (self-signed host cert accepted).
-/// Returns an announcement when a Proximity host answers, else null.
-/// Single-host unicast only: used for BLE IP-hint probes (one cheap GET
-/// per hinted host:port). There is deliberately no subnet sweep — 254
-/// rapid probes have kicked phones off enterprise WiFi; discovery is
-/// passive (UDP beacons + BLE hints) plus typed IP.
+/// Returns an announcement when a Proximity host answers AND the org gate
+/// passes, else null (silence). [org] is the student's org claim (gated
+/// discovery): matching or legacy org lists; mismatched org gets silence
+/// (never the class, never the email) — the class never appears on that
+/// phone. Single-host unicast only: used for BLE IP-hint probes (one cheap
+/// GET per hinted host:port) and beacon-triggered gated fetches. There is
+/// deliberately no subnet sweep — 254 rapid probes have kicked phones off
+/// enterprise WiFi; discovery is solicited-unicast (beacons/hints trigger
+/// one gated GET each) plus typed IP.
 /// [onMiss] receives the failure reason (surfaced to the system log;
 /// connection-refused on empty hosts is normal and stays quiet unless
-/// [verboseMisses] is set).
+/// [verboseMisses] is set; org-mismatch silence is also reported here so
+/// the log never shows a silent empty list as a mystery).
 Future<ClassAnnouncement?> probeHost(
   String host,
   int port, {
   Duration timeout = const Duration(milliseconds: 900),
   void Function(String reason)? onMiss,
   bool verboseMisses = false,
+  String org = '',
 }) async {
   final client = ProxClient(host: host, port: port);
   String? err;
   try {
     final r = await client
-        .probeWindow(timeout: timeout, onError: (e) => err = '$e')
+        .probeWindow(
+            timeout: timeout, onError: (e) => err = '$e', org: org)
         .timeout(timeout + const Duration(seconds: 2));
     if (!r.reachable) {
       onMiss?.call(err == null ? '$host unreachable' : '$host: $err');

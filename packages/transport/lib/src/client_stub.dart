@@ -24,6 +24,8 @@ class WindowDescriptor {
   final Uint8List tlsFp;
   final String display;
   final String org;
+  /// Mirror of client.dart: gated unicast prof Gmail, '' = unknown/legacy.
+  final String profEmail;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -34,6 +36,7 @@ class WindowDescriptor {
     required this.tlsFp,
     required this.display,
     this.org = '',
+    this.profEmail = '',
   });
 }
 
@@ -76,10 +79,12 @@ class ProxClient {
         String classLabel,
         int waiting,
         String display,
-        String org
+        String org,
+        String profEmail
       })> probeWindow(
           {Duration timeout = const Duration(seconds: 4),
-          void Function(Object e)? onError}) =>
+          void Function(Object e)? onError,
+          String org = ''}) =>
           _web();
 
   Future<void> postWaiting(
@@ -100,7 +105,9 @@ class ProxClient {
 
   Future<String> fetchManualStatus(String email) => _web();
 
-  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge) => _web();
+  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge,
+          {String org = ''}) =>
+      _web();
 
   Future<ProveResult> prove({
     required WindowDescriptor desc,

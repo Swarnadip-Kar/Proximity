@@ -310,11 +310,162 @@ void main() {
         final cj = server.window!.challengeFor(0);
         final desc = await rawClient.fetchWindow(cj);
         expect(desc.org, 'univ.edu');
+        expect(desc.profEmail, '');
       } finally {
         rawClient.close();
       }
     } finally {
       await server.stop();
     }
+  });
+
+  test('gated /window: matching org lists + sees email (idle + open)', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'GATED-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+      sessionOrg: 'univ.edu',
+      sessionProfEmail: 'Prof.K@Univ.edu',
+    );
+    await server.start(port: 0);
+    final port = server.port;
+    try {
+      // Idle: gated probe with the matching claim returns identity + email.
+      final idleClient = ProxClient(host: '127.0.0.1', port: port);
+      try {
+        final idle = await idleClient.probeWindow(org: 'univ.edu');
+        expect(idle.reachable, isTrue);
+        expect(idle.classLabel, 'GATED-TEST');
+        expect(idle.org, 'univ.edu');
+        expect(idle.profEmail, 'prof.k@univ.edu');
+      } finally {
+        idleClient.close();
+      }
+      // Open: probe + full descriptor both carry the gated email.
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'GATED-TEST',
+        ),
+        1,
+      );
+      final hit = await probeHost('127.0.0.1', port, org: 'univ.edu');
+      expect(hit, isNotNull);
+      expect(hit!.org, 'univ.edu');
+      final fetchClient = ProxClient(host: '127.0.0.1', port: port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await fetchClient.fetchWindow(cj, org: 'univ.edu');
+        expect(desc.profEmail, 'prof.k@univ.edu');
+        expect(desc.org, 'univ.edu');
+      } finally {
+        fetchClient.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('gated /window: mismatched org gets silence, never the class', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'GATED-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+      sessionOrg: 'univ.edu',
+      sessionProfEmail: 'prof.k@univ.edu',
+    );
+    await server.start(port: 0);
+    final port = server.port;
+    try {
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'GATED-TEST',
+        ),
+        1,
+      );
+      // Gated probe with the wrong claim: silence (no listing).
+      String? miss;
+      final missHit =
+          await probeHost('127.0.0.1', port, org: 'other.edu', onMiss: (r) => miss = r);
+      expect(missHit, isNull);
+      expect(miss ?? '', contains('org-mismatch'));
+      final probeClient = ProxClient(host: '127.0.0.1', port: port);
+      try {
+        final probe = await probeClient.probeWindow(org: 'other.edu');
+        expect(probe.reachable, isFalse);
+        expect(probe.classLabel, '');
+        expect(probe.profEmail, '');
+        // Full fetch with the wrong claim: structured refusal, never email.
+        final cj = server.window!.challengeFor(0);
+        try {
+          await probeClient.fetchWindow(cj, org: 'other.edu');
+          fail('mismatched fetch must throw');
+        } on StateError catch (e) {
+          expect('$e', contains('org-mismatch'));
+          expect('$e', isNot(contains('prof.k@univ.edu')));
+        }
+      } finally {
+        probeClient.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('gated /window: legacy/empty org renders as before (no email key)', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'LEGACY-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+    );
+    await server.start(port: 0);
+    try {
+      // Legacy host ('' org): any claim passes, no email — renders as before.
+      final hit = await probeHost('127.0.0.1', server.port, org: 'univ.edu');
+      expect(hit, isNotNull);
+      expect(hit!.org, '');
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final probe = await client.probeWindow(org: '');
+        expect(probe.reachable, isTrue);
+        expect(probe.profEmail, '');
+        expect(probe.org, '');
+      } finally {
+        client.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('BLE air packets carry no prof email (IP:port only — assert)', () {
+    // The BLE IP hint is host:port packed beside the discriminator (never
+    // identity): pack + parse round-trips the address with no email field
+    // anywhere on the sighting type.
+    const host = '10.50.37.76';
+    const port = 8443;
+    final uuid = UuidCodec.packIpHint(host, port);
+    expect(uuid, isNotNull);
+    final norm = UuidCodec.normalize(uuid!);
+    expect(norm, isNotEmpty);
+    // Raw air bytes never contain an email marker: no '@', no Gmail.
+    final raw = uuid.toString();
+    expect(raw.contains('@'), isFalse);
+    expect(raw.toLowerCase().contains('gmail'), isFalse);
+    // Beacons likewise have no email field by construction (see key-set
+    // pin above): the announcement type cannot name one.
   });
 }

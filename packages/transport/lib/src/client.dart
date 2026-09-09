@@ -28,6 +28,10 @@ class WindowDescriptor {
   final Uint8List tlsFp;
   final String display;
   final String org; // prof org domain, '' = legacy host
+  /// Hosting professor's Gmail, lowercased, '' = unknown/legacy.
+  /// Gated unicast ONLY (GET /window with a matching or legacy org —
+  /// never UDP beacons, never BLE air packets, never Sig_p/Sig_s).
+  final String profEmail;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -38,6 +42,7 @@ class WindowDescriptor {
     required this.tlsFp,
     required this.display,
     this.org = '',
+    this.profEmail = '',
   });
 }
 
@@ -99,6 +104,9 @@ class ProxClient {
 
   /// Lightweight LAN probe for the waiting room: reachable + windowOpen,
   /// without needing a radio challenge. Accepts the self-signed host cert.
+  /// [org] is the student's org claim (gated discovery): matching or
+  /// legacy org returns the descriptor WITH profEmail; mismatched org
+  /// returns unreachable (gated silence — never the class, never email).
   Future<
       ({
         bool reachable,
@@ -106,16 +114,34 @@ class ProxClient {
         String classLabel,
         int waiting,
         String display,
-        String org
+        String org,
+        String profEmail
       })> probeWindow(
       {Duration timeout = const Duration(seconds: 4),
-      void Function(Object e)? onError}) async {
+      void Function(Object e)? onError,
+      String org = ''}) async {
     try {
       _http.badCertificateCallback = (cert, h, p) => true;
-      final req = await _http.getUrl(_uri('/window')).timeout(timeout);
+      final uri = org.trim().isEmpty
+          ? _uri('/window')
+          : _uri('/window', {'org': org.trim().toLowerCase()});
+      final req = await _http.getUrl(uri).timeout(timeout);
       final resp = await req.close().timeout(timeout);
       final body =
           await resp.transform(utf8.decoder).join().timeout(timeout);
+      if (resp.statusCode == 403) {
+        // Gated silence: org-mismatch — never the class, never the email.
+        onError?.call(StateError('org-mismatch (gated silence)'));
+        return (
+          reachable: false,
+          windowOpen: false,
+          classLabel: '',
+          waiting: 0,
+          display: '',
+          org: '',
+          profEmail: ''
+        );
+      }
       if (resp.statusCode != 200) {
         onError?.call(StateError('HTTP ${resp.statusCode}'));
         return (
@@ -124,7 +150,8 @@ class ProxClient {
           classLabel: '',
           waiting: 0,
           display: '',
-          org: ''
+          org: '',
+          profEmail: ''
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
@@ -135,6 +162,7 @@ class ProxClient {
         waiting: (m['waiting'] as num?)?.toInt() ?? 0,
         display: (m['display'] as String?) ?? '',
         org: (m['org'] as String?) ?? '',
+        profEmail: ((m['profEmail'] as String?) ?? '').trim().toLowerCase(),
       );
     } catch (e) {
       onError?.call(e);
@@ -144,7 +172,8 @@ class ProxClient {
         classLabel: '',
         waiting: 0,
         display: '',
-        org: ''
+        org: '',
+        profEmail: ''
       );
     }
   }
@@ -203,15 +232,17 @@ class ProxClient {
     }
   }
 
-  Future<(int, Map<String, dynamic>)> _get(String path) async {
+  Future<(int, Map<String, dynamic>)> _get(String path,
+      [Map<String, String>? query]) async {
     // TOFU: the self-signed host cert is accepted here AND on POST, but
     // content is signature-verified below (Sig_p over the radio challenge)
     // and channel-bound at POST (sigBind over the live cert fingerprint,
     // checked server-side). A MITM serves a cert whose fingerprint fails
     // both gates, so no pin state is kept across calls.
     _http.badCertificateCallback = (cert, h, p) => true;
-    final req =
-        await _http.getUrl(_uri(path)).timeout(const Duration(seconds: 8));
+    final req = await _http
+        .getUrl(_uri(path, query))
+        .timeout(const Duration(seconds: 8));
     final resp = await req.close().timeout(const Duration(seconds: 8));
     final body = await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     return (resp.statusCode, jsonDecode(body) as Map<String, dynamic>);
@@ -224,9 +255,21 @@ class ProxClient {
   /// previous signature too, and either token verifies (both stay fresh
   /// for a full rotation + drift). Only a token matching NEITHER is a
   /// genuine mismatch — stale air, or a fake professor.
-  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge) async {
-    final (status, body) = await _get('/window');
+  ///
+  /// [org] is the student's org claim (gated discovery): a mismatched org
+  /// throws `org-mismatch:<classOrg>` (never the email, never window
+  /// material) so the caller returns a structured wrong-org receipt
+  /// without sending any proof. Matching or legacy org returns the
+  /// descriptor WITH profEmail (gated unicast only).
+  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge,
+      {String org = ''}) async {
+    final query =
+        org.trim().isEmpty ? null : {'org': org.trim().toLowerCase()};
+    final (status, body) = await _get('/window', query);
     if (status == 429) throw StateError('window rate-limited, retry later');
+    if (status == 403 && body['reason'] == 'org-mismatch') {
+      throw StateError('org-mismatch:${body['org'] ?? ''}');
+    }
     if (status != 200) {
       throw StateError(
           'window fetch HTTP $status (${body['error'] ?? body['windowOpen'] ?? 'no body'})');
@@ -256,7 +299,8 @@ class ProxClient {
     final sigP = Uint8List.fromList(hexDecode(body['sigP'] as String));
     // The descriptor never carries C_j (radio-only). The caller proves it
     // heard the live challenge by verifying Sig_p against its radio copy.
-    // `org` rides alongside (join-gate only — never in Sig_p/Sig_s).
+    // `org` + `profEmail` ride alongside (join-gate display only — never
+    // in Sig_p/Sig_s; email is gated unicast only, never beacons/BLE).
     WindowDescriptor descFor(int jj, Uint8List sig) => WindowDescriptor(
           classLabel: body['class'] as String,
           sessionId: sessionId,
@@ -267,6 +311,8 @@ class ProxClient {
           tlsFp: Uint8List.fromList(hexDecode(body['tlsFp'] as String)),
           display: body['display'] as String,
           org: body['org'] as String? ?? '',
+          profEmail:
+              ((body['profEmail'] as String?) ?? '').trim().toLowerCase(),
         );
     bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
           profPk: profPk,
