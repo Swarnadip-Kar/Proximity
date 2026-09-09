@@ -78,6 +78,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   bool _connected = false;
   bool _roomWindowOpen = false;
   String _roomClass = '';
+  // Waiting-room identity (presentation only): prof name + org from the
+  // tapped announcement, shown on the waiting card. Typed-IP joins heard
+  // no announcement, so both stay empty there — nothing is fetched.
+  String _roomProf = '';
+  String _roomOrg = '';
   // Consecutive unreachable room polls: hosting ended under a waiter
   // (End attendance stops the professor server) vs a network blip.
   int _roomMisses = 0;
@@ -381,6 +386,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _roomWindowOpen = false;
     _connected = false;
     _roomMisses = 0;
+    _roomProf = '';
+    _roomOrg = '';
     setState(() {
       phase = StudentPhase.browsing;
       joinError = notice;
@@ -680,8 +687,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// for the professor. When the window opens the room auto-advances.
   /// [immediateProbe] false skips the fast-path check (UDP idle beacons
   /// already say closed); timers still start for presence + polling.
+  /// [profName]/[org] are the tapped announcement's already-available
+  /// identity, shown on the waiting card (absent = typed-IP join with no
+  /// announcement heard: the card shows the class only; round rewaits pass
+  /// the current values back to preserve them — never fetched).
   Future<void> _enterWaitingRoom(ClassBeacon target,
-      {bool immediateProbe = true}) async {
+      {bool immediateProbe = true, String? profName, String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
     final linked = ref.read(linkedIdentityProvider)!;
@@ -698,6 +709,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _roomMisses = 0;
       _roomWindowOpen = false;
       _roomClass = target.classLabel;
+      _roomProf = profName ?? '';
+      _roomOrg = org ?? target.org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
       _autoFaceTries = 0;
@@ -1065,7 +1078,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (rewait) {
       BleLog.log(ProxLogTags.lan,
           'round over (was $markedDisplay, now ${nextDisplay.isEmpty ? 'closed' : nextDisplay}) → waiting for next');
-      await _enterWaitingRoom(target);
+      await _enterWaitingRoom(target, profName: _roomProf, org: _roomOrg);
       return;
     }
     _rewaitAfterRound(target, run, markedDisplay);
@@ -1134,7 +1147,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         if (c.last.windowOpen) {
           _joinBeacon(target);
         } else {
-          _enterWaitingRoom(target, immediateProbe: false);
+          _enterWaitingRoom(target,
+              immediateProbe: false,
+              profName: c.last.prof,
+              org: c.last.org);
         }
       },
       onEnroll: () {
@@ -1211,6 +1227,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 roomClass: _roomClass.isNotEmpty
                     ? _roomClass
                     : (_waitingTarget?.classLabel ?? 'this class'),
+                roomProf: _roomProf,
+                roomOrg: _roomOrg,
                 roundMarks: _roundMarks,
                 onRequestManual: _requestManual,
                 onCancel: _cancelToBrowsing,

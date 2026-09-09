@@ -145,6 +145,10 @@ class BrowseClassesView extends StatelessWidget {
                     live[i].last.host,
                     if (live[i].last.display.isNotEmpty)
                       'Code ${live[i].last.display}',
+                    // Institute org rides in the announcement already
+                    // (join-gate, same broadcast as the prof name above) —
+                    // surfaced here so same-org scope reads on the card.
+                    if (live[i].last.org.isNotEmpty) live[i].last.org,
                   ].join(' · '),
                   staggerIndex: i,
                   leading: ProxDot(

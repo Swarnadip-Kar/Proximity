@@ -143,8 +143,10 @@ class StudentSessionTile extends StatelessWidget {
             : null,
       ),
       title: sessionDateTimeLine(session),
+      // Institute org rides in the synced record already (prof org at
+      // push, '' = legacy) — surfaced so same-org scope reads on the tile.
       subtitle:
-          '$status · ${session.windowCount} round${session.windowCount == 1 ? '' : 's'}${session.classLabel.isNotEmpty && session.classLabel != course ? ' · ${session.classLabel}' : ''}',
+          '$status · ${session.windowCount} round${session.windowCount == 1 ? '' : 's'}${session.classLabel.isNotEmpty && session.classLabel != course ? ' · ${session.classLabel}' : ''}${session.org.isNotEmpty ? ' · ${session.org}' : ''}',
       trailing: onHide == null
           ? null
           : IconButton(

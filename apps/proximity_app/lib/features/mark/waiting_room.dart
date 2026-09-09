@@ -18,6 +18,12 @@ import '../../widgets/prox_states.dart';
 class WaitingRoomView extends StatelessWidget {
   final bool connected;
   final String roomClass;
+  /// Professor display name from the tapped announcement ('' when the
+  /// room was joined by typed IP — no announcement was heard). surfaced
+  /// only, never fetched: the announcement already broadcasts it.
+  final String roomProf;
+  /// Institute org from the announcement / beacon target ('' = legacy).
+  final String roomOrg;
   final List<String> roundMarks;
   final VoidCallback onRequestManual;
   final VoidCallback onCancel;
@@ -26,6 +32,8 @@ class WaitingRoomView extends StatelessWidget {
     super.key,
     required this.connected,
     required this.roomClass,
+    this.roomProf = '',
+    this.roomOrg = '',
     required this.roundMarks,
     required this.onRequestManual,
     required this.onCancel,
@@ -64,6 +72,17 @@ class WaitingRoomView extends StatelessWidget {
                 'Attendance has not yet started for\n$roomClass.\nKeep this open — you will continue automatically when the professor starts marking.',
                 textAlign: TextAlign.center,
               ),
+              if (roomProf.isNotEmpty || roomOrg.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    if (roomProf.isNotEmpty) 'Hosted by $roomProf',
+                    if (roomOrg.isNotEmpty) roomOrg,
+                  ].join(' · '),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
               if (!connected) ...[
                 const SizedBox(height: 8),
                 Text(
