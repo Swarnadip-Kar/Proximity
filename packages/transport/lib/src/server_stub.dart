@@ -76,9 +76,14 @@ class ProxServer {
     TallyStore? tally,
     void Function(String email, String decision, String reason)? onProve,
     this.sessionOrg = '',
+    // Mirror of server.dart: hosting professor's Gmail (web never hosts).
+    this.sessionProfEmail = '',
   });
 
   String sessionOrg;
+
+  /// Mirror of server.dart: hosting professor's Gmail, '' = legacy host.
+  String sessionProfEmail;
 
   Duration sightingGrace = const Duration(seconds: 4);
 

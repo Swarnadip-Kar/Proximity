@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -225,5 +226,133 @@ void main() {
     // kicked phones off enterprise WiFi and was deleted — this pins the
     // single-host signature so it cannot grow a range argument silently.
     expect(probeHost, isA<Future<ClassAnnouncement?> Function(String, int)>());
+  });
+
+  test('beacon round-trips the prof email (lowercased)', () {
+    final a = ClassAnnouncement(
+      classLabel: 'CS201-Room301',
+      host: '10.50.37.76',
+      port: 8443,
+      display: 'KQ7',
+      prof: 'Prof K',
+      windowOpen: true,
+      ts: DateTime.now().toUtc(),
+      org: 'univ.edu',
+      profEmail: 'Prof.K@Univ.edu',
+    );
+    final back = decodeAnnouncement(encodeAnnouncement(a))!;
+    expect(back.profEmail, 'prof.k@univ.edu');
+    expect(back.org, 'univ.edu');
+    expect(back.prof, 'Prof K');
+  });
+
+  test('legacy beacons without the email parse to empty', () {
+    final legacy = {
+      'v': kDiscoveryMagic,
+      'class': 'CS201',
+      'host': '10.0.0.5',
+      'port': 8443,
+      'display': '',
+      'prof': 'Prof X',
+      'windowOpen': false,
+      'ts': DateTime.now().toUtc().toIso8601String(),
+      'org': 'univ.edu',
+    };
+    final back = ClassAnnouncement.fromJson(legacy)!;
+    expect(back.profEmail, '');
+    // Codec-level legacy: no profEmail key at all still decodes.
+    final raw =
+        Uint8List.fromList(utf8.encode(jsonEncode(legacy)));
+    expect(decodeAnnouncement(raw)!.profEmail, '');
+  });
+
+  test('beacon stays well under the 512B budget with the email', () {
+    final typical = ClassAnnouncement(
+      classLabel: 'CS201-Room301',
+      host: '10.50.37.76',
+      port: 8443,
+      display: 'KQ7',
+      prof: 'Prof K',
+      windowOpen: true,
+      ts: DateTime.parse('2026-09-09T10:00:00.000Z'),
+      org: 'univ.edu',
+      profEmail: 'prof.k@univ.edu',
+    );
+    final padded = ClassAnnouncement(
+      classLabel: 'CS101-Introduction-to-Computer-Science-Room-301-B',
+      host: '10.50.37.76',
+      port: 8443,
+      display: 'KQ7',
+      prof: 'Professor Kavitha Krishnamurthy Rao-Jones',
+      windowOpen: true,
+      ts: DateTime.parse('2026-09-09T10:00:00.000Z'),
+      org: 'engineering.university-example.edu',
+      profEmail: 'kavitha.krishnamurthy-rao-jones@engineering.university-example.edu',
+    );
+    expect(encodeAnnouncement(typical).length, lessThan(512));
+    expect(encodeAnnouncement(padded).length, lessThan(512));
+  });
+
+  test('/window + probe + descriptor carry the prof email', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'EMAIL-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+      sessionOrg: 'univ.edu',
+      sessionProfEmail: 'prof.k@univ.edu',
+    );
+    await server.start(port: 0);
+    final port = server.port;
+    try {
+      // Idle window: the lightweight probe still carries it.
+      final idle = await probeHost('127.0.0.1', port);
+      expect(idle, isNotNull);
+      expect(idle!.profEmail, 'prof.k@univ.edu');
+      expect(idle.org, 'univ.edu');
+      // Open window: probe + full descriptor both carry it.
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'EMAIL-TEST',
+        ),
+        1,
+      );
+      final hit = await probeHost('127.0.0.1', port);
+      expect(hit!.profEmail, 'prof.k@univ.edu');
+      final fetchClient = ProxClient(host: '127.0.0.1', port: port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await fetchClient.fetchWindow(cj);
+        expect(desc.profEmail, 'prof.k@univ.edu');
+        expect(desc.org, 'univ.edu');
+      } finally {
+        fetchClient.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('/window without the email reads legacy empty', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'LEGACY-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+    );
+    await server.start(port: 0);
+    try {
+      final hit = await probeHost('127.0.0.1', server.port);
+      expect(hit, isNotNull);
+      expect(hit!.profEmail, '');
+    } finally {
+      await server.stop();
+    }
   });
 }

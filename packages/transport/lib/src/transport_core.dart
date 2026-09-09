@@ -13,6 +13,9 @@ class ClassBeacon {
   final int rssiDbm;
   final String displayCode;
   final String org; // prof org domain, '' = legacy/unknown
+  /// Hosting professor's Gmail, lowercased, '' = legacy/unknown.
+  /// Mirrors the beacon profEmail (same LAN broadcast, same default).
+  final String profEmail;
   const ClassBeacon({
     required this.classLabel,
     required this.host,
@@ -20,6 +23,7 @@ class ClassBeacon {
     required this.rssiDbm,
     required this.displayCode,
     this.org = '',
+    this.profEmail = '',
   });
 }
 

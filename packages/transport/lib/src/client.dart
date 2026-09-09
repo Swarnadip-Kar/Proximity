@@ -28,6 +28,10 @@ class WindowDescriptor {
   final Uint8List tlsFp;
   final String display;
   final String org; // prof org domain, '' = legacy host
+  /// Hosting professor's Gmail, lowercased, '' = legacy host.
+  /// LAN-only (same broadcast as the beacon profEmail); join-gate display
+  /// only — never in Sig_p/Sig_s.
+  final String profEmail;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -38,6 +42,7 @@ class WindowDescriptor {
     required this.tlsFp,
     required this.display,
     this.org = '',
+    this.profEmail = '',
   });
 }
 
@@ -106,7 +111,8 @@ class ProxClient {
         String classLabel,
         int waiting,
         String display,
-        String org
+        String org,
+        String profEmail
       })> probeWindow(
       {Duration timeout = const Duration(seconds: 4),
       void Function(Object e)? onError}) async {
@@ -124,7 +130,8 @@ class ProxClient {
           classLabel: '',
           waiting: 0,
           display: '',
-          org: ''
+          org: '',
+          profEmail: ''
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
@@ -135,6 +142,7 @@ class ProxClient {
         waiting: (m['waiting'] as num?)?.toInt() ?? 0,
         display: (m['display'] as String?) ?? '',
         org: (m['org'] as String?) ?? '',
+        profEmail: ((m['profEmail'] as String?) ?? '').trim().toLowerCase(),
       );
     } catch (e) {
       onError?.call(e);
@@ -144,7 +152,8 @@ class ProxClient {
         classLabel: '',
         waiting: 0,
         display: '',
-        org: ''
+        org: '',
+        profEmail: ''
       );
     }
   }
@@ -267,6 +276,8 @@ class ProxClient {
           tlsFp: Uint8List.fromList(hexDecode(body['tlsFp'] as String)),
           display: body['display'] as String,
           org: body['org'] as String? ?? '',
+          profEmail:
+              ((body['profEmail'] as String?) ?? '').trim().toLowerCase(),
         );
     bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
           profPk: profPk,
