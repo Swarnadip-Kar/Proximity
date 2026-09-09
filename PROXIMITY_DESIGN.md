@@ -88,6 +88,11 @@ receipt (`MarkedReceipt.isWrongOrg` + `classOrg`/`myOrg`, Track 6) and
 sends no PII. Legacy `''` on either side passes (migration). The UI
 branches on the flag, never on matching detail text.
 
+Discovery is gated on the same claim (§6.3): the student sends `?org=`
+FIRST on every /window unicast and the professor responds with the class
++ prof Gmail ONLY on match (foreign org: 403 silence, never listed).
+/waiting + /prove org-rejects remain as defense-in-depth.
+
 ### 3.1 No roster source of truth
 
 There is no admin roster. Identity is the Google account itself; the ID
@@ -506,7 +511,11 @@ manual IP display with type-in join. Endpoints (as built,
 `packages/transport/lib/src/server.dart`):
 
 ```
-GET  /window               -> {class, sessionID, windowID, j_now, PK_p, Cert_p, Sig_p, Sig_p_prev, org}
+GET  /window?org=         -> gated unicast identity (matching/legacy org:
+                             {class, sessionID, windowID, j_now, PK_p, Cert_p,
+                             Sig_p, Sig_p_prev, org, profEmail}; mismatched
+                             org: 403 {decision, reason, org} — silence, no
+                             class/email/window). profEmail travels ONLY here.
 POST /prove {ID,windowID,j,C_j,Sig_s,faceScore,peerW[, face:{score,faceValidAt,verifierVer}, pkD, dSig, attestationLevel]} -> {confirmed|late|invalid, serverTime, Sig_pAck}
 POST /waiting {email,name,roll}   -> presence heartbeat (waiting room)
 POST /leave {email}               -> explicit leave (count drops at once)
@@ -518,10 +527,28 @@ GET  /export               -> {csv} (professor Bearer; .sig applied at the app l
 
 Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. If campus AP isolates clients, BLE hint + typed IP carry the join and an unreachable host fails honestly into the manual path — hotspot is excluded, never the fallback.
 
-Discovery detail (as built + field-verified 2026-09): professors announce
-over UDP broadcast `:54545` (2 s beacons, 6 s expiry; targets: limited
-broadcast + /24 and /16 directed guesses; announced IP prefers non-VPN,
-non-cellular WiFi NICs and re-resolves on every window open). Enterprise
+Discovery detail — ORG-GATED (as built + field-verified 2026-09):
+professors advertise CONTINUOUSLY while hosting over UDP broadcast
+`:54545` (2 s beacons, 6 s expiry; targets: limited broadcast + /24 and
+/16 directed guesses; announced IP prefers non-VPN, non-cellular WiFi
+NICs and re-resolves on every window open) + BLE IP-hint rotation
+(`host:port` only). One-time announce is NOT sufficient: late joiners
+depend on the next beacon/hint arriving within seconds, so both stay
+continuous. Beacons carry presence only — prof name + org + class/host/
+port/display/windowOpen (NEVER the prof Gmail; the announcement type has
+no such field by construction) — and BLE air packets carry IP:port only
+(never email, asserted by tests). Students solicit CHEAPLY and
+REPEATABLY: every beacon/hint (plus the 15 s session refresh) triggers
+one unicast HTTPS GET /window?org= carrying the student's org claim
+FIRST; the professor org-checks it and responds ONLY on match (or legacy
+'' either side) with the class identity + prof Gmail (lowercased, key
+omitted when unknown). Foreign org gets silence (403, no class, no
+email): the class never appears on that phone — browse filters beacons
+by org locally and hints list only on gated success. Typed-IP manual
+join stays as the fallback (same gated GET; matching/legacy lists,
+mismatched silent). The existing /waiting + /prove org-rejects stay as
+defense-in-depth behind this primary gate. Enterprise
+APs may suppress inter-client broadcasts entirely (measured on institute
 APs may suppress inter-client broadcasts entirely (measured on institute
 /18 WiFi: all broadcast variants 0/5) — for those networks classes surface
 through the BLE IP hint (Android/Linux profs publish `host:port` in the
