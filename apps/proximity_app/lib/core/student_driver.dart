@@ -83,13 +83,17 @@ class WindowProbe {
   final int waiting;
   final String display; // window code when open (round identity)
   final String org; // prof org from /window, '' = legacy host
+  /// Hosting professor's Gmail from /window, '' = legacy host. Shown on
+  /// the waiting card when the room was joined from a beacon carrying it.
+  final String profEmail;
   const WindowProbe(
       {required this.reachable,
       required this.windowOpen,
       required this.classLabel,
       this.waiting = 0,
       this.display = '',
-      this.org = ''});
+      this.org = '',
+      this.profEmail = ''});
 }
 
 abstract class StudentDriver {
@@ -297,7 +301,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           classLabel: r.classLabel,
           waiting: r.waiting,
           display: r.display,
-          org: r.org);
+          org: r.org,
+          profEmail: r.profEmail);
     } finally {
       client.close();
     }
