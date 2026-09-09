@@ -89,7 +89,7 @@ abstract class FaceVerifier {
   Future<void> remove(String faceId);
 
   /// Mean embedding over [faceId]'s enrolled stills (one 512-d vector for
-  /// the cloud duplicate check — see protocol face_print.dart; the privacy
+  /// the local-session duplicate check — see protocol face_print.dart; the privacy
   /// flag there applies). Throws StateError when nothing is enrolled
   /// (fail-closed recapture, never an empty vector).
   Future<List<double>> embeddingFor(String faceId);
