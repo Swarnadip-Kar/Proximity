@@ -209,7 +209,7 @@ native-only.
 Web platform seams (all compile-neutral on native): conditional exports
 for transport client/discovery/server, BLE BlueZ shim, the
 `face_verification` plugin (fail-closed stub on web — records only, never
-verifies), file saving, attestation HTTP, and interface enumeration;
+verifies), file saving, and interface enumeration;
 `platformx.dart` replaces `dart:io Platform`; protocol prefixes are built
 from 32-bit halves (a >2⁵³ literal cannot compile to JS — values are
 bit-exact on 64-bit native, untouched by web which never runs radio
@@ -415,7 +415,8 @@ Simulator UI walkthrough without taps/accounts:
    BlazeFace/EdgeFace pipeline is deleted (models, code, and tests);
    threshold 0.70 on the plugin score scale (old EdgeFace numbers stay
    retired). **Device binding is dual-key** (HW DKey sealing the Ed25519
-   SKey) with server attestation re-check on sync; the OS-biometric
+   SKey) with offline-only attestation trust (no server re-check — see
+   design §3.4); the OS-biometric
    prompt is deliberately NOT a substitute (face-only).
 10. Present rule: single window by default; each “Take another round” adds a window and
    Present = intersection of all windows taken (`lenientOneOfTwo` per export
@@ -555,15 +556,15 @@ Simulator UI walkthrough without taps/accounts:
       with the download banner.
 - [ ] Windows/Linux: confirm offline-professor start (no Firebase crash)
       and the plain-language sign-in limit.
-- [ ] Face capture in a real classroom: 3-still enroll completes fast in
+- [ ] Face capture in a real classroom: 5-still enroll completes fast in
   cabin light; single-shot marking verify stays ~1s.
 
 ## Face capture UX
 
-Enrollment is one tap, one capture page: 3 stills (Centre / slight-Left /
-slight-Right) registered into the on-device plugin gallery under an
+Enrollment is one tap, one capture page: 5 stills (Centre / Left /
+Right / Up / Down) registered into the on-device plugin gallery under an
 opaque faceId (`sha256(gmail+installId)` — never the raw Gmail). Save
-stays disabled until all three register; rescan replaces per-sample
+stays disabled until all five register; rescan replaces per-sample
 (monotonic progress, never a wipe). Marking runs a single-shot verify on
 the isolate path (~1s fast path): a match stamps the `FaceGate` and
 signs the challenge-bound ticket; an unreadable frame is inconclusive
@@ -571,7 +572,9 @@ signs the challenge-bound ticket; an unreadable frame is inconclusive
 one attempt (2 instant retries, then per-session fail; 4 mismatch
 sessions → needs-review queue → professor manual override; never
 auto-present on face fail). A version mismatch forces re-face (key kept);
-no images or embeddings ever leave the device. Anti-spoof is accordingly
+no images ever leave the device; marking proofs carry a compact face vector
+(numbers only, no photo) to the professor's phone over classroom WiFi —
+held in memory for that session only, never the cloud. Anti-spoof is accordingly
 modest: the passive matcher plus the signed ticket plus the device key —
 a good-quality printed photo CAN pass, stated plainly. If photo fraud
 appears in the pilot, the fix is swapping the adapter for a
@@ -627,7 +630,10 @@ own example app). Threshold 0.70 on the plugin score scale targets
 FAR ~0.01% / FRR <2% — the old EdgeFace 0.60/0.80 numbers are retired
 and must never be reused (different embedding space). The old
 hand-rolled BlazeFace/EdgeFace pipeline — code, vendored `.tflite`s, and
-tests — is deleted; no photo or embedding ever leaves the phone, only
-the signed match ticket. Enrollment identity is `sha256(gmail+installId)`,
+tests — is deleted; no photo ever leaves the phone: enrollment holds the
+gallery on-device and each marking proof carries only the signed match
+ticket plus a compact face vector (numbers only, no photo) to the
+professor's phone over classroom WiFi — held in memory for that session
+only, never the cloud. Enrollment identity is `sha256(gmail+installId)`,
 and matcher versions are allowlisted (`verifierVer`) so a plugin/model
 bump forces re-face instead of matching across versions.
