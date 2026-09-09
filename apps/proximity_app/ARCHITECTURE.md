@@ -42,7 +42,7 @@ One-way dependencies, top to bottom:
 ```
 presentation (screens/, features/, widgets/)
   → state (mode.dart providers, Riverpod controllers)
-    → data (core/sync/, core/enroll_finalize.dart)
+    → data (core/sync/, core/enrollment.dart)
       → service (core/host_driver.dart, core/student_driver.dart,
                  BLE engine, face stack, transport)
 ```
@@ -104,7 +104,7 @@ embedders, store facets, `SightingLookup`, engine callbacks — no module
 reaches into another's internals): crypto (`protocol/src/crypto/`),
 air (`protocol/src/air/`), session (`storage`), radio (`ble/src/`),
 net (`transport`, incl. `LiveRoom`), sync (`core/sync/` + `SyncQueue`),
-face-decision (`face` + `core/enroll_finalize.dart`).
+face-decision (`features/face_identity/` + `protocol/src/face_gate.dart`).
 Size 11003 → 11764 LOC: more, smaller files, net larger — splits added
 barrels/wrappers while almost every shrink candidate proved live on
 zero-caller check and was kept. CSV unification, stub-entry retirement,
