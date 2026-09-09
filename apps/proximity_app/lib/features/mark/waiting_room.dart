@@ -22,6 +22,10 @@ class WaitingRoomView extends StatelessWidget {
   /// room was joined by typed IP — no announcement was heard). surfaced
   /// only, never fetched: the announcement already broadcasts it.
   final String roomProf;
+  /// Hosting professor's Gmail from the GATED /window unicast ('' =
+  /// unknown/legacy or typed-IP join before the gated fetch lands). Fed
+  /// only by the org-checked unicast — never beacons/BLE.
+  final String roomProfEmail;
   /// Institute org from the announcement / beacon target ('' = legacy).
   final String roomOrg;
   final List<String> roundMarks;
@@ -33,6 +37,7 @@ class WaitingRoomView extends StatelessWidget {
     required this.connected,
     required this.roomClass,
     this.roomProf = '',
+    this.roomProfEmail = '',
     this.roomOrg = '',
     required this.roundMarks,
     required this.onRequestManual,
@@ -72,11 +77,14 @@ class WaitingRoomView extends StatelessWidget {
                 'Attendance has not yet started for\n$roomClass.\nKeep this open — you will continue automatically when the professor starts marking.',
                 textAlign: TextAlign.center,
               ),
-              if (roomProf.isNotEmpty || roomOrg.isNotEmpty) ...[
+              if (roomProf.isNotEmpty ||
+                  roomProfEmail.isNotEmpty ||
+                  roomOrg.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
                   [
                     if (roomProf.isNotEmpty) 'Hosted by $roomProf',
+                    if (roomProfEmail.isNotEmpty) roomProfEmail,
                     if (roomOrg.isNotEmpty) roomOrg,
                   ].join(' · '),
                   textAlign: TextAlign.center,

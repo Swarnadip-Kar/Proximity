@@ -1,14 +1,17 @@
-// Identity surfacing on cards (presentation only, nothing fetched).
+// Identity surfacing on cards (presentation only; email fetched, never
+// broadcast).
 //
-// Student cards show already-available professor identity: the live tile
-// carries the announcement's prof name + org, the waiting room shows the
-// tapped announcement's prof + org, and history tiles carry the synced
-// record's org. Professor rows already carried the student email via
+// Student cards show professor identity: the live tile carries the
+// announcement's prof name + org plus the GATED prof Gmail (org-checked
+// /window unicast only — never beacons/BLE), the waiting room shows the
+// gated prof + Gmail + org, and history tiles carry the synced record's
+// org. Professor rows already carried the student email via
 // rosterSubtitle — locked here so a copy tweak can never drop it silently.
 //
-// Privacy: the professor EMAIL is in no student-side payload (beacon,
-// /window, ClassRecord all carry name/org only), so no card here renders
-// one — asserting its absence is part of the contract.
+// Privacy (gated model): beacons/BLE carry NO Gmail by construction
+// (ClassAnnouncement has no such field); live cards render the Gmail only
+// when the gated unicast supplied it. Legacy/unknown renders exactly as
+// before — asserting both shapes is part of the contract.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/host_driver.dart';
@@ -47,7 +50,9 @@ LiveClass _live({
   );
 }
 
-Widget _browse(List<LiveClass> live) => MaterialApp(
+Widget _browse(List<LiveClass> live,
+        {Map<String, String> profEmailByHost = const {}}) =>
+    MaterialApp(
       home: Scaffold(
         body: BrowseClassesView(
           linked: null,
@@ -58,6 +63,7 @@ Widget _browse(List<LiveClass> live) => MaterialApp(
           onJoin: () {},
           joinError: '',
           live: live,
+          profEmailByHost: profEmailByHost,
           onTapLive: (_) {},
           onEnroll: () {},
           onViewRecords: () {},
@@ -82,6 +88,17 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('10.0.0.5'), findsOneWidget);
     expect(find.textContaining('univ.edu'), findsNothing);
+  });
+
+  testWidgets('browse tile shows the gated prof Gmail when present',
+      (t) async {
+    await t.pumpWidget(_browse([_live()],
+        profEmailByHost: const {'10.0.0.5:8443': 'prof.x@univ.edu'}));
+    await t.pumpAndSettle();
+    expect(
+      find.text('Prof X · prof.x@univ.edu · 10.0.0.5 · Code KQ7 · univ.edu'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('waiting room shows tapped announcement prof + org',
@@ -115,6 +132,44 @@ void main() {
       ),
     ));
     expect(find.textContaining('Hosted by'), findsNothing);
+  });
+
+  testWidgets('waiting room shows gated prof + Gmail + org', (t) async {
+    await t.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: WaitingRoomView(
+          connected: true,
+          roomClass: 'CS201',
+          roomProf: 'Prof X',
+          roomProfEmail: 'prof.x@univ.edu',
+          roomOrg: 'univ.edu',
+          roundMarks: const [],
+          onRequestManual: () {},
+          onCancel: () {},
+        ),
+      ),
+    ));
+    expect(find.text('Hosted by Prof X · prof.x@univ.edu · univ.edu'),
+        findsOneWidget);
+  });
+
+  testWidgets('waiting room without the Gmail renders no dangling separator',
+      (t) async {
+    await t.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: WaitingRoomView(
+          connected: true,
+          roomClass: 'CS201',
+          roomProf: 'Prof X',
+          roomOrg: 'univ.edu',
+          roundMarks: const [],
+          onRequestManual: () {},
+          onCancel: () {},
+        ),
+      ),
+    ));
+    expect(find.text('Hosted by Prof X · univ.edu'), findsOneWidget);
+    expect(find.textContaining('@'), findsNothing);
   });
 
   testWidgets('history tile shows stamped record org', (t) async {

@@ -82,14 +82,19 @@ class WindowProbe {
   final String classLabel;
   final int waiting;
   final String display; // window code when open (round identity)
-  final String org; // prof org from /window, '' = legacy host
+  final String org; // prof org from gated /window, '' = legacy host
+  /// Hosting professor's Gmail from the GATED /window unicast (matching
+  /// or legacy org only; '' = unknown/legacy or gated silence). NEVER from
+  /// beacons/BLE — fed only by the org-checked unicast.
+  final String profEmail;
   const WindowProbe(
       {required this.reachable,
       required this.windowOpen,
       required this.classLabel,
       this.waiting = 0,
       this.display = '',
-      this.org = ''});
+      this.org = '',
+      this.profEmail = ''});
 }
 
 abstract class StudentDriver {
@@ -118,7 +123,10 @@ abstract class StudentDriver {
   });
 
   /// Waiting-room LAN probe: reachable + windowOpen without radio.
-  Future<WindowProbe> probeWindow(ClassBeacon target);
+  /// [myOrg] is the student's org claim (gated discovery): matching or
+  /// legacy org returns identity WITH profEmail; mismatched returns
+  /// unreachable (gated silence — never the class, never email).
+  Future<WindowProbe> probeWindow(ClassBeacon target, {String myOrg = ''});
 
   /// Registers presence in the professor's waiting room (heartbeat).
   Future<void> sendPresence(
@@ -284,10 +292,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   }
 
   @override
-  Future<WindowProbe> probeWindow(ClassBeacon target) async {
+  Future<WindowProbe> probeWindow(ClassBeacon target,
+      {String myOrg = ''}) async {
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      final r = await client.probeWindow();
+      final r = await client.probeWindow(org: myOrg);
       if (!r.reachable) {
         BleLog.log('LAN', 'probe ${target.host}:${target.port} unreachable');
       }
@@ -297,7 +306,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           classLabel: r.classLabel,
           waiting: r.waiting,
           display: r.display,
-          org: r.org);
+          org: r.org,
+          profEmail: r.profEmail);
     } finally {
       client.close();
     }
@@ -476,10 +486,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       final cj = await _waitNewChallenge(lastTried);
       if (cj == null) {
         // Dead air: is the round still open or did it end? One cheap
-        // unicast probe decides — no guessing, no countdown.
+        // gated unicast probe decides — no guessing, no countdown.
         WindowProbe probe;
         try {
-          probe = await probeWindow(target);
+          probe = await probeWindow(target, myOrg: studentOrgOf(identity));
         } catch (_) {
           BleLog.log('LAN', 'silence probe flaked — kept waiting…');
           continue;
@@ -707,22 +717,42 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // mismatch is suspicious (never verified); every other fetch failure
       // — closed window, rate limit, missing descriptor — is PROOF the
       // server is real, so it resets the streak instead of feeding it.
+      // Gated discovery sends the org claim FIRST (fetchWindow with myOrg):
+      // a mismatch throws org-mismatch BEFORE any radio response or POST
+      // (professor-checked primary gate — no PII sent); the descriptor
+      // comparison below stays as defense-in-depth for ungated callers.
       BleLog.log('NET', 'fetching window (verify prof sig)…');
+      final myOrg = studentOrgOf(identity);
       late final WindowDescriptor desc;
       try {
-        desc = await client.fetchWindow(challenge);
+        desc = await client.fetchWindow(challenge, org: myOrg);
       } on StateError catch (e) {
         final msg = '$e';
+        if (msg.contains('org-mismatch')) {
+          final classOrg = msg.contains(':')
+              ? msg.substring(msg.indexOf(':') + 1).trim().toLowerCase()
+              : '';
+          BleLog.log('NET',
+              'wrong org (gated fetch: class $classOrg vs $myOrg) — no proof sent');
+          return MarkedReceipt(
+              detail:
+                  'Wrong organization for this class — join your institute class',
+              result: StudentResult.error,
+              isWrongOrg: true,
+              classOrg: classOrg,
+              myOrg: myOrg,
+              attestationLevel: stored.attestationLevel);
+        }
         // Only an unverifiable signature means "never verified".
         final suspicious = msg.contains('prof signature mismatch');
         throw _TryNext('window fetch ($e)', suspicious: suspicious);
       }
       BleLog.log('NET', 'window ok code=${desc.display} j=${desc.jNow}');
-      // Org join-gate (Track 1): descriptor org is compared BEFORE any radio
-      // response or POST — a mismatch returns a wrong-org receipt and sends
-      // no PII. Legacy '' on either side passes (migration). Crypto
-      // preimages untouched (Track E authority).
-      final myOrg = studentOrgOf(identity);
+      // Org join-gate (Track 1, defense-in-depth behind the gated fetch
+      // above): descriptor org is compared BEFORE any radio response or
+      // POST — a mismatch returns a wrong-org receipt and sends no PII.
+      // Legacy '' on either side passes (migration). Crypto preimages
+      // untouched (Track E authority).
       if (myOrg.isNotEmpty &&
           desc.org.isNotEmpty &&
           desc.org != myOrg) {
@@ -921,10 +951,12 @@ class FakeStudentDriver implements StudentDriver {
       const FaceCheckResult(FaceMatch.pass, 0.95);
 
   @override
-  Future<WindowProbe> probeWindow(ClassBeacon target) async => WindowProbe(
-      reachable: true,
-      windowOpen: windowOpenProbe,
-      classLabel: target.classLabel);
+  Future<WindowProbe> probeWindow(ClassBeacon target,
+          {String myOrg = ''}) async =>
+      WindowProbe(
+          reachable: true,
+          windowOpen: windowOpenProbe,
+          classLabel: target.classLabel);
 
   @override
   Future<void> sendPresence(

@@ -37,6 +37,10 @@ class BrowseClassesView extends StatelessWidget {
   /// Track 4 §2: true when UDP beacons deliver nothing but BLE-hinted
   /// classes list (isolating AP) — the list below is hint-only, said aloud.
   final bool broadcastBlocked;
+  /// Gated prof emails by `host:port` (from the org-checked /window
+  /// unicast — never beacons/BLE). Empty/absent renders exactly as before
+  /// (no dangling separators).
+  final Map<String, String> profEmailByHost;
 
   const BrowseClassesView({
     super.key,
@@ -53,6 +57,7 @@ class BrowseClassesView extends StatelessWidget {
     required this.onViewRecords,
     required this.onRefresh,
     this.broadcastBlocked = false,
+    this.profEmailByHost = const {},
   });
 
   @override
@@ -142,6 +147,11 @@ class BrowseClassesView extends StatelessWidget {
                   title: live[i].last.classLabel,
                   subtitle: [
                     if (live[i].last.prof.isNotEmpty) live[i].last.prof,
+                    // Gated prof Gmail (org-checked /window unicast only —
+                    // never beacons/BLE). Empty on legacy/unknown: the card
+                    // reads as before.
+                    if ((profEmailByHost[live[i].last.key] ?? '').isNotEmpty)
+                      profEmailByHost[live[i].last.key]!,
                     live[i].last.host,
                     if (live[i].last.display.isNotEmpty)
                       'Code ${live[i].last.display}',

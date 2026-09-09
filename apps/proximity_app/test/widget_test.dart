@@ -172,10 +172,12 @@ class _EndedHostDriver extends FakeStudentDriver {
   var listens = 0;
 
   @override
-  Future<WindowProbe> probeWindow(ClassBeacon target) async => WindowProbe(
-      reachable: reachableProbe,
-      windowOpen: reachableProbe && windowOpenProbe,
-      classLabel: target.classLabel);
+  Future<WindowProbe> probeWindow(ClassBeacon target,
+          {String myOrg = ''}) async =>
+      WindowProbe(
+          reachable: reachableProbe,
+          windowOpen: reachableProbe && windowOpenProbe,
+          classLabel: target.classLabel);
 
   @override
   Future<MarkedReceipt> listenAndProve({

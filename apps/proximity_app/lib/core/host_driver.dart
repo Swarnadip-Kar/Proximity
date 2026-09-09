@@ -347,9 +347,19 @@ class RealHostDriver implements HostDriver {
     // Session org = prof org at creation (role cache stamped at sign-in;
     // offline-skipped profs host legacy '' local-only).
     var sessionOrg = '';
+    // Session prof email = the hosting professor's account Gmail,
+    // lowercased (enrollment record first, role-cache email as fallback;
+    // '' = unknown, key omitted). Stamped ONLY on the gated /window
+    // unicast (matching/legacy org) — NEVER on UDP beacons (which have no
+    // such field by construction) and NEVER on BLE air packets (IP:port
+    // only). Student cards render it after the gated fetch.
+    var sessionProfEmail = (stored?.email ?? '').trim().toLowerCase();
     try {
       final role = await _store.readRole();
       sessionOrg = roleOrg(role);
+      if (sessionProfEmail.isEmpty) {
+        sessionProfEmail = (role?['email'] ?? '').trim().toLowerCase();
+      }
     } catch (_) {}
     // Rosterless: no roster fetch — students verify with presented device
     // keys (TOFU per class). Whoever proves presence over radio lands in
@@ -366,6 +376,7 @@ class RealHostDriver implements HostDriver {
       },
       tally: _tally,
       sessionOrg: sessionOrg,
+      sessionProfEmail: sessionProfEmail,
     );
     await _bindWithRetry(_server!, port);
     // Readiness BEFORE any hint/beacon: the port must answer TLS locally.

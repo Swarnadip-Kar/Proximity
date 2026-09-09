@@ -22,6 +22,7 @@ import '../core/ble_radio.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
 import '../core/student_driver.dart';
+import '../core/sync/org.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
@@ -79,10 +80,20 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   bool _roomWindowOpen = false;
   String _roomClass = '';
   // Waiting-room identity (presentation only): prof name + org from the
-  // tapped announcement, shown on the waiting card. Typed-IP joins heard
-  // no announcement, so both stay empty there — nothing is fetched.
+  // tapped announcement + Gmail from the GATED /window unicast (never
+  // beacons/BLE). Typed-IP joins heard no announcement, so name/org stay
+  // empty and email fills after the gated fetch — nothing is fetched from
+  // broadcasts.
   String _roomProf = '';
+  String _roomProfEmail = '';
   String _roomOrg = '';
+  // Gated prof emails by `host:port` (org-checked /window unicast only).
+  // Browse tiles render these (KEEP of the pre-revert surfacing, new
+  // gated source); mismatched org never populates (silence).
+  final Map<String, String> _gatedEmailByHost = {};
+  // Email backfill throttle: one gated /window fetch per host per 15s
+  // (same budget as the session heartbeat — solicitation stays cheap).
+  final Map<String, DateTime> _emailFetchThrottle = {};
   // Consecutive unreachable room polls: hosting ended under a waiter
   // (End attendance stops the professor server) vs a network blip.
   int _roomMisses = 0;
@@ -305,9 +316,23 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         .leaveWaiting(target: target, email: linked.gmail));
   }
 
+  /// This student's org claim for gated discovery (explicit identity org,
+  /// else the Gmail domain; '' = legacy/unknown, passes as before).
+  String _myOrg() {
+    try {
+      final linked = ref.read(linkedIdentityProvider);
+      if (linked == null) return '';
+      if (linked.org.trim().isNotEmpty) return linked.org.trim().toLowerCase();
+      return orgOf(linked.gmail);
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// BLE IP hint heard (professor HTTPS host:port in scan-response mfg).
-  /// Background-probes the hint (throttled) and lists it on answer —
-  /// class discovery with zero LAN broadcasts and zero taps.
+  /// Gated-probes the hint with our org claim (throttled) and lists it
+  /// ONLY on match — mismatched org gets silence (never listed). Class
+  /// discovery with zero LAN broadcasts and zero taps.
   ///
   /// Early-join race: the hint can arrive while the professor's HTTPS is
   /// still coming up (first start), so one probe is never the verdict. A
@@ -322,14 +347,15 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       return;
     }
     _bleHintThrottle[key] = now;
-    BleLog.log(ProxLogTags.ble, 'IP hint $key — background probe…');
+    BleLog.log(ProxLogTags.ble, 'IP hint $key — gated probe…');
     String missReason = 'unreachable';
     final hit = await probeHost(host, port,
-        verboseMisses: true, onMiss: (r) => missReason = r);
+        verboseMisses: true, onMiss: (r) => missReason = r, org: _myOrg());
     if (!mounted) return;
     if (hit == null) {
       // Honest reason always logged: refused = starting-server, timeout =
-      // AP isolation/firewall, TLS = cert. Pending + heartbeat retry
+      // AP isolation/firewall, org-mismatch = gated silence (foreign org:
+      // the class never appears here). Pending + heartbeat retry
       // regardless — never one-and-done, never silent.
       BleLog.log(ProxLogTags.ble,
           'IP hint $key unreachable ($missReason) — retrying…');
@@ -362,6 +388,38 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       );
       _live = _allLive();
     });
+    // Gated email backfill (one cheap unicast; throttled): the hint probe
+    // above is presence-only — the Gmail rides the gated /window unicast.
+    unawaited(_backfillGatedEmail(host, port));
+  }
+
+  /// Gated email backfill for one host:port (matching/legacy org only).
+  /// One short GET per host per 15s — solicitation stays cheap. Mismatched
+  /// org gets silence (nothing cached, nothing rendered).
+  Future<void> _backfillGatedEmail(String host, int port) async {
+    final key = '$host:$port';
+    final now = DateTime.now().toUtc();
+    final last = _emailFetchThrottle[key];
+    if (last != null && now.difference(last) < kSessionRefresh) return;
+    _emailFetchThrottle[key] = now;
+    try {
+      final probe = await ref.read(studentDriverProvider).probeWindow(
+          ClassBeacon(
+              classLabel: '',
+              host: host,
+              port: port,
+              rssiDbm: 0,
+              displayCode: ''),
+          myOrg: _myOrg());
+      if (!mounted || !probe.reachable) return;
+      final email = probe.profEmail.trim().toLowerCase();
+      if (email.isEmpty) return;
+      if (_gatedEmailByHost[key] == email) return;
+      _gatedEmailByHost[key] = email;
+      if (phase == StudentPhase.browsing && mounted) {
+        setState(() => _live = _allLive());
+      }
+    } catch (_) {}
   }
 
   /// Forgets everything browse knows about one host:port (hosting ended):
@@ -374,6 +432,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _hints.remove(key);
     _pendingHints.remove(key);
     _bleHintThrottle.remove(key);
+    _gatedEmailByHost.remove(key);
+    _emailFetchThrottle.remove(key);
   }
 
   /// Leaves waiting/marked for the browse list (hosting ended): room
@@ -387,6 +447,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _connected = false;
     _roomMisses = 0;
     _roomProf = '';
+    _roomProfEmail = '';
     _roomOrg = '';
     setState(() {
       phase = StudentPhase.browsing;
@@ -400,6 +461,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// its round — and its challenges — go silent. Answered hosts refresh;
   /// dead ones age out via [hintEntryAlive]. Pending hints (first probe
   /// missed while the server started) retry here too. Browse phase only.
+  /// All re-probes carry our org claim (gated): a host that now answers
+  /// org-mismatch goes silent here (dropped like a dead host — the class
+  /// never appears on a foreign-org phone).
   Future<void> _refreshSessions() async {
     if (!mounted || phase != StudentPhase.browsing) return;
     // Drop stale pending hints (heard >2 min ago, never answered).
@@ -411,6 +475,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     final now = DateTime.now().toUtc();
     var changed = false;
+    final myOrg = _myOrg();
     final keys = <String>{..._sessionAck.keys, ..._pendingHints.keys};
     for (final key in keys) {
       final lastProbe = _bleHintThrottle[key];
@@ -425,7 +490,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final hit = await probeHost(key.substring(0, slash),
           int.tryParse(key.substring(slash + 1)) ?? 0,
           verboseMisses: true,
-          onMiss: (r) => missReason = r);
+          onMiss: (r) => missReason = r,
+          org: myOrg);
       if (!mounted) return;
       if (hit == null) {
         _sessionFails[key] = (_sessionFails[key] ?? 0) + 1;
@@ -488,6 +554,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// Hint entries outlive the 6s radio expiry while their session acks
   /// ([hintEntryAlive]): the class stays visible after the round ends;
   /// tapping re-validates through the waiting room / join gates.
+  ///
+  /// ORG-GATED: beacons whose org is stamped and mismatched against ours
+  /// are EXCLUDED here (foreign org gets silence — the class never
+  /// appears). Hints are already gated (their probeHost carried our claim
+  /// and returned null on mismatch, so no entry exists). Legacy '' on
+  /// either side passes (migration) and renders as before.
   List<LiveClass> _allLive() {
     final now = DateTime.now().toUtc();
     _hints.removeWhere((k, v) => !hintEntryAlive(
@@ -505,8 +577,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           'broadcast-blocked? 0 UDP beacons but ${_hints.length} BLE-hinted — hint+probe rung');
     }
     _broadcastBlocked = blocked;
+    String myOrg = '';
+    try {
+      myOrg = _myOrg();
+    } catch (_) {}
+    bool orgAllows(String beaconOrg) {
+      if (beaconOrg.isEmpty || myOrg.isEmpty) return true;
+      return beaconOrg == myOrg;
+    }
     final byKey = <String, LiveClass>{};
     for (final c in beacons) {
+      if (!orgAllows(c.last.org)) continue; // gated silence: never listed
       byKey[c.last.key] = c;
     }
     for (final c in _hints.values) {
@@ -514,6 +595,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     final out = byKey.values.toList()
       ..sort((a, b) => a.firstSeen.compareTo(b.firstSeen));
+    // Gated email backfill for newly listed matching hosts (cheap,
+    // throttled — see _backfillGatedEmail): browse tiles render the Gmail
+    // once the unicast lands, without any tap.
+    for (final c in out) {
+      final key = c.last.key;
+      if ((_gatedEmailByHost[key] ?? '').isEmpty &&
+          orgAllows(c.last.org)) {
+        unawaited(_backfillGatedEmail(c.last.host, c.last.port));
+      }
+    }
     return out;
   }
 
@@ -687,12 +778,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// for the professor. When the window opens the room auto-advances.
   /// [immediateProbe] false skips the fast-path check (UDP idle beacons
   /// already say closed); timers still start for presence + polling.
-  /// [profName]/[org] are the tapped announcement's already-available
-  /// identity, shown on the waiting card (absent = typed-IP join with no
-  /// announcement heard: the card shows the class only; round rewaits pass
-  /// the current values back to preserve them — never fetched).
+  /// [profName]/[profEmail]/[org] are the tapped announcement's
+  /// already-available identity (email from the gated cache when known),
+  /// shown on the waiting card (absent = typed-IP join with no announcement
+  /// heard: the card shows the class only; round rewaits pass the current
+  /// values back to preserve them — the gated poll below refreshes email).
   Future<void> _enterWaitingRoom(ClassBeacon target,
-      {bool immediateProbe = true, String? profName, String? org}) async {
+      {bool immediateProbe = true,
+      String? profName,
+      String? profEmail,
+      String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
     final linked = ref.read(linkedIdentityProvider)!;
@@ -702,6 +797,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (!mounted) return;
     _stopRoomTimers();
     BleLog.log(ProxLogTags.nav, 'waiting room ${target.host}:${target.port}');
+    final cachedEmail =
+        _gatedEmailByHost['${target.host}:${target.port}'] ?? '';
     setState(() {
       joinError = '';
       _waitingTarget = target;
@@ -710,6 +807,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _roomWindowOpen = false;
       _roomClass = target.classLabel;
       _roomProf = profName ?? '';
+      _roomProfEmail = profEmail ?? cachedEmail;
       _roomOrg = org ?? target.org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
@@ -753,15 +851,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   Future<void> _pollRoomOnce() async {
     final target = _waitingTarget;
     if (target == null) return;
+    String myOrg = '';
     try {
-      final probe = await ref.read(studentDriverProvider).probeWindow(target);
+      myOrg = _myOrg();
+    } catch (_) {}
+    try {
+      final probe = await ref
+          .read(studentDriverProvider)
+          .probeWindow(target, myOrg: myOrg);
       if (!mounted) return;
       if (!probe.reachable) {
-        // Hosting may have ended under a waiter (End attendance stops
-        // the server): 5 consecutive misses (~10s) leaves for the live
-        // list instead of parking on "Not connected" forever. Single
-        // misses just show the state (transient holes must not bounce
-        // a waiter out).
+        // Gated silence (org-mismatch) reads like hosting-ended here: the
+        // class never appears for a foreign org. Single misses just show
+        // the state; 5 consecutive misses leave for the live list.
         if (++_roomMisses >= 5) {
           final key = '${target.host}:${target.port}';
           BleLog.log(ProxLogTags.lan, 'hosting ended while waiting → live list');
@@ -772,10 +874,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       } else {
         _roomMisses = 0;
       }
+      // Gated email lands here (matching/legacy org): cache + waiting card.
+      final email = probe.profEmail.trim().toLowerCase();
+      if (email.isNotEmpty) {
+        _gatedEmailByHost['${target.host}:${target.port}'] = email;
+      }
       setState(() {
         _connected = probe.reachable;
         _roomWindowOpen = probe.windowOpen;
         if (probe.classLabel.isNotEmpty) _roomClass = probe.classLabel;
+        if (email.isNotEmpty) _roomProfEmail = email;
       });
     } catch (_) {
       if (++_roomMisses >= 5) {
@@ -1042,9 +1150,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     var rewait = false;
     var ended = false;
     var nextDisplay = '';
+    String myOrg = '';
     try {
-      final probe =
-          await ref.read(studentDriverProvider).probeWindow(target);
+      myOrg = _myOrg();
+    } catch (_) {}
+    try {
+      final probe = await ref
+          .read(studentDriverProvider)
+          .probeWindow(target, myOrg: myOrg);
       if (!probe.reachable) {
         if (++_rewaitMisses >= 2) ended = true;
       } else {
@@ -1079,7 +1192,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       BleLog.log(ProxLogTags.lan,
           'round over (was $markedDisplay, now ${nextDisplay.isEmpty ? 'closed' : nextDisplay}) → waiting for next');
       await _enterWaitingRoom(target,
-          profName: _roomProf, org: _roomOrg);
+          profName: _roomProf, profEmail: _roomProfEmail, org: _roomOrg);
       return;
     }
     _rewaitAfterRound(target, run, markedDisplay);
@@ -1128,6 +1241,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       joinError: joinError,
       live: _live,
       broadcastBlocked: _broadcastBlocked,
+      profEmailByHost: Map.of(_gatedEmailByHost),
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final target = ClassBeacon(
@@ -1151,6 +1265,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           _enterWaitingRoom(target,
               immediateProbe: false,
               profName: c.last.prof,
+              profEmail: _gatedEmailByHost[hp],
               org: c.last.org);
         }
       },
@@ -1229,6 +1344,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                     ? _roomClass
                     : (_waitingTarget?.classLabel ?? 'this class'),
                 roomProf: _roomProf,
+                roomProfEmail: _roomProfEmail,
                 roomOrg: _roomOrg,
                 roundMarks: _roundMarks,
                 onRequestManual: _requestManual,
