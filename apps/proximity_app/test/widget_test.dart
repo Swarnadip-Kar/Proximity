@@ -11,13 +11,14 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/features/enrollment/enroll_capture.dart';
-import 'package:proximity_app/features/enrollment/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/core/student_driver.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/main.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
@@ -36,7 +37,11 @@ ProviderScope testScope(
     StudentDriver? studentDriver,
     BtState btPower = BtState.on,
     AppMode? mode,
-    FakeCloudSync? cloud}) {
+    FakeCloudSync? cloud,
+    // Direct-screen pumps (bypass the app home): the Mark gate owns
+    // unenrolled routing, so join-gate contracts pump StudentHomeScreen
+    // directly instead of the full shell.
+    Widget? home}) {
   final auth = FakeAuthService(
       SignedAccount(email: email, displayName: 'Test User', uid: 'test-uid'));
   final deviceStore = store ?? InMemoryDeviceStore();
@@ -82,8 +87,15 @@ ProviderScope testScope(
         ),
       ),
     ],
-    child: const ProximityApp(),
+    child: home ?? const ProximityApp(),
   );
+}
+
+/// Shell-tab helper (§3.1 rebuild): tab content other than the default
+/// tab is offstage — navigate the bottom bar before asserting on it.
+Future<void> openTab(WidgetTester t, String label) async {
+  await t.tap(find.widgetWithText(BottomNavigationBar, label));
+  await t.pumpAndSettle();
 }
 
 /// Driver whose listen parks until released: exercises pause-during-
@@ -202,6 +214,14 @@ class _EndedHostDriver extends FakeStudentDriver {
 
 void main() {
 Future<void> enterIp(WidgetTester t, String ip) async {
+  // Typed-IP is fallback-weight (§6.1/§6.4): the field lives in the
+  // `Enter IP manually` sheet below the browse list — scroll it into
+  // view, then type in the sheet field.
+  final fallback = find.text('Enter IP manually');
+  await t.scrollUntilVisible(fallback, 300);
+  await t.pumpAndSettle();
+  await t.tap(fallback);
+  await t.pumpAndSettle();
   await t.enterText(find.byKey(const ValueKey('ipfield')), ip);
   await t.pump();
 }
@@ -213,9 +233,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     expect(find.text('CS201'), findsOneWidget);
     // course detail → take attendance (fake host advertises)
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     expect(find.textContaining('waiting for window'), findsOneWidget);
     // start single window
@@ -231,7 +251,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // end attendance (no export) → history holds the class record, detail
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    // Ended → back on the Live root (§3.1 rebuild).
+    expect(find.text('CS201'), findsOneWidget);
     expect(await store.readHistory(), hasLength(1));
   });
 
@@ -404,7 +425,14 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(t.takeException(), isNull);
   });
   testWidgets('student without enrollment cannot join', (t) async {
-    await t.pumpWidget(testScope(linked: null, mode: AppMode.student));
+    // Join-gate contract (§3.4 rebuild): the shell routes unenrolled
+    // students into the setup flow, so this pumps the Mark host directly
+    // — the refusal itself is unchanged.
+    await t.pumpWidget(testScope(
+        linked: null,
+        mode: AppMode.student,
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const StudentHomeScreen())));
     await t.pumpAndSettle();
     await enterIp(t, '192.168.43.1');
     await t.tap(find.text('Join'));
@@ -424,8 +452,12 @@ Future<void> enterIp(WidgetTester t, String ip) async {
             gmail: 'student@example.com',
             roll: '12342210')));
     await t.pumpAndSettle();
-    // No Rejoin chip anymore — the field opens prefilled with last host.
+    // No Rejoin chip anymore — the sheet field opens prefilled with last host.
     expect(find.textContaining('Rejoin'), findsNothing);
+    await t.scrollUntilVisible(find.text('Enter IP manually'), 300);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Enter IP manually'));
+    await t.pumpAndSettle();
     String field(String k) =>
         t.widget<TextField>(find.byKey(ValueKey(k))).controller!.text;
     expect(field('ipfield'), '192.168.43.9');
@@ -449,7 +481,12 @@ Future<void> enterIp(WidgetTester t, String ip) async {
 
   testWidgets('face-fail→needs-review copy present', (t) async {
     // Static copy contract: needs-review path must exist in UI strings.
-    await t.pumpWidget(testScope(mode: AppMode.student));
+    // Browse copy (§3.4 rebuild): the shell gates unenrolled students, so
+    // this pumps the Mark host directly.
+    await t.pumpWidget(testScope(
+        mode: AppMode.student,
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const StudentHomeScreen())));
     await t.pumpAndSettle();
     // Paused copy exists in source (background contract); smoke-check browsing.
     // The note sits at the bottom of the scrollable browse list (below the
@@ -472,29 +509,40 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // Landing (FakeAuth signed in, no role): register as student.
     await t.tap(find.text('Register as Student'));
     await t.pumpAndSettle();
-    // Student home browsing now offers enrollment when not enrolled.
-    await t.tap(find.text('Enroll this device (face + ID)'));
-    await t.pumpAndSettle();
+    // Register lands on the shell, whose Mark gate is already pushing the
+    // setup flow at the combined device+intro step (§3.3/§3.4 rebuild: no
+    // separate enroll-bundle entry tap anymore).
     expect(find.text('Enroll this device'), findsWidgets);
     // 1. intro: account picked up silently (already signed in on the
     // landing): no second Google tap. Identity imports from Gmail.
-    expect(find.text('Sign in with Google'), findsNothing);
-    expect(find.textContaining('Signed in as Test User'), findsOneWidget);
+    // (The flow's sign-in page exists offstage; the visible step is the
+    // combined device+intro step.)
+    expect(find.text('Confirm device'), findsOneWidget);
+    expect(find.textContaining('Signed in as Test User'), findsWidgets);
     expect(find.textContaining('student@example.com'), findsWidgets);
     // ID number (compulsory, saved unverified)
     await t.enterText(
         find.widgetWithText(TextField, 'ID Number'), '12342210');
     await t.pump();
-    // 2. device key (scroll into view: intro carries pre-context cards).
+    // 2. device key (scroll into view: the combined step carries the
+    // device facts above the intro cards).
     await t.scrollUntilVisible(find.text('Generate device key'), 300,
-        scrollable: find.byType(Scrollable).first);
+        scrollable: find
+            .descendant(
+                of: find.byKey(const ValueKey('setup-combined-scroll')),
+                matching: find.byType(Scrollable))
+            .first);
     await t.pumpAndSettle();
     await t.tap(find.text('Generate device key'));
     await t.pumpAndSettle();
     expect(find.textContaining('Key: '), findsOneWidget);
     // Intro → capture.
     await t.scrollUntilVisible(find.text('Continue to face scan'), 300,
-        scrollable: find.byType(Scrollable).first);
+        scrollable: find
+            .descendant(
+                of: find.byKey(const ValueKey('setup-combined-scroll')),
+                matching: find.byType(Scrollable))
+            .first);
     await t.pumpAndSettle();
     await t.tap(find.text('Continue to face scan'));
     await t.pumpAndSettle();
@@ -504,7 +552,7 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // pumpAndSettle mid-loop (the loop always has its next beat due).
     // (No instruction-line snapshot here: the loop advances past angle 1
     // while settling; overlay copy is pinned in enroll_guided_test.)
-    expect(find.byType(EnrollAngleDots), findsWidgets);
+    expect(find.byType(CaptureOverlay), findsOneWidget);
     final saveFinder = find.text('Save enrollment');
     for (var i = 0; i < 60 && saveFinder.evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 200));
@@ -513,8 +561,10 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(find.text('Save enrollment'), findsWidgets);
     final saveBtn =
         find.widgetWithText(FilledButton, 'Save enrollment');
+    // Result step's own scroll (the flow PageView viewport is an
+    // ancestor Scrollable — target the innermost scroll here).
     await t.scrollUntilVisible(saveBtn, 300,
-        scrollable: find.byType(Scrollable).first);
+        scrollable: find.byType(Scrollable).last);
     await t.pumpAndSettle();
     await t.tap(saveBtn);
     await t.pumpAndSettle();
@@ -528,6 +578,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
   testWidgets('prof enlists new course by name', (t) async {
     await t.pumpWidget(testScope(mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Courses tab owns the catalog (§3.1 rebuild).
+    await openTab(t, 'Courses');
     expect(find.text('My courses'), findsWidgets);
     await t.tap(find.text('Register new course'));
     await t.pumpAndSettle();
@@ -536,10 +588,11 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.tap(find.text('Register'));
     await t.pumpAndSettle();
     expect(find.text('CS301'), findsOneWidget);
-    // registered course opens its detail with take-attendance entry
+    // registered course opens its records overview (no hosting entry here)
     await t.tap(find.text('CS301'));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    expect(find.text('Take attendance'), findsNothing);
+    expect(find.text('Review & export'), findsOneWidget);
   });
 
   testWidgets('late/invalid states render in prof search', (t) async {
@@ -547,9 +600,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await store.addCourse('CS201');
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     // Live window runs the 1s elapsed tick + pulsing dot: pump fixed steps,
@@ -579,6 +632,10 @@ Future<void> enterIp(WidgetTester t, String ip) async {
               gmail: 'student@example.com',
               roll: '12342210')));
       await t.pumpAndSettle();
+      await t.scrollUntilVisible(find.text('Enter IP manually'), 300);
+      await t.pumpAndSettle();
+      await t.tap(find.text('Enter IP manually'));
+      await t.pumpAndSettle();
       expect(find.byKey(const ValueKey('ipfield')), findsOneWidget);
       expect(t.takeException(), isNull);
     } finally {
@@ -594,9 +651,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
       await store.addCourse('CS201');
       await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
       await t.pumpAndSettle();
+      // Live-tab root → host for CS201 directly (§3.1 rebuild).
       await t.tap(find.text('CS201'));
-      await t.pumpAndSettle();
-      await t.tap(find.text('Take attendance'));
       await t.pumpAndSettle();
       await t.tap(find.text('Start'));
       await t.pump();
@@ -614,9 +670,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await store.addCourse('CS201');
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
@@ -640,7 +696,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(snap2.first.id, snap1.first.id);
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    // Ended → back on the Live root (§3.1 rebuild).
+    expect(find.text('CS201'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -649,9 +706,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await store.addCourse('CS201');
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
@@ -681,20 +738,25 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpWidget(
         testScope(store: store, hostDriver: host, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
-    await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
-    await t.scrollUntilVisible(find.text('Select all'), 500,
+    // Hold-and-tap inbox (§4.1 rebuild): long-press enters selection for
+    // the inbox list, the toolbar bulk-approves (no checkboxes).
+    await t.scrollUntilVisible(find.text('M One'), 500,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
+    await t.longPress(find.text('M One'));
+    await t.pumpAndSettle();
+    expect(find.text('Approve 1'), findsOneWidget);
     await t.tap(find.text('Select all'));
     await t.pumpAndSettle();
-    await t.scrollUntilVisible(find.text('Approve selected'), 500,
+    await t.scrollUntilVisible(find.text('Approve 2'), 500,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
-    await t.tap(find.text('Approve selected'));
+    await t.tap(find.text('Approve 2'));
     await t.pumpAndSettle();
     // The added directory-search block lengthened the list: the header may
     // have scrolled out of the built viewport — scroll back up to read it.
@@ -745,9 +807,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await store.addCourse('CS201');
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
@@ -756,12 +818,13 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // System back: hosting ends but the draft autosaves.
     await t.binding.handlePopRoute();
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    // Back lands on the Live root (§3.5 rebuild: no mode-hub jump).
+    expect(find.text('CS201'), findsOneWidget);
     final draft = await store.readSession('CS201');
     expect(draft, isNotNull);
     expect(draft!['windowNo'], 1);
-    // Re-enter: tally + window numbering resume, no re-marking needed.
-    await t.tap(find.text('Take attendance'));
+    // Re-enter from the Live root: tally + window numbering resume.
+    await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
     expect(find.text('Resumed autosaved session'), findsOneWidget);
     expect(find.textContaining('2 present'), findsWidgets);
@@ -780,9 +843,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await store.addCourse('CS201');
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Take attendance'));
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
@@ -791,7 +854,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(await store.readSession('CS201'), isNotNull);
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    // Ended → back on the Live root (§3.1 rebuild).
+    expect(find.text('CS201'), findsOneWidget);
     expect(await store.readSession('CS201'), isNull);
     // The class record survives in history (export moved to course page).
     expect(await store.readHistory(), hasLength(1));
@@ -815,6 +879,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     ));
     await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
+    // Courses tab owns the records overview (§3.1 rebuild).
+    await openTab(t, 'Courses');
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
     // Open the saved session (overview → read-only detail → editor).
@@ -879,7 +945,7 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(flaky.listens, 1);
     await t.tap(find.text('Try again'));
     await t.pumpAndSettle();
-    expect(find.text('Join'), findsOneWidget);
+    expect(find.text('Enter IP manually'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -953,9 +1019,17 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(find.textContaining('Waiting for the class signal'),
         findsOneWidget);
     // Real backgrounding still pauses proving (foreground-required rule).
+    // Full modern sequence (§3.1 rebuild): the shell keeps offstage tab
+    // fields mounted, and their framework listeners enforce the valid
+    // order (inactive → hidden → paused … hidden → inactive → resumed).
     // Note: paused disables test frames, so resume (a no-op for our
     // observer) to re-enable them before pumping.
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     t.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await t.pump();
+    expect(find.text('Paused — reopen'), findsOneWidget);
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     t.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await t.pump();
     expect(find.text('Paused — reopen'), findsOneWidget);
@@ -963,11 +1037,11 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // (its completion is run-guarded).
     await t.tap(find.text('Back to join'));
     await t.pumpAndSettle();
-    expect(find.text('Join'), findsOneWidget);
+    expect(find.text('Enter IP manually'), findsOneWidget);
     hanging.release.complete();
     await t.pump();
     await t.pump(const Duration(seconds: 1));
-    expect(find.text('Join'), findsOneWidget);
+    expect(find.text('Enter IP manually'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -1068,7 +1142,11 @@ Future<void> enterIp(WidgetTester t, String ip) async {
         cloudSyncProvider.overrideWithValue(cloud),
         deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
       ],
-      child: MaterialApp(home: SessionEditScreen(record: rec)),
+      // App theme: the session editor embeds the module manual-add form,
+      // which reads the ProximityColors extension (Live rebuild).
+      child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SessionEditScreen(record: rec)),
     ));
     await t.pumpAndSettle();
     // The form fields ARE the search: typing an email prefix lists the
@@ -1145,7 +1223,10 @@ Future<void> enterIp(WidgetTester t, String ip) async {
         cloudSyncProvider.overrideWithValue(FakeCloudSync()),
         deviceStoreProvider.overrideWithValue(store),
       ],
+      // App theme: the session editor embeds the module manual-add form,
+      // which reads the ProximityColors extension (Live rebuild).
       child: MaterialApp(
+          theme: proxLightTheme(),
           home: SessionEditScreen(record: s2, courseSessions: [s1, s2])),
     ));
     await t.pumpAndSettle();

@@ -14,9 +14,9 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/sync/claim.dart';
-import 'package:proximity_app/features/enrollment/enroll_intro.dart';
-import 'package:proximity_app/features/enrollment/enroll_result.dart';
-import 'package:proximity_app/features/enrollment/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/enroll_intro.dart';
+import 'package:proximity_app/features/setup/enroll_result.dart';
+import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 

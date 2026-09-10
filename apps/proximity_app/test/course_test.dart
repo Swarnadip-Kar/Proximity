@@ -5,6 +5,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
 import 'package:proximity_app/features/records/export_center_screen.dart';
 import 'package:proximity_app/features/records/prof_courses_screen.dart';
@@ -40,7 +41,8 @@ ProviderScope wrap(InMemoryDeviceStore s, Widget home) => ProviderScope(
         cameraPermissionProvider.overrideWithValue(() async => true),
         btPowerProvider.overrideWithValue(() async => BtState.on),
       ],
-      child: MaterialApp(home: home),
+      // App theme: screens read the ProximityColors extension (rebuild).
+      child: MaterialApp(theme: proxLightTheme(), home: home),
     );
 
 void main() {
@@ -75,12 +77,15 @@ void main() {
     expect(shortDayDateOf('garbage'), 'garbage');
   });
 
-  testWidgets('course overview: sessions + export center + retake',
+  testWidgets('course overview: sessions + export center (records-only)',
       (t) async {
     await t.pumpWidget(
         wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
+    // Records-only (§3.1a): no hosting entry lives in this tab.
+    expect(find.text('Take attendance'), findsNothing);
+    expect(find.byTooltip('Retake attendance'), findsNothing);
+    expect(find.byType(Checkbox), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
     // Tight title: short weekday + day/month; roomy subtitle: full date.
     expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
@@ -96,16 +101,6 @@ void main() {
     // export dialog shows simple session CSV (no W1/W2)
     expect(find.textContaining('A,1,a@x.in,Absent'), findsOneWidget);
     await t.tap(find.text('Close'));
-    await t.pumpAndSettle();
-    // Back to overview for the retake (live screen auto-starts).
-    await t.pageBack();
-    await t.pumpAndSettle();
-    // retake pushes the live screen and auto-starts the single window
-    await t.tap(find.byTooltip('Retake attendance'));
-    await t.pumpAndSettle();
-    expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
-    // stop early so no timers leak, then close
-    await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull);
   });
@@ -126,15 +121,18 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('course overview: select sessions + delete with X/Y warning',
+  testWidgets('course overview: hold-and-tap select + delete with X/Y warning',
       (t) async {
     await t.pumpWidget(
         wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    await t.tap(find.byType(Checkbox).first);
+    // Hold-and-tap enters selection mode (no checkboxes in this tab).
+    await t.longPress(find.textContaining('Thu, 3 Sep'));
     await t.pumpAndSettle();
-    expect(find.textContaining('Delete selected (1)'), findsOneWidget);
-    await t.tap(find.textContaining('Delete selected (1)'));
+    expect(find.text('Delete 1'), findsOneWidget);
+    expect(find.text('Select all'), findsOneWidget);
+    expect(find.byTooltip('Cancel'), findsOneWidget);
+    await t.tap(find.text('Delete 1'));
     await t.pumpAndSettle();
     expect(
         find.textContaining(

@@ -8,9 +8,9 @@
 // no constraining wrappers/fixed boxes in the preview path, AppBar height,
 // identical preview area in EVERY lifecycle variant (mid-flow, validated,
 // save-error, after back-navigation), and the researched layering decision
-// (chrome stays overlay — dots Positioned in the preview Stack,
-// prompt/buttons in the bottom bar, never inline above the feed, never copy
-// inside the Stack). Two-oval tests pin green-outer/blue-inner distinctness
+// (chrome stays overlay — the two-oval overlay paints inside the preview
+// Stack, prompt/buttons sit in the bottom bar, never inline above the feed,
+// never copy inside the Stack). Two-oval tests pin green-outer/blue-inner distinctness
 // (colors, radii, jobs) and reduced-motion steady glows. Clock: the beacon
 // timer is periodic — drive live sessions with bounded pumps, never
 // pumpAndSettle with the session mounted (settle only once the loop and
@@ -21,13 +21,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
-import 'package:proximity_app/features/enrollment/enroll_capture.dart';
-import 'package:proximity_app/features/enrollment/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
+import 'package:proximity_app/widgets/capture_overlay.dart';
 
 /// Fail-closed gallery write that always throws (save-error variant).
 class _EnrollBoom extends FakeFaceVerifier {
@@ -60,6 +62,8 @@ Widget _captureHarness({required EnrollmentController ctl}) =>
         poseGateProvider.overrideWithValue(FakePoseGate()),
       ],
       child: MaterialApp(
+        // App theme: the shared two-oval overlay reads ProximityColors.
+        theme: proxLightTheme(),
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
@@ -96,12 +100,12 @@ Future<void> _pumpUntil(WidgetTester t, Finder f, {int ticks = 60}) async {
   fail('auto-capture loop never settled: $f');
 }
 
-/// The preview Stack: the only StackFit.expand Stack carrying the oval
+/// The preview Stack: the only StackFit.expand Stack carrying the two-oval
 /// overlay (Navigator/Overlay internals use loose fits, so this is unique).
 Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
     w is Stack &&
     w.fit == StackFit.expand &&
-    w.children.whereType<FaceCaptureOvalOverlay>().isNotEmpty);
+    w.children.whereType<CaptureOverlay>().isNotEmpty);
 
 void main() {
   group('device-boundary parity (elongation fix)', () {
@@ -131,7 +135,7 @@ void main() {
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       final chain = <Widget>[];
-      t.element(find.byType(FaceCaptureOvalOverlay)).visitAncestorElements((a) {
+      t.element(find.byType(CaptureOverlay)).visitAncestorElements((a) {
         chain.add(a.widget);
         return true;
       });
@@ -157,14 +161,15 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('mid-flow keeps single prompt + dots, reserves original height',
+    testWidgets('mid-flow keeps single prompt + overlay, reserves original height',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // Single static prompt + dots exactly (no copy changes).
+      // Single static prompt + the two-oval overlay exactly (no dots, no
+      // per-angle labels — §6.2).
       expect(find.text(enrollCapturePrompt), findsOneWidget);
-      expect(find.byType(EnrollAngleDots), findsOneWidget);
+      expect(find.byType(CaptureOverlay), findsOneWidget);
       // Invisible original-height reservation (boundary parity, no semantics).
       final reservations = find.byWidgetPredicate(
           (w) => w is Visibility && !w.visible && w.maintainSize);
@@ -359,25 +364,23 @@ void main() {
   });
 
   group('layering decision (overlay refinement, never inline)', () {
-    testWidgets('dots ride Positioned in the preview Stack; prompt in bar',
+    testWidgets('overlay rides paint-only in the preview Stack; prompt in bar',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // Dots: exactly one Positioned overlay child, touch-transparent.
+      // The two-oval overlay is the paint-only child; mid-flow carries no
+      // Positioned chrome at all (the save-error toast is saveError-gated).
+      // Touch-transparency comes from the overlay root itself.
+      expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(
           find.ancestor(
-              of: find.byType(EnrollAngleDots),
+              of: find.byType(CaptureOverlay),
               matching: find.byType(Positioned)),
-          findsOneWidget);
-      expect(
-          find.ancestor(
-              of: find.byType(EnrollAngleDots),
-              matching: find.byType(IgnorePointer)),
-          findsWidgets);
+          findsNothing);
       final stack = t.element(_previewStackFinder()).widget as Stack;
       expect(stack.fit, StackFit.expand);
-      expect(stack.children.whereType<Positioned>(), hasLength(1));
+      expect(stack.children.whereType<Positioned>(), isEmpty);
       // Prompt is bottom-bar chrome, never preview chrome: no Stack between
       // the prompt text and the page Scaffold, and it sits in Padding(16).
       final promptEl = find.text(enrollCapturePrompt).evaluate().single;
@@ -406,8 +409,9 @@ void main() {
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       expect(_previewStackFinder(), findsOneWidget);
-      // Dots report via semantics, the ovals via paint, the placeholder via
-      // an empty prompt — no readable text is laid out over the feed.
+      // Progress rides the large oval arc, the placeholder carries no copy,
+      // and the overlay status line stays null mid-flow (rejects are silent)
+      // — no readable text is laid out over the feed.
       for (final e in find
           .descendant(
               of: _previewStackFinder(), matching: find.byType(Text))

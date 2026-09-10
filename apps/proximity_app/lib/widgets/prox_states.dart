@@ -152,6 +152,8 @@ class ProxSectionHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
           if (trailing != null) trailing!,
@@ -313,9 +315,8 @@ class ProxIdentityHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final initial = displayName.trim().isEmpty
-        ? '?'
-        : displayName.trim()[0].toUpperCase();
+    final initial =
+        displayName.trim().isEmpty ? '?' : displayName.trim()[0].toUpperCase();
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [

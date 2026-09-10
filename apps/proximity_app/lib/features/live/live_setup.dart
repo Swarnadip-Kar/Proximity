@@ -1,6 +1,12 @@
-// Live setup (prof live): everything the professor configures BEFORE the
-// first Start — display name, announce-IP picker, visibility guidance, and
-// the Bluetooth/permission error line.
+// Live setup (prof live, §7.1): everything the professor configures BEFORE
+// the first Start — display name, announce-IP picker, visibility guidance,
+// and the Bluetooth/permission error line.
+//
+// Presentation rebuild (behavior frozen): terse status + next action stay
+// visible; the discovery/ladder explanation collapses into a shared
+// [DetailsExpander] (§4.7) instead of an always-visible paragraph. Pinned
+// copy (`Starting host…`, the name field label, `Announcing on <ip> ·
+// change`, the server line, the error line) is byte-identical.
 //
 // This section is idle-time only: once the window is LIVE the header owns
 // the screen and this collapses to the server line + errors. Nothing here
@@ -8,7 +14,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:proximity_transport/transport.dart';
 
+import '../../design/tokens.dart';
+import '../../widgets/details_expander.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
 
@@ -46,6 +55,7 @@ Future<String?> showAnnounceIpDialog(
     ),
   );
 }
+
 /// Pre-window setup block. [hosting] false + no error reads as the
 /// transient 'Starting host…' line; the name field + visibility guidance
 /// show only while idle (hosting && !live); the announce line, IP picker,
@@ -76,19 +86,47 @@ class LiveSetupSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         if (!hosting && serverError == null) ...[
-          const SizedBox(height: 8),
-          const Text('Starting host…'),
+          const SizedBox(height: ProxSpacing.sm),
+          Text(
+            'Starting host…',
+            style: ProxType.body(color: c.contentSecondary),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
         ],
         if (hosting && !live) ...[
-          const SizedBox(height: 8),
-          const Text(
-              'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, have them type the IP shown below (this screen) with Bluetooth on — discovery broadcasts are advisory, the typed IP always works.'),
-          const SizedBox(height: 8),
+          const SizedBox(height: ProxSpacing.sm),
+          Text(
+            'Advertising — students can join the waiting area. Tap Start when the class has joined.',
+            style: ProxType.body(color: c.contentPrimary),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          DetailsExpander(
+            title: 'Details',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, have them type the IP shown below (this screen) with Bluetooth on — discovery broadcasts are advisory, the typed IP always works.',
+                  style: ProxType.caption(color: c.contentSecondary),
+                ),
+                const SizedBox(height: ProxSpacing.xs),
+                Text(
+                  'Path: ${formatLadderLine(-1)}',
+                  style: ProxType.monoCaption(color: c.contentSecondary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: ProxSpacing.sm),
           TextField(
             controller: nameCtrl,
             decoration: const InputDecoration(
@@ -98,20 +136,33 @@ class LiveSetupSection extends StatelessWidget {
           ),
         ],
         if (serverLine != null) ...[
-          const SizedBox(height: 4),
-          Text(serverLine!, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: ProxSpacing.xs),
+          // Address line: a short code/URL string, monospace per §2.2.
+          // Plain Text (not SelectableText): the take-screen contract
+          // reads this line with text finders, and it is short enough
+          // to ellipsize rather than wrap.
+          Text(
+            serverLine!,
+            style: ProxType.monoBody(color: c.contentPrimary),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
         ],
         if (allIps.length > 1) ...[
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
               onPressed: live ? null : onPickIp,
-              child: Text('Announcing on $currentIp · change'),
+              child: Text(
+                'Announcing on $currentIp · change',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             ),
           ),
         ],
         if (serverError != null) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: ProxSpacing.xs),
           ProxErrorNote(serverError!),
         ],
       ],

@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
 import 'package:proximity_app/features/live/manual_inbox.dart';
 import 'package:proximity_app/features/mark/browse_classes.dart';
@@ -23,6 +24,12 @@ import 'package:proximity_app/widgets/course_attendance.dart';
 import 'package:proximity_app/widgets/partial_list.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
+
+// Rebuilt mark views read the `ProximityColors` extension.
+Widget _themed(Widget body) => MaterialApp(
+      theme: proxLightTheme(),
+      home: Scaffold(body: body),
+    );
 
 LiveClass _live({
   String label = 'CS201',
@@ -52,23 +59,20 @@ LiveClass _live({
 
 Widget _browse(List<LiveClass> live,
         {Map<String, String> profEmailByHost = const {}}) =>
-    MaterialApp(
-      home: Scaffold(
-        body: BrowseClassesView(
-          linked: null,
-          identityLine: 'S',
-          ipFieldKey: UniqueKey(),
-          ipInitial: '',
-          onIpChanged: (_) {},
-          onJoin: () {},
-          joinError: '',
-          live: live,
-          profEmailByHost: profEmailByHost,
-          onTapLive: (_) {},
-          onEnroll: () {},
-          onViewRecords: () {},
-          onRefresh: () async {},
-        ),
+    _themed(
+      BrowseClassesView(
+        linked: null,
+        identityLine: 'S',
+        ipInitial: '',
+        onIpChanged: (_) {},
+        onJoin: () {},
+        joinError: '',
+        live: live,
+        profEmailByHost: profEmailByHost,
+        onTapLive: (_) {},
+        onEnroll: () {},
+        onViewRecords: () {},
+        onRefresh: () async {},
       ),
     );
 
@@ -103,9 +107,8 @@ void main() {
 
   testWidgets('waiting room shows tapped announcement prof + org',
       (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
+    await t.pumpWidget(_themed(
+      WaitingRoomView(
           connected: true,
           roomClass: 'CS201',
           roomProf: 'Prof X',
@@ -114,30 +117,26 @@ void main() {
           onRequestManual: () {},
           onCancel: () {},
         ),
-      ),
-    ));
+      ));
     expect(find.text('Hosted by Prof X · univ.edu'), findsOneWidget);
   });
 
   testWidgets('waiting room typed-IP join shows no host line', (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
+    await t.pumpWidget(_themed(
+      WaitingRoomView(
           connected: true,
           roomClass: 'CS201',
           roundMarks: const [],
           onRequestManual: () {},
           onCancel: () {},
         ),
-      ),
-    ));
+      ));
     expect(find.textContaining('Hosted by'), findsNothing);
   });
 
   testWidgets('waiting room shows gated prof + Gmail + org', (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
+    await t.pumpWidget(_themed(
+      WaitingRoomView(
           connected: true,
           roomClass: 'CS201',
           roomProf: 'Prof X',
@@ -147,17 +146,15 @@ void main() {
           onRequestManual: () {},
           onCancel: () {},
         ),
-      ),
-    ));
+      ));
     expect(find.text('Hosted by Prof X · prof.x@univ.edu · univ.edu'),
         findsOneWidget);
   });
 
   testWidgets('waiting room without the Gmail renders no dangling separator',
       (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
+    await t.pumpWidget(_themed(
+      WaitingRoomView(
           connected: true,
           roomClass: 'CS201',
           roomProf: 'Prof X',
@@ -166,8 +163,7 @@ void main() {
           onRequestManual: () {},
           onCancel: () {},
         ),
-      ),
-    ));
+      ));
     expect(find.text('Hosted by Prof X · univ.edu'), findsOneWidget);
     expect(find.textContaining('@'), findsNothing);
   });
@@ -216,12 +212,10 @@ void main() {
   });
 
   testWidgets('professor waiting row shows student email', (t) async {
-    await t.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: WaitingListSection(waitingRows: [
-          WaitingRow(email: 's@univ.edu', name: 'S', roll: '1'),
-        ]),
-      ),
+    await t.pumpWidget(_themed(
+      const WaitingListSection(waitingRows: [
+        WaitingRow(email: 's@univ.edu', name: 'S', roll: '1'),
+      ]),
     ));
     await t.pumpAndSettle();
     expect(find.text('1 · s@univ.edu'), findsOneWidget);
@@ -235,8 +229,8 @@ void main() {
     tally.mark('a@univ.edu', 'A', 1, roll: '1');
     tally.mark('a@univ.edu', 'A', 2, roll: '1');
     tally.mark('b@univ.edu', 'B', 1, roll: '2');
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(body: MarkedRosterSection(tally: tally)),
+    await t.pumpWidget(_themed(
+      MarkedRosterSection(tally: tally),
     ));
     await t.pumpAndSettle();
     expect(find.textContaining('a@univ.edu'), findsOneWidget);
@@ -244,16 +238,14 @@ void main() {
   });
 
   testWidgets('professor manual inbox shows student email', (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: ManualInboxSection(
-          pending: const [
-            ManualRow(email: 's@univ.edu', name: 'S', roll: '1'),
-          ],
-          onApproveOne: (_) async {},
-          onRejectOne: (_) async {},
-          onDecide: (_, __) async {},
-        ),
+    await t.pumpWidget(_themed(
+      ManualInboxSection(
+        pending: const [
+          ManualRow(email: 's@univ.edu', name: 'S', roll: '1'),
+        ],
+        onApproveOne: (_) async {},
+        onRejectOne: (_) async {},
+        onDecide: (_, __) async {},
       ),
     ));
     await t.pumpAndSettle();

@@ -1,7 +1,8 @@
 // Landing: thin entry router. Watches the signed-in account stream and
 // shows Welcome (signed out) vs RoleHub (signed in). All sign-in, role,
 // merge, claim-gate, and last-mode logic lives in the entry bundle
-// (features/entry/entry_flow.dart + welcome/role_hub/device screens) —
+// (features/entry/entry_flow.dart + features/setup welcome/role_hub/device
+// screens) —
 // this file owns no auth state, no cloud calls, no navigation decisions.
 // Preserves the PROX_MODE preview contract via main.dart home (this screen
 // only serves AppMode.unset) and the web records guards via the entry
@@ -12,8 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/auth.dart';
-import '../features/entry/role_hub_screen.dart';
-import '../features/entry/welcome_screen.dart';
+import '../features/setup/role_hub_screen.dart';
+import '../features/setup/welcome_screen.dart';
 import '../widgets/prox_scaffold.dart';
 import '../widgets/prox_states.dart';
 

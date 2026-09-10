@@ -1,12 +1,19 @@
-// One course's management page: Take a new visit on top, previous sessions
-// below (most recent first), rename/delete the course, multi-select session
-// deletion with X/Y warnings. Review/export of the past lives in
-// ExportCenterScreen; one tapping a session opens SessionDetailScreen.
+// One course's management page: previous sessions below (most recent
+// first), rename/delete the course, multi-select session deletion with X/Y
+// warnings. Review/export of the past lives in ExportCenterScreen; tapping
+// a session opens SessionDetailScreen. Records-only: this tab never routes
+// into room capture and shows no status chip for it.
 //
-// Sync law (preserved): professors signed in pull-merge on open and after a
-// take returns (newer timestampIso wins per id); offline-queued manual adds
-// resolve now (single-flight, live drafts excluded — the visit is still
-// open); local-only sessions push up; renames/deletes propagate to the cloud.
+// Sync law (preserved): professors signed in pull-merge on open and after an
+// export returns (newer timestampIso wins per id); offline-queued manual adds
+// resolve now (single-flight, live drafts excluded); local-only sessions
+// push up; renames/deletes propagate to the cloud.
+//
+// Data logic preserved per the Phase-1 exemption (filter, sort, union,
+// tombstones, rename-migrate, warnings): restyle only. Bulk selection uses
+// hold-and-tap (one SelectionScope for this list + SelectionToolbar); the
+// per-round correction boxes on the session edit page are the one exception
+// and are untouched there.
 library;
 
 import 'dart:async';
@@ -23,15 +30,18 @@ import '../../core/sync_hook.dart';
 import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
-import '../../screens/take_attendance.dart';
 import '../../widgets/clock.dart';
+import '../../widgets/details_expander.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/selection_controller.dart';
+import '../../widgets/selection_toolbar.dart';
+import '../../widgets/student_card.dart';
 import '../../widgets/sync_badge.dart';
+import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
-import '../debug/debug_log_screen.dart';
 import 'export_center_screen.dart';
 import 'session_detail_screen.dart';
 
@@ -47,7 +57,6 @@ class CourseOverviewScreen extends ConsumerStatefulWidget {
 class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   final _renameCtrl = TextEditingController();
   String? _notice;
-  final Set<String> _selected = {};
   String? _syncMsg;
   bool _syncing = false;
 
@@ -65,8 +74,7 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
 
   /// Pull-merge on open through the SyncEngine (single-flight flush:
   /// tombstones -> outbox FIFO with union-merge-before-push -> manual
-  /// queue -> pull-union converge). Runs on page open and after
-  /// take-attendance returns. Offline/failures keep local data quietly.
+  /// queue -> pull-union converge). Offline/failures keep local data quietly.
   Future<void> _syncFromCloud() async {
     if (mounted) setState(() => _syncing = true);
     final res = await flushNow(ref);
@@ -132,17 +140,6 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     return out;
   }
 
-  Future<void> _takeAttendance({bool autoStart = false}) async {
-    BleLog.log('NAV', 'overview ${widget.courseName} → take');
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => TakeAttendanceScreen(
-            courseName: widget.courseName, autoStart: autoStart)));
-    if (mounted) setState(() {});
-    // Returning from a live session: pull cloud merges (other devices may
-    // have marked meanwhile) without blocking the list.
-    unawaited(_syncFromCloud());
-  }
-
   Future<void> _openExport() async {
     BleLog.log('NAV', 'overview ${widget.courseName} → export');
     await Navigator.of(context).push(MaterialPageRoute(
@@ -152,8 +149,7 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
 
   void _openLog() {
     BleLog.log('NAV', 'overview → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    showLogDrawer(context);
   }
 
   /// Deletes the whole course (catalog entry + sessions + cloud copies)
@@ -193,9 +189,12 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  Future<void> _deleteSelected(List<ClassRecord> sessions) async {
-    final sel = sessions.where((s) => _selected.contains(s.id)).toList();
-    if (sel.isEmpty) return;
+  /// Deletes the hold-and-tap selected sessions with the X/Y warning.
+  /// Returns true when sessions were deleted.
+  Future<bool> _deleteSessions(
+      List<ClassRecord> sessions, Set<String> ids) async {
+    final sel = sessions.where((s) => ids.contains(s.id)).toList();
+    if (sel.isEmpty) return false;
     final stats = deletionStats(sel);
     final confirm = await showDialog<bool>(
       context: context,
@@ -215,37 +214,37 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
         ],
       ),
     );
-    if (confirm != true || !mounted) return;
-    final ids = sel.map((s) => s.id).toList();
-    await syncEngine.deleteSessionsLocal(ref.read(deviceStoreProvider), ids,
+    if (confirm != true || !mounted) return false;
+    final deleted = sel.map((s) => s.id).toList();
+    await syncEngine.deleteSessionsLocal(ref.read(deviceStoreProvider), deleted,
         courseOf: (_) => widget.courseName);
     BleLog.log('SYNC',
-        'overview: deleted ${ids.length} sessions (${stats.students} students)');
+        'overview: deleted ${deleted.length} sessions (${stats.students} students)');
     // Tombstones propagate on flush (other devices drop them on next sync).
     unawaited(flushNow(ref));
     if (mounted) {
       setState(() {
-        _selected.clear();
         _notice = null;
       });
     }
+    return true;
   }
 
   /// Tight title: short weekday + day/month, time when known
   /// ('CS201 · Thu, 3 Sep · 10:00').
-  String _sessionLabel(ClassRecord r) => sessionTightLabel(
-      r.classLabel, r.dateIso, r.timestampIso);
+  String _sessionLabel(ClassRecord r) =>
+      sessionTightLabel(r.classLabel, r.dateIso, r.timestampIso);
 
   /// Roomy subtitle line: full weekday, date and year.
   String _sessionDateLine(ClassRecord r) =>
       sessionRoomyLine(r.dateIso, r.timestampIso);
 
-  /// One-line partial marker on the session card (multi-round sessions
-  /// only): "Partial (2)". The full per-student list lives in the session
+  /// Partial marker for the session row (multi-round sessions only):
+  /// "Partial (2)". The full per-student list lives in the session
   /// detail, where the professor can mark them present.
-  String _partialLine(ClassRecord r) {
+  String _partialMarker(ClassRecord r) {
     final n = partialCountOf(r.windows, r.allEmails);
-    return n == 0 ? '' : '\nPartial ($n)';
+    return n == 0 ? '' : 'Partial ($n)';
   }
 
   /// Tap opens the read-only session detail (edit/export branch from there).
@@ -261,8 +260,8 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     BleLog.log('NAV', 'overview → session ${target.dateIso}');
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-          builder: (_) => SessionDetailScreen(
-              record: target!, courseSessions: sessions)),
+          builder: (_) =>
+              SessionDetailScreen(record: target!, courseSessions: sessions)),
     );
     if (mounted) setState(() {});
   }
@@ -285,131 +284,222 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
             onPressed: _rename,
           ),
       ],
-      body: FutureBuilder<List<ClassRecord>>(
-        future: store.readHistory(),
-        builder: (context, snap) {
-          final sessions = _sessions(snap.data ?? const <ClassRecord>[]);
-          // Roster union: everyone ever seen in any session of this course.
-          // Newcomers from later classes read as absent in earlier ones,
-          // matching the matrix exports.
-          final rosterCount = courseRoster(sessions).length;
-          return ListView(
-            padding: const EdgeInsets.all(16),
+      body: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(maxWidth: ProxSpacing.maxContentWidth),
+          child: FutureBuilder<List<ClassRecord>>(
+            future: store.readHistory(),
+            builder: (context, snap) {
+              final sessions = _sessions(snap.data ?? const <ClassRecord>[]);
+              // Roster union: everyone ever seen in any session of this course.
+              // Newcomers from later classes read as absent in earlier ones,
+              // matching the matrix exports.
+              final rosterCount = courseRoster(sessions).length;
+              return SelectionScope(
+                child: _OverviewBody(
+                  sessions: sessions,
+                  loading: snap.connectionState == ConnectionState.waiting,
+                  hasData: snap.hasData,
+                  rosterCount: rosterCount,
+                  syncing: _syncing,
+                  syncMsg: _syncMsg,
+                  notice: _notice,
+                  onOpenExport: _openExport,
+                  onOpenSession: (id) => _openSession(sessions, id),
+                  onDeleteSessions: (ids) => _deleteSessions(sessions, ids),
+                  onDeleteCourse:
+                      sessions.isEmpty ? null : () => _deleteCourse(sessions),
+                  sessionLabel: _sessionLabel,
+                  sessionDateLine: _sessionDateLine,
+                  partialMarker: _partialMarker,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Overview content inside one [SelectionScope]: session rows use
+/// hold-and-tap selection with a bottom toolbar
+/// (Delete N · Select all · Cancel). No checkbox appears here; the
+/// session-edit page keeps the per-round correction boxes.
+class _OverviewBody extends ConsumerWidget {
+  final List<ClassRecord> sessions;
+  final bool loading;
+  final bool hasData;
+  final int rosterCount;
+  final bool syncing;
+  final String? syncMsg;
+  final String? notice;
+  final VoidCallback onOpenExport;
+  final ValueChanged<String> onOpenSession;
+  final Future<bool> Function(Set<String>) onDeleteSessions;
+  final VoidCallback? onDeleteCourse;
+  final String Function(ClassRecord) sessionLabel;
+  final String Function(ClassRecord) sessionDateLine;
+  final String Function(ClassRecord) partialMarker;
+
+  const _OverviewBody({
+    required this.sessions,
+    required this.loading,
+    required this.hasData,
+    required this.rosterCount,
+    required this.syncing,
+    required this.syncMsg,
+    required this.notice,
+    required this.onOpenExport,
+    required this.onOpenSession,
+    required this.onDeleteSessions,
+    required this.onDeleteCourse,
+    required this.sessionLabel,
+    required this.sessionDateLine,
+    required this.partialMarker,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = ProximityColors.of(context);
+    final controller = ref.watch(selectionControllerProvider);
+    final selecting = controller.selecting && !kIsWeb;
+    final count = controller.count;
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProxSpacing.screenMargin,
+              vertical: ProxSpacing.lg,
+            ),
             children: [
               const ClockHeader(),
               const WebRecordsBanner(),
-              if (_syncing)
+              if (syncing)
                 const ProxLoadingRow(label: 'Syncing with cloud…')
-              else if (_syncMsg != null)
-                ProxSyncNote(_syncMsg!),
+              else if (syncMsg != null)
+                ProxSyncNote(syncMsg!),
               const Align(
                 alignment: Alignment.centerLeft,
                 child: UnsyncedBadge(),
               ),
-              const SizedBox(height: 8),
-              // No hosting on web records builds (no BLE/HTTPS there).
-              if (!kIsWeb)
-                ProxPrimaryButton(
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Take attendance'),
-                  onPressed: _takeAttendance,
-                ),
-              if (!kIsWeb) const SizedBox(height: 8),
+              const SizedBox(height: ProxSpacing.sm),
               ProxSecondaryButton(
                 icon: const Icon(Icons.ios_share),
                 label: const Text('Review & export'),
-                onPressed: sessions.isEmpty ? null : _openExport,
+                onPressed: sessions.isEmpty ? null : onOpenExport,
                 expanded: true,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: ProxSpacing.sm),
               Text(
                 '$rosterCount people · ${sessions.length} sessions',
                 style: proxTabular(
-                    context, Theme.of(context).textTheme.titleSmall),
+                    context, ProxType.label(color: c.contentPrimary)),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
-              if (_selected.isNotEmpty && !kIsWeb) ...[
-                const SizedBox(height: 8),
-                ProxPrimaryButton(
-                  icon: const Icon(Icons.delete),
-                  label: Text('Delete selected (${_selected.length})'),
-                  onPressed: () => _deleteSelected(sessions),
+              DetailsExpander(
+                title: 'Details',
+                child: Text(
+                  'The roster unions everyone seen in any session. Newcomers appear absent in earlier sessions, matching exports.',
+                  style: ProxType.caption(color: c.contentSecondary),
                 ),
+              ),
+              if (notice != null) ...[
+                const SizedBox(height: ProxSpacing.sm),
+                ProxErrorNote(notice!),
               ],
-              if (_notice != null) ...[
-                const SizedBox(height: 8),
-                ProxErrorNote(_notice!),
-              ],
-              const SizedBox(height: 8),
-              if (snap.connectionState == ConnectionState.waiting)
+              const SizedBox(height: ProxSpacing.sm),
+              if (loading)
                 const Center(child: CircularProgressIndicator())
               else if (sessions.isEmpty)
                 const ProxEmptyState(
                   message: 'No sessions yet for this course.',
                 )
-              else
-                // Restrained motion: stagger on load only (ProxListTile).
-                for (var i = 0; i < sessions.length; i++)
-                  _session(context, sessions, sessions[i], i),
-              if (!kIsWeb && snap.hasData) ...[
-                const SizedBox(height: 8),
+              else ...[
+                // One-time hold-to-select hint (§9): once per install,
+                // hidden while selecting. Web builds have no multi-delete
+                // selection, so the mark stays a native affordance.
+                if (!kIsWeb)
+                  SelectionCoachMark(
+                    listType: SelectionCoachMarks.sessions,
+                    selecting: selecting,
+                  ),
+                for (final r in sessions)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: StudentCard(
+                            name: sessionLabel(r),
+                            subtitle:
+                                '${sessionDateLine(r)} · ${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}',
+                            status: partialMarker(r).isEmpty
+                                ? null
+                                : VerdictBadge(
+                                    status: ProxStatus.review,
+                                    label: partialMarker(r),
+                                  ),
+                            selectionMode: selecting,
+                            selected: controller.isSelected(r.id),
+                            // No multi-delete selection on web records builds.
+                            onSelectionChanged: kIsWeb
+                                ? null
+                                : (select) {
+                                    if (select) {
+                                      controller.select(r.id);
+                                    } else {
+                                      controller.deselect(r.id);
+                                    }
+                                  },
+                            onTap: () => onOpenSession(r.id),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.ios_share),
+                          tooltip: 'Export CSV',
+                          onPressed: onOpenExport,
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+              if (!kIsWeb && hasData) ...[
+                const SizedBox(height: ProxSpacing.sm),
                 ProxSecondaryButton(
                   icon: const Icon(Icons.delete_outline),
                   label: const Text('Delete course'),
-                  onPressed: sessions.isEmpty
-                      ? null
-                      : () => _deleteCourse(sessions),
+                  onPressed: onDeleteCourse,
                   expanded: true,
                 ),
               ],
             ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _session(
-      BuildContext context, List<ClassRecord> sessions, ClassRecord r, int i) {
-    final checked = _selected.contains(r.id);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-      child: ProxListTile(
-        title: _sessionLabel(r),
-        subtitle:
-            '${_sessionDateLine(r)}\n${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}${_partialLine(r)}',
-        staggerIndex: i,
-        // No multi-delete selection on web records builds.
-        leading: kIsWeb
-            ? null
-            : Checkbox(
-                value: checked,
-                onChanged: (v) => setState(() {
-                  if (v == true) {
-                    _selected.add(r.id);
-                  } else {
-                    _selected.remove(r.id);
-                  }
-                }),
-              ),
-        onTap: () => _openSession(sessions, r.id),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.ios_share),
-              tooltip: 'Export CSV',
-              onPressed: _openExport,
-            ),
-            // Retake needs hosting: native only.
-            if (!kIsWeb)
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Retake attendance',
-                onPressed: () => _takeAttendance(autoStart: true),
-              ),
-          ],
+          ),
         ),
-      ),
+        SelectionToolbar(
+          visible: selecting,
+          selectedCount: count,
+          totalCount: sessions.length,
+          actions: [
+            SelectionToolbarAction(
+              label: 'Delete $count',
+              onPressed: count == 0
+                  ? null
+                  : () async {
+                      final ids = controller.selectedIds;
+                      final deleted = await onDeleteSessions(ids);
+                      if (deleted) controller.clear();
+                    },
+            ),
+          ],
+          onSelectAll: () => controller.selectAll(sessions.map((s) => s.id)),
+          onCancel: controller.clear,
+        ),
+      ],
     );
   }
 }

@@ -25,8 +25,7 @@ import '../core/student_driver.dart';
 import '../core/sync/org.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
-import '../features/debug/debug_log_screen.dart';
-import '../features/enrollment/enroll_flow.dart';
+import '../features/setup/enroll_flow.dart';
 import '../features/mark/browse_classes.dart';
 import '../features/mark/face_check.dart';
 import '../features/mark/manual_status.dart';
@@ -38,6 +37,7 @@ import '../features/mark/waiting_room.dart';
 import '../features/records/my_attendance_screen.dart';
 import '../main.dart';
 import '../mode.dart';
+import '../widgets/log_drawer.dart';
 import 'face_capture.dart';
 
 // Mark phases live in the mark-flow section; re-exported here so existing
@@ -70,7 +70,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   String joinError = '';
   String _typedHostPort = '';
   String _fieldInitial = '';
-  int _fieldNonce = 0;
   final _listener = ClassListener();
   List<LiveClass> _live = [];
   ClassBeacon? _waitingTarget;
@@ -269,8 +268,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // the list survives the round end. One short GET per host per 15s —
     // never a sweep. Other phases run their own probes; browse only here.
     _sessionTimer?.cancel();
-    _sessionTimer =
-        Timer.periodic(kSessionRefresh, (_) => _refreshSessions());
+    _sessionTimer = Timer.periodic(kSessionRefresh, (_) => _refreshSessions());
     // Bluetooth off is otherwise a log-only failure: prompt once, up
     // front, with a tappable Turn-on.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -468,8 +466,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (!mounted || phase != StudentPhase.browsing) return;
     // Drop stale pending hints (heard >2 min ago, never answered).
     final now0 = DateTime.now().toUtc();
-    _pendingHints.removeWhere(
-        (k, v) => now0.difference(v) > const Duration(minutes: 2));
+    _pendingHints
+        .removeWhere((k, v) => now0.difference(v) > const Duration(minutes: 2));
     if (_sessionAck.isEmpty && _pendingHints.isEmpty) {
       return;
     }
@@ -479,19 +477,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     final keys = <String>{..._sessionAck.keys, ..._pendingHints.keys};
     for (final key in keys) {
       final lastProbe = _bleHintThrottle[key];
-      if (lastProbe != null &&
-          now.difference(lastProbe) < kSessionRefresh) {
+      if (lastProbe != null && now.difference(lastProbe) < kSessionRefresh) {
         continue;
       }
       _bleHintThrottle[key] = now;
       final slash = key.lastIndexOf(':');
       if (slash < 0) continue;
       String missReason = 'unreachable';
-      final hit = await probeHost(key.substring(0, slash),
-          int.tryParse(key.substring(slash + 1)) ?? 0,
-          verboseMisses: true,
-          onMiss: (r) => missReason = r,
-          org: myOrg);
+      final hit = await probeHost(
+          key.substring(0, slash), int.tryParse(key.substring(slash + 1)) ?? 0,
+          verboseMisses: true, onMiss: (r) => missReason = r, org: myOrg);
       if (!mounted) return;
       if (hit == null) {
         _sessionFails[key] = (_sessionFails[key] ?? 0) + 1;
@@ -534,8 +529,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _sessionAck[key] = now;
       _sessionFails[key] = 0;
       if (_pendingHints.remove(key) != null) {
-        BleLog.log(
-            ProxLogTags.ble, 'IP hint $key answered on retry → listed');
+        BleLog.log(ProxLogTags.ble, 'IP hint $key answered on retry → listed');
       }
       final prev = _hints[key];
       _hints[key] = LiveClass(
@@ -585,6 +579,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (beaconOrg.isEmpty || myOrg.isEmpty) return true;
       return beaconOrg == myOrg;
     }
+
     final byKey = <String, LiveClass>{};
     for (final c in beacons) {
       if (!orgAllows(c.last.org)) continue; // gated silence: never listed
@@ -600,8 +595,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // once the unicast lands, without any tap.
     for (final c in out) {
       final key = c.last.key;
-      if ((_gatedEmailByHost[key] ?? '').isEmpty &&
-          orgAllows(c.last.org)) {
+      if ((_gatedEmailByHost[key] ?? '').isEmpty && orgAllows(c.last.org)) {
         unawaited(_backfillGatedEmail(c.last.host, c.last.port));
       }
     }
@@ -715,7 +709,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       setState(() => joinError = 'Enter the professor IP shown in class.');
       return;
     }
-    BleLog.log(ProxLogTags.nav, 'join by IP ${target.host}:${target.port} → waiting');
+    BleLog.log(
+        ProxLogTags.nav, 'join by IP ${target.host}:${target.port} → waiting');
     try {
       await ref
           .read(deviceStoreProvider)
@@ -866,7 +861,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // the state; 5 consecutive misses leave for the live list.
         if (++_roomMisses >= 5) {
           final key = '${target.host}:${target.port}';
-          BleLog.log(ProxLogTags.lan, 'hosting ended while waiting → live list');
+          BleLog.log(
+              ProxLogTags.lan, 'hosting ended while waiting → live list');
           _dropHostEntries(key);
           _toBrowsing('Class ended — back to the live list.');
           return;
@@ -889,7 +885,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (++_roomMisses >= 5) {
         final t = _waitingTarget;
         if (t != null) {
-          BleLog.log(ProxLogTags.lan, 'hosting ended while waiting → live list');
+          BleLog.log(
+              ProxLogTags.lan, 'hosting ended while waiting → live list');
           _dropHostEntries('${t.host}:${t.port}');
           _toBrowsing('Class ended — back to the live list.');
           return;
@@ -964,14 +961,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
-        BleLog.log(ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
+        BleLog.log(
+            ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
         _faceAttempts++;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
         // No readable verdict (attempt kept): relaunch automatically a
         // couple of times with a helpful prompt, then fall back to the
         // manual Scan button. Cancel exits this loop by returning null.
-        BleLog.log(ProxLogTags.face, 'face inconclusive — auto-retry ($_autoFaceTries of 2)');
+        BleLog.log(ProxLogTags.face,
+            'face inconclusive — auto-retry ($_autoFaceTries of 2)');
         if (_autoFaceTries < 2) {
           _autoFaceTries++;
           setState(() => faceNotice =
@@ -1004,7 +1003,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     final target = _waitingTarget ?? _parseTarget();
     final linked = ref.read(linkedIdentityProvider);
     if (target == null || linked == null) return;
-    BleLog.log(ProxLogTags.state, 'manual request → ${target.host} (polling prof)');
+    BleLog.log(
+        ProxLogTags.state, 'manual request → ${target.host} (polling prof)');
     setState(() {
       _manualStatus = 'pending';
       phase = StudentPhase.manualPending;
@@ -1042,7 +1042,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           });
         } else if (st == 'rejected') {
           _manualPoll?.cancel();
-          BleLog.log(ProxLogTags.state, 'manual rejected — parked, see professor');
+          BleLog.log(
+              ProxLogTags.state, 'manual rejected — parked, see professor');
           // Stays in manualPending showing the verdict (present-or-absent ACK).
         }
       } catch (_) {}
@@ -1083,10 +1084,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (receipt.result == StudentResult.marked ||
         receipt.result == StudentResult.late) {
       // Per-round trail for the waiting-room card (R1, R2, … this join).
-      _roundMarks.add(
-          'R${_roundMarks.length + 1} · ${receipt.detail}');
+      _roundMarks.add('R${_roundMarks.length + 1} · ${receipt.detail}');
     }
-    BleLog.log(ProxLogTags.state, 'verdict ${receipt.result.name} (${receipt.detail})');
+    BleLog.log(ProxLogTags.state,
+        'verdict ${receipt.result.name} (${receipt.detail})');
     // Wrong-org refusals surface as structured error receipts (no proof
     // sent, no PII left) with their own verdict screen — a decision, not
     // a network hole. Branches on the receipt flag, never detail text.
@@ -1143,8 +1144,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _rewaitTimer = null;
     if (!mounted ||
         run != _runId ||
-        !(phase == StudentPhase.marked ||
-            phase == StudentPhase.late)) {
+        !(phase == StudentPhase.marked || phase == StudentPhase.late)) {
       return;
     }
     var rewait = false;
@@ -1177,8 +1177,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     if (!mounted ||
         run != _runId ||
-        !(phase == StudentPhase.marked ||
-            phase == StudentPhase.late)) {
+        !(phase == StudentPhase.marked || phase == StudentPhase.late)) {
       return;
     }
     if (ended) {
@@ -1226,7 +1225,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     return BrowseClassesView(
       linked: linked,
       identityLine: identityLine,
-      ipFieldKey: ValueKey('ip-$_fieldNonce'),
       ipInitial: _fieldInitial,
       onIpChanged: (v) {
         _typedHostPort = v ?? '';
@@ -1255,7 +1253,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         final hp = '${c.last.host}:${c.last.port}';
         setState(() {
           _fieldInitial = hp;
-          _fieldNonce++;
           _typedHostPort = hp;
         });
         _roundMarks.clear();
@@ -1288,8 +1285,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
 
   void _openLog() {
     BleLog.log(ProxLogTags.nav, 'mark → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    // Overlay drawer (§4.5): proving/face keep listening while it is open —
+    // no navigation/lifecycle interruption (never a route push of its own).
+    // The drawer's Expand carries the tag filter into debug/log.
+    showLogDrawer(context);
   }
 
   @override
@@ -1298,142 +1297,127 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     final identityLine = linked == null
         ? 'Not enrolled — enroll this device to link identity.'
         : '${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}\n${linked.gmail}';
+    // No PopScope here (§3.5, navigation-shell rebuild): the shell owns
+    // back — in-tab back pops that tab's stack only, tab-root back hints.
+    // Browsing never exits to the roles hub, and waiting / face / proving
+    // end only via their explicit Cancel/Leave actions (timers, drivers,
+    // relays, and drafts untouched).
     final target = _parseTarget();
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        // Back never exits mid-flow: inner phases return to browsing,
-        // browsing returns to the mode hub.
-        if (phase == StudentPhase.browsing) {
-          setMode(ref, AppMode.unset);
-        } else {
-          _runId++;
-          _stopRoomTimers();
-          _leaveWaitingRoom();
-          _relayOff();
-          setState(() {
-            _waitingTarget = null;
-            phase = StudentPhase.browsing;
-          });
-        }
-      },
-      child: AdaptiveScaffold(
-        title: 'Student — Join class',
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.terminal_outlined),
-            tooltip: 'System log',
-            onPressed: _openLog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.switch_account),
-            tooltip: 'Switch mode',
-            onPressed: () => setMode(ref, AppMode.unset),
-          ),
-        ],
-        // Waiting → scan → verdict wrapped as ONE continuation: every hop
-        // cross-fades (emphasized) instead of hard-cutting.
-        body: MarkFlowShell(
-          phase: phase,
-          child: switch (phase) {
-            StudentPhase.browsing => _browsing(context, linked, identityLine),
-            StudentPhase.waiting => WaitingRoomView(
-                connected: _connected,
-                roomClass: _roomClass.isNotEmpty
-                    ? _roomClass
-                    : (_waitingTarget?.classLabel ?? 'this class'),
-                roomProf: _roomProf,
-                roomProfEmail: _roomProfEmail,
-                roomOrg: _roomOrg,
-                roundMarks: _roundMarks,
-                onRequestManual: _requestManual,
-                onCancel: _cancelToBrowsing,
-              ),
-            StudentPhase.manualPending => ManualRequestView(
-                status: _manualStatus,
-                onBack: _cancelToBrowsing,
-              ),
-            StudentPhase.faceCheck => FaceCheckView(
-                faceNotice: faceNotice,
-                canScan: (_waitingTarget ?? target) != null && linked != null,
-                onScan: () {
-                  final t = _waitingTarget ?? target;
-                  final l = linked;
-                  if (t != null && l != null) _scanFace(t, l);
-                },
-              ),
-            StudentPhase.listening => ProvingView(
-                status: listenStatus,
-                driftBanner: _driftBanner(),
-              ),
-            StudentPhase.marked => MarkVerdictView(
-                kind: MarkVerdict.marked,
-                detail: ackDetail,
-                roundMarks: _roundMarks,
-                onRetryFace: () {},
-                onManualInstead: () {},
-                onBack: () {},
-              ),
-            StudentPhase.late => MarkVerdictView(
-                kind: MarkVerdict.late,
-                detail: ackDetail,
-                roundMarks: _roundMarks,
-                onRetryFace: () {},
-                onManualInstead: () {},
-                onBack: () {},
-              ),
-            StudentPhase.wrongOrg => MarkVerdictView(
-                kind: MarkVerdict.wrongOrg,
-                detail: ackDetail,
-                classOrg: wrongClassOrg,
-                myOrg: wrongMyOrg,
-                roundMarks: const [],
-                onRetryFace: () {},
-                onManualInstead: () {},
-                onBack: () => setState(() => phase = StudentPhase.browsing),
-              ),
-            StudentPhase.needsReview => MarkVerdictView(
-                kind: MarkVerdict.needsReview,
-                detail: '',
-                roundMarks: const [],
-                attemptsLeft: 4 - _faceAttempts,
-                onRetryFace: () {
-                  final t = _waitingTarget ?? target;
-                  final l = linked;
-                  setState(() => phase = StudentPhase.faceCheck);
-                  if (t != null && l != null) {
-                    _scheduleAutoScan(t, l);
-                  }
-                },
-                onManualInstead: _requestManual,
-                onBack: () => setState(() => phase = StudentPhase.browsing),
-              ),
-            StudentPhase.noSignal => MarkVerdictView(
-                kind: MarkVerdict.noSignal,
-                detail: ackDetail,
-                infoDetail: infoDetail,
-                roundMarks: const [],
-                onRetryFace: () {},
-                onManualInstead: () {},
-                onBack: () => setState(() => phase = StudentPhase.browsing),
-              ),
-            StudentPhase.paused => Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Paused — reopen'),
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: () =>
-                          setState(() => phase = StudentPhase.browsing),
-                      child: const Text('Back to join'),
-                    ),
-                  ],
-                ),
-              ),
-          },
+    return AdaptiveScaffold(
+      title: 'Student — Join class',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: _openLog,
         ),
+        IconButton(
+          icon: const Icon(Icons.switch_account),
+          tooltip: 'Switch mode',
+          onPressed: () => setMode(ref, AppMode.unset),
+        ),
+      ],
+      // Waiting → scan → verdict wrapped as ONE continuation: every hop
+      // cross-fades (emphasized) instead of hard-cutting.
+      body: MarkFlowShell(
+        phase: phase,
+        child: switch (phase) {
+          StudentPhase.browsing => _browsing(context, linked, identityLine),
+          StudentPhase.waiting => WaitingRoomView(
+              connected: _connected,
+              roomClass: _roomClass.isNotEmpty
+                  ? _roomClass
+                  : (_waitingTarget?.classLabel ?? 'this class'),
+              roomProf: _roomProf,
+              roomProfEmail: _roomProfEmail,
+              roomOrg: _roomOrg,
+              roundMarks: _roundMarks,
+              onRequestManual: _requestManual,
+              onCancel: _cancelToBrowsing,
+            ),
+          StudentPhase.manualPending => ManualRequestView(
+              status: _manualStatus,
+              onBack: _cancelToBrowsing,
+            ),
+          StudentPhase.faceCheck => FaceCheckView(
+              faceNotice: faceNotice,
+              canScan: (_waitingTarget ?? target) != null && linked != null,
+              onScan: () {
+                final t = _waitingTarget ?? target;
+                final l = linked;
+                if (t != null && l != null) _scanFace(t, l);
+              },
+            ),
+          StudentPhase.listening => ProvingView(
+              status: listenStatus,
+              driftBanner: _driftBanner(),
+            ),
+          StudentPhase.marked => MarkVerdictView(
+              kind: MarkVerdict.marked,
+              detail: ackDetail,
+              roundMarks: _roundMarks,
+              onRetryFace: () {},
+              onManualInstead: () {},
+              onBack: () {},
+            ),
+          StudentPhase.late => MarkVerdictView(
+              kind: MarkVerdict.late,
+              detail: ackDetail,
+              roundMarks: _roundMarks,
+              onRetryFace: () {},
+              onManualInstead: _requestManual,
+              onBack: () {},
+            ),
+          StudentPhase.wrongOrg => MarkVerdictView(
+              kind: MarkVerdict.wrongOrg,
+              detail: ackDetail,
+              classOrg: wrongClassOrg,
+              myOrg: wrongMyOrg,
+              roundMarks: const [],
+              onRetryFace: () {},
+              onManualInstead: _requestManual,
+              onBack: () => setState(() => phase = StudentPhase.browsing),
+            ),
+          StudentPhase.needsReview => MarkVerdictView(
+              kind: MarkVerdict.needsReview,
+              detail: '',
+              roundMarks: const [],
+              attemptsLeft: 4 - _faceAttempts,
+              onRetryFace: () {
+                final t = _waitingTarget ?? target;
+                final l = linked;
+                setState(() => phase = StudentPhase.faceCheck);
+                if (t != null && l != null) {
+                  _scheduleAutoScan(t, l);
+                }
+              },
+              onManualInstead: _requestManual,
+              onBack: () => setState(() => phase = StudentPhase.browsing),
+            ),
+          StudentPhase.noSignal => MarkVerdictView(
+              kind: MarkVerdict.noSignal,
+              detail: ackDetail,
+              infoDetail: infoDetail,
+              roundMarks: const [],
+              onRetryFace: () {},
+              onManualInstead: _requestManual,
+              onBack: () => setState(() => phase = StudentPhase.browsing),
+            ),
+          StudentPhase.paused => Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Paused — reopen'),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    onPressed: () =>
+                        setState(() => phase = StudentPhase.browsing),
+                    child: const Text('Back to join'),
+                  ),
+                ],
+              ),
+            ),
+        },
       ),
     );
   }

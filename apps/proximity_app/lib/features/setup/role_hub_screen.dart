@@ -31,7 +31,7 @@ import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
 import 'device_identity_screen.dart';
-import 'entry_flow.dart';
+import '../entry/entry_flow.dart';
 
 /// Authenticated role hub. [account] comes from `accountProvider`
 /// (proposed: landing router shows this when the stream is non-null).
@@ -83,10 +83,9 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
   Future<void> _registerStudent() =>
       _run(() => entryRegisterStudent(ref, () => mounted, widget.account));
 
-  Future<void> _continueWithRole(
-          Map<String, String> role, String which) =>
-      _run(
-          () => entryContinueWithRole(ref, () => mounted, widget.account, role, which));
+  Future<void> _continueWithRole(Map<String, String> role, String which) =>
+      _run(() => entryContinueWithRole(
+          ref, () => mounted, widget.account, role, which));
 
   Future<void> _signOut() => _run(() => entrySignOut(ref));
 
@@ -121,27 +120,23 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                 final emailOk = role != null &&
                     (role['email'] ?? '').toLowerCase() ==
                         acct.email.toLowerCase();
-                final held =
-                    emailOk ? roleSet(role) : const <String>{};
+                final held = emailOk ? roleSet(role) : const <String>{};
                 final hasProf = held.contains('prof');
                 final hasStudent = held.contains('student');
                 // Last-used mode first — relaunch and return visits
                 // default here.
                 final ordered = {
-                  if (roleLastMode(role) == 'student' && hasStudent)
-                    'student',
+                  if (roleLastMode(role) == 'student' && hasStudent) 'student',
                   if (roleLastMode(role) != 'student' && hasProf) 'prof',
                   if (roleLastMode(role) == 'student' && hasProf) 'prof',
-                  if (roleLastMode(role) != 'student' && hasStudent)
-                    'student',
+                  if (roleLastMode(role) != 'student' && hasStudent) 'student',
                 }.toList();
                 return ProxStaggered(
                   children: [
                     ProxIdentityHeader(
                         displayName: acct.displayName,
                         email: acct.email,
-                        heldLabel:
-                            emailOk ? entryHeldLabel(role) : ''),
+                        heldLabel: emailOk ? entryHeldLabel(role) : ''),
                     if (linked != null &&
                         linked.gmail.toLowerCase() !=
                             acct.email.toLowerCase()) ...[
@@ -234,14 +229,12 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                           'works on many devices; student enrollment lives on exactly '
                           'one device (moves to a new phone once a month).',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                       ],
                     ] else ...[
@@ -256,8 +249,7 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                                 : 'Continue as Student'),
                             onPressed: _busy
                                 ? null
-                                : () =>
-                                    _continueWithRole(role!, ordered[i]),
+                                : () => _continueWithRole(role!, ordered[i]),
                           )
                         else
                           ProxSecondaryButton(
@@ -269,14 +261,12 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                                 : 'Continue as Student'),
                             onPressed: _busy
                                 ? null
-                                : () =>
-                                    _continueWithRole(role!, ordered[i]),
+                                : () => _continueWithRole(role!, ordered[i]),
                             expanded: true,
                           ),
                         if (i == 0 && roleLastMode(role).isNotEmpty)
                           const Padding(
-                            padding:
-                                EdgeInsets.only(top: ProxSpacing.xs),
+                            padding: EdgeInsets.only(top: ProxSpacing.xs),
                             child: Text(
                               'Last used — continues where you left off.',
                               textAlign: TextAlign.center,
@@ -287,7 +277,8 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                       // No extra registration on web records builds; no
                       // student registration on records-only desktops
                       // (Track 5 — removed, not disabled).
-                      if (!kIsWeb && (!hasProf || (canUseFace() && !hasStudent))) ...[
+                      if (!kIsWeb &&
+                          (!hasProf || (canUseFace() && !hasStudent))) ...[
                         Text(
                           'Add the other role on this same sign-in:',
                           textAlign: TextAlign.center,
@@ -314,14 +305,12 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                           'on exactly one device — it can move to a new phone once '
                           'a week (unlimited times).',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                       ],
                       if (hasProf && !kIsWeb) ...[
@@ -333,14 +322,12 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                           'take-attendance screen (Request manual attendance or '
                           'direct entry). No reset shortcut exists by design.',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                       ],
                     ],

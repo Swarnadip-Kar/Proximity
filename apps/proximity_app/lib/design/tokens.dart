@@ -10,7 +10,18 @@
 // these tokens must stay interruptible and skippable.
 library;
 
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
+
+// Raw-color enforcement (no custom lint exists in this repo — do not invent
+// lint infra; enforce by review with this grep, run from apps/proximity_app):
+//   grep -rn "Colors\." lib/screens lib/features --include="*.dart"
+//   grep -rn "Color(0x" lib/screens lib/features lib/widgets --include="*.dart"
+// Allowlist: `Colors.transparent` (absence of color, not a theme color) and
+// anything inside lib/design/ itself (this file IS the token definition
+// site). Every other hit must move onto ProximityColors/ProxStateColors/
+// ProxPalette/ProxLogColors, or be flagged in INTEGRATION_LOG.md.
 
 /// Duration scale. Named by intent, not by screen:
 /// - [micro]: press ripples, icon toggles (120ms)
@@ -58,6 +69,33 @@ abstract final class ProxDurations {
   /// Directory-search debounce (one round trip per pause, stale
   /// generations dropped). Consumed by the manual-add form.
   static const searchDebounce = Duration(milliseconds: 400);
+
+  // --- Redesign §3.2/§3.3/§6 motion vocabulary (presentation only). ---
+  // Added by the Foundation section; existing values above are untouched.
+  // Network/behavior timeouts stay out of tokens (see class doc).
+
+  /// Bottom-bar tab switch cross-fade (+ 4dp icon settle, §3.1).
+  static const tabCrossFade = Duration(milliseconds: 120);
+
+  /// Forward push / shared-axis horizontal slide (§3.2).
+  static const push = Duration(milliseconds: 220);
+
+  /// Bottom-sheet spring + scrim fade-in (§3.2, §6.4).
+  static const sheet = Duration(milliseconds: 200);
+
+  /// Setup-flow internal step slide — lighter than a push (§3.3).
+  static const step = Duration(milliseconds: 150);
+
+  /// `Marked` gradient wash + glow fade, non-blocking, skippable (§6.3).
+  /// Shared with [ProximityColors] `glowMarked` (one event, same timing).
+  static const verdictWash = Duration(milliseconds: 400);
+
+  /// Waiting-ring morph into the camera viewfinder frame (§6.2).
+  static const ringMorph = Duration(milliseconds: 300);
+
+  /// Reduce-motion collapse target: all transitions become opacity-only
+  /// cross-fades at this duration (§3.2, §9).
+  static const reducedFade = Duration(milliseconds: 100);
 }
 
 /// Easing vocabulary. Rule of thumb (see PROXIMITY_DESIGN §7 flows):
@@ -96,6 +134,32 @@ abstract final class ProxSpacing {
 
   /// Max content width for phone-first layouts on desktop/web.
   static const double maxContentWidth = 560;
+
+  // --- Redesign §2.3 spec grid (Foundation addition). ---
+  // Legacy values above are FROZEN until each rebuild section migrates its
+  // screens (changing them now would silently restyle every current screen,
+  // which is out of Foundation scope). New code uses the `Spec` values
+  // below; see INTEGRATION_LOG.md D4.
+
+  /// Spec grid unit: all new spacing composes from multiples of 8.
+  static const double grid = 8;
+
+  /// Spec screen horizontal margin (§2.3).
+  static const double screenMargin = 20;
+
+  /// Spec screen margins as insets (horizontal 20, vertical 0 — vertical
+  /// rhythm comes from slivers/list gaps, not page padding).
+  static const EdgeInsets screenMarginInsets =
+      EdgeInsets.symmetric(horizontal: screenMargin);
+
+  /// Spec card internal padding (§2.3).
+  static const double cardPadding = 16;
+
+  /// Minimum tap target edge (§2.3, §9): 48x48 regardless of visual size.
+  static const double minTap = 48;
+
+  /// Minimum tap target as a [Size] for hit-region constraints.
+  static const Size minTapSize = Size(minTap, minTap);
 }
 
 /// Corner radii. One family everywhere: cards [card], buttons [button],
@@ -111,6 +175,25 @@ abstract final class ProxRadii {
   static BorderRadius get cardRadius => BorderRadius.circular(card);
   static BorderRadius get buttonRadius => BorderRadius.circular(button);
   static BorderRadius get chipRadius => BorderRadius.circular(chip);
+
+  // --- Redesign §2.3 spec radii (Foundation addition, frozen-legacy rule
+  // as in [ProxSpacing]: `card` stays 14 until section migrations; new code
+  // uses [cardSpec]. See INTEGRATION_LOG.md D4). ---
+
+  /// Spec card radius (§2.3): 16. Canonical for all new cards/tiles.
+  static const double cardSpec = 16;
+
+  /// Spec bottom-sheet radius (§2.3): 24, top corners only.
+  static const double sheet = 24;
+
+  /// Spec pill radius (§2.3): 999. Same value as [chip]; named for the
+  /// spec vocabulary so downstream sections read spec names.
+  static const double pill = 999;
+
+  static BorderRadius get cardSpecRadius => BorderRadius.circular(cardSpec);
+
+  static BorderRadius get sheetTopRadius =>
+      const BorderRadius.vertical(top: Radius.circular(sheet));
 }
 
 /// Attendance states. These communicate *meaning*, not just decoration:
@@ -275,4 +358,554 @@ abstract final class ProxLogColors {
         ProxLogTags.clock => const Color(0xFFFDE68A),
         _ => const Color(0xFFE5E7EB),
       };
+}
+
+// ---------------------------------------------------------------------------
+// Foundation rebuild (redesign §2/§2.5/§9): semantic + effect token API.
+// Everything below is ADDITIVE: legacy classes above are frozen (see
+// INTEGRATION_LOG.md D3–D5) so current screens render byte-identical until
+// their rebuild section migrates them onto this API.
+// How a screen reads tokens:
+//   final c = ProximityColors.of(context); // ThemeExtension, dark/light pair
+//   color: c.statusMarked,
+//   decoration: BoxDecoration(gradient: c.gradientBrand),
+//   boxShadow: [c.glowLive.toShadow(), c.elevationRaised],
+// ---------------------------------------------------------------------------
+
+/// Responsive layout rules, redesign §10 (narrow / wide breakpoints).
+///
+/// Single source for the width contract every screen shares:
+/// - narrow (< [narrowBreakpoint], 360dp): bottom bar goes icon-only
+///   (labels off, tooltips carry the words), card padding drops
+///   [cardPadding] → [cardPaddingNarrow], `StudentCard` round trails wrap.
+/// - wide (≥ [wideBreakpoint], 600dp): list screens gain a max content
+///   width ([ProxSpacing.maxContentWidth]) and center via `ConstrainedBox`
+///   instead of stretching edge-to-edge — no bespoke landscape path
+///   (only the camera preview screen may lay out orientation-specifically).
+abstract final class ProxLayout {
+  /// Narrow-width breakpoint in logical dp (§10).
+  static const double narrowBreakpoint = 360;
+
+  /// Wide/tablet breakpoint in logical dp (§10).
+  static const double wideBreakpoint = 600;
+
+  /// True below the narrow breakpoint (icon-only bar, tight card padding).
+  static bool isNarrow(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < narrowBreakpoint;
+
+  /// True at/above the wide breakpoint (max-width-center lists).
+  static bool isWide(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >= wideBreakpoint;
+
+  /// Spec card internal padding (§2.3): 16, dropping 16→12 below the
+  /// narrow breakpoint (§10).
+  static double cardPadding(BuildContext context) =>
+      isNarrow(context) ? ProxSpacing.md : ProxSpacing.cardPadding;
+}
+
+/// Typography scale, redesign §2.2: single family, 3 weights only
+/// (Regular/Medium/Semibold), fixed size/line-height pairs:
+/// display 28/34, title 20/26, body 15/22, label 13/16, caption 11/14.
+///
+/// Canonical family is [family] (`Inter`, already bundled in pubspec with
+/// exactly the 400/500/600 cuts this scale needs).
+/// DEVIATION D3 (see INTEGRATION_LOG.md): the live `ThemeData.textTheme`
+/// still pairs Space Grotesk display + Inter body with Bold 700 cuts.
+/// `ProxType` declares the spec scale for all NEW components; the legacy
+/// textTheme is untouched by Foundation (flipping it now would restyle
+/// every screen) and consolidates during the Shared-components section.
+///
+/// Monospace appears ONLY for the debug terminal + short code/ID strings
+/// (faceId prefix, install-ID tail, IP address) via [monoBody]/[monoCaption]
+/// — never for prose, labels, or verdicts.
+abstract final class ProxType {
+  static const String family = 'Inter';
+
+  static const FontWeight regular = FontWeight.w400;
+  static const FontWeight medium = FontWeight.w500;
+  static const FontWeight semibold = FontWeight.w600;
+
+  static const double displaySize = 28;
+  static const double titleSize = 20;
+  static const double bodySize = 15;
+  static const double labelSize = 13;
+  static const double captionSize = 11;
+
+  static TextStyle display({Color? color}) => TextStyle(
+        fontFamily: family,
+        fontSize: displaySize,
+        height: 34 / displaySize,
+        fontWeight: semibold,
+        color: color,
+      );
+
+  static TextStyle title({Color? color}) => TextStyle(
+        fontFamily: family,
+        fontSize: titleSize,
+        height: 26 / titleSize,
+        fontWeight: semibold,
+        color: color,
+      );
+
+  static TextStyle body({Color? color}) => TextStyle(
+        fontFamily: family,
+        fontSize: bodySize,
+        height: 22 / bodySize,
+        fontWeight: regular,
+        color: color,
+      );
+
+  static TextStyle label({Color? color}) => TextStyle(
+        fontFamily: family,
+        fontSize: labelSize,
+        height: 16 / labelSize,
+        fontWeight: medium,
+        color: color,
+      );
+
+  static TextStyle caption({Color? color}) => TextStyle(
+        fontFamily: family,
+        fontSize: captionSize,
+        height: 14 / captionSize,
+        fontWeight: regular,
+        color: color,
+      );
+
+  /// Monospace at body size — debug terminal + short code/ID strings only.
+  static TextStyle monoBody({Color? color}) => TextStyle(
+        fontFamily: 'monospace',
+        fontSize: bodySize,
+        height: 22 / bodySize,
+        color: color,
+      );
+
+  /// Monospace at caption size — IDs, IPs, hashes in tight rows.
+  static TextStyle monoCaption({Color? color}) => TextStyle(
+        fontFamily: 'monospace',
+        fontSize: captionSize,
+        height: 14 / captionSize,
+        color: color,
+      );
+}
+
+/// Glow effect spec, redesign §2.5 (`effect.glow.*`).
+///
+/// A glow is a colored blur at a fixed opacity (no offset): callers render
+/// it with [toShadow] behind the pulsing presence ring / radar sweep
+/// (`glowLive`) or the `Marked` wash (`glowMarked`). Under reduce-motion
+/// the pulse/fade collapses to this same shadow rendered statically —
+/// never removed (an inert ring would read as "disconnected").
+@immutable
+class ProxGlow {
+  final Color color;
+  final double blurSigma;
+  final double opacity;
+
+  const ProxGlow({
+    required this.color,
+    required this.blurSigma,
+    required this.opacity,
+  });
+
+  Color get glowColor => color.withValues(alpha: opacity);
+
+  BoxShadow toShadow({Offset offset = Offset.zero}) => BoxShadow(
+        color: glowColor,
+        blurRadius: blurSigma,
+        offset: offset,
+      );
+
+  ProxGlow copyWith({Color? color, double? blurSigma, double? opacity}) =>
+      ProxGlow(
+        color: color ?? this.color,
+        blurSigma: blurSigma ?? this.blurSigma,
+        opacity: opacity ?? this.opacity,
+      );
+
+  static ProxGlow lerp(ProxGlow a, ProxGlow b, double t) => ProxGlow(
+        color: Color.lerp(a.color, b.color, t) ?? a.color,
+        blurSigma: lerpDouble(a.blurSigma, b.blurSigma, t) ?? a.blurSigma,
+        opacity: lerpDouble(a.opacity, b.opacity, t) ?? a.opacity,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProxGlow &&
+      other.color == color &&
+      other.blurSigma == blurSigma &&
+      other.opacity == opacity;
+
+  @override
+  int get hashCode => Object.hash(color, blurSigma, opacity);
+}
+
+/// Semantic + effect colors, redesign §2.1 + §2.5.
+///
+/// The single `ThemeExtension<ProximityColors>` both themes register on
+/// `MaterialApp.theme/.darkTheme`. Dark/light ship at parity: every field
+/// below has a per-brightness value in [.dark]/[.light]; no screen reads
+/// raw `Colors.*` or hand-authors a `LinearGradient(...)` inline — a
+/// hand-authored gradient/glow/shadow outside this extension is the same
+/// severity violation as a raw hex color (redesign §2.5).
+///
+/// Contrast rule (§9), checked per gradient token against its DARKEST stop
+/// (measured WCAG ratios, white text unless noted):
+/// - `gradientBrand` dark, darkest stop `#5B8CFF` (white 3.16:1 — large
+///   text / UI chrome only, never body copy). The Account-header wash
+///   (§2.5) therefore renders SUBTLE — low opacity over `surfaceBase` —
+///   so `contentPrimary` on the effective surface still passes; never lay
+///   body-size text on the full-opacity gradient in dark mode.
+/// - `gradientBrand` light, darkest stop `#3A63E0` (white 5.20:1 — passes
+///   for body text).
+/// - `gradientMarked` dark, darkest stop `#33C77A` (white 2.19:1 FAIL —
+///   badge content on this wash uses dark ink `#14161A`, 8.27:1, never
+///   white; the wash itself is transient 400ms reinforcement, §6.3).
+/// - `gradientMarked` light, darkest stop `#1E9A5C` (white 3.60:1 —
+///   large/bold badge text only; same transient-reinforcement rule).
+/// - `gradientScrim`: text NEVER sits on the scrim — sheet content sits on
+///   `surfaceRaised` + `elevationSheet`; the scrim only darkens the
+///   backdrop (both themes use a near-black scrim for this reason).
+/// No gradient/glow is ever the only signal for a state: color-plus-shape
+/// (§2.4) carries the meaning; effects reinforce it.
+@immutable
+class ProximityColors extends ThemeExtension<ProximityColors> {
+  // --- §2.1 semantic tokens ---
+  final Color surfaceBase;
+  final Color surfaceRaised;
+  final Color surfaceOverlay;
+  final Color contentPrimary;
+  final Color contentSecondary;
+  final Color contentTertiary;
+  final Color accentBrand;
+  final Color statusMarked;
+  final Color statusLate;
+  final Color statusReview;
+  final Color statusError;
+  final Color divider;
+
+  // --- §2.5 gradient / glow / elevation tokens ---
+  final LinearGradient gradientBrand;
+  final LinearGradient gradientMarked;
+  final LinearGradient gradientScrim;
+  final ProxGlow glowLive;
+  final ProxGlow glowMarked;
+  final BoxShadow elevationRaised;
+  final BoxShadow elevationSheet;
+
+  // Gradient geometry (§2.5 angles, CSS convention: 0° = to top,
+  // clockwise; begin/end are the unit diagonal for that angle).
+  // 135° → begin top-left, end bottom-right.
+  static const _brandBegin = Alignment(-0.7071, -0.7071);
+  static const _brandEnd = Alignment(0.7071, 0.7071);
+  // 120° → begin upper-left, end lower-right (flatter than 135°).
+  static const _markedBegin = Alignment(-0.8660, -0.5);
+  static const _markedEnd = Alignment(0.8660, 0.5);
+
+  const ProximityColors({
+    required this.surfaceBase,
+    required this.surfaceRaised,
+    required this.surfaceOverlay,
+    required this.contentPrimary,
+    required this.contentSecondary,
+    required this.contentTertiary,
+    required this.accentBrand,
+    required this.statusMarked,
+    required this.statusLate,
+    required this.statusReview,
+    required this.statusError,
+    required this.divider,
+    required this.gradientBrand,
+    required this.gradientMarked,
+    required this.gradientScrim,
+    required this.glowLive,
+    required this.glowMarked,
+    required this.elevationRaised,
+    required this.elevationSheet,
+  });
+
+  /// Dark (default) instance — spec §2.1/§2.5 dark column.
+  const ProximityColors.dark()
+      : surfaceBase = const Color(0xFF0B0D10),
+        surfaceRaised = const Color(0xFF15181D),
+        surfaceOverlay = const Color(0xFF1D2128),
+        contentPrimary = const Color(0xFFF2F3F5),
+        contentSecondary = const Color(0xFF9AA0AA),
+        contentTertiary = const Color(0xFF5C626C),
+        accentBrand = const Color(0xFF5B8CFF),
+        statusMarked = const Color(0xFF33C77A),
+        statusLate = const Color(0xFFE0B23A),
+        statusReview = const Color(0xFFE0833A),
+        statusError = const Color(0xFFE85D5D),
+        divider = const Color(0x9922262D), // #22262D @ 60%
+        gradientBrand = const LinearGradient(
+          begin: _brandBegin,
+          end: _brandEnd,
+          colors: [Color(0xFF5B8CFF), Color(0xFF8F6BFF)],
+        ),
+        gradientMarked = const LinearGradient(
+          begin: _markedBegin,
+          end: _markedEnd,
+          colors: [Color(0xFF33C77A), Color(0xFF2FE0A0)],
+        ),
+        // Scrim stays near-black on BOTH themes (§2.5 light column reuses
+        // the ink ramp so backdrops dim identically for legibility).
+        gradientScrim = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x000B0D10), Color(0xB80B0D10)], // 0% → 72%
+        ),
+        glowLive = const ProxGlow(
+          color: Color(0xFF5B8CFF),
+          blurSigma: 24,
+          opacity: 0.24,
+        ),
+        glowMarked = const ProxGlow(
+          color: Color(0xFF33C77A),
+          blurSigma: 32,
+          opacity: 0.30,
+        ),
+        elevationRaised = const BoxShadow(
+          offset: Offset(0, 1),
+          blurRadius: 2,
+          color: Color(0x66000000), // black 40%
+        ),
+        elevationSheet = const BoxShadow(
+          offset: Offset(0, -2),
+          blurRadius: 12,
+          color: Color(0x80000000), // black 50%
+        );
+
+  /// Light instance — spec §2.1/§2.5 light column, same fields, parity.
+  const ProximityColors.light()
+      : surfaceBase = const Color(0xFFFAFAFA),
+        surfaceRaised = const Color(0xFFFFFFFF),
+        surfaceOverlay = const Color(0xFFF0F1F3),
+        contentPrimary = const Color(0xFF14161A),
+        contentSecondary = const Color(0xFF5B6270),
+        contentTertiary = const Color(0xFF9AA0AA),
+        accentBrand = const Color(0xFF3A63E0),
+        statusMarked = const Color(0xFF1E9A5C),
+        statusLate = const Color(0xFFB4870F),
+        statusReview = const Color(0xFFC4661A),
+        statusError = const Color(0xFFC43E3E),
+        divider = const Color(0x14000000), // black @ 8%
+        gradientBrand = const LinearGradient(
+          begin: _brandBegin,
+          end: _brandEnd,
+          colors: [Color(0xFF3A63E0), Color(0xFF6A4FD9)],
+        ),
+        gradientMarked = const LinearGradient(
+          begin: _markedBegin,
+          end: _markedEnd,
+          colors: [Color(0xFF1E9A5C), Color(0xFF22B87E)],
+        ),
+        gradientScrim = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x0014161A), Color(0x8C14161A)], // 0% → 55%
+        ),
+        glowLive = const ProxGlow(
+          color: Color(0xFF3A63E0),
+          blurSigma: 16,
+          opacity: 0.14,
+        ),
+        glowMarked = const ProxGlow(
+          color: Color(0xFF1E9A5C),
+          blurSigma: 20,
+          opacity: 0.18,
+        ),
+        elevationRaised = const BoxShadow(
+          offset: Offset(0, 1),
+          blurRadius: 2,
+          color: Color(0x14000000), // black 8%
+        ),
+        elevationSheet = const BoxShadow(
+          offset: Offset(0, -2),
+          blurRadius: 12,
+          color: Color(0x1A000000), // black 10%
+        );
+
+  /// Reads the extension. Both app themes register it (see app_theme.dart);
+  /// the `!` fails fast if a test/sheet builds outside the app themes.
+  static ProximityColors of(BuildContext context) =>
+      Theme.of(context).extension<ProximityColors>()!;
+
+  @override
+  ProximityColors copyWith({
+    Color? surfaceBase,
+    Color? surfaceRaised,
+    Color? surfaceOverlay,
+    Color? contentPrimary,
+    Color? contentSecondary,
+    Color? contentTertiary,
+    Color? accentBrand,
+    Color? statusMarked,
+    Color? statusLate,
+    Color? statusReview,
+    Color? statusError,
+    Color? divider,
+    LinearGradient? gradientBrand,
+    LinearGradient? gradientMarked,
+    LinearGradient? gradientScrim,
+    ProxGlow? glowLive,
+    ProxGlow? glowMarked,
+    BoxShadow? elevationRaised,
+    BoxShadow? elevationSheet,
+  }) =>
+      ProximityColors(
+        surfaceBase: surfaceBase ?? this.surfaceBase,
+        surfaceRaised: surfaceRaised ?? this.surfaceRaised,
+        surfaceOverlay: surfaceOverlay ?? this.surfaceOverlay,
+        contentPrimary: contentPrimary ?? this.contentPrimary,
+        contentSecondary: contentSecondary ?? this.contentSecondary,
+        contentTertiary: contentTertiary ?? this.contentTertiary,
+        accentBrand: accentBrand ?? this.accentBrand,
+        statusMarked: statusMarked ?? this.statusMarked,
+        statusLate: statusLate ?? this.statusLate,
+        statusReview: statusReview ?? this.statusReview,
+        statusError: statusError ?? this.statusError,
+        divider: divider ?? this.divider,
+        gradientBrand: gradientBrand ?? this.gradientBrand,
+        gradientMarked: gradientMarked ?? this.gradientMarked,
+        gradientScrim: gradientScrim ?? this.gradientScrim,
+        glowLive: glowLive ?? this.glowLive,
+        glowMarked: glowMarked ?? this.glowMarked,
+        elevationRaised: elevationRaised ?? this.elevationRaised,
+        elevationSheet: elevationSheet ?? this.elevationSheet,
+      );
+
+  static LinearGradient _lerpGradient(
+          LinearGradient a, LinearGradient b, double t) =>
+      LinearGradient.lerp(a, b, t) ?? (t < 0.5 ? a : b);
+
+  @override
+  ProximityColors lerp(
+      covariant ThemeExtension<ProximityColors>? other, double t) {
+    if (other is! ProximityColors) return this;
+    return ProximityColors(
+      surfaceBase: Color.lerp(surfaceBase, other.surfaceBase, t)!,
+      surfaceRaised: Color.lerp(surfaceRaised, other.surfaceRaised, t)!,
+      surfaceOverlay: Color.lerp(surfaceOverlay, other.surfaceOverlay, t)!,
+      contentPrimary: Color.lerp(contentPrimary, other.contentPrimary, t)!,
+      contentSecondary:
+          Color.lerp(contentSecondary, other.contentSecondary, t)!,
+      contentTertiary: Color.lerp(contentTertiary, other.contentTertiary, t)!,
+      accentBrand: Color.lerp(accentBrand, other.accentBrand, t)!,
+      statusMarked: Color.lerp(statusMarked, other.statusMarked, t)!,
+      statusLate: Color.lerp(statusLate, other.statusLate, t)!,
+      statusReview: Color.lerp(statusReview, other.statusReview, t)!,
+      statusError: Color.lerp(statusError, other.statusError, t)!,
+      divider: Color.lerp(divider, other.divider, t)!,
+      gradientBrand: _lerpGradient(gradientBrand, other.gradientBrand, t),
+      gradientMarked: _lerpGradient(gradientMarked, other.gradientMarked, t),
+      gradientScrim: _lerpGradient(gradientScrim, other.gradientScrim, t),
+      glowLive: ProxGlow.lerp(glowLive, other.glowLive, t),
+      glowMarked: ProxGlow.lerp(glowMarked, other.glowMarked, t),
+      elevationRaised:
+          BoxShadow.lerp(elevationRaised, other.elevationRaised, t)!,
+      elevationSheet: BoxShadow.lerp(elevationSheet, other.elevationSheet, t)!,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProximityColors &&
+      other.surfaceBase == surfaceBase &&
+      other.surfaceRaised == surfaceRaised &&
+      other.surfaceOverlay == surfaceOverlay &&
+      other.contentPrimary == contentPrimary &&
+      other.contentSecondary == contentSecondary &&
+      other.contentTertiary == contentTertiary &&
+      other.accentBrand == accentBrand &&
+      other.statusMarked == statusMarked &&
+      other.statusLate == statusLate &&
+      other.statusReview == statusReview &&
+      other.statusError == statusError &&
+      other.divider == divider &&
+      other.gradientBrand == gradientBrand &&
+      other.gradientMarked == gradientMarked &&
+      other.gradientScrim == gradientScrim &&
+      other.glowLive == glowLive &&
+      other.glowMarked == glowMarked &&
+      other.elevationRaised == elevationRaised &&
+      other.elevationSheet == elevationSheet;
+
+  @override
+  int get hashCode => Object.hash(
+        surfaceBase,
+        surfaceRaised,
+        surfaceOverlay,
+        contentPrimary,
+        contentSecondary,
+        contentTertiary,
+        accentBrand,
+        statusMarked,
+        statusLate,
+        statusReview,
+        statusError,
+        divider,
+        gradientBrand,
+        gradientMarked,
+        gradientScrim,
+        glowLive,
+        glowMarked,
+        elevationRaised,
+        elevationSheet,
+      );
+}
+
+/// Frozen verdict vocabulary for status display (redesign §4.2 — rendering
+/// standardization only, never new states): `Marked / Late / Wrong org /
+/// No signal / Needs review / Waiting / Pending`. Distinct from [ProxState]
+/// (legacy flow-phase enum): [ProxStatus] is the exhaustive badge set.
+enum ProxStatus {
+  marked,
+  late,
+  wrongOrg,
+  noSignal,
+  review,
+  waiting,
+  pending,
+}
+
+/// Iconography, redesign §2.4: ONE icon set (Material outlined by default,
+/// filled on active/selected — never mixed families; this repo uses zero
+/// `CupertinoIcons`/custom `IconData`, verified by grep — keep it that
+/// way). Status is ALWAYS color + shape + text, never color alone: callers
+/// pair [statusIcon] + [statusColor] with the verdict word (the shared
+/// `VerdictBadge` composes all three; this helper is the shape source).
+///
+/// Shape map (§4.2): Marked = check, Late = clock, Wrong org = triangle,
+/// No signal = slash (wifi-off), Needs review = flag, Waiting = dot,
+/// Pending = dot-pulsing (same dot icon; the caller animates the pulse
+/// only while actually pending).
+abstract final class ProxIcons {
+  static IconData statusIcon(ProxStatus status, {bool active = false}) =>
+      switch (status) {
+        ProxStatus.marked =>
+          active ? Icons.check_circle : Icons.check_circle_outline,
+        ProxStatus.late => active ? Icons.schedule : Icons.schedule_outlined,
+        ProxStatus.wrongOrg =>
+          active ? Icons.warning_amber : Icons.warning_amber_outlined,
+        ProxStatus.noSignal =>
+          active ? Icons.wifi_off : Icons.wifi_off_outlined,
+        ProxStatus.review => active ? Icons.flag : Icons.flag_outlined,
+        ProxStatus.waiting ||
+        ProxStatus.pending =>
+          active ? Icons.circle : Icons.circle_outlined,
+      };
+
+  /// Status color from the ambient [ProximityColors] (never a raw hex).
+  /// Waiting reads `contentSecondary`; Pending reads `statusReview`
+  /// (dot-pulsing, §4.2) — not the same token, do not merge them.
+  static Color statusColor(BuildContext context, ProxStatus status) {
+    final c = ProximityColors.of(context);
+    return switch (status) {
+      ProxStatus.marked => c.statusMarked,
+      ProxStatus.late => c.statusLate,
+      ProxStatus.review || ProxStatus.pending => c.statusReview,
+      ProxStatus.wrongOrg || ProxStatus.noSignal => c.statusError,
+      ProxStatus.waiting => c.contentSecondary,
+    };
+  }
 }

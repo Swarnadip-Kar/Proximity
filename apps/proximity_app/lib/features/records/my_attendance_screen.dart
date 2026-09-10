@@ -1,11 +1,9 @@
-// Student attendance records: classes synced online by professors,
-// cached on this device. Course cards (x/y days + totals header), tap one
-// for its sessions. Read-only: "delete" hides the entry on THIS device only
-// (professor/cloud data untouched).
+// Student records landing: synced courses as progress-ring cards, tap one
+// for its sessions. Read-only: hiding removes the entry on THIS device only
+// (professor/cloud data untouched). Records-only: no marking entry here.
 //
-// Course-wise in both places: the cloud docs carry courseId/courseName
-// (professor renames bump timestampIso so merges adopt them), the device
-// cache is the last pull verbatim.
+// Data logic preserved per the Phase-1 exemption (load, cache, grouping,
+// totals): restyle only.
 library;
 
 import 'package:flutter/material.dart';
@@ -21,10 +19,10 @@ import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/clock.dart';
 import '../../widgets/course_attendance.dart';
-import '../../widgets/prox_cards.dart';
+import '../../widgets/details_expander.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
-import '../debug/debug_log_screen.dart';
 import 'course_attendance_detail_screen.dart';
 
 class MyAttendanceScreen extends ConsumerStatefulWidget {
@@ -103,8 +101,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         return;
       }
       // Identity org wins, else the Gmail domain ([orgOf]).
-      final myOrg =
-          acct.org.isNotEmpty ? acct.org : orgOf(email);
+      final myOrg = acct.org.isNotEmpty ? acct.org : orgOf(email);
       final sessions = await cloud.pullStudentSessions(email, org: myOrg);
       // Device copy: same docs, same order (newest first). Professor
       // attendance pushes and course renames land here on every pull.
@@ -135,23 +132,26 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
   Future<void> _openCourse(String course, List<ClassRecord> sessions,
       String email) async {
     BleLog.log('NAV', 'my-attendance → $course');
-    final changed = await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
           builder: (_) => CourseAttendanceDetailScreen(
               course: course, sessions: sessions, email: email)),
     );
-    // A hide inside the detail reloads this list on return.
-    if (changed == true && mounted) _load();
+    // Back yields no value (no PopScope anywhere in this tab): always
+    // refresh so a hide inside the detail is reflected here on return.
+    // Mechanical orchestration note for the final summary: previously
+    // reloaded only when the detail returned true.
+    if (mounted) _load();
   }
 
   void _openLog() {
     BleLog.log('NAV', 'my-attendance → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    showLogDrawer(context);
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final acct = ref.watch(accountProvider).valueOrNull;
     final email = acct?.email.toLowerCase() ?? '';
     // Course-wise: buckets A–Z, sessions newest-first inside each (the
@@ -177,81 +177,155 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
           onPressed: _openLog,
         ),
       ],
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const ClockHeader(),
-            const WebRecordsBanner(),
-            if (acct != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(acct.email,
-                    style: Theme.of(context).textTheme.bodySmall),
+      body: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(maxWidth: ProxSpacing.maxContentWidth),
+          child: RefreshIndicator(
+            onRefresh: _load,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(
+                horizontal: ProxSpacing.screenMargin,
+                vertical: ProxSpacing.lg,
               ),
-            const SizedBox(height: 8),
-            if (_offlineNote.isNotEmpty) ProxSyncNote(_offlineNote),
-            if (_loading)
-              const Center(child: CircularProgressIndicator())
-            else if (_error.isNotEmpty)
-              ProxErrorNote(_error)
-            else if (_sessions.isEmpty)
-              const ProxEmptyState(
-                message:
-                    'No synced classes yet. Professors sync after marking — pull down to refresh when online.',
-              )
-            else ...[
-              Text('$totalAttended present · $totalTaken synced sessions',
-                  style: proxTabular(
-                      context, Theme.of(context).textTheme.titleSmall)),
-              const SizedBox(height: 8),
-              // First page is courses: tap one for its sessions + totals.
-              // Restrained motion: stagger on load only (ProxListTile).
-              for (var i = 0; i < courses.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-                  child: ProxListTile(
-                    title: courses[i],
-                    subtitle: summaries[courses[i]]!.line,
-                    staggerIndex: i,
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        borderRadius:
-                            BorderRadius.circular(ProxRadii.md),
-                      ),
-                      child: Icon(
-                        Icons.folder_outlined,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onPrimaryContainer,
+              children: [
+                const ClockHeader(),
+                const WebRecordsBanner(),
+                if (acct != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: ProxSpacing.xs),
+                    child: Text(
+                      acct.email,
+                      style: ProxType.caption(color: c.contentSecondary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                const SizedBox(height: ProxSpacing.sm),
+                if (_offlineNote.isNotEmpty) ProxSyncNote(_offlineNote),
+                if (_loading)
+                  const Center(child: CircularProgressIndicator())
+                else if (_error.isNotEmpty)
+                  ProxErrorNote(_error)
+                else if (_sessions.isEmpty)
+                  const ProxEmptyState(
+                    message:
+                        'No synced classes yet. Professors sync after marking — pull down to refresh when online.',
+                  )
+                else ...[
+                  Text('$totalAttended present · $totalTaken synced sessions',
+                      style: proxTabular(
+                          context, ProxType.label(color: c.contentPrimary))),
+                  const SizedBox(height: ProxSpacing.sm),
+                  // One card per course: progress ring as the primary
+                  // visual, the x/y fraction line as the caption beneath.
+                  for (final course in courses)
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(bottom: ProxSpacing.sm),
+                      child: _CourseCard(
+                        title: course,
+                        summary: summaries[course]!,
+                        onTap: acct == null
+                            ? null
+                            : () => _openCourse(
+                                course, groups[course]!, email),
                       ),
                     ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                            '${summaries[courses[i]]!.present}/${summaries[courses[i]]!.sessions}',
-                            style: proxTabular(context,
-                                Theme.of(context).textTheme.titleSmall)),
-                        const Icon(Icons.chevron_right),
-                      ],
-                    ),
-                    onTap: acct == null
-                        ? null
-                        : () => _openCourse(
-                            courses[i], groups[courses[i]]!, email),
+                ],
+                if (_online)
+                  const ProxSyncNote(
+                    'Synced from your professors. Removing hides it here only.',
+                  ),
+                DetailsExpander(
+                  title: 'Details',
+                  child: Text(
+                    'Synced sessions stay cached on this device. Counts converge on the next pull. Removing hides entries here only.',
+                    style: ProxType.caption(color: c.contentSecondary),
                   ),
                 ),
-            ],
-            if (_online)
-              const ProxSyncNote(
-                'Synced from your professors. Removing hides it here only.',
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Course card: progress ring (primary) + fraction line caption.
+class _CourseCard extends StatelessWidget {
+  final String title;
+  final CourseAttendanceSummary summary;
+  final VoidCallback? onTap;
+  const _CourseCard(
+      {required this.title, required this.summary, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final value = summary.sessions == 0
+        ? 0.0
+        : (summary.present / summary.sessions).clamp(0.0, 1.0);
+    return Container(
+      constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
+      decoration: BoxDecoration(
+        color: c.surfaceRaised,
+        borderRadius: ProxRadii.cardSpecRadius,
+        border: Border.all(color: c.divider),
+        boxShadow: [c.elevationRaised],
+      ),
+      child: InkWell(
+        borderRadius: ProxRadii.cardSpecRadius,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(ProxSpacing.cardPadding),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Semantics(
+                label: summary.line,
+                child: SizedBox(
+                  width: ProxSpacing.minTap,
+                  height: ProxSpacing.minTap,
+                  child: CircularProgressIndicator(
+                    value: value,
+                    strokeWidth: 5,
+                    strokeCap: StrokeCap.round,
+                    backgroundColor: c.divider,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(c.accentBrand),
+                  ),
+                ),
               ),
-          ],
+              const SizedBox(width: ProxSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: ProxType.body(color: c.contentPrimary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      summary.line,
+                      style:
+                          ProxType.caption(color: c.contentSecondary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: ProxSpacing.sm),
+              Icon(Icons.chevron_right, color: c.contentTertiary),
+            ],
+          ),
         ),
       ),
     );

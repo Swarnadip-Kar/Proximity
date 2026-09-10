@@ -1,16 +1,20 @@
-// Live focused section screens (Track 5 split).
+// Live focused section screens (§7.1, Track 5 split).
 //
-// Reason to exist: the live host (`TakeAttendanceScreen`) was one 800-line
-// page carrying setup + header + roster + inbox + direct-add + recovery.
-// Each section below is ONE purpose, readable mid-lecture without the
-// control cluster, and directly deep-linkable (`live/<course>/roster`
-// etc.). They read the same live host driver the host screen owns —
-// pushed atop a hosting host they show live data; opened cold (no host
-// below) they show guidance instead of a dead list, never a crash.
+// Presentation rebuild (behavior frozen): the take host
+// (`TakeAttendanceScreen`) was one long page carrying setup + header +
+// roster + inbox + direct-add + recovery. Each section below is ONE
+// purpose, readable mid-lecture without the control cluster, and directly
+// deep-linkable (`live/<course>/roster` etc.). They read the same live
+// host driver the host screen owns — pushed atop a hosting host they show
+// live data; opened cold (no host below) they show guidance instead of a
+// dead list, never a crash. Inbox and add compose the
+// `features/manual_attendance/` module (§4.8), never bespoke UI.
 //
 // Behavior is unchanged: decisions delegate to the host driver (the same
 // narrow interface the host screen uses); drafts/snapshots stay owned by
-// the host visit.
+// the host visit. The terminal icon opens the log drawer (overlay — the
+// radio UI keeps listening beneath it); `Expand` (and the setup screen's
+// `System log` button) pushes the full-screen `debug/log`.
 library;
 
 import 'package:flutter/material.dart';
@@ -22,6 +26,7 @@ import '../../core/device_store.dart';
 import '../../core/host_driver.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
 import '../debug/debug_log_screen.dart';
@@ -34,25 +39,36 @@ class _LiveSectionShell extends StatelessWidget {
   final String title;
   final String reason;
   final Widget child;
+  final bool showLogAction;
   const _LiveSectionShell({
     required this.title,
     required this.reason,
     required this.child,
+    this.showLogAction = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return ProxScreen(
       title: title,
+      actions: showLogAction
+          ? [
+              IconButton(
+                icon: const Icon(Icons.terminal_outlined),
+                tooltip: 'System log',
+                onPressed: () => showLogDrawer(context),
+              ),
+            ]
+          : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             reason,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            style: ProxType.caption(
+              color: ProximityColors.of(context).contentSecondary,
+            ),
           ),
           const SizedBox(height: ProxSpacing.sm),
           child,
@@ -228,6 +244,7 @@ class LiveSetupScreen extends ConsumerWidget {
     return _LiveSectionShell(
       title: 'Setup · $course',
       reason: 'Hosting setup before Start — back to the host to begin.',
+      showLogAction: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

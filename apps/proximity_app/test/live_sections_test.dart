@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/live_sections.dart';
 import 'package:proximity_app/routes.dart';
 
@@ -25,8 +26,11 @@ void main() {
         deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
         hostDriverProvider.overrideWithValue(FakeHostDriver()),
       ],
-      child: const MaterialApp(
-          home: LiveRosterScreen(course: 'CS201')),
+      // App theme: section shells read the ProximityColors extension
+      // (Live rebuild; same harness as the shared-components tests).
+      child: MaterialApp(
+          theme: proxLightTheme(),
+          home: const LiveRosterScreen(course: 'CS201')),
     ));
     await t.pumpAndSettle();
     expect(find.textContaining('Roster'), findsWidgets);
@@ -44,7 +48,7 @@ void main() {
           deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
           hostDriverProvider.overrideWithValue(FakeHostDriver()),
         ],
-        child: MaterialApp(home: w),
+        child: MaterialApp(theme: proxLightTheme(), home: w),
       ));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);

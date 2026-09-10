@@ -5,8 +5,8 @@
 // cancel/dispose safety, fail-closed save.
 //
 // Guidance model (Apple Face ID + Tobii "follow the target"): every still
-// classifies into ANY matching unfilled bucket; rim sweep + one static
-// prompt guide, progress dots report. Nothing user-facing ever narrates
+// classifies into ANY matching unfilled bucket; the small oval + one static
+// prompt guide, the large oval arc reports. Nothing user-facing ever narrates
 // checker state. Camera plugin has no test double, so the live
 // CameraPreview composition is verified on-device; CI drives the
 // placeholder Stack (same shape) through the FakeEnrollSessionCamera +
@@ -23,12 +23,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
-import 'package:proximity_app/features/enrollment/enroll_capture.dart';
-import 'package:proximity_app/features/enrollment/enroll_widgets.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
+import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/widgets/prox_cards.dart';
 
 class _EnrollBoom extends FakeFaceVerifier {
@@ -84,6 +86,8 @@ Widget _captureHarness(
         poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
       ],
       child: MaterialApp(
+        // App theme: the shared two-oval overlay reads ProximityColors.
+        theme: proxLightTheme(),
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
@@ -270,7 +274,7 @@ void main() {
 
     test('ratio-critical lines survive verbatim, in order', () {
       final session = File(
-              'lib/features/enrollment/enroll_capture.dart')
+              'lib/features/setup/enroll_capture.dart')
           .readAsStringSync();
       var from = 0;
       for (final line in originalLines) {
@@ -280,9 +284,9 @@ void main() {
       }
     });
 
-    test('exactly the four documented deltas, nothing else', () {
+    test('exactly the documented two-oval deltas, nothing else', () {
       final session = File(
-              'lib/features/enrollment/enroll_capture.dart')
+              'lib/features/setup/enroll_capture.dart')
           .readAsStringSync();
       // (a) three-state message instead of the single status…
       expect(session.contains('child: Text(_status,'), isFalse);
@@ -296,15 +300,23 @@ void main() {
           session.contains('!ctl.value.isInitialized\n'
               '                      ? const CircularProgressIndicator()'),
           isFalse);
-      expect(session.contains('FaceOval('), isTrue);
-      // (c) TWO Positioned overlay children + sweep params on the oval, and
-      // no trace of the removed green dot: dots (top) + save-error toast
-      // (bottom, saveError-gated) — both positioned/paint-only, so overlay
-      // count stays pinned and no inline copy ever sneaks over the feed…
-      expect('Positioned('.allMatches(session).length, 2);
+      // (c) THE shared two-oval overlay (§6.2): CaptureOverlay present with
+      // the angle count from the controller's own slot list (verified 5 via
+      // faceEnrollSlots, never hardcoded); the old single oval + dots are
+      // gone (EnrollAngleDots violated the two-ovals-only rule — its usage
+      // was removed in Integration, its class removed in Phase 6).
+      expect(session.contains('CaptureOverlay('), isTrue);
+      expect(session.contains('faceEnrollSlots.length'), isTrue);
+      expect(session.contains('FaceOval('), isFalse);
+      expect(session.contains('FaceCaptureOvalOverlay('), isFalse);
+      expect(session.contains('EnrollAngleDots('), isFalse);
+      // (d) ONE Positioned overlay child (the save-error toast,
+      // saveError-gated — paint-only) plus the sweep param on the overlay,
+      // and no trace of the removed single-oval beacon spans…
+      expect('Positioned('.allMatches(session).length, 1);
       expect(session.contains('if (saveError)'), isTrue);
       expect(session.contains('sweepAngle:'), isTrue);
-      expect(session.contains('sweepSpan:'), isTrue);
+      expect(session.contains('sweepSpan'), isFalse);
       expect(session.contains('dotUnit'), isFalse);
       expect(session.contains('guideDotUnit'), isFalse);
       // …and the original single-status/progress expressions are gone.
@@ -321,17 +333,6 @@ void main() {
       expect(enrollCapturePrompt,
           'Rotate your face slowly, following the glow.');
       expect(faceEnrollSlots, ['centre', 'left', 'right', 'up', 'down']);
-    });
-
-    testWidgets('dots label tracks captured count', (t) async {
-      await t.pumpWidget(const MaterialApp(
-        home: Scaffold(
-            body: EnrollAngleDots(done: 1, total: 5, current: 1)),
-      ));
-      expect(find.byKey(const ValueKey('angle-dot-0')), findsOneWidget);
-      expect(find.byKey(const ValueKey('angle-dot-4')), findsOneWidget);
-      expect(
-          find.bySemanticsLabel('Captured 1 of 5 angles'), findsOneWidget);
     });
 
     testWidgets('camera oval overlay renders + repaints (sweep included)',
@@ -392,10 +393,11 @@ void main() {
       await t.pumpWidget(_captureHarness(ctl: ctl));
       // Camera open, loop still in its initial beat (600ms).
       await _openSession(t);
-      // Overlay ONLY in the preview Stack: dots + oval. The single static
-      // prompt lives in the bottom bar (area constancy, see chain test).
-      expect(find.byType(EnrollAngleDots), findsOneWidget);
-      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
+      // Overlay ONLY in the preview Stack: THE shared two-oval overlay. No
+      // dots, no single oval, no cards. The single static prompt lives in
+      // the bottom bar (area constancy, see chain test).
+      expect(find.byType(CaptureOverlay), findsOneWidget);
+      expect(find.byType(FaceCaptureOvalOverlay), findsNothing);
       expect(find.byType(ProxCard), findsNothing);
       // No VISIBLE buttons mid-flow (the boundary-parity reservation keeps
       // one hidden FilledButton to hold the original bottom-slot height —
@@ -432,30 +434,25 @@ void main() {
         expect(find.textContaining(banned), findsNothing,
             reason: 'banned mid-flow jargon: $banned');
       }
-      // The overlay never affects preview layout: it hangs off Positioned
-      // + IgnorePointer inside the Stack (ancestor existence; Scaffold
+      // The overlay never affects preview layout: CaptureOverlay is itself
+      // pointer-transparent inside the Stack (ancestor existence; Scaffold
       // internals own other IgnorePointers, so this asserts presence).
       expect(
           find.ancestor(
-              of: find.byType(EnrollAngleDots),
-              matching: find.byType(IgnorePointer)),
+              of: find.byType(CaptureOverlay),
+              matching: find.byType(Stack)),
           findsWidgets);
-      expect(
-          find.ancestor(
-              of: find.byType(EnrollAngleDots),
-              matching: find.byType(Positioned)),
-          findsOneWidget);
       // …and the preview area is constraint-loose (Expanded + Center, the
       // certified FaceCaptureScreen construction — CameraPreview, an
       // AspectRatio internally, sizes itself), never a fixed-height box.
       expect(
           find.ancestor(
-              of: find.byType(FaceCaptureOvalOverlay),
+              of: find.byType(CaptureOverlay),
               matching: find.byType(Center)),
           findsOneWidget);
       expect(
           find.ancestor(
-              of: find.byType(FaceCaptureOvalOverlay),
+              of: find.byType(CaptureOverlay),
               matching: find.byType(Expanded)),
           findsOneWidget);
       expect(
@@ -495,7 +492,7 @@ void main() {
       // Preview path: overlay > Stack(expand) > Center > Expanded(flex 1)
       // > Column(max) > Scaffold — with no constraining wrapper between.
       final preview =
-          chainOf(find.byType(FaceCaptureOvalOverlay)).map((e) => e.widget).toList();
+          chainOf(find.byType(CaptureOverlay)).map((e) => e.widget).toList();
       int after(int from, bool Function(Widget) test, String what) {
         final at = preview.indexWhere(test, from);
         expect(at, isNot(-1), reason: 'missing chain link: $what');
@@ -574,9 +571,10 @@ void main() {
           ctl: ctl, gate: gate, camera: camera));
       await _openSession(t);
       // Two buckets filled by "wrong"-order stills — prompt unchanged,
-      // gallery untouched until the terminal write.
-      await _pumpUntil(
-          t, find.bySemanticsLabel('Captured 2 of 5 angles'));
+      // gallery untouched until the terminal write. Fixed pump past the
+      // first beats (progress now rides the large oval arc, which carries
+      // no semantics label — any partial state proves the mid-flow point).
+      await t.pump(const Duration(milliseconds: 1500));
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(find.textContaining('Turn'), findsNothing);
       expect(find.textContaining('Look straight'), findsNothing);
@@ -595,8 +593,8 @@ void main() {
       await t.pumpWidget(_captureHarness(ctl: ctl, camera: camera));
       await _openSession(t);
       // First fill arrives with no error text ever shown (silent retry).
-      await _pumpUntil(
-          t, find.bySemanticsLabel('Captured 1 of 5 angles'));
+      // Fixed pump past the first beat (progress rides the oval arc now).
+      await t.pump(const Duration(milliseconds: 800));
       expect(find.textContaining('blank'), findsNothing);
       expect(find.byType(EnrollNotice), findsNothing);
       // One wasted still, then the session completes on its own.
@@ -631,9 +629,8 @@ void main() {
       await t.pumpWidget(
           _captureHarness(ctl: ctl, camera: camera));
       await _openSession(t);
-      // Wait for the first fill (dots semantics), then cancel.
-      await _pumpUntil(
-          t, find.bySemanticsLabel('Captured 1 of 5 angles'));
+      // Let the first beat fill, then cancel (progress rides the oval arc).
+      await t.pump(const Duration(milliseconds: 1000));
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
       // Popped back to the launcher, camera closed, gallery untouched.

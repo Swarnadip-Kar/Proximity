@@ -2,8 +2,15 @@
 //
 // Lists registered courses (most recent first) with session counts, registers
 // new ones, and pull-merges cloud sessions on open so other devices' visits
-// converge here. Per-course work (sessions, Take, rename/delete, export)
-// lives in CourseOverviewScreen — this screen only picks or creates.
+// converge here. Per-course work (sessions, rename/delete, export) lives in
+// CourseOverviewScreen — this screen only picks or creates. Records-only:
+// registration stays here because the Live tab root is register-free by
+// design (it only opens existing courses); this tab never routes into room
+// capture and shows no status chip for it.
+//
+// Data logic preserved per the Phase-1 exemption (rows, sort, register,
+// sync): restyle only. No PopScope in this tab (navigation-shell rebuild):
+// the shell owns back; the explicit Switch-mode button below is untouched.
 library;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -18,12 +25,12 @@ import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
 import '../../widgets/clock.dart';
+import '../../widgets/details_expander.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
-import '../debug/debug_log_screen.dart';
 import 'course_overview_screen.dart';
 
 class ProfCoursesScreen extends ConsumerStatefulWidget {
@@ -108,8 +115,7 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
 
   void _openLog() {
     BleLog.log('NAV', 'courses → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    showLogDrawer(context);
   }
 
   /// Tight-row label: short weekday + day/month ('Fri, 4 Sep').
@@ -144,116 +150,178 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final store = ref.watch(deviceStoreProvider);
     final linked = ref.watch(linkedIdentityProvider);
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) setMode(ref, AppMode.unset);
-      },
-      child: AdaptiveScaffold(
-        title: 'My courses',
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.terminal_outlined),
-            tooltip: 'System log',
-            onPressed: _openLog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.switch_account),
-            tooltip: 'Switch mode',
-            onPressed: () => setMode(ref, AppMode.unset),
-          ),
-        ],
-        body: FutureBuilder<List<dynamic>>(
-          future: Future.wait([store.readCourses(), store.readHistory()]),
-          builder: (context, snap) {
-            final data = snap.data ?? const [];
-            final courses =
-                data.isEmpty ? const <Course>[] : data[0] as List<Course>;
-            final history = data.length < 2
-                ? const <ClassRecord>[]
-                : data[1] as List<ClassRecord>;
-            final rows = _rows(courses, history);
-            return ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const ClockHeader(),
-                const WebRecordsBanner(),
-                if (_syncMsg != null) ProxSyncNote(_syncMsg!),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: UnsyncedBadge(),
+    return AdaptiveScaffold(
+      title: 'My courses',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: _openLog,
+        ),
+        IconButton(
+          icon: const Icon(Icons.switch_account),
+          tooltip: 'Switch mode',
+          onPressed: () => setMode(ref, AppMode.unset),
+        ),
+      ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(maxWidth: ProxSpacing.maxContentWidth),
+          child: FutureBuilder<List<dynamic>>(
+            future: Future.wait([store.readCourses(), store.readHistory()]),
+            builder: (context, snap) {
+              final data = snap.data ?? const [];
+              final courses =
+                  data.isEmpty ? const <Course>[] : data[0] as List<Course>;
+              final history = data.length < 2
+                  ? const <ClassRecord>[]
+                  : data[1] as List<ClassRecord>;
+              final rows = _rows(courses, history);
+              return ListView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: ProxSpacing.screenMargin,
+                  vertical: ProxSpacing.lg,
                 ),
-                if (linked != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                        'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
-                        style: Theme.of(context).textTheme.bodySmall),
+                children: [
+                  const ClockHeader(),
+                  const WebRecordsBanner(),
+                  if (_syncMsg != null) ProxSyncNote(_syncMsg!),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: UnsyncedBadge(),
                   ),
-                const SizedBox(height: 8),
-                // Course catalog edits are native-only (records view on web).
-                if (!kIsWeb)
-                  ProxPrimaryButton(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Register new course'),
-                    onPressed: _register,
-                  ),
-                if (!kIsWeb) const SizedBox(height: 8),
-                const SizedBox(height: 8),
-                if (snap.connectionState == ConnectionState.waiting)
-                  const Center(child: CircularProgressIndicator())
-                else if (rows.isEmpty)
-                  ProxEmptyState(
-                    message: kIsWeb
-                        ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
-                        : 'No courses yet. Register your first course above.',
-                  )
-                else
-                  // Restrained motion: stagger on load only (ProxListTile).
-                  for (var i = 0; i < rows.length; i++)
+                  if (linked != null)
                     Padding(
-                      padding:
-                          const EdgeInsets.only(bottom: ProxSpacing.sm),
-                      child: ProxListTile(
-                        title: rows[i].name,
-                        subtitle:
-                            '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}',
-                        staggerIndex: i,
-                        leading: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .primaryContainer,
-                            borderRadius:
-                                BorderRadius.circular(ProxRadii.md),
-                          ),
-                          child: Icon(
-                            Icons.folder_outlined,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onPrimaryContainer,
-                          ),
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          BleLog.log('NAV', 'courses → overview ${rows[i].name}');
-                          Navigator.of(context)
-                              .push(MaterialPageRoute(
-                                  builder: (_) => CourseOverviewScreen(
-                                      courseName: rows[i].name)))
-                              .then((_) {
-                            if (mounted) setState(() {});
-                          });
-                        },
+                      padding: const EdgeInsets.only(top: ProxSpacing.xs),
+                      child: Text(
+                        'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
+                        style: ProxType.caption(color: c.contentSecondary),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                     ),
-              ],
-            );
-          },
+                  const SizedBox(height: ProxSpacing.sm),
+                  // Course catalog edits are native-only (records view on web).
+                  if (!kIsWeb)
+                    ProxPrimaryButton(
+                      icon: const Icon(Icons.add),
+                      label: const Text('Register new course'),
+                      onPressed: _register,
+                    ),
+                  if (!kIsWeb) const SizedBox(height: ProxSpacing.sm),
+                  if (snap.connectionState == ConnectionState.waiting)
+                    const Center(child: CircularProgressIndicator())
+                  else if (rows.isEmpty)
+                    ProxEmptyState(
+                      message: kIsWeb
+                          ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
+                          : 'No courses yet. Register your first course above.',
+                    )
+                  else
+                    for (final row in rows)
+                      Padding(
+                        padding:
+                            const EdgeInsets.only(bottom: ProxSpacing.sm),
+                        child: _PickerCard(
+                          title: row.name,
+                          subtitle:
+                              '${row.sessions} sessions · ${_lastDateLabel(row.lastDate)}',
+                          onTap: () {
+                            BleLog.log(
+                                'NAV', 'courses → overview ${row.name}');
+                            Navigator.of(context)
+                                .push(MaterialPageRoute(
+                                    builder: (_) => CourseOverviewScreen(
+                                        courseName: row.name)))
+                                .then((_) {
+                              if (mounted) setState(() {});
+                            });
+                          },
+                        ),
+                      ),
+                  DetailsExpander(
+                    title: 'Details',
+                    child: Text(
+                      'Pull-merge converges other devices on open. Newest writes win per session.',
+                      style: ProxType.caption(color: c.contentSecondary),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PickerCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _PickerCard(
+      {required this.title, required this.subtitle, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Container(
+      constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
+      decoration: BoxDecoration(
+        color: c.surfaceRaised,
+        borderRadius: ProxRadii.cardSpecRadius,
+        border: Border.all(color: c.divider),
+        boxShadow: [c.elevationRaised],
+      ),
+      child: InkWell(
+        borderRadius: ProxRadii.cardSpecRadius,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(ProxSpacing.cardPadding),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: c.accentBrand.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(ProxRadii.md),
+                ),
+                alignment: Alignment.center,
+                child: Icon(Icons.folder_outlined, color: c.accentBrand),
+              ),
+              const SizedBox(width: ProxSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: ProxType.body(color: c.contentPrimary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: ProxType.caption(color: c.contentSecondary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: ProxSpacing.sm),
+              Icon(Icons.chevron_right, color: c.contentTertiary),
+            ],
+          ),
         ),
       ),
     );

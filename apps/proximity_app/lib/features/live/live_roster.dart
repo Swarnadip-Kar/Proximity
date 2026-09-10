@@ -1,5 +1,11 @@
-// Live roster (prof live): waiting area + present (intersection) +
+// Live roster (prof live, §7.1): waiting area + present (intersection) +
 // partial + search + per-student per-round ticks (R1 ✓ · R2 ✗).
+//
+// Presentation rebuild (behavior frozen): waiting/present/partial rows
+// render as the one shared `StudentCard` (§4.1) with round-tick pills
+// instead of screen-local tiles and raw tick strings. Present rule,
+// intersection gate (partials never promote via search), search filter,
+// and all pinned copy are byte-identical to the pre-rebuild roster.
 //
 // Present rule (behavioral law): present = intersection of ALL windows
 // taken. A student who marked R1 but missed R2 stays visible under
@@ -31,6 +37,8 @@ import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/student_card.dart';
+import '../../widgets/verdict_badge.dart';
 
 /// Per-round ticks for one student ('R1 ✓ · R2 ✗', or 'R1 ✓' pre-round).
 String rosterTicksFor(Set<int> wins, List<int> windowNos) {
@@ -38,6 +46,18 @@ String rosterTicksFor(Set<int> wins, List<int> windowNos) {
   return [
     for (final w in windowNos) 'R$w ${wins.contains(w) ? '✓' : '✗'}',
   ].join(' · ');
+}
+
+/// Round-tick pills for one student (the [StudentCard] trail form of
+/// [rosterTicksFor]; same information, componentized per §4.1).
+List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
+  if (windowNos.isEmpty) {
+    return wins.isEmpty ? const [] : const [RoundTick('R1', present: true)];
+  }
+  return [
+    for (final w in windowNos)
+      RoundTick('R$w', present: wins.contains(w)),
+  ];
 }
 
 /// Waiting area: who is parked for the next window to open.
@@ -48,26 +68,36 @@ class WaitingListSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        ProxSectionHeader(title: 'Waiting area (${waitingRows.length})'),
+        Text(
+          'Waiting area (${waitingRows.length})',
+          style: ProxType.title(color: c.contentPrimary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        const SizedBox(height: ProxSpacing.sm),
         if (waitingRows.isEmpty)
           const ProxEmptyLine('No students in the waiting area yet.')
         else
           // Keyed entrances: a join fades/slides its row in; the 1s
           // elapsed tick rebuilds with stable keys so nothing replays.
           for (final w in waitingRows)
-            ProxFadeSlideIn(
+            Padding(
               key: ValueKey<String>('waiting-${w.email}'),
-              child: ProxListTile(
-                tileKey: ValueKey<String>('waiting-${w.email}-tile'),
-                dense: true,
-                leading:
-                    const Icon(Icons.hourglass_top, size: 20),
-                title: w.name.isNotEmpty ? w.name : w.email,
-                subtitle: rosterSubtitle(w.roll, w.email),
+              padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+              child: ProxFadeSlideIn(
+                child: StudentCard(
+                  name: w.name.isNotEmpty ? w.name : w.email,
+                  subtitle: rosterSubtitle(w.roll, w.email),
+                  // Static badge: meaning rides on icon + word, and a
+                  // pulsing badge would keep tests from settling.
+                  status:
+                      const VerdictBadge(status: ProxStatus.waiting),
+                ),
               ),
             ),
       ],
@@ -90,6 +120,7 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final tally = widget.tally;
     final present = tally.confirmedCount;
     final windowNos = tally.windowNos;
@@ -130,50 +161,59 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
               prefixIcon: Icon(Icons.search)),
           onChanged: (v) => setState(() => _search = v),
         ),
-        const SizedBox(height: 8),
-        ProxSectionHeader(
-          title:
-              'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
-          padding: EdgeInsets.zero,
+        const SizedBox(height: ProxSpacing.sm),
+        Text(
+          'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
+          style: ProxType.title(color: c.contentPrimary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 2,
         ),
+        const SizedBox(height: ProxSpacing.sm),
         if (confirmedRows.isEmpty)
           const ProxEmptyLine(
               'Nobody present in every round yet — partials stay listed below.')
         else
-          for (var i = 0; i < confirmedRows.length; i++)
-            // No staggerIndex (see the settle note above): same Card row,
-            // instant mount — the cascade would only ever play below the
-            // fold, late enough to break test settling while LIVE pulses.
-            ProxListTile(
-              title: confirmedRows[i].name,
-              subtitle:
-                  '${rosterTicksFor(confirmedRows[i].wins, windowNos)} · '
-                  '${rosterSubtitle(confirmedRows[i].roll, confirmedRows[i].email)}'
-                  '${confirmedRows[i].late ? ' · late' : ''}',
-              leading: Icon(
-                Icons.check_circle,
-                color: ProxStateColors.of(context, ProxState.marked),
+          // No entrance motion on present rows (see the settle note
+          // above): same card row, instant mount — the cascade would
+          // only ever play below the fold, late enough to break test
+          // settling while LIVE pulses. Status slot carries the STATIC
+          // Late badge only: the marked elastic pop must not mount
+          // under the take screen's 1s ticking parent (it never
+          // settles in widget tests, and replaying transition motion
+          // on every mount violates "updates in place"). Presence is
+          // already stated by the section header + round-tick pills.
+          for (final r in confirmedRows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+              child: StudentCard(
+                name: r.name,
+                subtitle:
+                    '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                status: r.late
+                    ? const VerdictBadge(status: ProxStatus.late)
+                    : null,
+                roundTrail: rosterTickPills(r.wins, windowNos),
               ),
             ),
         if (partialRows.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          ProxSectionHeader(
-            title: 'Partial — some rounds (${partialRows.length})',
-            padding: EdgeInsets.zero,
+          const SizedBox(height: ProxSpacing.xs),
+          Text(
+            'Partial — some rounds (${partialRows.length})',
+            style: ProxType.title(color: c.contentPrimary),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
+          const SizedBox(height: ProxSpacing.sm),
           for (final r in partialRows)
-            ProxListTile(
-              tileKey: ValueKey<String>('partial-${r.email}'),
-              dense: true,
-              leading: Icon(
-                Icons.timelapse,
-                color: ProxStateColors.of(context, ProxState.waiting),
+            Padding(
+              key: ValueKey<String>('partial-${r.email}'),
+              padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+              child: StudentCard(
+                name: r.name,
+                subtitle:
+                    '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                roundTrail: rosterTickPills(r.wins, windowNos),
               ),
-              title: r.name,
-              subtitle:
-                  '${rosterTicksFor(r.wins, windowNos)} · '
-                  '${rosterSubtitle(r.roll, r.email)}'
-                  '${r.late ? ' · late' : ''}',
             ),
         ],
       ],

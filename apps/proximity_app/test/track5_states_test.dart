@@ -3,23 +3,29 @@
 // over the shared trust cards (no drivers, no sync).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/mark/verdict_view.dart';
 import 'package:proximity_app/features/mark/waiting_room.dart';
 import 'package:proximity_app/widgets/trust_cards.dart';
 
+/// Rebuilt mark views read the `ProximityColors` extension, so even these
+/// presentation-only contracts pump under the app theme.
+Widget _themed(Widget body) => MaterialApp(
+      theme: proxLightTheme(),
+      home: Scaffold(body: body),
+    );
+
 void main() {
   testWidgets('wrong-org verdict explains no-proof-sent + way back',
       (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MarkVerdictView(
-          kind: MarkVerdict.wrongOrg,
-          detail: 'Wrong organization for this class — join your institute class',
-          roundMarks: const [],
-          onRetryFace: () {},
-          onManualInstead: () {},
-          onBack: () {},
-        ),
+    await t.pumpWidget(_themed(
+      MarkVerdictView(
+        kind: MarkVerdict.wrongOrg,
+        detail: 'Wrong organization for this class — join your institute class',
+        roundMarks: const [],
+        onRetryFace: () {},
+        onManualInstead: () {},
+        onBack: () {},
       ),
     ));
     expect(find.textContaining('Wrong organization'), findsWidgets);
@@ -43,15 +49,13 @@ void main() {
   });
 
   testWidgets('waiting room states unreachable honestly', (t) async {
-    await t.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: WaitingRoomView(
-          connected: false,
-          roomClass: 'CS201',
-          roundMarks: const [],
-          onRequestManual: () {},
-          onCancel: () {},
-        ),
+    await t.pumpWidget(_themed(
+      WaitingRoomView(
+        connected: false,
+        roomClass: 'CS201',
+        roundMarks: const [],
+        onRequestManual: () {},
+        onCancel: () {},
       ),
     ));
     expect(find.text('Not connected'), findsOneWidget);

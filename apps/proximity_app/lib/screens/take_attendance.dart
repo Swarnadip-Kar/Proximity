@@ -32,22 +32,55 @@ import '../core/device_store.dart';
 import '../core/host_driver.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
-import '../features/debug/debug_log_screen.dart';
 import '../features/live/direct_add.dart';
 import '../features/live/draft_recovery.dart';
 import '../features/live/live_roster.dart';
 import '../features/live/live_session.dart';
 import '../features/live/live_setup.dart';
 import '../features/live/manual_inbox.dart';
+import '../features/manual_attendance/manual_attendance.dart';
 import '../main.dart';
 import '../mode.dart';
-import '../widgets/clock.dart';
-import '../widgets/ladder_line.dart';
+import '../widgets/fallback_button.dart';
+import '../widgets/log_drawer.dart';
 
 // Recovery policy lives in the draft-recovery section; re-exported here
 // so existing imports (and tests) keep resolving it from this screen.
 export '../features/live/draft_recovery.dart'
     show recoverPromptThreshold, shouldPromptRecover;
+
+/// Lightweight segmented sub-nav (§7.1) under the fixed control cluster:
+/// roster / inbox / add / setup. All sections stay mounted in one scroll;
+/// tapping a segment highlights it and scrolls the section into view.
+class _LiveSubNav extends StatelessWidget {
+  final int selected;
+  final int inboxCount;
+  final ValueChanged<int> onSelect;
+
+  const _LiveSubNav({
+    required this.selected,
+    required this.inboxCount,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<int>(
+      segments: [
+        const ButtonSegment(value: 0, label: Text('Roster')),
+        ButtonSegment(
+          value: 1,
+          label: Text(inboxCount > 0 ? 'Inbox ($inboxCount)' : 'Inbox'),
+        ),
+        const ButtonSegment(value: 2, label: Text('Add')),
+        const ButtonSegment(value: 3, label: Text('Setup')),
+      ],
+      selected: {selected},
+      showSelectedIcon: false,
+      onSelectionChanged: (s) => onSelect(s.first),
+    );
+  }
+}
 
 class TakeAttendanceScreen extends ConsumerStatefulWidget {
   final String courseName;
@@ -101,7 +134,18 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       return '';
     }
   }
+
   final _nameCtrl = TextEditingController();
+
+  /// Segmented sub-nav (§7.1): which live section is highlighted. All
+  /// sections stay mounted in one scroll (mid-lecture scan + stable test
+  /// hooks); tapping a segment scrolls to it.
+  int _section = 0;
+  final _scrollCtrl = ScrollController();
+  final _setupKey = GlobalKey();
+  final _rosterKey = GlobalKey();
+  final _inboxKey = GlobalKey();
+  final _addKey = GlobalKey();
 
   TallyStore get tally {
     try {
@@ -135,8 +179,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _loadName() async {
     var name = ref.read(linkedIdentityProvider)?.name ?? '';
     try {
-      final saved =
-          await ref.read(deviceStoreProvider).readHostName();
+      final saved = await ref.read(deviceStoreProvider).readHostName();
       if (saved.isNotEmpty) name = saved;
     } catch (_) {}
     if (mounted && _nameCtrl.text.isEmpty && name.isNotEmpty) {
@@ -230,9 +273,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   bool _logWaitingDelta() {
     Set<String> cur = {};
     try {
-      cur = {
-        for (final w in ref.read(hostDriverProvider).waitingRows) w.email
-      };
+      cur = {for (final w in ref.read(hostDriverProvider).waitingRows) w.email};
     } catch (_) {
       return false;
     }
@@ -260,7 +301,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _restoreDraft() async {
     Map<String, dynamic>? draft;
     try {
-      draft = await ref.read(deviceStoreProvider).readSession(widget.courseName);
+      draft =
+          await ref.read(deviceStoreProvider).readSession(widget.courseName);
     } catch (_) {
       return;
     }
@@ -275,22 +317,22 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       final recover = await showRecoverOldDialog(context, savedAt);
       if (!mounted) return;
       if (recover == true) {
-        BleLog.log(ProxLogTags.nav, 'old draft recovered (continue same visit)');
+        BleLog.log(
+            ProxLogTags.nav, 'old draft recovered (continue same visit)');
         await _applyDraft(d);
       } else {
         // Save & start fresh (or dismissed): archive first, then clear.
         BleLog.log(ProxLogTags.nav, 'old draft archived, starting fresh visit');
         await _archiveDraftAsHistory(d);
         try {
-          await ref
-              .read(deviceStoreProvider)
-              .clearSession(widget.courseName);
+          await ref.read(deviceStoreProvider).clearSession(widget.courseName);
         } catch (_) {}
       }
       return;
     }
     // Recent: snapshot to history, then resume the same visit live.
-    BleLog.log(ProxLogTags.nav, 'recent draft auto-archived + resumed live, no prompt');
+    BleLog.log(ProxLogTags.nav,
+        'recent draft auto-archived + resumed live, no prompt');
     await _archiveDraftAsHistory(d);
     await _applyDraft(d);
   }
@@ -320,7 +362,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               id: d['recordId'] as String?,
             ),
           );
-      BleLog.log(ProxLogTags.sync, 'draft archived to history (${tally.size} marked)');
+      BleLog.log(
+          ProxLogTags.sync, 'draft archived to history (${tally.size} marked)');
     } catch (_) {}
   }
 
@@ -358,7 +401,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (v is! Map) return {};
     return {
       for (final e in v.entries)
-        if (e.key is String && e.value is String) e.key as String: e.value as String
+        if (e.key is String && e.value is String)
+          e.key as String: e.value as String
     };
   }
 
@@ -432,7 +476,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _discardDraft() async {
-    BleLog.log(ProxLogTags.state, 'draft discarded by professor (tally cleared)');
+    BleLog.log(
+        ProxLogTags.state, 'draft discarded by professor (tally cleared)');
     try {
       await ref.read(deviceStoreProvider).clearSession(widget.courseName);
     } catch (_) {}
@@ -475,6 +520,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     _t?.cancel();
     _idlePoll?.cancel();
     _nameCtrl.dispose();
+    _scrollCtrl.dispose();
     _setWake(false);
     // Best-effort only: dispose cannot await, so the durable save is the
     // autosave + _leave path above.
@@ -499,7 +545,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // marks). Timers die here (and again in dispose), never after the pop.
     _t?.cancel();
     _idlePoll?.cancel();
-    BleLog.log(ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
+    BleLog.log(
+        ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
     await _saveDraft();
     try {
       await ref.read(hostDriverProvider).endHosting();
@@ -541,7 +588,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (!mounted) return;
     // Keep the screen awake for the live window on all OS.
     _setWake(true);
-    BleLog.log(ProxLogTags.state, 'window #$windowNo live (code ${session.displayCode})');
+    BleLog.log(ProxLogTags.state,
+        'window #$windowNo live (code ${session.displayCode})');
     setState(() {
       live = true;
       _windowNo = windowNo;
@@ -612,8 +660,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         return true;
       }
       if (!mounted) return false;
-      setState(() => serverError =
-          'Bluetooth is off — turn it on to start the window.');
+      setState(() =>
+          serverError = 'Bluetooth is off — turn it on to start the window.');
       return false;
     }
     return true;
@@ -622,7 +670,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// Ends attendance (no export — that lives on the course page): final
   /// snapshot, draft cleared, hosting down, back to the course.
   Future<void> _endAttendance() async {
-    BleLog.log(ProxLogTags.nav, 'end attendance (final snapshot, hosting down)');
+    BleLog.log(
+        ProxLogTags.nav, 'end attendance (final snapshot, hosting down)');
     // Freeze autosave first (same teardown race as _leave: the draft is
     // cleared and the tally dropped below, so a timer tick landing before
     // unmount would resurrect a stale empty draft behind the course page).
@@ -743,10 +792,40 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _saveSnapshot();
   }
 
-  void _openLog() {
-    BleLog.log(ProxLogTags.nav, 'take → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+  /// Fallback-weight add entry (§6.4): icon button → sheet with the same
+  /// module form as the Add section (separate `sheet-` field keys so both
+  /// instances stay mounted without colliding). Same [onAdd]/[isPresent]
+  /// behavior as the section below (ID-compulsory + offline queue).
+  Future<void> _openAddSheet() {
+    BleLog.log(ProxLogTags.nav, 'take → add sheet');
+    return showProxSheet<void>(
+      context: context,
+      title: 'Add student',
+      builder: (_) => ManualAddForm(
+        fieldPrefix: 'sheet',
+        course: widget.courseName,
+        sessionId: _recordId ?? '',
+        onAdd: _addDirectEntry,
+        // Present = every round taken (intersection): re-adding one
+        // shows "Already marked present."; partials still go through.
+        isPresent: (email) =>
+            tally.confirmed.any((r) => r.email == email.toLowerCase()),
+      ),
+    );
+  }
+
+  /// Segmented sub-nav tap: highlight + scroll the section into view.
+  void _selectSection(int i) {
+    setState(() => _section = i);
+    final key = [_rosterKey, _inboxKey, _addKey, _setupKey][i];
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: ProxDurations.small,
+        curve: ProxCurves.standard,
+      );
+    }
   }
 
   /// 1-tap duplicate-face override: the driver clears the whole group and
@@ -769,62 +848,42 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     final hostLine = linked == null
         ? null
         : 'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}';
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _leave();
-      },
-      child: AdaptiveScaffold(
-        title: widget.courseName,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.terminal_outlined),
-            tooltip: 'System log',
-            onPressed: _openLog,
-          ),
-        ],
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const ClockHeader(),
-            if (!live) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Both devices must reach each other directly over this WiFi — marking is device-to-device, internet is not used in class.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const LadderLine(),
-            ],
-            LiveSetupSection(
-              hosting: hosting,
-              live: live,
-              nameCtrl: _nameCtrl,
-              onNameChanged: (v) {
-                try {
-                  ref.read(hostDriverProvider).setDisplayName(v);
-                } catch (_) {}
-              },
-              serverLine: serverLine,
-              allIps: _session?.allIps ?? const [],
-              currentIp: _ip,
-              onPickIp: _pickIp,
-              serverError: serverError,
-            ),
-            if (_resumed) ...[
-              const SizedBox(height: 8),
-              DraftResumedBanner(
-                present: present,
-                windowsTaken: windowsTaken,
-                onDiscard: _discardDraft,
-              ),
-            ],
-            const SizedBox(height: 8),
-            // Live header: elapsed clock + pulsing on-air dot + counters.
-            // The dot is the only repeating motion here — everything else
-            // updates in place so the 1s elapsed tick never replays
-            // entrances (waiting rows are keyed; present rows mount
-            // static, see the roster section).
-            LiveSessionHeader(
+    // No PopScope here (§3.5, navigation-shell rebuild): the shell owns
+    // back — in-tab back pops this tab's stack only. Ending the session
+    // stays an explicit action: the bar back button runs the same
+    // autosave + endHosting [_leave] the old pop handler ran
+    // (navigation-only change; timers, drivers, and drafts untouched).
+    // System-back pops through dispose, whose best-effort top-up + port
+    // close path is unchanged.
+    return AdaptiveScaffold(
+      title: widget.courseName,
+      leading: BackButton(onPressed: () => _leave()),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.person_add_outlined),
+          tooltip: 'Add student',
+          onPressed: _openAddSheet,
+        ),
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          // Overlay drawer (§4.5): the radio UI keeps listening beneath
+          // it. `Expand` inside pushes the full-screen debug/log.
+          onPressed: () => showLogDrawer(context),
+        ),
+      ],
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Fixed control-cluster header (§7.1): elapsed clock + pulsing
+          // on-air dot + counters stay on screen while the sections
+          // scroll beneath. The dot is the only repeating motion here —
+          // everything else updates in place so the 1s elapsed tick
+          // never replays entrances (waiting rows are keyed; present
+          // rows mount static, see the roster section).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: LiveSessionHeader(
               live: live,
               elapsed: elapsed,
               present: present,
@@ -839,39 +898,87 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               onStop: _stopEarly,
               onEnd: _endAttendance,
             ),
-            const SizedBox(height: 12),
-            WaitingListSection(
-              waitingRows: waitingRows,
+          ),
+          if (_resumed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: DraftResumedBanner(
+                present: present,
+                windowsTaken: windowsTaken,
+                onDiscard: _discardDraft,
+              ),
             ),
-            const SizedBox(height: 8),
-            ManualInboxSection(
-              pending: manualPending,
-              onApproveOne: _approveOne,
-              onRejectOne: _rejectOne,
-              onDecide: _decideSelected,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _LiveSubNav(
+              selected: _section,
+              inboxCount: manualPending.length,
+              onSelect: _selectSection,
             ),
-            const SizedBox(height: 8),
-            DirectAddSection(
-              course: widget.courseName,
-              sessionId: _recordId ?? '',
-              onAdd: _addDirectEntry,
-              // Present = every round taken (intersection): re-adding one
-              // shows "Already marked present."; partials still go through.
-              isPresent: (email) => tally.confirmed
-                  .any((r) => r.email == email.toLowerCase()),
+          ),
+          Expanded(
+            child: ListView(
+              controller: _scrollCtrl,
+              padding: const EdgeInsets.all(16),
+              children: [
+                Container(
+                  key: _setupKey,
+                  child: LiveSetupSection(
+                    hosting: hosting,
+                    live: live,
+                    nameCtrl: _nameCtrl,
+                    onNameChanged: (v) {
+                      try {
+                        ref.read(hostDriverProvider).setDisplayName(v);
+                      } catch (_) {}
+                    },
+                    serverLine: serverLine,
+                    allIps: _session?.allIps ?? const [],
+                    currentIp: _ip,
+                    onPickIp: _pickIp,
+                    serverError: serverError,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  key: _rosterKey,
+                  child: WaitingListSection(
+                    waitingRows: waitingRows,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ManualInboxSection(
+                  key: _inboxKey,
+                  pending: manualPending,
+                  onApproveOne: _approveOne,
+                  onRejectOne: _rejectOne,
+                  onDecide: _decideSelected,
+                ),
+                const SizedBox(height: 8),
+                DirectAddSection(
+                  key: _addKey,
+                  course: widget.courseName,
+                  sessionId: _recordId ?? '',
+                  onAdd: _addDirectEntry,
+                  // Present = every round taken (intersection): re-adding one
+                  // shows "Already marked present."; partials still go through.
+                  isPresent: (email) => tally.confirmed
+                      .any((r) => r.email == email.toLowerCase()),
+                ),
+                const SizedBox(height: 16),
+                DupFlagSection(
+                  groups: _driver?.dupGroups ?? const {},
+                  names: tally.nameMap(),
+                  onResolve: _resolveDup,
+                ),
+                const SizedBox(height: 8),
+                MarkedRosterSection(
+                  tally: tally,
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            DupFlagSection(
-              groups: _driver?.dupGroups ?? const {},
-              names: tally.nameMap(),
-              onResolve: _resolveDup,
-            ),
-            const SizedBox(height: 8),
-            MarkedRosterSection(
-              tally: tally,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

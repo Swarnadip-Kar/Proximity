@@ -16,18 +16,19 @@
 // block lists each kept deviation with a one-line reason. Overlay stays
 // strictly Positioned/IgnorePointer decoration with zero layout effect.
 //
-// Guidance is a slow rotating beacon on the oval rim (ONE bright head +
-// SHORT fading tail, fully transparent well before a full revolution — no
-// trails) on the blue inner oval, plus a green outer completion ring per
-// bucket, plus ONE static prompt (rotate slowly, follow the glow) — no
-// narrated checker state (narrating "turn more / checking" while the user
-// had turned is what flickered). Provenance: Apple Face ID enrollment (one
-// imperative + rim progress) and Tobii "follow the target" calibration (one
-// target, 5 points, repeat missing). Under the paint, buckets keep filling
-// opportunistically (EnrollBucketFill.classifyInto on one readPose per
-// still); progress dots are the sole completion indicator. Rejects stay
-// SILENT in-UI (BleLog only). Under reduced motion the beacon timer never
-// starts and the rim shows a steady soft full glow.
+// Guidance is the shared two-oval overlay (§6.2, one overlay design with
+// mark/face): the SMALL oval is the live head-position target for the next
+// unfilled angle, the LARGE oval is overall progress through the angle
+// sequence — plus ONE static prompt (rotate slowly, follow the glow), no
+// narrated checker state (narrating per-frame output is what flickered).
+// No separate progress bar, no dots, no per-angle labels. Provenance:
+// Apple Face ID enrollment (one imperative + rim progress) and Tobii
+// "follow the target" calibration (one target, 5 points, repeat missing).
+// Under the paint, buckets keep filling opportunistically
+// (EnrollBucketFill.classifyInto on one readPose per still); the large
+// oval arc is the sole completion indicator. Rejects stay SILENT in-UI
+// (BleLog only). Under reduced motion the sweep timer never starts and the
+// ovals render statically.
 //
 // Gallery write is single + terminal (controller.enrollFace → plugin
 // enroll + centre self-check); marking verify untouched. HONESTY: five
@@ -47,12 +48,12 @@ import '../../design/tokens.dart';
 import '../../features/face_identity/face_blocked.dart';
 import '../../features/face_identity/face_verifier.dart';
 import '../../features/face_identity/pose_gate.dart';
-import '../../screens/face_capture.dart';
-import '../../widgets/animated.dart';
+import '../../widgets/capture_overlay.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_scaffold.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
+import 'setup_step_scope.dart';
 
 /// Session-camera seam (navigation/camera plumbing, NOT face math):
 /// production opens the real front camera once per session; widget tests
@@ -278,6 +279,15 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           if (_paths[i] != null) faceEnrollSlots[i],
       };
 
+  /// Next unfilled slot index — the live head-position target for the small
+  /// oval. Falls back to the last slot once the set is complete (the save
+  /// runs, so the overlay is gone a beat later). Pure wiring over the
+  /// driver's own buckets; the loop above never reads it.
+  int get _nextAngle {
+    final at = _paths.indexWhere((p) => p == null);
+    return at == -1 ? _paths.length - 1 : at;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -332,8 +342,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
       _sweepTimer?.cancel();
       _sweepTimer = Timer.periodic(_sweepTick, (_) {
         if (_done || _finished || _failed) return;
-        _sweep +=
-            2 * 3.141592653589793 * _sweepTick.inMilliseconds / _sweepRevolution.inMilliseconds;
+        _sweep += 2 *
+            3.141592653589793 *
+            _sweepTick.inMilliseconds /
+            _sweepRevolution.inMilliseconds;
         if (_sweep > 2 * 3.141592653589793) {
           _sweep -= 2 * 3.141592653589793;
         }
@@ -390,8 +402,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           setState(() {
             _paths[faceEnrollSlots.indexOf(slot)] = still;
           });
-          EnrollLog.face(
-              'bucket $slot filled ($_doneCount/${_paths.length})');
+          EnrollLog.face('bucket $slot filled ($_doneCount/${_paths.length})');
         } else {
           EnrollLog.face('still classified nowhere (silent, continuing)');
         }
@@ -444,7 +455,14 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
       if (after.phase == EnrollPhase.faceDone) {
         EnrollLog.face('session validated — continuing');
         if (!mounted) return;
-        EnrollFlow.openResult(context);
+        // STEP-SCOPE: inside SetupFlow, Continue advances the stepper
+        // instead of pushing the standalone result route.
+        final scope = SetupStepScope.of(context);
+        if (scope != null) {
+          scope.next();
+        } else {
+          EnrollFlow.openResult(context);
+        }
       } else {
         EnrollLog.face('controller: ${after.message}');
       }
@@ -456,7 +474,14 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
   void _cancel() {
     EnrollLog.face(
         'session cancelled — nothing enrolled ($_doneCount/${_paths.length} filled, discarded)');
-    Navigator.of(context).pop();
+    // STEP-SCOPE: inside SetupFlow, Cancel steps back instead of popping
+    // the shell tab route (standalone pop preserved).
+    final scope = SetupStepScope.of(context);
+    if (scope != null) {
+      scope.back();
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
@@ -473,7 +498,16 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
             const SizedBox(height: ProxSpacing.md),
             ProxSecondaryButton(
               label: const Text('Back'),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                // STEP-SCOPE: inside SetupFlow, Back steps back instead of
+                // popping (standalone pop preserved).
+                final scope = SetupStepScope.of(context);
+                if (scope != null) {
+                  scope.back();
+                } else {
+                  Navigator.of(context).pop();
+                }
+              },
             ),
           ],
         ),
@@ -524,8 +558,9 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
           // test pins the chain; kept deviations, one line each:
           // (a) AppBar title 'Face capture' (flow-specific, same height).
           // (b) Preview message covers denied/failed/no-key (fail-closed gate).
-          // (c) Null-controller FaceOval placeholder (test fake only, never on-device).
-          // (d) ONE Positioned dots overlay + beacon params (positioned/paint-only).
+          // (c) Null-controller placeholder (test fake only, never on-device).
+          // (d) THE shared two-oval overlay (paint-only) + save-error toast
+          //     (positioned/paint-only) — no dots, no per-angle labels.
           // (e) Mid-flow single prompt + hidden status/button reservation (no flicker + parity).
           // (f) Validated Continue / save-error Try-again + shared hidden top-up (same total — back-nav stable).
           // (g) Blocked path uses ProxScreen (no camera, shared shell).
@@ -550,8 +585,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
               child: _denied || _failed || (!_opening && noKey)
                   ? Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text(previewMessage,
-                          textAlign: TextAlign.center),
+                      child: Text(previewMessage, textAlign: TextAlign.center),
                     )
                   : _opening
                       ? const CircularProgressIndicator()
@@ -561,40 +595,20 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                             if (ctl != null)
                               CameraPreview(ctl)
                             else
-                              const FaceOval(progress: 0, prompt: ''),
+                              const SizedBox.expand(),
                             // The oval ACTUALLY renders on the preview: this
                             // overlay is inside the preview Stack (not beside
                             // it), pointer-transparent, repainting per shot.
-                            FaceCaptureOvalOverlay(
+                            // THE shared two-oval overlay (§6.2 — small oval
+                            // = live head target for the next unfilled angle,
+                            // large oval = overall progress; totalAngles comes
+                            // from the controller's own slot list, verified 5
+                            // via faceEnrollSlots, never hardcoded).
+                            CaptureOverlay(
                               progress: _doneCount / total,
-                              sweepAngle: reduced ? 0.0 : _sweep,
-                              sweepSpan: reduced
-                                  ? 2 * 3.141592653589793
-                                  : 1.047,
-                            ),
-                            // Overlay ONLY — progress dots, composited over
-                            // the preview, transparent to touch, zero
-                            // layout effect on the preview.
-                            Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              child: IgnorePointer(
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.only(top: 12),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      EnrollAngleDots(
-                                        done: _doneCount,
-                                        total: total,
-                                        current: _doneCount,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                              currentAngle: _nextAngle,
+                              totalAngles: faceEnrollSlots.length,
+                              sweepAngle: reduced ? null : _sweep,
                             ),
                             // Fail-closed error banner (save-error only):
                             // toast-pattern overlay — same Notice widget and
@@ -637,7 +651,16 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                 if (validated) ...[
                   ProxPrimaryButton(
                     label: const Text('Continue'),
-                    onPressed: () => EnrollFlow.openResult(context),
+                    onPressed: () {
+                      // STEP-SCOPE: inside SetupFlow, Continue advances the
+                      // stepper instead of pushing the standalone route.
+                      final scope = SetupStepScope.of(context);
+                      if (scope != null) {
+                        scope.next();
+                      } else {
+                        EnrollFlow.openResult(context);
+                      }
+                    },
                   ),
                   const _SlotTopUp(),
                 ] else if (saveError) ...[
@@ -646,8 +669,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen> {
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : null,
                     label: const Text('Try again'),

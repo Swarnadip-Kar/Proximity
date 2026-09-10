@@ -32,9 +32,8 @@ abstract final class EnrollLog {
 
 /// THE instructional text of the capture session: one static prompt,
 /// shown once, never changing mid-flow (narrating checker state is what
-/// flickered — guidance now comes from the rim sweep + dots, both silent).
-const enrollCapturePrompt =
-    'Rotate your face slowly, following the glow.';
+/// flickered — guidance now comes from the rim sweep, silent).
+const enrollCapturePrompt = 'Rotate your face slowly, following the glow.';
 
 /// THE single ID-number entry of the bundle (entered exactly once, on the
 /// intro/account step; the result step shows it readonly). One entry, one
@@ -84,49 +83,7 @@ class _EnrollRollFieldState extends State<EnrollRollField> {
     );
   }
 }
-/// Angle progress dots: one dot per enrollment still (filled = captured,
-/// ring = current, dim = upcoming). Plain containers on the shared spacing
-/// scale — static, timer-free (unlike the pulsing [ProxDot]), so tests
-/// settle and idle screens stay cheap.
-class EnrollAngleDots extends StatelessWidget {
-  final int done;
-  final int total;
-  final int current;
-  const EnrollAngleDots(
-      {super.key, required this.done, required this.total, this.current = 0});
 
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Semantics(
-      label: 'Captured $done of $total angles',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < total; i++)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: ProxSpacing.xs),
-              child: Container(
-                key: ValueKey('angle-dot-$i'),
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: i < done ? scheme.primary : Colors.transparent,
-                  border: Border.all(
-                    color: i == current && i >= done
-                        ? scheme.primary
-                        : scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                    width: i == current && i >= done ? 2.5 : 1.5,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
 /// opened the bundle. Forward pushes name their routes (see EnrollFlow) so
 /// Done lands on the opener, never mid-bundle.
 abstract final class EnrollNav {
@@ -191,8 +148,9 @@ class _EnrollNoticeState extends State<EnrollNotice>
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final targeted = _targeted;
-    final color =
-        targeted ? ProxStateColors.of(context, ProxState.waiting) : scheme.error;
+    final color = targeted
+        ? ProxStateColors.of(context, ProxState.waiting)
+        : scheme.error;
     final icon = targeted ? Icons.refresh : Icons.error_outline;
     if (ProxMotion.reduced(context)) {
       return _row(color, icon);

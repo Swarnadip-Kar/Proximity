@@ -70,6 +70,16 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
     colorScheme: scheme,
     brightness: brightness,
     useMaterial3: true,
+    // Foundation rebuild (redesign §2.1/§2.5): semantic + gradient/glow/
+    // elevation tokens, dark/light at parity. New components read
+    // `ProximityColors.of(context)`; legacy scheme/scaffold/card defaults
+    // below are FROZEN until each rebuild section migrates (see
+    // INTEGRATION_LOG.md D5) so current screens render unchanged.
+    extensions: <ThemeExtension<dynamic>>[
+      brightness == Brightness.dark
+          ? const ProximityColors.dark()
+          : const ProximityColors.light(),
+    ],
     textTheme: text,
     scaffoldBackgroundColor: scheme.surface,
     appBarTheme: AppBarTheme(
@@ -90,8 +100,8 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         side: BorderSide(
           // Depth in dark mode comes from elevation (lighter fill), not
           // borders — so the border steps back where the fill steps up.
-          color: scheme.outlineVariant.withValues(
-              alpha: brightness == Brightness.dark ? 0.35 : 0.6),
+          color: scheme.outlineVariant
+              .withValues(alpha: brightness == Brightness.dark ? 0.35 : 0.6),
         ),
       ),
       // Dark-mode rule (Material + Apple HIG alignment): cards sit ABOVE
@@ -107,6 +117,11 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         shape: RoundedRectangleBorder(
           borderRadius: ProxRadii.buttonRadius,
         ),
+        // §9: every interactive target is ≥48×48dp. The theme carries the
+        // floor so dialog actions, sheet buttons, and rows all comply
+        // without per-site minimumSize copies (MARK-D5 keeps buttons
+        // Material theme-driven — this is that theme).
+        minimumSize: const Size(64, ProxSpacing.minTap),
         padding: const EdgeInsets.symmetric(
           horizontal: ProxSpacing.lg,
           vertical: ProxSpacing.md,
@@ -119,6 +134,8 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         shape: RoundedRectangleBorder(
           borderRadius: ProxRadii.buttonRadius,
         ),
+        // §9 48dp floor (see filledButtonTheme above).
+        minimumSize: const Size(64, ProxSpacing.minTap),
         padding: const EdgeInsets.symmetric(
           horizontal: ProxSpacing.lg,
           vertical: ProxSpacing.md,
@@ -131,7 +148,18 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         shape: RoundedRectangleBorder(
           borderRadius: ProxRadii.buttonRadius,
         ),
+        // §9 48dp floor (see filledButtonTheme above). Material's own
+        // default is shorter — without this, dialog/sheet text actions
+        // would be the one sub-48 target class left in the app.
+        minimumSize: const Size(64, ProxSpacing.minTap),
         textStyle: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        // §9 48dp floor, explicit: framework IconButtons already target
+        // 48×48; this pins the guarantee against future default drift.
+        minimumSize: const Size(ProxSpacing.minTap, ProxSpacing.minTap),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(

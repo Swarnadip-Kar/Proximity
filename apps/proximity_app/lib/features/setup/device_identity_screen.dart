@@ -30,20 +30,53 @@ import '../../widgets/trust_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
-import 'entry_flow.dart';
+import '../entry/entry_flow.dart';
 
 /// Device & identity status. Pushed from the RoleHub (plain
 /// MaterialPageRoute — no mode change, so preview flags and relaunch
 /// routing are untouched).
-class DeviceIdentityScreen extends ConsumerStatefulWidget {
+class DeviceIdentityScreen extends ConsumerWidget {
   const DeviceIdentityScreen({super.key});
 
   @override
-  ConsumerState<DeviceIdentityScreen> createState() =>
-      _DeviceIdentityScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return const AdaptiveScaffold(
+      title: 'Device & identity',
+      body: DeviceIdentityBody(),
+    );
+  }
 }
 
-class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
+/// Standalone scroll around the shared content below.
+class DeviceIdentityBody extends ConsumerWidget {
+  const DeviceIdentityBody({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: DeviceIdentityContent(),
+        ),
+      ),
+    );
+  }
+}
+
+/// Scroll-free content, shared by the standalone route above and the
+/// SetupFlow combined device+intro step (mechanical extraction — the state
+/// implementation below is verbatim, only the scroll wrapper moved up).
+class DeviceIdentityContent extends ConsumerStatefulWidget {
+  const DeviceIdentityContent({super.key});
+
+  @override
+  ConsumerState<DeviceIdentityContent> createState() =>
+      _DeviceIdentityContentState();
+}
+
+class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
   String _status = '';
   bool _busy = false;
 
@@ -94,150 +127,133 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
     final linked = ref.watch(linkedIdentityProvider);
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    return AdaptiveScaffold(
-      title: 'Device & identity',
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: ProxStaggered(
-              children: [
-                const WebRecordsBanner(),
-                Text(
-                  'Which account, which device.',
-                  textAlign: TextAlign.center,
-                  style: text.titleLarge,
-                ),
-                const SizedBox(height: ProxSpacing.xs),
-                Text(
-                  'One Gmail holds both roles; one phone holds one student enrollment.',
-                  textAlign: TextAlign.center,
-                  style: text.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: ProxSpacing.lg),
-                ProxSectionHeader(
-                  title: 'Signed in',
-                  padding: EdgeInsets.zero,
-                ),
-                if (acct == null)
-                  const ProxSyncNote(
-                      'Not signed in — sign in from the welcome screen.')
-                else ...[
-                  Text('Signed in as ${acct.displayName}',
-                      textAlign: TextAlign.center,
-                      style: text.titleMedium),
-                  Text(acct.email,
-                      textAlign: TextAlign.center,
-                      style: text.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      )),
-                  if (linked != null &&
-                      linked.gmail.toLowerCase() !=
-                          acct.email.toLowerCase()) ...[
-                    const SizedBox(height: ProxSpacing.sm),
-                    ProxErrorNote(
-                      'Note: this device is enrolled as ${linked.gmail} — different from the signed-in account. '
-                      'Wrong account? Switch below.',
-                    ),
-                  ],
-                ],
-                // Mobile-only: enrollment key + binding gate need the
-                // device store + cloud claim + face/device trust stack,
-                // none of which exists on web/desktop records builds
-                // (Track 5 — removed, not disabled).
-                if (canUseFace()) ...[
-                  const ProxSectionHeader(title: 'This device'),
-                  FutureBuilder<StoredEnrollment?>(
-                    future: _enrollment(),
-                    builder: (context, snap) {
-                      if (snap.connectionState ==
-                          ConnectionState.waiting) {
-                        return const Center(
-                            child: CircularProgressIndicator());
-                      }
-                      final e = snap.data;
-                      if (e == null) {
-                        return const ProxSyncNote(
-                          'No student key on this device yet — enrollment creates one (device key + face, online once).',
-                        );
-                      }
-                      final shortPk = e.pkHex.length <= 12
-                          ? e.pkHex
-                          : '${e.pkHex.substring(0, 12)}…';
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ProxStateBadge(
-                              state: ProxState.marked,
-                              label: 'Enrolled as ${e.email}'),
-                          ProxSyncNote(
-                            '${e.name} · ${e.roll} · key $shortPk',
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const ProxSectionHeader(title: 'Move status'),
-                  if (acct == null)
-                    const ProxSyncNote(
-                        'Sign in to check this Gmail against the one-device rule.')
-                  else
-                    FutureBuilder<StudentGate?>(
-                      future: _gate(acct.email),
-                      builder: (context, snap) {
-                        if (snap.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                              child: CircularProgressIndicator());
-                        }
-                        final gate = snap.data;
-                        if (gate == null) {
-                          return const ProxSyncNote(
-                            'Connect to check move status — one enrolled device per Gmail is checked online.',
-                          );
-                        }
-                        return _gateBody(gate);
-                      },
-                    ),
-                  const SizedBox(height: ProxSpacing.sm),
-                  const Divider(),
-                  Text(
-                    'Offline professors keep everything on this device. Sign in later '
-                    'to back up, sync across devices, and share CSVs from the cloud.',
-                    textAlign: TextAlign.center,
-                    style: text.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ] else ...[
-                  const SizedBox(height: ProxSpacing.sm),
-                  const Text(
-                    'Records view only here — enrollment, keys, and device moves live in the mobile app (Android/iOS).',
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-                const SizedBox(height: ProxSpacing.lg),
-                TextButton.icon(
-                  icon: const Icon(Icons.switch_account),
-                  label: const Text('Switch account (sign out)'),
-                  onPressed: _busy ? null : _signOut,
-                ),
-                if (_status.isNotEmpty) ...[
-                  const SizedBox(height: ProxSpacing.sm),
-                  ProxErrorNote(_status),
-                ],
-                if (_busy) ...[
-                  const SizedBox(height: ProxSpacing.sm),
-                  const Center(child: CircularProgressIndicator()),
-                ],
-              ],
-            ),
+    // Scroll-free content: the standalone route (DeviceIdentityBody
+    // above) and the SetupFlow combined device+intro step own the scroll.
+    return ProxStaggered(
+      children: [
+        const WebRecordsBanner(),
+        Text(
+          'Which account, which device.',
+          textAlign: TextAlign.center,
+          style: text.titleLarge,
+        ),
+        const SizedBox(height: ProxSpacing.xs),
+        Text(
+          'One Gmail holds both roles; one phone holds one student enrollment.',
+          textAlign: TextAlign.center,
+          style: text.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
           ),
         ),
-      ),
+        const SizedBox(height: ProxSpacing.lg),
+        ProxSectionHeader(
+          title: 'Signed in',
+          padding: EdgeInsets.zero,
+        ),
+        if (acct == null)
+          const ProxSyncNote('Not signed in — sign in from the welcome screen.')
+        else ...[
+          Text('Signed in as ${acct.displayName}',
+              textAlign: TextAlign.center, style: text.titleMedium),
+          Text(acct.email,
+              textAlign: TextAlign.center,
+              style: text.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              )),
+          if (linked != null &&
+              linked.gmail.toLowerCase() != acct.email.toLowerCase()) ...[
+            const SizedBox(height: ProxSpacing.sm),
+            ProxErrorNote(
+              'Note: this device is enrolled as ${linked.gmail} — different from the signed-in account. '
+              'Wrong account? Switch below.',
+            ),
+          ],
+        ],
+        // Mobile-only: enrollment key + binding gate need the
+        // device store + cloud claim + face/device trust stack,
+        // none of which exists on web/desktop records builds
+        // (Track 5 — removed, not disabled).
+        if (canUseFace()) ...[
+          const ProxSectionHeader(title: 'This device'),
+          FutureBuilder<StoredEnrollment?>(
+            future: _enrollment(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final e = snap.data;
+              if (e == null) {
+                return const ProxSyncNote(
+                  'No student key on this device yet — enrollment creates one (device key + face, online once).',
+                );
+              }
+              final shortPk = e.pkHex.length <= 12
+                  ? e.pkHex
+                  : '${e.pkHex.substring(0, 12)}…';
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ProxStateBadge(
+                      state: ProxState.marked, label: 'Enrolled as ${e.email}'),
+                  ProxSyncNote(
+                    '${e.name} · ${e.roll} · key $shortPk',
+                  ),
+                ],
+              );
+            },
+          ),
+          const ProxSectionHeader(title: 'Move status'),
+          if (acct == null)
+            const ProxSyncNote(
+                'Sign in to check this Gmail against the one-device rule.')
+          else
+            FutureBuilder<StudentGate?>(
+              future: _gate(acct.email),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final gate = snap.data;
+                if (gate == null) {
+                  return const ProxSyncNote(
+                    'Connect to check move status — one enrolled device per Gmail is checked online.',
+                  );
+                }
+                return _gateBody(gate);
+              },
+            ),
+          const SizedBox(height: ProxSpacing.sm),
+          const Divider(),
+          Text(
+            'Offline professors keep everything on this device. Sign in later '
+            'to back up, sync across devices, and share CSVs from the cloud.',
+            textAlign: TextAlign.center,
+            style: text.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: ProxSpacing.sm),
+          const Text(
+            'Records view only here — enrollment, keys, and device moves live in the mobile app (Android/iOS).',
+            textAlign: TextAlign.center,
+          ),
+        ],
+        const SizedBox(height: ProxSpacing.lg),
+        TextButton.icon(
+          icon: const Icon(Icons.switch_account),
+          label: const Text('Switch account (sign out)'),
+          onPressed: _busy ? null : _signOut,
+        ),
+        if (_status.isNotEmpty) ...[
+          const SizedBox(height: ProxSpacing.sm),
+          ProxErrorNote(_status),
+        ],
+        if (_busy) ...[
+          const SizedBox(height: ProxSpacing.sm),
+          const Center(child: CircularProgressIndicator()),
+        ],
+      ],
     );
   }
 
@@ -276,8 +292,7 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
             const ProxStateBadge(
                 state: ProxState.marked,
                 label: 'This device holds the enrollment'),
-            const ProxSyncNote(
-                'Re-keys and re-enrolls here are always free.'),
+            const ProxSyncNote('Re-keys and re-enrolls here are always free.'),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,
@@ -303,8 +318,7 @@ class _DeviceIdentityScreenState extends ConsumerState<DeviceIdentityScreen> {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ProxErrorNote(
-                studentClaimMessage(gate.verdict, gate.binding)),
+            ProxErrorNote(studentClaimMessage(gate.verdict, gate.binding)),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,

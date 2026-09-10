@@ -1,8 +1,10 @@
 // One saved session, read-only: present/partial counts plus the per-student
-// R1✓·R2✗ round ticks. Tapped from the course overview; native professors
-// branch to the editor (fix marks) or the export center (CSV) from here.
-// Web records builds stay here — no toggles, adds, or save exist on this
-// page at all.
+// round ticks. Tapped from the course overview; native professors branch to
+// the editor (fix marks) or the export center (CSV) from here. Records-only:
+// viewing past marks here; the room-capture entry lives on another tab.
+//
+// Data logic preserved per the Phase-1 exemption (intersection present,
+// partials, ticks, reload): restyle only.
 library;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -16,12 +18,12 @@ import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/clock.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/student_card.dart';
 import '../../widgets/web_banner.dart';
-import '../debug/debug_log_screen.dart';
 import 'export_center_screen.dart';
 import 'session_edit_screen.dart';
 
@@ -62,19 +64,6 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
       if (w[email] != true) return false;
     }
     return true;
-  }
-
-  bool _isPartial(String email) {
-    var some = false;
-    var all = _record.windows.isNotEmpty;
-    for (final w in _record.windows) {
-      if (w[email] == true) {
-        some = true;
-      } else {
-        all = false;
-      }
-    }
-    return some && !all;
   }
 
   /// Per-round ticks for one student: 'R1 ✓ · R2 ✗'.
@@ -120,12 +109,12 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 
   void _openLog() {
     BleLog.log('NAV', 'session → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    showLogDrawer(context);
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final persons = _persons;
     final present = persons.where(_isPresent).length;
     final partials = _partialCount();
@@ -139,77 +128,70 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
           onPressed: _openLog,
         ),
       ],
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            '${_record.classLabel} · ${fullDateOf(_record.dateIso)}'
-            '${time.isEmpty ? '' : ' · $time'}',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '$present present · ${persons.length} listed'
-            '${partials > 0 ? ' · Partial ($partials)' : ''}',
-            style: proxTabular(
-                context, Theme.of(context).textTheme.bodyMedium),
-          ),
-          if (kIsWeb) ...[
-            const SizedBox(height: 8),
-            const WebRecordsBanner(),
-          ],
-          const SizedBox(height: 8),
-          if (!kIsWeb)
-            ProxPrimaryButton(
-              icon: const Icon(Icons.edit),
-              label: const Text('Fix marks'),
-              onPressed: _openEdit,
+      body: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(maxWidth: ProxSpacing.maxContentWidth),
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProxSpacing.screenMargin,
+              vertical: ProxSpacing.lg,
             ),
-          if (!kIsWeb) const SizedBox(height: 8),
-          ProxSecondaryButton(
-            icon: const Icon(Icons.ios_share),
-            label: const Text('Export CSV'),
-            onPressed: _openExport,
-            expanded: true,
+            children: [
+              Text(
+                '${_record.classLabel} · ${fullDateOf(_record.dateIso)}'
+                '${time.isEmpty ? '' : ' · $time'}',
+                style: ProxType.title(color: c.contentPrimary),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+              const SizedBox(height: ProxSpacing.xs),
+              Text(
+                '$present present · ${persons.length} listed'
+                '${partials > 0 ? ' · Partial ($partials)' : ''}',
+                style: proxTabular(
+                    context, ProxType.label(color: c.contentSecondary)),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              if (kIsWeb) ...[
+                const SizedBox(height: ProxSpacing.sm),
+                const WebRecordsBanner(),
+              ],
+              const SizedBox(height: ProxSpacing.sm),
+              if (!kIsWeb)
+                ProxPrimaryButton(
+                  icon: const Icon(Icons.edit),
+                  label: const Text('Fix marks'),
+                  onPressed: _openEdit,
+                ),
+              if (!kIsWeb) const SizedBox(height: ProxSpacing.sm),
+              ProxSecondaryButton(
+                icon: const Icon(Icons.ios_share),
+                label: const Text('Export CSV'),
+                onPressed: _openExport,
+                expanded: true,
+              ),
+              const SizedBox(height: ProxSpacing.md),
+              const ProxSectionHeader(
+                title: 'Attendance',
+                padding: EdgeInsets.zero,
+              ),
+              if (persons.isEmpty)
+                const ProxEmptyState(message: 'Nobody listed in this session.')
+              else
+                for (final email in persons)
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(bottom: ProxSpacing.sm),
+                    child: StudentCard(
+                      name: _record.names[email] ?? email,
+                      subtitle:
+                          '${_ticksFor(email)} · ${rosterSubtitle(_record.rolls[email] ?? '', email)}',
+                    ),
+                  ),
+            ],
           ),
-          const SizedBox(height: 12),
-          const ProxSectionHeader(
-            title: 'Attendance',
-            padding: EdgeInsets.zero,
-          ),
-          if (persons.isEmpty)
-            const ProxEmptyState(message: 'Nobody listed in this session.')
-          else
-            // Restrained motion: stagger on load only (ProxListTile).
-            for (var i = 0; i < persons.length; i++)
-              _personRow(persons[i], i),
-        ],
-      ),
-    );
-  }
-
-  Widget _personRow(String email, int i) {
-    final present = _isPresent(email);
-    final partial = _isPartial(email);
-    final name = _record.names[email] ?? email;
-    final roll = _record.rolls[email] ?? '';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-      child: ProxListTile(
-        title: name,
-        subtitle: '${_ticksFor(email)} · ${rosterSubtitle(roll, email)}',
-        staggerIndex: i,
-        leading: Icon(
-          present
-              ? Icons.check_circle
-              : partial
-                  ? Icons.timelapse
-                  : Icons.circle_outlined,
-          color: present
-              ? ProxStateColors.of(context, ProxState.marked)
-              : partial
-                  ? ProxStateColors.of(context, ProxState.waiting)
-                  : null,
         ),
       ),
     );

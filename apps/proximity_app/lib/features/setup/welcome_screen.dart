@@ -26,7 +26,7 @@ import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
-import 'entry_flow.dart';
+import '../entry/entry_flow.dart';
 
 /// Unauthenticated welcome. Hosted wherever the account stream is null
 /// (proposed: landing router shows this when `accountProvider` is null).
@@ -49,7 +49,8 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     try {
       await fn();
     } catch (e) {
-      if (mounted) setState(() => _status = '$e'.replaceFirst('StateError: ', ''));
+      if (mounted)
+        setState(() => _status = '$e'.replaceFirst('StateError: ', ''));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -98,8 +99,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                   'and sync.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color:
-                            Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: ProxSpacing.xl),
@@ -123,8 +123,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                     'to back up, sync across devices, and share CSVs from the cloud.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
                 ],
@@ -293,8 +292,7 @@ class _RingsPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2
-          ..color =
-              (i.isEven ? primary : secondary).withValues(alpha: alpha),
+          ..color = (i.isEven ? primary : secondary).withValues(alpha: alpha),
       );
     }
   }

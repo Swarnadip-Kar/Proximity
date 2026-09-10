@@ -20,16 +20,16 @@ import 'core/platformx.dart';
 import 'core/student_driver.dart';
 import 'core/sync_hook.dart';
 import 'design/app_theme.dart';
-import 'features/enrollment/enroll_intro.dart';
+import 'features/account/theme_mode.dart';
+import 'screens/setup_flow_screen.dart';
+import 'screens/shells.dart';
 import 'features/face_identity/device_key.dart';
 import 'features/face_identity/face_verifier.dart';
 import 'features/face_identity/pose_gate.dart';
 import 'features/records/my_attendance_screen.dart';
-import 'features/records/prof_courses_screen.dart';
 import 'mode.dart';
 import 'routes.dart';
 import 'screens/landing.dart';
-import 'screens/student_home.dart';
 import 'screens/take_attendance.dart';
 
 import 'package:proximity_ble/ble.dart';
@@ -50,8 +50,14 @@ Future<DeviceStore> _debugSeededStore() async {
     dateIso: '2026-09-03',
     w1: const {'student1@example.com': true, 'student2@example.com': false},
     w2: const {'student1@example.com': true, 'student2@example.com': true},
-    names: const {'student1@example.com': 'Student One', 'student2@example.com': 'Student Two'},
-    rolls: const {'student1@example.com': '12342210', 'student2@example.com': '12342211'},
+    names: const {
+      'student1@example.com': 'Student One',
+      'student2@example.com': 'Student Two'
+    },
+    rolls: const {
+      'student1@example.com': '12342210',
+      'student2@example.com': '12342211'
+    },
   ));
   await store.appendHistory(ClassRecord(
     courseId: 'CS202',
@@ -84,11 +90,10 @@ Future<void> main() async {
   // (Firebase Auth) + identity survive restarts with zero taps.
   // Fail-open: secure storage may be unavailable (e.g. unsigned sim
   // builds) — the app still starts, user simply enrolls.
-  final DeviceStore store = (_debugMode == 'course' ||
-          _debugMode == 'take' ||
-          _debugMode == 'prof')
-      ? await _debugSeededStore()
-      : SecureDeviceStore();
+  final DeviceStore store =
+      (_debugMode == 'course' || _debugMode == 'take' || _debugMode == 'prof')
+          ? await _debugSeededStore()
+          : SecureDeviceStore();
   StoredEnrollment? stored;
   try {
     stored = await store.readEnrollment();
@@ -118,13 +123,13 @@ Future<void> main() async {
     final m = modeFromName(savedMode);
     if (m != null) {
       if (currentAcct != null && cachedRole != null) {
-        final sameEmail =
-            (cachedRole['email'] ?? '').toLowerCase() ==
-                currentAcct.email.toLowerCase();
+        final sameEmail = (cachedRole['email'] ?? '').toLowerCase() ==
+            currentAcct.email.toLowerCase();
         final wantRole = m == AppMode.prof ? 'prof' : 'student';
-        initialMode =
-            (sameEmail && roleHas(cachedRole, wantRole)) ? m : null;
-      } else if (currentAcct == null && cachedRole == null && m == AppMode.prof) {
+        initialMode = (sameEmail && roleHas(cachedRole, wantRole)) ? m : null;
+      } else if (currentAcct == null &&
+          cachedRole == null &&
+          m == AppMode.prof) {
         initialMode = m; // offline professor who skipped sign-in
       } else {
         initialMode = null; // landing decides
@@ -175,8 +180,8 @@ Future<void> main() async {
     ProviderScope(
       overrides: [
         authServiceProvider.overrideWithValue(authService),
-        cloudSyncProvider.overrideWithValue(FirestoreCloudSync(
-            available: firebaseReady)),
+        cloudSyncProvider
+            .overrideWithValue(FirestoreCloudSync(available: firebaseReady)),
         deviceStoreProvider.overrideWithValue(store),
         faceVerifierProvider.overrideWithValue(faceVerifier),
         deviceKeyProvider.overrideWithValue(deviceKey),
@@ -248,8 +253,7 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
     try {
       final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
-       syncEngine.startBackstop(
-          store: store, cloud: cloud, profOf: _profOf);
+      syncEngine.startBackstop(store: store, cloud: cloud, profOf: _profOf);
       try {
         await Connectivity().checkConnectivity();
       } catch (_) {
@@ -259,11 +263,9 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
       // Platform hint ONLY (never trusted): a return hint schedules the
       // ~5s debounced server probe inside the engine; only a real
       // offline→online edge flushes.
-      _connSub = Connectivity()
-          .onConnectivityChanged
-          .listen((List<ConnectivityResult> results) {
-        final hintOnline =
-            results.any((r) => r != ConnectivityResult.none);
+      _connSub = Connectivity().onConnectivityChanged.listen(
+          (List<ConnectivityResult> results) {
+        final hintOnline = results.any((r) => r != ConnectivityResult.none);
         try {
           syncEngine.onConnectivityHint(hintOnline,
               store: ref.read(deviceStoreProvider),
@@ -295,10 +297,10 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       try {
-          syncEngine.onAppResume(
-              store: ref.read(deviceStoreProvider),
-              cloud: ref.read(cloudSyncProvider),
-              profOf: _profOf);
+        syncEngine.onAppResume(
+            store: ref.read(deviceStoreProvider),
+            cloud: ref.read(cloudSyncProvider),
+            profOf: _profOf);
       } catch (_) {}
     }
   }
@@ -306,10 +308,13 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(appModeProvider);
+    // Account-section addition: the persisted Dark/Light/System choice
+    // (features/account/theme_mode.dart). Defaults to system.
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp(
       title: 'Proximity',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
       // Phase 1 visual identity: one theme from the design tokens —
       // Space Grotesk display + Inter body, intentional palette.
       theme: proxLightTheme(),
@@ -327,13 +332,30 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
         // Thin entry router: Welcome (signed out) vs RoleHub (signed in).
         AppMode.unset => const LandingScreen(),
         // Web records builds never mark: students land on records.
+        // Native students land on the 3-tab shell (Mark gate inside).
         AppMode.student =>
-          kIsWeb ? const MyAttendanceScreen() : const StudentHomeScreen(),
-        AppMode.prof => const ProfCoursesScreen(),
-        // Bundle entry (pre-context + account + key); capture/result follow.
-        AppMode.enroll => const EnrollIntroScreen(),
-        AppMode.take =>
-          const TakeAttendanceScreen(courseName: 'CS201'),
+          kIsWeb ? const MyAttendanceScreen() : const StudentShell(),
+        // Professor 3-tab shell (Live/Courses/Account).
+        AppMode.prof => const ProfShell(),
+        // Fresh-install entry: the ONE serialized setup flow (the
+        // Mark-gate path pushes this same screen onto the Mark tab).
+        AppMode.enroll => SetupFlowScreen(
+            onFirstBack: () async {
+              // The flow is the app home here: nothing above Account
+              // exists yet — hint instead of landing on a bare screen.
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Complete setup to continue'),
+                  duration: Duration(seconds: 2),
+                ));
+              }
+            },
+            onComplete: () async {
+              // Claim done → land on mark/browse, never the roles hub.
+              await setMode(ref, AppMode.student);
+            },
+          ),
+        AppMode.take => const TakeAttendanceScreen(courseName: 'CS201'),
       },
     );
   }
@@ -345,8 +367,18 @@ class AdaptiveScaffold extends StatelessWidget {
   final String title;
   final Widget body;
   final List<Widget>? actions;
+
+  /// Explicit leading widget (e.g. a Leave-with-save back button). Null
+  /// keeps the platform default (automatic back affordance) everywhere —
+  /// existing callers are unaffected.
+  final Widget? leading;
+
   const AdaptiveScaffold(
-      {super.key, required this.title, required this.body, this.actions});
+      {super.key,
+      required this.title,
+      required this.body,
+      this.actions,
+      this.leading});
 
   @override
   Widget build(BuildContext context) {
@@ -355,13 +387,14 @@ class AdaptiveScaffold extends StatelessWidget {
         platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
     if (!cupertino) {
       return Scaffold(
-        appBar: AppBar(title: Text(title), actions: actions),
+        appBar: AppBar(title: Text(title), actions: actions, leading: leading),
         body: body,
       );
     }
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
         middle: Text(title),
+        leading: leading,
         trailing: actions == null
             ? null
             : Row(mainAxisSize: MainAxisSize.min, children: actions!),

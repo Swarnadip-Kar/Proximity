@@ -14,11 +14,18 @@
 //                   live/<course>/recover
 //   Student mark:   mark/browse · mark/join · mark/waiting · mark/face
 //                   mark/proving · mark/verdict · mark/manual
-//                   (one continuation — phases, not pages)
+//                   (one continuation — phases, not pages; unenrolled
+//                   entries resolve through the _MarkGate into the setup
+//                   flow, never bare mark/browse)
 //   Enroll:         enroll/intro · enroll/capture · enroll/result
 //                   (adoption: identical strings to `EnrollFlow`, so bundle
-//                   pushes and this table name the same routes)
+//                   pushes and this table name the same routes; the
+//                   serialized SetupFlowScreen composes the same screens)
 //   Records:        records/mine · records/course/<course>
+//                   (Courses-tab aliases: courses/mine ·
+//                   courses/course/<course> — same screens/guards)
+//   Account:         account/face-id (isolated status page; the
+//                   consolidated account page is the tab root in shells)
 //   Shared:         debug/log (filterable full-screen terminal)
 //
 // Status: wired. Entry/enroll/debug/records/review + prof setup builders
@@ -48,13 +55,14 @@ import 'core/device_store.dart';
 import 'core/platformx.dart';
 import 'features/face_identity/face_blocked.dart';
 import 'design/tokens.dart';
+import 'features/account/face_id_screen.dart';
 import 'features/debug/debug_log_screen.dart';
-import 'features/enrollment/enroll_capture.dart';
-import 'features/enrollment/enroll_intro.dart';
-import 'features/enrollment/enroll_result.dart';
-import 'features/entry/device_identity_screen.dart';
-import 'features/entry/role_hub_screen.dart';
-import 'features/entry/welcome_screen.dart';
+import 'features/setup/enroll_capture.dart';
+import 'features/setup/enroll_intro.dart';
+import 'features/setup/enroll_result.dart';
+import 'features/setup/device_identity_screen.dart';
+import 'features/setup/role_hub_screen.dart';
+import 'features/setup/welcome_screen.dart';
 import 'features/records/course_attendance_detail_screen.dart';
 import 'features/records/course_overview_screen.dart';
 import 'features/records/export_center_screen.dart';
@@ -63,7 +71,9 @@ import 'features/records/prof_courses_screen.dart';
 import 'features/live/live_sections.dart';
 import 'features/records/session_detail_screen.dart';
 import 'features/records/session_edit_screen.dart';
+import 'mode.dart';
 import 'screens/student_home.dart';
+import 'screens/setup_flow_screen.dart';
 import 'screens/take_attendance.dart';
 import 'widgets/course_attendance.dart';
 import 'widgets/prox_buttons.dart';
@@ -143,6 +153,17 @@ abstract final class ProxRoutes {
   static const myAttendance = 'records/mine';
   static String courseAttendance(String course) => 'records/course/$course';
 
+  // Courses-tab aliases for the records routes (shell rename; the
+  // records/* names keep working — no dead routes, no redirects).
+  static const coursesMine = 'courses/mine';
+  static String courseCourse(String course) => 'courses/course/$course';
+
+  // Account (one consolidated page is the tab root; face-id stays its own
+  // pushed page per §5.2 so the never-preview rule can't inherit stray
+  // image chrome — in-tab push already names this; the table entry makes
+  // deep-links resolve too).
+  static const faceId = 'account/face-id';
+
   // Shared.
   static const debugLog = 'debug/log';
 
@@ -220,10 +241,8 @@ class ProxRouteObserver extends NavigatorObserver {
   }
 
   @override
-  void didReplace(
-      {Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    BleLog.log(
-        ProxLogTags.nav, '⇄ ${_label(oldRoute)} ⇒ ${_label(newRoute)}');
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    BleLog.log(ProxLogTags.nav, '⇄ ${_label(oldRoute)} ⇒ ${_label(newRoute)}');
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
   }
 }
@@ -247,7 +266,8 @@ class MobileOnlyGuidanceScreen extends StatelessWidget {
           const SizedBox(height: 12),
           ProxSecondaryButton(
             label: const Text('Open my records'),
-            onPressed: () => ProxNav.pushNamed(context, ProxRoutes.myAttendance),
+            onPressed: () =>
+                ProxNav.pushNamed(context, ProxRoutes.myAttendance),
           ),
         ],
       ),
@@ -315,19 +335,23 @@ Map<String, WidgetBuilder> buildProxRoutes() => {
       // Student mark (one continuation inside StudentHomeScreen phases;
       // the shell retains discovery/waiting/proving orchestration, the
       // mark bundle stays presentational).
-      ProxRoutes.browse: (_) => const StudentHomeScreen(),
-      ProxRoutes.join: (_) => const StudentHomeScreen(),
-      ProxRoutes.waiting: (_) => const StudentHomeScreen(),
-      ProxRoutes.face: (_) => const StudentHomeScreen(),
-      ProxRoutes.proving: (_) => const StudentHomeScreen(),
-      ProxRoutes.verdict: (_) => const StudentHomeScreen(),
-      ProxRoutes.manualStatus: (_) => const StudentHomeScreen(),
+      ProxRoutes.browse: (_) => const _MarkGate(),
+      ProxRoutes.join: (_) => const _MarkGate(),
+      ProxRoutes.waiting: (_) => const _MarkGate(),
+      ProxRoutes.face: (_) => const _MarkGate(),
+      ProxRoutes.proving: (_) => const _MarkGate(),
+      ProxRoutes.verdict: (_) => const _MarkGate(),
+      ProxRoutes.manualStatus: (_) => const _MarkGate(),
       // Enroll (feature bundle; same names EnrollFlow pushes).
       ProxRoutes.enrollIntro: (_) => const EnrollIntroScreen(),
       ProxRoutes.enrollCapture: (_) => const EnrollCaptureScreen(),
       ProxRoutes.enrollResult: (_) => const EnrollResultScreen(),
       // Records (bundle — absorbs the old my-attendance + student-course).
       ProxRoutes.myAttendance: (_) => const MyAttendanceScreen(),
+      ProxRoutes.coursesMine: (_) => const MyAttendanceScreen(),
+      // Account: face-id stays its own route (see ProxRoutes.faceId) —
+      // the consolidated account page itself is the tab root in shells.
+      ProxRoutes.faceId: (_) => const FaceIdScreen(),
       // Shared.
       ProxRoutes.debugLog: (_) => const DebugLogScreen(),
     };
@@ -403,8 +427,7 @@ class CourseAttendanceRouteLoader extends ConsumerWidget {
           );
         }
         final all = snap.data ?? const <ClassRecord>[];
-        final sessions =
-            all.where((s) => courseOfRecord(s) == course).toList();
+        final sessions = all.where((s) => courseOfRecord(s) == course).toList();
         if (sessions.isEmpty) {
           BleLog.log(ProxLogTags.state,
               'route records/course/$course has no cached sessions — guidance');
@@ -416,6 +439,42 @@ class CourseAttendanceRouteLoader extends ConsumerWidget {
         }
         return CourseAttendanceDetailScreen(
             course: course, sessions: sessions, email: email);
+      },
+    );
+  }
+}
+
+/// Mark-tab enrollment gate for named/deep-link entries (§3.4): a student
+/// who has not completed enrollment never lands on bare mark/browse —
+///
+/// they route into the SetupFlowScreen at its computed start step (the
+/// same flow the shell pushes, the same flow the fresh-install path
+/// hosts). Gate signal is [linkedIdentityProvider]: the same enrollment
+/// signal the Mark browse card and join gate already use (see the
+/// integration log for the candidates audit).
+class _MarkGate extends ConsumerWidget {
+  const _MarkGate();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(linkedIdentityProvider) != null) {
+      return const StudentHomeScreen();
+    }
+    return SetupFlowScreen(
+      onFirstBack: () async {
+        // Back from the first step → Account/RoleHub, never bare mark:
+        // replace this entry with the roles hub (the shell stays beneath,
+        // so back from there returns to it).
+        if (context.mounted) {
+          Navigator.of(context).pushReplacementNamed(ProxRoutes.roles);
+        }
+      },
+      onComplete: () async {
+        // Done → reveal the opener (linked by now; the shell gate and any
+        // re-entry through this gate stay shut).
+        if (context.mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
       },
     );
   }
@@ -457,11 +516,11 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
   // the same host driver. Recover stays on the host (it owns the draft).
   if (name.startsWith('live/')) {
     final rest = name.substring('live/'.length);
-    final course =
-        args.course.isNotEmpty ? args.course : rest.split('/').first;
+    final course = args.course.isNotEmpty ? args.course : rest.split('/').first;
     if (course.isEmpty) return null;
-    final section =
-        args.section.isNotEmpty ? args.section : rest.split('/').skip(1).join('/');
+    final section = args.section.isNotEmpty
+        ? args.section
+        : rest.split('/').skip(1).join('/');
     BleLog.log(ProxLogTags.nav,
         'live deep-link course=$course${section.isEmpty ? '' : ' section=$section'}');
     final s = section.trim().toLowerCase();
@@ -526,15 +585,19 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
         'session deep-link session=$id (${editing ? 'edit' : 'read'})');
     return MaterialPageRoute(
       settings: settings,
-      builder: (_) =>
-          SessionRouteLoader(sessionId: id, editing: editing),
+      builder: (_) => SessionRouteLoader(sessionId: id, editing: editing),
     );
   }
 
   // Records: per-course drill-down resolves cached student sessions +
-  // viewer email via its loader.
-  if (name.startsWith('records/course/')) {
-    final rest = name.substring('records/course/'.length);
+  // viewer email via its loader. courses/course/* is the Courses-tab
+  // alias of records/course/* (same loader, same guards).
+  if (name.startsWith('records/course/') ||
+      name.startsWith('courses/course/')) {
+    final prefix = name.startsWith('records/course/')
+        ? 'records/course/'
+        : 'courses/course/';
+    final rest = name.substring(prefix.length);
     final course = args.course.isNotEmpty ? args.course : rest.split('/').first;
     if (course.isEmpty) return null;
     BleLog.log(ProxLogTags.nav, 'records deep-link course=$course');
@@ -569,8 +632,8 @@ abstract final class ProxNav {
     ProxRouteArgs args = const ProxRouteArgs(),
   }) {
     final summary = args.summary;
-    BleLog.log(ProxLogTags.nav,
-        'push $name${summary.isEmpty ? '' : ' ($summary)'}');
+    BleLog.log(
+        ProxLogTags.nav, 'push $name${summary.isEmpty ? '' : ' ($summary)'}');
     return Navigator.of(context).pushNamed<T>(name, arguments: args);
   }
 

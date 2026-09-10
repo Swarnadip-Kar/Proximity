@@ -24,6 +24,7 @@ import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/prox_verdict.dart';
 import 'enroll_widgets.dart';
+import 'setup_step_scope.dart';
 
 /// Refusal classes, detected from the controller message (which carries the
 /// user-facing claim copy verbatim). Pure — the message stays the source of
@@ -85,7 +86,16 @@ class EnrollResultScreen extends ConsumerWidget {
             ProxSecondaryButton(
               label: const Text('Back'),
               expanded: true,
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                // STEP-SCOPE: inside SetupFlow, Back steps back instead of
+                // popping (standalone pop preserved).
+                final scope = SetupStepScope.of(context);
+                if (scope != null) {
+                  scope.back();
+                } else {
+                  Navigator.of(context).pop();
+                }
+              },
             ),
           ],
         ),
@@ -136,9 +146,7 @@ class EnrollResultScreen extends ConsumerWidget {
                     'Face matched on this phone — '
                     'face data never leaves this phone.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
                 ],
@@ -155,13 +163,29 @@ class EnrollResultScreen extends ConsumerWidget {
               // still works) until 3 new stills validate.
               EnrollLog.face('re-scan from result — key kept, slots cleared');
               ctl.restartFace();
-              Navigator.of(context).pop();
+              // STEP-SCOPE: inside SetupFlow, re-scan returns to the
+              // capture step instead of popping (standalone pop preserved).
+              final scope = SetupStepScope.of(context);
+              if (scope != null) {
+                scope.goTo(SetupStep.capture);
+              } else {
+                Navigator.of(context).pop();
+              }
             },
           ),
           const SizedBox(height: ProxSpacing.sm),
           ProxPrimaryButton(
             label: const Text('Done'),
-            onPressed: () => EnrollNav.finish(context),
+            onPressed: () {
+              // STEP-SCOPE: inside SetupFlow, Done exits via the flow
+              // (lands on mark/browse, never the roles hub).
+              final scope = SetupStepScope.of(context);
+              if (scope != null) {
+                scope.complete();
+              } else {
+                EnrollNav.finish(context);
+              }
+            },
           ),
         ],
       ),
@@ -170,8 +194,8 @@ class EnrollResultScreen extends ConsumerWidget {
 
   Widget _pending(BuildContext context, WidgetRef ref, EnrollmentState st,
       EnrollmentController ctl) {
-    final hasFace = st.phase == EnrollPhase.faceDone ||
-        st.phase == EnrollPhase.uploaded;
+    final hasFace =
+        st.phase == EnrollPhase.faceDone || st.phase == EnrollPhase.uploaded;
     final refusal = _classify(st);
     return ProxScreen(
       title: 'Save enrollment',
@@ -207,9 +231,7 @@ class EnrollResultScreen extends ConsumerWidget {
                   'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}… · '
                   'Face: ${hasFace ? '5 of 5 stills captured' : 'capture pending'}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: ProxSpacing.sm),
@@ -255,7 +277,16 @@ class EnrollResultScreen extends ConsumerWidget {
             icon: const Icon(Icons.arrow_back),
             label: const Text('Back to face scan'),
             expanded: true,
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              // STEP-SCOPE: inside SetupFlow, back steps within the flow
+              // instead of popping (standalone pop preserved).
+              final scope = SetupStepScope.of(context);
+              if (scope != null) {
+                scope.back();
+              } else {
+                Navigator.of(context).pop();
+              }
+            },
           ),
         ],
       ),
@@ -340,7 +371,16 @@ class EnrollResultScreen extends ConsumerWidget {
                 icon: const Icon(Icons.face),
                 label: const Text('Back to face scan'),
                 expanded: true,
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  // STEP-SCOPE: inside SetupFlow, back steps within the
+                  // flow instead of popping (standalone pop preserved).
+                  final scope = SetupStepScope.of(context);
+                  if (scope != null) {
+                    scope.back();
+                  } else {
+                    Navigator.of(context).pop();
+                  }
+                },
               ),
             ],
           ),
@@ -359,7 +399,16 @@ class EnrollResultScreen extends ConsumerWidget {
                 icon: const Icon(Icons.face),
                 label: const Text('Back to face scan'),
                 expanded: true,
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  // STEP-SCOPE: inside SetupFlow, back steps within the
+                  // flow instead of popping (standalone pop preserved).
+                  final scope = SetupStepScope.of(context);
+                  if (scope != null) {
+                    scope.back();
+                  } else {
+                    Navigator.of(context).pop();
+                  }
+                },
               ),
             ],
           ),
@@ -379,11 +428,19 @@ class EnrollResultScreen extends ConsumerWidget {
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Back to account step'),
                 expanded: true,
-                onPressed: () => Navigator.of(context).popUntil(
-                    (route) =>
+                onPressed: () {
+                  // STEP-SCOPE: inside SetupFlow, the account step is the
+                  // combined device+intro step (standalone popUntil
+                  // preserved).
+                  final scope = SetupStepScope.of(context);
+                  if (scope != null) {
+                    scope.goTo(SetupStep.deviceIntro);
+                  } else {
+                    Navigator.of(context).popUntil((route) =>
                         route.isFirst ||
-                        route.settings.name ==
-                            '${EnrollNav.routePrefix}intro'),
+                        route.settings.name == '${EnrollNav.routePrefix}intro');
+                  }
+                },
               ),
             ],
           ),

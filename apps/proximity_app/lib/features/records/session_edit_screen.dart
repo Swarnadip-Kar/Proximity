@@ -20,6 +20,7 @@ import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/manual_add.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
@@ -27,7 +28,6 @@ import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
-import '../debug/debug_log_screen.dart';
 
 class SessionEditScreen extends ConsumerStatefulWidget {
   final ClassRecord record;
@@ -207,8 +207,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
 
   void _openLog() {
     BleLog.log('NAV', 'edit → system log');
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const DebugLogScreen()));
+    showLogDrawer(context);
   }
 
   @override

@@ -1,5 +1,6 @@
-// Direct add (prof live): professor-typed manual entry reusing the ONE
-// unified [ManualAddForm] (shared with the saved-session editor).
+// Direct add (prof live, §7.1): professor-typed manual entry reusing the
+// ONE unified [ManualAddForm] from the `features/manual_attendance/`
+// module (§4.8, shared with the saved-session editor).
 //
 // The form's three fields ARE the directory search (debounced online
 // lookup, tap-a-card fills all three); ID-only submits resolve online or
@@ -10,8 +11,8 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../../widgets/manual_add.dart';
 import '../../widgets/prox_states.dart';
+import '../manual_attendance/manual_attendance.dart' show ManualAddForm;
 
 class DirectAddSection extends StatelessWidget {
   final String course;
