@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../design/tokens.dart';
-import 'prox_cards.dart';
 import 'student_card.dart';
 import 'verdict_badge.dart';
 
@@ -112,43 +111,6 @@ CourseAttendanceSummary summarizeCourse(
       sessions: sessions.length,
       present: present,
       partial: partial);
-}
-
-class CourseSummaryHeader extends StatelessWidget {
-  final CourseAttendanceSummary summary;
-  final bool compact;
-  const CourseSummaryHeader(
-      {super.key, required this.summary, this.compact = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return ProxCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-            Text(summary.course,
-                style: compact
-                    ? Theme.of(context).textTheme.titleSmall
-                    : Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(summary.line,
-                style: Theme.of(context).textTheme.bodyMedium),
-            if (!compact) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: summary.sessions == 0
-                    ? 0
-                    : summary.present / summary.sessions,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                  '${summary.present} present · ${summary.partial} partial · ${summary.absent} absent · ${summary.sessions} days taken',
-                  style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ],
-        ),
-    );
-  }
 }
 
 /// Secondary line for a student session tile: rounds · label · org.

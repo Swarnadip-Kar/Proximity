@@ -35,30 +35,17 @@ import 'package:proximity_app/widgets/clock.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
+import 'tab_slide_test.dart' as slide_helpers;
+import 'widget_test.dart' as helpers;
+
 Widget _themed(Widget body) => MaterialApp(
       theme: proxLightTheme(),
       home: Scaffold(body: body),
     );
 
-ProviderScope _scoped(Widget home,
-        {InMemoryDeviceStore? store,
-        FakeHostDriver? host,
-        FakeCloudSync? cloud}) =>
-    ProviderScope(
-      overrides: [
-        deviceStoreProvider.overrideWithValue(store ?? InMemoryDeviceStore()),
-        hostDriverProvider.overrideWithValue(host ?? FakeHostDriver()),
-        cloudSyncProvider
-            .overrideWithValue(cloud ?? FakeCloudSync(online: false)),
-        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
-        bleEngineProvider
-            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-        blePermissionProvider.overrideWithValue(() async => true),
-        cameraPermissionProvider.overrideWithValue(() async => true),
-        btPowerProvider.overrideWithValue(() async => BtState.on),
-      ],
-      child: MaterialApp(theme: proxLightTheme(), home: home),
-    );
+/// Shell ProviderScope shim removed (A4): pumps below use the canonical
+/// widget_test.testScope with an explicit offline cloud + MaterialApp home.
+/// The stepped settle helper is the canonical tab_slide.steppedSettle.
 
 Future<FakeHostDriver> _seededDriver() async {
   final driver = FakeHostDriver();
@@ -77,12 +64,8 @@ Future<FakeHostDriver> _seededDriver() async {
   return driver;
 }
 
-Future<void> _settle(WidgetTester t) async {
-  await t.pump();
-  for (var i = 0; i < 4; i++) {
-    await t.pump(const Duration(milliseconds: 500));
-  }
-}
+/// Stepped settle removed (A3): use the canonical
+/// slideHelpers.steppedSettle (tab_slide_test).
 
 Future<void> _openTab(WidgetTester t, String label) async {
   final labelInBar = find.descendant(
@@ -115,8 +98,13 @@ void main() {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
     final host = await _seededDriver();
-    await t.pumpWidget(_scoped(const TakeAttendanceScreen(courseName: 'CS201'),
-        store: store, host: host));
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
 
     // One state-preserving switch, one scroll per tab (no shared scroll):
@@ -189,8 +177,13 @@ void main() {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
     final host = await _seededDriver();
-    await t.pumpWidget(_scoped(const TakeAttendanceScreen(courseName: 'CS201'),
-        store: store, host: host));
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
 
     // Roster search text survives a round-trip through another tab.
@@ -289,7 +282,7 @@ void main() {
       ],
       child: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
     ));
-    await _settle(t);
+    await slide_helpers.steppedSettle(t);
 
     // Courses tab reads empty before the visit (stale-link baseline).
     await _openTab(t, 'Courses');
@@ -319,7 +312,11 @@ void main() {
       (t) async {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
-    await t.pumpWidget(_scoped(const ProfCoursesScreen(), store: store));
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.textContaining('0 sessions'), findsOneWidget);
 
@@ -336,8 +333,12 @@ void main() {
       (t) async {
     final store = InMemoryDeviceStore();
     await store.upsertHistory(_record('sess-1', '2026-09-09'));
-    await t.pumpWidget(
-        _scoped(const CourseOverviewScreen(courseName: 'CS201'), store: store));
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     expect(find.textContaining('1 sessions'), findsOneWidget);
 

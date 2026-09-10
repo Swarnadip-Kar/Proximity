@@ -23,16 +23,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/auth.dart';
-import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
-import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/live/direct_add.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
 import 'package:proximity_app/features/live/live_sections.dart';
@@ -45,33 +39,19 @@ import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/shells.dart';
 import 'package:proximity_app/screens/take_attendance.dart';
 import 'package:proximity_app/widgets/clock.dart';
-import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+
+import 'widget_test.dart' as helpers;
 
 Widget _themed(Widget body) => MaterialApp(
       theme: proxLightTheme(),
       home: Scaffold(body: body),
     );
 
-ProviderScope _scoped(Widget home,
-        {InMemoryDeviceStore? store,
-        FakeHostDriver? host,
-        FakeCloudSync? cloud}) =>
-    ProviderScope(
-      overrides: [
-        deviceStoreProvider.overrideWithValue(store ?? InMemoryDeviceStore()),
-        hostDriverProvider.overrideWithValue(host ?? FakeHostDriver()),
-        cloudSyncProvider
-            .overrideWithValue(cloud ?? FakeCloudSync(online: false)),
-        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
-        bleEngineProvider
-            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-        blePermissionProvider.overrideWithValue(() async => true),
-        cameraPermissionProvider.overrideWithValue(() async => true),
-        btPowerProvider.overrideWithValue(() async => BtState.on),
-      ],
-      child: MaterialApp(theme: proxLightTheme(), home: home),
-    );
+/// Shell ProviderScope shims removed (A4): pumps below use the canonical
+/// widget_test.testScope with an explicit offline cloud + MaterialApp home.
+/// The take-host _settle stays local: A3 unifies only the live_subtabs vs
+/// tab_slide pair, and _openTab variants stay distinct per brief.
 
 Future<FakeHostDriver> _seededDriver() async {
   final driver = FakeHostDriver();
@@ -89,35 +69,8 @@ Future<FakeHostDriver> _seededDriver() async {
   return driver;
 }
 
-Widget _profShellApp(InMemoryDeviceStore store) {
-  return ProviderScope(
-    overrides: [
-      authServiceProvider.overrideWithValue(FakeAuthService(SignedAccount(
-          email: 'prof@example.com',
-          displayName: 'Prof',
-          uid: 'prof-uid'))),
-      cloudSyncProvider.overrideWithValue(FakeCloudSync()),
-      deviceStoreProvider.overrideWithValue(store),
-      faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
-      deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
-      hostDriverProvider.overrideWithValue(FakeHostDriver()),
-      studentDriverProvider
-          .overrideWithValue(FakeStudentDriver(windowOpenProbe: false)),
-      bleEngineProvider.overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-      blePermissionProvider.overrideWithValue(() async => true),
-      btPowerProvider.overrideWithValue(() async => BtState.on),
-      enrollmentControllerProvider.overrideWith(
-        (ref) => EnrollmentController(
-          auth: ref.watch(authServiceProvider),
-          store: ref.watch(deviceStoreProvider),
-          verifier: FakeFaceVerifier(),
-          deviceKey: FakeDeviceKey(),
-        ),
-      ),
-    ],
-    child: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
-  );
-}
+/// Prof-shell shim removed (A4): the Live-rows test below uses the
+/// canonical widget_test.testScope (prof email + store + ProfShell home).
 
 Future<void> _settle(WidgetTester t) async {
   await t.pump();
@@ -284,7 +237,11 @@ void main() {
 
     // The focused setup deep-link screen names the step but carries no
     // second name field (single home for the editable prof name).
-    await t.pumpWidget(_scoped(const LiveSetupScreen(course: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const LiveSetupScreen(course: 'CS201'))));
     await t.pumpAndSettle();
     expect(
         find.widgetWithText(
@@ -300,8 +257,13 @@ void main() {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
     final host = FakeHostDriver();
-    await t.pumpWidget(_scoped(const TakeAttendanceScreen(courseName: 'CS201'),
-        store: store, host: host));
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
 
     // Fixed chrome each once.
@@ -372,7 +334,11 @@ void main() {
       (t) async {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
-    await t.pumpWidget(_profShellApp(store));
+    await t.pumpWidget(helpers.testScope(
+        email: 'prof@example.com',
+        store: store,
+        home: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
+    ));
     await _settle(t);
 
     // Live tab root: host entry only.
@@ -417,8 +383,11 @@ void main() {
       names: const {'a@x.in': 'A'},
       rolls: const {'a@x.in': '1'},
     );
-    await t.pumpWidget(_scoped(
-        SessionEditScreen(record: record, courseSessions: [record])));
+    await t.pumpWidget(helpers.testScope(
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: SessionEditScreen(record: record, courseSessions: [record]))));
     await t.pumpAndSettle();
     // Distinct correction copy (not the live `Direct manual entry`):
     // sub-tabs Marks + Add person (navigation only).

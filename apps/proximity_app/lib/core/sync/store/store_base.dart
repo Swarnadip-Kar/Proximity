@@ -206,7 +206,7 @@ abstract class DeviceStore {
 
   /// Offline manual-add queue (professor typed an ID with no internet;
   /// each entry resolves against the student directory on the next sync —
-  /// see processPendingAdds in widgets/manual_add.dart). Plain JSON maps.
+  /// see processPendingAdds in core/sync/queue.dart). Plain JSON maps.
   Future<List<Map<String, dynamic>>> readPendingAdds();
   Future<void> writePendingAdds(List<Map<String, dynamic>> items);
 

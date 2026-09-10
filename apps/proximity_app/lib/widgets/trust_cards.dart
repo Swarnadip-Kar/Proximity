@@ -20,7 +20,6 @@ import 'package:flutter/material.dart';
 import '../design/tokens.dart';
 import 'prox_cards.dart';
 import 'prox_states.dart';
-import 'sync_badge.dart';
 import '../core/sync/store/record_helpers.dart' as rh;
 
 /// UTC epoch millis as yyyy-MM-dd ('' when 0).
@@ -147,77 +146,6 @@ class WrongOrgCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Honest-unreachable: the professor server did not answer.
-/// States whether hosting likely ended (purge path) or the network holed.
-class HonestUnreachableCard extends StatelessWidget {
-  final String host;
-  final bool likelyEnded;
-  const HonestUnreachableCard(
-      {super.key, required this.host, this.likelyEnded = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return ProxCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.wifi_off_outlined),
-          const SizedBox(width: ProxSpacing.sm),
-          Expanded(
-            child: Text(
-              likelyEnded
-                  ? 'Class at $host is unreachable — hosting likely ended. '
-                      'Back to the live list; nothing was marked.'
-                  : 'Professor unreachable at $host — check the IP and that '
-                      'both devices are on the same WiFi (no VPN on either '
-                      'side: VPNs block local connections even on the same '
-                      'network). Nothing was marked; retry when reachable.',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// SyncEngine status strip: unsynced badge count + online/offline +
-/// backfill note. Thin wrapper over [UnsyncedBadge] counts so every
-/// records/setup screen says the same thing.
-class SyncStatusStrip extends StatelessWidget {
-  final int pending;
-  final bool online;
-  final String? note;
-  const SyncStatusStrip({
-    super.key,
-    required this.pending,
-    required this.online,
-    this.note,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (!online && pending <= 0) {
-      return const ProxSyncNote('Offline — this device only.');
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Shared with the live badge (was a duplicated Chip).
-        if (pending > 0) PendingCountChip(pending: pending, online: online),
-        ProxSyncNote(
-          note ??
-              (online
-                  ? (pending > 0
-                      ? 'Synced with cloud ($pending still pending).'
-                      : 'Synced with cloud.')
-                  : 'Offline — $pending queued, syncs on reconnect.'),
-        ),
-      ],
     );
   }
 }

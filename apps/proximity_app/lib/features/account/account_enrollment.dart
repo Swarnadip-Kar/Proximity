@@ -57,7 +57,7 @@ class AccountEnrollmentSection extends ConsumerWidget {
                 acct.org.isNotEmpty ? acct.org : 'Not set',
               ),
               const ProxSyncNote(
-                'No student key on this device yet — enrollment creates one (device key + face, online once).',
+                accountNoKeyNote,
               ),
               const SizedBox(height: ProxSpacing.sm),
               FallbackButton(

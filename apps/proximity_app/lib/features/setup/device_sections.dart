@@ -17,6 +17,7 @@ import '../../design/tokens.dart';
 import 'setup_details.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/trust_cards.dart';
+import '../account/account_common.dart';
 import '../entry/entry_flow.dart';
 
 /// Signed-in account block (with the wrong-account warning when the
@@ -92,7 +93,7 @@ class DeviceKeySection extends StatelessWidget {
             final e = snap.data;
             if (e == null) {
               return const ProxSyncNote(
-                'No student key on this device yet — enrollment creates one (device key + face, online once).',
+                accountNoKeyNote,
               );
             }
             final shortPk = e.pkHex.length <= 12

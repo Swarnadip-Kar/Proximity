@@ -118,9 +118,10 @@ Widget _profApp(InMemoryDeviceStore store, {bool reduced = false}) {
   );
 }
 
-/// Stepped settle (mirrors the shell suites): lets each periodic tick's
-/// async tail settle instead of racing stagger one-shots at teardown.
-Future<void> _settle(WidgetTester t) async {
+/// Stepped settle, canonical for the shell suites (also imported by
+/// live_subtabs_freshness): lets each periodic tick's async tail settle
+/// instead of racing stagger one-shots at teardown.
+Future<void> steppedSettle(WidgetTester t) async {
   await t.pump();
   for (var i = 0; i < 4; i++) {
     await t.pump(const Duration(milliseconds: 500));
@@ -134,7 +135,7 @@ Future<void> _openTab(WidgetTester t, String label) async {
   );
   expect(labelInBar, findsOneWidget, reason: 'tab $label exists in bar');
   await t.tap(labelInBar);
-  await _settle(t);
+  await steppedSettle(t);
 }
 
 /// Bottom-bar selected index (bar/content sync both ways).
@@ -146,7 +147,7 @@ int _barIndex(WidgetTester t) =>
 /// higher indices), positive dx pages back.
 Future<void> _swipe(WidgetTester t, Finder content, Offset offset) async {
   await t.fling(content, offset, _flingVelocity);
-  await _settle(t);
+  await steppedSettle(t);
 }
 
 /// True when [opacity] sits directly above a tab [Navigator] (through the
@@ -221,7 +222,7 @@ void main() {
     testWidgets('rightward tap slides in from right; leftward mirrors',
         (t) async {
       await t.pumpWidget(_studentApp(linked: _linked));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
       // Mark(0) → Courses(1): incoming starts fully right, eases to rest.
@@ -238,7 +239,7 @@ void main() {
       expect(mid.single, lessThan(1.0));
       await t.pump(ProxDurations.tabSlide);
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
 
       // Same-tab tap restarts nothing (settled at rest).
@@ -248,7 +249,7 @@ void main() {
       ));
       await t.pump();
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
 
       // Courses(1) → Mark(0): incoming starts fully left.
       await t.tap(find.descendant(
@@ -259,14 +260,14 @@ void main() {
       expect(_movingDx(t), [-1.0]);
       await t.pump(ProxDurations.tabSlide);
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
     testWidgets('Mark gate still fires through the slide path', (t) async {
       await t.pumpWidget(_studentApp());
-      await _settle(t);
+      await steppedSettle(t);
       // Unenrolled → gate flow, never bare mark.
       expect(find.byType(SetupFlowScreen), findsOneWidget);
 
@@ -285,7 +286,7 @@ void main() {
     testWidgets('flings switch tabs both directions; bar stays in sync',
         (t) async {
       await t.pumpWidget(_studentApp(linked: _linked));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
       // Finger left pages forward: Mark → Courses with the same rightward
@@ -294,7 +295,7 @@ void main() {
           find.byType(StudentHomeScreen), const Offset(-400, 0), 800);
       await t.pump();
       expect(_movingDx(t), [1.0]);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
       expect(_barIndex(t), 1);
 
@@ -303,7 +304,7 @@ void main() {
           find.byType(MyAttendanceScreen), const Offset(400, 0), 800);
       await t.pump();
       expect(_movingDx(t), [-1.0]);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(_barIndex(t), 0);
 
@@ -312,20 +313,20 @@ void main() {
           find.byType(StudentHomeScreen), const Offset(400, 0), 800);
       await t.pump();
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
       expect(_barIndex(t), 0);
       expect(t.takeException(), isNull);
     });
 
     testWidgets('slow drag does not switch tabs', (t) async {
       await t.pumpWidget(_studentApp(linked: _linked));
-      await _settle(t);
+      await steppedSettle(t);
 
       // ~100px/s: well under the swipe floor — vertical-list jitter and
       // hesitant drags never page.
       await t.timedDrag(find.byType(StudentHomeScreen),
           const Offset(-100, 0), const Duration(seconds: 1));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(_barIndex(t), 0);
       expect(t.takeException(), isNull);
@@ -334,7 +335,7 @@ void main() {
     testWidgets('unenrolled swipe-to-Mark snaps back + routes setup',
         (t) async {
       await t.pumpWidget(_studentApp());
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(SetupFlowScreen), findsOneWidget);
 
       // Leave Mark by tap (swipe is locked while the gate flow is pushed —
@@ -346,7 +347,7 @@ void main() {
       // never lands.
       await t.fling(
           find.byType(MyAttendanceScreen), const Offset(400, 0), 800);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
       expect(_barIndex(t), 1);
       // No visible flow (never lands) …
@@ -359,7 +360,7 @@ void main() {
 
     testWidgets('reduce-motion swipe switches instantly', (t) async {
       await t.pumpWidget(_studentApp(linked: _linked, reduced: true));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
       // Slides stay parked: lands with no motion in flight.
@@ -368,7 +369,7 @@ void main() {
       await t.pump();
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
       expect(_barIndex(t), 1);
       expect(t.takeException(), isNull);
     });
@@ -378,7 +379,7 @@ void main() {
     testWidgets('Live → Account slides from right; Account → Live from left',
         (t) async {
       await t.pumpWidget(_profApp(InMemoryDeviceStore()));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
 
       await t.tap(find.descendant(
@@ -389,7 +390,7 @@ void main() {
       expect(_movingDx(t), [1.0]);
       await t.pump(ProxDurations.tabSlide);
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
 
       await t.tap(find.descendant(
         of: find.byType(BottomNavigationBar),
@@ -397,7 +398,7 @@ void main() {
       ));
       await t.pump();
       expect(_movingDx(t), [-1.0]);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
@@ -406,12 +407,12 @@ void main() {
       final store = InMemoryDeviceStore();
       await store.addCourse('CS201');
       await t.pumpWidget(_profApp(store));
-      await _settle(t);
+      await steppedSettle(t);
 
       // Push the course overview on the Courses tab's own Navigator.
       await _openTab(t, 'Courses');
       await t.tap(find.text('CS201'));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Review & export'), findsOneWidget);
 
       // Round-trip through Account: the pushed route must still be there.
@@ -428,7 +429,7 @@ void main() {
         await store.addCourse('CS2${i.toString().padLeft(2, '0')}');
       }
       await t.pumpWidget(_profApp(store));
-      await _settle(t);
+      await steppedSettle(t);
       await _openTab(t, 'Courses');
 
       final list = find.descendant(
@@ -452,7 +453,7 @@ void main() {
     testWidgets('reduce-motion falls back to instant opacity (no slide)',
         (t) async {
       await t.pumpWidget(_profApp(InMemoryDeviceStore(), reduced: true));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
 
       // Slides stay parked at rest, and every tab opacity is instant.
@@ -472,7 +473,7 @@ void main() {
       await t.pump();
       expect(_movingDx(t), isEmpty);
       expect(find.text('Register new course'), findsOneWidget);
-      await _settle(t);
+      await steppedSettle(t);
 
       await t.tap(find.descendant(
         of: find.byType(BottomNavigationBar),
@@ -480,7 +481,7 @@ void main() {
       ));
       await t.pump();
       expect(_movingDx(t), isEmpty);
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
@@ -490,7 +491,7 @@ void main() {
     testWidgets('flings page both directions; bar syncs; edges hold',
         (t) async {
       await t.pumpWidget(_profApp(InMemoryDeviceStore()));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
 
       await _swipe(t, find.text('Go to Courses'), const Offset(-400, 0));
@@ -522,12 +523,12 @@ void main() {
       final store = InMemoryDeviceStore();
       await store.addCourse('CS201');
       await t.pumpWidget(_profApp(store));
-      await _settle(t);
+      await steppedSettle(t);
 
       // Push the course overview on the Courses tab's own Navigator.
       await _openTab(t, 'Courses');
       await t.tap(find.text('CS201'));
-      await _settle(t);
+      await steppedSettle(t);
       expect(find.text('Review & export'), findsOneWidget);
 
       // Both directions swallowed: the pushed route keeps its own

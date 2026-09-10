@@ -29,8 +29,6 @@ import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
 import 'log_category.dart';
 
-export 'log_category.dart';
-
 /// Opens the log drawer (peek ~30%, draggable full). Tag selection made
 /// here carries into `Expand`.
 Future<void> showLogDrawer(

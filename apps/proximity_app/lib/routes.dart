@@ -121,11 +121,6 @@ abstract final class ProxRoutes {
 
   // Prof setup.
   static const profCourses = 'prof/courses';
-  static String courseOverview(String course) => 'prof/courses/$course';
-  static String sessionDetail(String sessionId) => 'prof/sessions/$sessionId';
-  static String sessionEdit(String sessionId) =>
-      'prof/sessions/$sessionId/edit';
-  static String exportCenter(String course) => 'prof/courses/$course/export';
 
   // Prof live (one host screen; sections ride the path).
   static String live(String course) => 'live/$course';
@@ -151,12 +146,10 @@ abstract final class ProxRoutes {
 
   // Records.
   static const myAttendance = 'records/mine';
-  static String courseAttendance(String course) => 'records/course/$course';
 
   // Courses-tab aliases for the records routes (shell rename; the
   // records/* names keep working — no dead routes, no redirects).
   static const coursesMine = 'courses/mine';
-  static String courseCourse(String course) => 'courses/course/$course';
 
   // Account (one consolidated page is the tab root; face-id stays its own
   // pushed page per §5.2 so the never-preview rule can't inherit stray
@@ -639,15 +632,4 @@ abstract final class ProxNav {
 
   static Future<void> openDebugLog(BuildContext context) =>
       pushNamed(context, ProxRoutes.debugLog);
-
-  static Future<void> openCourse(BuildContext context, String course) =>
-      pushNamed(context, ProxRoutes.courseOverview(course),
-          args: ProxRouteArgs(course: course));
-
-  static Future<void> openLive(BuildContext context, String course) =>
-      pushNamed(context, ProxRoutes.live(course),
-          args: ProxRouteArgs(course: course));
-
-  static Future<void> openWelcome(BuildContext context) =>
-      pushNamed(context, ProxRoutes.welcome);
 }

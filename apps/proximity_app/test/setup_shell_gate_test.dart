@@ -25,52 +25,15 @@ import 'package:proximity_app/screens/shells.dart';
 import 'package:proximity_app/screens/student_home.dart';
 import 'package:proximity_ble/ble.dart';
 
+import 'widget_test.dart' as helpers;
+
 const _linked = LinkedIdentity(
     name: 'Test User', gmail: 'student@example.com', roll: 'R1');
 
-/// Shell tests pump the shells directly (not the full ProximityApp): the
-/// sync host owns its own timers and is untouched by this section.
-List<Override> _shellOverrides({
-  String? email = 'student@example.com',
-  LinkedIdentity? linked,
-}) {
-  return [
-    authServiceProvider.overrideWithValue(FakeAuthService(
-        email == null
-            ? null
-            : SignedAccount(
-                email: email, displayName: 'Test User', uid: 'test-uid'))),
-    cloudSyncProvider.overrideWithValue(FakeCloudSync()),
-    deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
-    faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
-    deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
-    hostDriverProvider.overrideWithValue(FakeHostDriver()),
-    studentDriverProvider
-        .overrideWithValue(FakeStudentDriver(windowOpenProbe: false)),
-    bleEngineProvider.overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-    blePermissionProvider.overrideWithValue(() async => true),
-    btPowerProvider.overrideWithValue(() async => BtState.on),
-    if (linked != null) linkedIdentityProvider.overrideWith((ref) => linked),
-    enrollmentControllerProvider.overrideWith(
-      (ref) => EnrollmentController(
-        auth: ref.watch(authServiceProvider),
-        store: ref.watch(deviceStoreProvider),
-        verifier: FakeFaceVerifier(),
-        deviceKey: FakeDeviceKey(),
-      ),
-    ),
-  ];
-}
-
-Widget _shellApp({required Widget home, List<Override>? extra}) {
-  return ProviderScope(
-    overrides: [
-      ..._shellOverrides(),
-      ...?extra,
-    ],
-    child: MaterialApp(theme: proxLightTheme(), home: home),
-  );
-}
+/// Shell ProviderScope shims removed (A4): shell pumps below use the
+/// canonical widget_test.testScope with an explicit MaterialApp home.
+/// One-off inline ProviderScopes (signed-out flow, router aliases) are
+/// kept as-is: they pin distinct minimal-override shapes.
 
 void main() {
   group('setupStartIndex (pure)', () {
@@ -138,7 +101,9 @@ void main() {
   group('student shell', () {
     testWidgets('3 tabs render; unenrolled Mark routes into setup flow',
         (t) async {
-      await t.pumpWidget(_shellApp(home: const StudentShell()));
+      await t.pumpWidget(helpers.testScope(
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
       await t.pump();
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
@@ -163,12 +128,9 @@ void main() {
     });
 
     testWidgets('enrolled student lands on mark/browse', (t) async {
-      await t.pumpWidget(ProviderScope(
-        overrides: [
-          ..._shellOverrides(),
-          linkedIdentityProvider.overrideWith((ref) => _linked),
-        ],
-        child:
+      await t.pumpWidget(helpers.testScope(
+        linked: _linked,
+        home:
             MaterialApp(theme: proxLightTheme(), home: const StudentShell()),
       ));
       await t.pump();
@@ -187,7 +149,8 @@ void main() {
 
   group('professor shell', () {
     testWidgets('Live · Courses · Account with empty live root', (t) async {
-      await t.pumpWidget(_shellApp(home: const ProfShell()));
+      await t.pumpWidget(helpers.testScope(
+          home: MaterialApp(theme: proxLightTheme(), home: const ProfShell())));
       await t.pump();
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));

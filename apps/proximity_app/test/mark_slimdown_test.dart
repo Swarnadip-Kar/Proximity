@@ -11,25 +11,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/auth.dart';
-import 'package:proximity_app/core/ble_radio.dart';
-import 'package:proximity_app/core/cloud_sync.dart';
-import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
-import 'package:proximity_app/features/face_identity/face_verifier.dart';
-import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/features/mark/browse_classes.dart';
-import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/mark/verdict_section.dart';
 import 'package:proximity_app/features/mark/verdict_view.dart';
 import 'package:proximity_app/mode.dart';
-import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/screens/student_home.dart';
-import 'package:proximity_ble/ble.dart';
 import 'package:proximity_transport/transport.dart';
+
+import 'widget_test.dart' as helpers;
 
 /// Themed pump helper (rebuilt mark views read `ProximityColors`).
 Widget _themed(Widget body) => MaterialApp(
@@ -80,62 +71,22 @@ LiveClass _live({
   );
 }
 
-/// Host harness (mirrors widget_test's testScope): Mark host pumped
-/// directly — the shell owns unenrolled routing, so the join gate and
-/// verdict-back contracts pump StudentHomeScreen itself.
+/// Host harness (delegates to the canonical widget_test.testScope): Mark
+/// host pumped directly — the shell owns unenrolled routing, so the join
+/// gate and verdict-back contracts pump StudentHomeScreen itself. Thin
+/// wrapper kept so the host call sites keep reading as `_markScope(...)`.
 ProviderScope _markScope({
   StudentDriver? studentDriver,
   bool probeOpen = false,
-}) {
-  const linked = LinkedIdentity(
-      name: 'Test User', gmail: 'student@example.com', roll: '12342210');
-  return ProviderScope(
-    overrides: [
-      authServiceProvider.overrideWithValue(FakeAuthService(SignedAccount(
-          email: 'student@example.com',
-          displayName: 'Test User',
-          uid: 'test-uid'))),
-      cloudSyncProvider.overrideWithValue(FakeCloudSync()),
-      deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
-      faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
-      deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
-      stillCapturerProvider.overrideWithValue(const FakeStillCapturer()),
-      enrollSessionCameraProvider
-          .overrideWithValue(FakeEnrollSessionCamera()),
-      poseGateProvider.overrideWithValue(FakePoseGate()),
-      studentDriverProvider.overrideWithValue(
-          studentDriver ?? FakeStudentDriver(windowOpenProbe: probeOpen)),
-      bleEngineProvider.overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-      blePermissionProvider.overrideWithValue(() async => true),
-      cameraPermissionProvider.overrideWithValue(() async => true),
-      btPowerProvider.overrideWithValue(() async => BtState.on),
-      linkedIdentityProvider.overrideWith((ref) => linked),
-      appModeProvider.overrideWith((ref) => AppMode.student),
-      enrollmentControllerProvider.overrideWith(
-        (ref) => EnrollmentController(
-          auth: ref.watch(authServiceProvider),
-          store: ref.watch(deviceStoreProvider),
-          verifier: FakeFaceVerifier(),
-          deviceKey: FakeDeviceKey(),
-        ),
-      ),
-    ],
-    child: MaterialApp(
-        theme: proxLightTheme(), home: const StudentHomeScreen()),
-  );
-}
-
-/// Typed-IP is fallback-weight: the field lives in the `Enter IP manually`
-/// sheet below the browse list.
-Future<void> _enterIp(WidgetTester t, String ip) async {
-  final fallback = find.text('Enter IP manually');
-  await t.scrollUntilVisible(fallback, 300);
-  await t.pumpAndSettle();
-  await t.tap(fallback);
-  await t.pumpAndSettle();
-  await t.enterText(find.byKey(const ValueKey('ipfield')), ip);
-  await t.pump();
-}
+}) =>
+    helpers.testScope(
+      linked: const LinkedIdentity(
+          name: 'Test User', gmail: 'student@example.com', roll: '12342210'),
+      studentDriver: studentDriver,
+      probeOpen: probeOpen,
+      home: MaterialApp(
+          theme: proxLightTheme(), home: const StudentHomeScreen()),
+    );
 
 /// Late verdict driver: face passes, the proof lands late.
 class _LateStudentDriver extends FakeStudentDriver {
@@ -280,7 +231,7 @@ void main() {
         (t) async {
       await t.pumpWidget(_markScope(probeOpen: true));
       await t.pumpAndSettle();
-      await _enterIp(t, '192.168.43.1');
+      await helpers.enterIp(t, '192.168.43.1');
       await t.tap(find.text('Join'));
       var marked = false;
       for (var i = 0; i < 20 && !marked; i++) {
@@ -306,7 +257,7 @@ void main() {
     testWidgets('late back lands on browse and stays', (t) async {
       await t.pumpWidget(_markScope(studentDriver: _LateStudentDriver()));
       await t.pumpAndSettle();
-      await _enterIp(t, '192.168.43.1');
+      await helpers.enterIp(t, '192.168.43.1');
       await t.tap(find.text('Join'));
       var late = false;
       for (var i = 0; i < 20 && !late; i++) {
@@ -330,7 +281,7 @@ void main() {
       await t.pumpWidget(_markScope(
           studentDriver: FakeStudentDriver(manualStatus: 'rejected')));
       await t.pumpAndSettle();
-      await _enterIp(t, '192.168.43.1');
+      await helpers.enterIp(t, '192.168.43.1');
       await t.tap(find.text('Join'));
       await t.pumpAndSettle();
       expect(find.textContaining('has not yet started'), findsOneWidget);
@@ -352,7 +303,7 @@ void main() {
         (t) async {
       await t.pumpWidget(_markScope(probeOpen: true));
       await t.pumpAndSettle();
-      await _enterIp(t, '192.168.43.1');
+      await helpers.enterIp(t, '192.168.43.1');
       await t.tap(find.text('Join'));
       var marked = false;
       for (var i = 0; i < 20 && !marked; i++) {

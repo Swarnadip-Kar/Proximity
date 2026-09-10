@@ -171,6 +171,11 @@ String linkedOrgForAccount(SignedAccount acct, LinkedIdentity? linked) {
       : '';
 }
 
+/// Shared 'no key yet' note (single source — same copy on the enrollment
+/// page, the device page, and the setup device section).
+const accountNoKeyNote =
+    'No student key on this device yet — enrollment creates one (device key + face, online once).';
+
 String accountShortKey(String pkHex) {
   final h = pkHex.trim();
   if (h.isEmpty) return 'no key';

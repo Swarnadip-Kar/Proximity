@@ -139,7 +139,7 @@ class AccountDeviceSection extends ConsumerWidget {
                     ),
                     if (e == null)
                       const ProxSyncNote(
-                        'No student key on this device yet — enrollment creates one (device key + face, online once).',
+                        accountNoKeyNote,
                       )
                     else ...[
                       const SizedBox(height: ProxSpacing.md),

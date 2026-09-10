@@ -29,9 +29,6 @@
 //   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
 //     profEmail, profName, dateIso, timestampIso, startIso, windows, names,
 //     rolls, studentEmails[], updatedAt}
-//   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
-//     profEmail, profName, dateIso, timestampIso, startIso, windows, names,
-//     rolls, studentEmails[], updatedAt}
 // Local history stays the offline source of truth; cloud is the sync copy.
 // Firestore offline persistence queues writes automatically — first sign-in
 // merges both ways, later changes push on save and pull on open/refresh.

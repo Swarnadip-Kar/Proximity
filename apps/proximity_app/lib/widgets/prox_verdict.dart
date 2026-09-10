@@ -34,20 +34,6 @@ class ProxVerdictBadge extends StatefulWidget {
     required this.detail,
   });
 
-  /// Marked ✓ with the legacy default copy.
-  const ProxVerdictBadge.marked({
-    super.key,
-    this.detail = '',
-    this.title = '✓ Marked',
-  }) : kind = ProxVerdictKind.marked;
-
-  /// Late with the legacy default copy.
-  const ProxVerdictBadge.late({
-    super.key,
-    this.detail = '',
-    this.title = 'Late',
-  }) : kind = ProxVerdictKind.late;
-
   @override
   State<ProxVerdictBadge> createState() => _ProxVerdictBadgeState();
 }

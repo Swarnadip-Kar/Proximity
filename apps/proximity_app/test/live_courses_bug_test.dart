@@ -5,50 +5,17 @@
 // appear (IndexedStack keeps the state alive; tab switches only rebuild,
 // never re-read).
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/auth.dart';
-import 'package:proximity_app/core/ble_radio.dart';
-import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/enrollment.dart';
-import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
-import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/screens/shells.dart';
-import 'package:proximity_ble/ble.dart';
 
-Widget _profShellApp(InMemoryDeviceStore store) {
-  return ProviderScope(
-    overrides: [
-      authServiceProvider.overrideWithValue(FakeAuthService(SignedAccount(
-          email: 'prof@example.com',
-          displayName: 'Prof',
-          uid: 'prof-uid'))),
-      cloudSyncProvider.overrideWithValue(FakeCloudSync()),
-      deviceStoreProvider.overrideWithValue(store),
-      faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
-      deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
-      hostDriverProvider.overrideWithValue(FakeHostDriver()),
-      studentDriverProvider
-          .overrideWithValue(FakeStudentDriver(windowOpenProbe: false)),
-      bleEngineProvider.overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-      blePermissionProvider.overrideWithValue(() async => true),
-      btPowerProvider.overrideWithValue(() async => BtState.on),
-      enrollmentControllerProvider.overrideWith(
-        (ref) => EnrollmentController(
-          auth: ref.watch(authServiceProvider),
-          store: ref.watch(deviceStoreProvider),
-          verifier: FakeFaceVerifier(),
-          deviceKey: FakeDeviceKey(),
-        ),
-      ),
-    ],
-    child: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
-  );
-}
+import 'widget_test.dart' as helpers;
+
+/// Prof-shell shim removed (A4): pumps below use the canonical
+/// widget_test.testScope (prof email + store + ProfShell home). The local
+/// _settle/_openTab stay: A3 unifies only the live_subtabs vs tab_slide
+/// settle pair, and _openTab variants stay distinct per brief.
 
 Future<void> _settle(WidgetTester t) async {
   await t.pump();
@@ -75,7 +42,11 @@ Future<void> _openTab(WidgetTester t, String label) async {
 void main() {
   testWidgets('register course → Live tab lists it', (t) async {
     final store = InMemoryDeviceStore();
-    await t.pumpWidget(_profShellApp(store));
+    await t.pumpWidget(helpers.testScope(
+        email: 'prof@example.com',
+        store: store,
+        home: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
+    ));
     await _settle(t);
 
     // Starts empty: honest empty state only.
@@ -98,7 +69,11 @@ void main() {
 
   testWidgets('empty state only when truly no courses', (t) async {
     final store = InMemoryDeviceStore();
-    await t.pumpWidget(_profShellApp(store));
+    await t.pumpWidget(helpers.testScope(
+        email: 'prof@example.com',
+        store: store,
+        home: MaterialApp(theme: proxLightTheme(), home: const ProfShell()),
+    ));
     await _settle(t);
 
     expect(find.text('Go to Courses'), findsOneWidget);

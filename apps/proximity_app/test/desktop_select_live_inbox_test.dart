@@ -21,16 +21,15 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/manual_inbox.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
-import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'widget_test.dart' as helpers;
 
 Widget _inbox({
   required List<ManualRow> pending,
@@ -67,20 +66,10 @@ Future<void> _asPlatform(
   }
 }
 
-ProviderScope _scopedSessions(InMemoryDeviceStore s, Widget home) =>
-    ProviderScope(
-      overrides: [
-        deviceStoreProvider.overrideWithValue(s),
-        hostDriverProvider.overrideWithValue(FakeHostDriver()),
-        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
-        bleEngineProvider
-            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-        blePermissionProvider.overrideWithValue(() async => true),
-        cameraPermissionProvider.overrideWithValue(() async => true),
-        btPowerProvider.overrideWithValue(() async => BtState.on),
-      ],
-      child: MaterialApp(theme: proxLightTheme(), home: home),
-    );
+/// Records ProviderScope shim removed (A4): the desktop-sessions pump
+/// below uses the canonical widget_test.testScope (store + explicit
+/// MaterialApp home). The inbox self-refresh inline ProviderScope stays:
+/// it pins a host-only minimal-override shape, not the shared defaults.
 
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -176,8 +165,11 @@ void main() {
         names: const {'a@x.in': 'A'},
         rolls: const {'a@x.in': '1'},
       ));
-      await t.pumpWidget(
-          _scopedSessions(s, const CourseOverviewScreen(courseName: 'CS201')));
+      await t.pumpWidget(helpers.testScope(
+          store: s,
+          home: MaterialApp(
+              theme: proxLightTheme(),
+              home: const CourseOverviewScreen(courseName: 'CS201'))));
       await t.pumpAndSettle();
       expect(find.text('Select'), findsOneWidget);
       expect(find.text('Delete 1'), findsNothing);

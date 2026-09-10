@@ -26,9 +26,3 @@ class PresentTicker extends StatelessWidget {
     );
   }
 }
-
-// NOTE (Track 5): MarkedBadge removed — superseded by ProxVerdictBadge
-// (one verdict language; the elastic pop is reserved for Marked there).
-// Phase 6 (2026-09-10): FaceOval (+ _OvalPainter) removed — zero production
-// uses (superseded by CaptureOverlay; verified by grep). PresentTicker stays
-// for the take-attendance header contract (used by live_session.dart).

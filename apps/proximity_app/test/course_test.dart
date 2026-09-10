@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
 import 'package:proximity_app/features/records/export_center_screen.dart';
 import 'package:proximity_app/features/records/prof_courses_screen.dart';
 import 'package:proximity_app/screens/take_attendance.dart';
 import 'package:proximity_app/widgets/clock.dart';
-import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+
+import 'widget_test.dart' as helpers;
 
 Future<InMemoryDeviceStore> seeded() async {
   final s = InMemoryDeviceStore();
@@ -30,24 +27,15 @@ Future<InMemoryDeviceStore> seeded() async {
   return s;
 }
 
-ProviderScope wrap(InMemoryDeviceStore s, Widget home) => ProviderScope(
-      overrides: [
-        deviceStoreProvider.overrideWithValue(s),
-        hostDriverProvider.overrideWithValue(FakeHostDriver()),
-        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
-        bleEngineProvider
-            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-        blePermissionProvider.overrideWithValue(() async => true),
-        cameraPermissionProvider.overrideWithValue(() async => true),
-        btPowerProvider.overrideWithValue(() async => BtState.on),
-      ],
-      // App theme: screens read the ProximityColors extension (rebuild).
-      child: MaterialApp(theme: proxLightTheme(), home: home),
-    );
+/// Records ProviderScope shim removed (A4): pumps below use the canonical
+/// widget_test.testScope (store + explicit MaterialApp home).
 
 void main() {
   testWidgets('courses list recent-first with session counts', (t) async {
-    await t.pumpWidget(wrap(await seeded(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.text('CS201'), findsOneWidget);
     expect(find.text('CS202'), findsOneWidget);
@@ -56,7 +44,10 @@ void main() {
   });
 
   testWidgets('courses empty state + register', (t) async {
-    await t.pumpWidget(wrap(InMemoryDeviceStore(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: InMemoryDeviceStore(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.textContaining('No courses yet'), findsOneWidget);
     await t.tap(find.text('Register new course'));
@@ -79,8 +70,11 @@ void main() {
 
   testWidgets('course overview: sessions + export center (records-only)',
       (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     // Records-only (§3.1a): no hosting entry lives in this tab.
     expect(find.text('Take attendance'), findsNothing);
@@ -106,8 +100,11 @@ void main() {
   });
 
   testWidgets('export center: date-range matrix reachable', (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const ExportCenterScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const ExportCenterScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     expect(find.text('Export date range'), findsOneWidget);
     expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
@@ -123,8 +120,11 @@ void main() {
 
   testWidgets('course overview: hold-and-tap select + delete with X/Y warning',
       (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     // Hold-and-tap enters selection mode (no checkboxes in this tab).
     await t.longPress(find.textContaining('Thu, 3 Sep'));
@@ -145,8 +145,11 @@ void main() {
   });
 
   testWidgets('prof overview: delete course with X/Y warning', (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     await t.scrollUntilVisible(find.text('Delete course'), 300,
         scrollable: find.byType(Scrollable).first);
@@ -165,8 +168,10 @@ void main() {
   });
 
   testWidgets('course rename from detail returns to updated list', (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
@@ -183,8 +188,11 @@ void main() {
   });
 
   testWidgets('take screen shows optional professor name field', (t) async {
-    await t.pumpWidget(wrap(await seeded(),
-        const TakeAttendanceScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     // The name field lives on the Setup sub-tab (real sub-tabs: tap swaps).
     await t.tap(find.text('Setup'));

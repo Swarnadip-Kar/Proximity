@@ -212,11 +212,11 @@ class _EndedHostDriver extends FakeStudentDriver {
   }
 }
 
-void main() {
+/// Typed-IP shared helper (fallback-weight §6.1/§6.4): the field lives in
+/// the `Enter IP manually` sheet below the browse list — scroll it into
+/// view, then type in the sheet field. Top-level so sibling suites
+/// (e.g. mark_slimdown) import it instead of duplicating.
 Future<void> enterIp(WidgetTester t, String ip) async {
-  // Typed-IP is fallback-weight (§6.1/§6.4): the field lives in the
-  // `Enter IP manually` sheet below the browse list — scroll it into
-  // view, then type in the sheet field.
   final fallback = find.text('Enter IP manually');
   await t.scrollUntilVisible(fallback, 300);
   await t.pumpAndSettle();
@@ -225,6 +225,8 @@ Future<void> enterIp(WidgetTester t, String ip) async {
   await t.enterText(find.byKey(const ValueKey('ipfield')), ip);
   await t.pump();
 }
+
+void main() {
 
   testWidgets('prof course→take→LIVE→close→end (history, no export)', (t) async {
     final store = InMemoryDeviceStore();
