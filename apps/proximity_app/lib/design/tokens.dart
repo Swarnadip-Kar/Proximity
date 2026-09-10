@@ -77,6 +77,13 @@ abstract final class ProxDurations {
   /// Bottom-bar tab switch cross-fade (+ 4dp icon settle, §3.1).
   static const tabCrossFade = Duration(milliseconds: 120);
 
+  /// Bottom-bar tab-switch directional slide (§3.1, tester-directed):
+  /// tap-triggered slide-in whose direction follows tab order, eased on
+  /// [ProxCurves.standard] (easeOutCubic). Reduced motion collapses to
+  /// instant opacity (see the shell `_TabSlide`). Kept separate from
+  /// [push]: pushes are route transitions, this is tab chrome.
+  static const tabSlide = Duration(milliseconds: 220);
+
   /// Forward push / shared-axis horizontal slide (§3.2).
   static const push = Duration(milliseconds: 220);
 
@@ -581,6 +588,13 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
   final Color statusLate;
   final Color statusReview;
   final Color statusError;
+  // On-tint foregrounds for light late/review (Task 3, D3): darkened text +
+  // icon color used on light tinted surfaces. Light values clear 4.5:1 on
+  // their 12%-alpha tints (and ≥3:1 as bare icon color on white); dark
+  // values equal the dark status hexes so dark rendering is pixel-identical.
+  // Backgrounds (statusLate/statusReview) are untouched spec-frozen hexes.
+  final Color onTintLate;
+  final Color onTintReview;
   final Color divider;
 
   // --- §2.5 gradient / glow / elevation tokens ---
@@ -613,6 +627,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
     required this.statusLate,
     required this.statusReview,
     required this.statusError,
+    required this.onTintLate,
+    required this.onTintReview,
     required this.divider,
     required this.gradientBrand,
     required this.gradientMarked,
@@ -636,6 +652,9 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
         statusLate = const Color(0xFFE0B23A),
         statusReview = const Color(0xFFE0833A),
         statusError = const Color(0xFFE85D5D),
+        // Dark on-tints equal the dark status hexes (pixel-identical).
+        onTintLate = const Color(0xFFE0B23A),
+        onTintReview = const Color(0xFFE0833A),
         divider = const Color(0x9922262D), // #22262D @ 60%
         gradientBrand = const LinearGradient(
           begin: _brandBegin,
@@ -688,6 +707,11 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
         statusLate = const Color(0xFFB4870F),
         statusReview = const Color(0xFFC4661A),
         statusError = const Color(0xFFC43E3E),
+        // Light on-tints: dark amber-brown / dark sienna. Measured WCAG on
+        // their 12%-alpha tints over white: late 5.65:1, review 6.63:1
+        // (both ≥4.5:1 text); as bare icons on white: 6.38 / 7.64 (≥3:1).
+        onTintLate = const Color(0xFF7A5A00),
+        onTintReview = const Color(0xFF8A3D00),
         divider = const Color(0x14000000), // black @ 8%
         gradientBrand = const LinearGradient(
           begin: _brandBegin,
@@ -743,6 +767,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
     Color? statusLate,
     Color? statusReview,
     Color? statusError,
+    Color? onTintLate,
+    Color? onTintReview,
     Color? divider,
     LinearGradient? gradientBrand,
     LinearGradient? gradientMarked,
@@ -764,6 +790,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
         statusLate: statusLate ?? this.statusLate,
         statusReview: statusReview ?? this.statusReview,
         statusError: statusError ?? this.statusError,
+        onTintLate: onTintLate ?? this.onTintLate,
+        onTintReview: onTintReview ?? this.onTintReview,
         divider: divider ?? this.divider,
         gradientBrand: gradientBrand ?? this.gradientBrand,
         gradientMarked: gradientMarked ?? this.gradientMarked,
@@ -795,6 +823,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
       statusLate: Color.lerp(statusLate, other.statusLate, t)!,
       statusReview: Color.lerp(statusReview, other.statusReview, t)!,
       statusError: Color.lerp(statusError, other.statusError, t)!,
+      onTintLate: Color.lerp(onTintLate, other.onTintLate, t)!,
+      onTintReview: Color.lerp(onTintReview, other.onTintReview, t)!,
       divider: Color.lerp(divider, other.divider, t)!,
       gradientBrand: _lerpGradient(gradientBrand, other.gradientBrand, t),
       gradientMarked: _lerpGradient(gradientMarked, other.gradientMarked, t),
@@ -821,6 +851,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
       other.statusLate == statusLate &&
       other.statusReview == statusReview &&
       other.statusError == statusError &&
+      other.onTintLate == onTintLate &&
+      other.onTintReview == onTintReview &&
       other.divider == divider &&
       other.gradientBrand == gradientBrand &&
       other.gradientMarked == gradientMarked &&
@@ -831,7 +863,7 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
       other.elevationSheet == elevationSheet;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
         surfaceBase,
         surfaceRaised,
         surfaceOverlay,
@@ -843,6 +875,8 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
         statusLate,
         statusReview,
         statusError,
+        onTintLate,
+        onTintReview,
         divider,
         gradientBrand,
         gradientMarked,
@@ -851,7 +885,7 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
         glowMarked,
         elevationRaised,
         elevationSheet,
-      );
+      ]);
 }
 
 /// Frozen verdict vocabulary for status display (redesign §4.2 — rendering
@@ -906,6 +940,21 @@ abstract final class ProxIcons {
       ProxStatus.review || ProxStatus.pending => c.statusReview,
       ProxStatus.wrongOrg || ProxStatus.noSignal => c.statusError,
       ProxStatus.waiting => c.contentSecondary,
+    };
+  }
+
+  /// Foreground (text + meaningful icon) color for a verdict.
+  ///
+  /// Task 3 (D3): light late/review/pending text+icons route through the
+  /// darkened on-tint tokens; backgrounds/borders keep [statusColor].
+  /// Every other state (and every dark-theme value, where on-tints equal
+  /// the status hexes) renders identical to [statusColor].
+  static Color statusForeground(BuildContext context, ProxStatus status) {
+    final c = ProximityColors.of(context);
+    return switch (status) {
+      ProxStatus.late => c.onTintLate,
+      ProxStatus.review || ProxStatus.pending => c.onTintReview,
+      _ => statusColor(context, status),
     };
   }
 }

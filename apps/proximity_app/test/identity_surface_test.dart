@@ -61,7 +61,6 @@ Widget _browse(List<LiveClass> live,
         {Map<String, String> profEmailByHost = const {}}) =>
     _themed(
       BrowseClassesView(
-        linked: null,
         identityLine: 'S',
         ipInitial: '',
         onIpChanged: (_) {},
@@ -70,8 +69,6 @@ Widget _browse(List<LiveClass> live,
         live: live,
         profEmailByHost: profEmailByHost,
         onTapLive: (_) {},
-        onEnroll: () {},
-        onViewRecords: () {},
         onRefresh: () async {},
       ),
     );
@@ -182,7 +179,10 @@ void main() {
       rolls: const {'s@univ.edu': '1'},
       org: 'univ.edu',
     );
+    // Themed harness (date-visibility rebuild): the tile now reads
+    // `ProximityColors` like every other rebuilt widget (LIVE-D3 pattern).
     await t.pumpWidget(MaterialApp(
+      theme: proxLightTheme(),
       home: Scaffold(
         body: StudentSessionTile(
             session: session, email: 's@univ.edu', course: 'CS201'),
@@ -201,6 +201,7 @@ void main() {
       ],
     );
     await t.pumpWidget(MaterialApp(
+      theme: proxLightTheme(),
       home: Scaffold(
         body: StudentSessionTile(
             session: session, email: 's@univ.edu', course: 'CS201'),

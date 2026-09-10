@@ -197,7 +197,10 @@ class _DriftBanner extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.schedule_outlined, size: 20, color: c.statusLate),
+          // Task 3 (D3): banner fill/border keep statusLate; the meaningful
+          // icon uses the on-tint foreground (dark pixel-identical, light
+          // darkened). Body copy already reads contentPrimary (untouched).
+          Icon(Icons.schedule_outlined, size: 20, color: c.onTintLate),
           const SizedBox(width: ProxSpacing.sm),
           Expanded(
             child: Text(

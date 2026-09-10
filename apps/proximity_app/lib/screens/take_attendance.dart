@@ -12,10 +12,17 @@
 // separate feature on the course page (per-session + date-range matrix).
 //
 // Layout contract: this screen owns hosting/window/draft orchestration
-// and composes the live feature sections (setup, session header, roster,
-// manual inbox, direct add, draft recovery) — one section per file under
-// lib/features/live/. Behavior is unchanged from the pre-split screen;
-// only the rendering moved.
+// and composes the live feature sections behind an explicit sub-nav
+// (Roster / Inbox / Add / Setup, product-owner order): the sub-nav SWAPS
+// content completely via an IndexedStack — each sub-tab shows ONLY its
+// view, no shared scroll, no intersection, inactive views stay mounted so
+// their state survives switches (mid-approve inbox selection, roster
+// search, direct-add fields). Roster = waiting + dup + marked
+// (`LiveRosterBody`, same composer as the dedicated roster screen);
+// inbox = manual requests only; add = direct manual entry only
+// (the single home — no AppBar sheet extra); setup = name/IP/discovery
+// only. Behavior is unchanged from the pre-split screen; only the
+// rendering moved.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -34,14 +41,13 @@ import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/live/direct_add.dart';
 import '../features/live/draft_recovery.dart';
+import '../features/live/live_refresh.dart';
 import '../features/live/live_roster.dart';
 import '../features/live/live_session.dart';
 import '../features/live/live_setup.dart';
 import '../features/live/manual_inbox.dart';
-import '../features/manual_attendance/manual_attendance.dart';
 import '../main.dart';
 import '../mode.dart';
-import '../widgets/fallback_button.dart';
 import '../widgets/log_drawer.dart';
 
 // Recovery policy lives in the draft-recovery section; re-exported here
@@ -50,8 +56,10 @@ export '../features/live/draft_recovery.dart'
     show recoverPromptThreshold, shouldPromptRecover;
 
 /// Lightweight segmented sub-nav (§7.1) under the fixed control cluster:
-/// roster / inbox / add / setup. All sections stay mounted in one scroll;
-/// tapping a segment highlights it and scrolls the section into view.
+/// roster / inbox / add / setup (explicit product-owner order). Tapping a
+/// segment SWAPS the content below via the host's IndexedStack — each
+/// sub-tab shows ONLY its view (no shared scroll, no intersection);
+/// inactive views stay mounted so their state survives switches.
 class _LiveSubNav extends StatelessWidget {
   final int selected;
   final int inboxCount;
@@ -137,15 +145,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   final _nameCtrl = TextEditingController();
 
-  /// Segmented sub-nav (§7.1): which live section is highlighted. All
-  /// sections stay mounted in one scroll (mid-lecture scan + stable test
-  /// hooks); tapping a segment scrolls to it.
+  /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster, 1 inbox,
+  /// 2 add, 3 setup — product-owner order). The IndexedStack below swaps to
+  /// it; every tab stays mounted so mid-lecture state (inbox selection,
+  /// roster search, add fields) survives switches.
   int _section = 0;
+  // Retained (unused by composition): dispose() still disposes it, and the
+  // dispose body is orchestration-frozen — so the field stays.
   final _scrollCtrl = ScrollController();
-  final _setupKey = GlobalKey();
-  final _rosterKey = GlobalKey();
-  final _inboxKey = GlobalKey();
-  final _addKey = GlobalKey();
 
   TallyStore get tally {
     try {
@@ -257,15 +264,21 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           });
         }
       } catch (_) {}
-      // Rebuild only when the waiting set actually changed — an
+      // Rebuild only when something actually changed — an
       // unconditional setState here rebuilt the whole list every 2s
-      // (scroll jank on big classes).
-      if (_logWaitingDelta()) setState(() {});
+      // (scroll jank on big classes). The manual delta refreshes the
+      // `Inbox (N)` badge + inbox prop while idle (inbox rows
+      // self-refresh in the section — see
+      // `features/live/manual_inbox.dart`).
+      final waitingChanged = _logWaitingDelta();
+      final manualChanged = _logManualDelta();
+      if (waitingChanged || manualChanged) setState(() {});
     });
     if (widget.autoStart) _startNext();
   }
 
   Set<String> _prevWaiting = {};
+  Set<String> _prevManual = {};
 
   /// Logs waiting-room joins/leaves (student entered or backed out) so the
   /// count changes are visible in the system log, not just the list.
@@ -287,6 +300,28 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       BleLog.log(ProxLogTags.lan, 'waiting -$e left (${cur.length} waiting)');
     }
     return joined.isNotEmpty || left.isNotEmpty;
+  }
+
+  /// Manual-arrival delta (inbox live-update fix, rebuild trigger only):
+  /// the idle poll previously watched the waiting set alone, so manual
+  /// arrivals while idle never refreshed the `Inbox (N)` badge or the
+  /// inbox prop until the next decision/navigation. Compares the LOCAL
+  /// pending email set (no network, no proof load) and stays silent —
+  /// arrivals render, decided rows still clear via the existing decide
+  /// paths. Orchestration untouched.
+  bool _logManualDelta() {
+    Set<String> cur = {};
+    try {
+      cur = {
+        for (final m in ref.read(hostDriverProvider).manualPending) m.email
+      };
+    } catch (_) {
+      return false;
+    }
+    final changed =
+        cur.length != _prevManual.length || !cur.containsAll(_prevManual);
+    _prevManual = cur;
+    return changed;
   }
 
   /// Autosaved-draft resume (back navigation or full app kill). Policy:
@@ -538,21 +573,57 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     super.dispose();
   }
 
-  Future<void> _leave() async {
-    // Freeze autosave FIRST: endHosting clears the live tally below, and a
-    // 1s/2s timer tick landing between the clear and unmount would persist
-    // an EMPTY visit over the good draft (back-nav would "resume" zero
-    // marks). Timers die here (and again in dispose), never after the pop.
+  /// Back-interrupt guards (§3.5 back-intercept): [_leaving] single-flights
+  /// the awaited teardown (a second back-press mid-await is ignored);
+  /// [_bypass] marks our own programmatic pops so the PopScope handler can
+  /// never re-enter teardown for them. Both are load-bearing: without them
+  /// a double-back would run teardown twice (double save + double
+  /// endHosting).
+  bool _leaving = false;
+  bool _bypass = false;
+
+  /// Shared back-path teardown: freeze autosave timers FIRST (endHosting
+  /// clears the live tally below, and a 1s/2s timer tick landing between
+  /// the clear and unmount would persist an EMPTY visit over the good
+  /// draft — back-nav would then "resume" zero marks). Timers die here
+  /// (and again in dispose), never after the pop.
+  ///
+  /// Throws stay caught exactly as today (ports close best-effort). The
+  /// End-attendance path passes `save: false`: it already snapshotted +
+  /// cleared the draft above, so saving again here would resurrect it.
+  Future<void> _teardown({bool save = true}) async {
     _t?.cancel();
     _idlePoll?.cancel();
-    BleLog.log(
-        ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
-    await _saveDraft();
+    if (save) {
+      BleLog.log(
+          ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
+      await _saveDraft();
+    }
     try {
       await ref.read(hostDriverProvider).endHosting();
     } catch (_) {}
-    if (mounted) Navigator.of(context).pop();
   }
+
+  /// Single-flight leave: the bar BackButton, the PopScope intercept, and
+  /// (its tail) End-attendance all funnel through here. Teardown throws
+  /// stay caught so the pop still proceeds (same as `_leave` today).
+  Future<void> _leave() async {
+    if (_leaving) return;
+    _leaving = true;
+    try {
+      await _teardown();
+    } catch (_) {}
+    if (mounted) {
+      _bypass = true;
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// PopScope intercept: system/shell back arriving via maybePop (the path
+  /// that consults the veto) runs the SAME awaited teardown as the bar
+  /// BackButton, then pops. Programmatic pops complete directly (notified
+  /// with didPop:true), so [_bypass] only ever short-circuits re-entry.
+  Future<void> _interceptBack() => _leave();
 
   void _startNext() => _start(_windowNo + 1);
 
@@ -670,6 +741,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// Ends attendance (no export — that lives on the course page): final
   /// snapshot, draft cleared, hosting down, back to the course.
   Future<void> _endAttendance() async {
+    if (_leaving) return;
+    _leaving = true;
     BleLog.log(
         ProxLogTags.nav, 'end attendance (final snapshot, hosting down)');
     // Freeze autosave first (same teardown race as _leave: the draft is
@@ -686,9 +759,20 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _recordId = null;
       _recordStartIso = null;
       _recordOrg = null;
-      await ref.read(hostDriverProvider).endHosting();
-      if (mounted) Navigator.of(context).pop();
+      // Shared tail: awaited endHosting via _teardown (save:false — the
+      // draft was cleared above and must not be rewritten). A teardown
+      // throw stays caught and the pop still proceeds (uniform with
+      // _leave; previously an endHosting throw surfaced serverError and
+      // kept the screen mounted).
+      await _teardown(save: false);
+      if (mounted) {
+        _bypass = true;
+        Navigator.of(context).pop();
+      }
     } catch (e) {
+      // Stay retryable: release the single-flight so End/back still work
+      // (today a failed End leaves the screen usable).
+      _leaving = false;
       if (!mounted) return;
       setState(() => serverError = '$e');
     }
@@ -792,40 +876,19 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _saveSnapshot();
   }
 
-  /// Fallback-weight add entry (§6.4): icon button → sheet with the same
-  /// module form as the Add section (separate `sheet-` field keys so both
-  /// instances stay mounted without colliding). Same [onAdd]/[isPresent]
-  /// behavior as the section below (ID-compulsory + offline queue).
-  Future<void> _openAddSheet() {
-    BleLog.log(ProxLogTags.nav, 'take → add sheet');
-    return showProxSheet<void>(
-      context: context,
-      title: 'Add student',
-      builder: (_) => ManualAddForm(
-        fieldPrefix: 'sheet',
-        course: widget.courseName,
-        sessionId: _recordId ?? '',
-        onAdd: _addDirectEntry,
-        // Present = every round taken (intersection): re-adding one
-        // shows "Already marked present."; partials still go through.
-        isPresent: (email) =>
-            tally.confirmed.any((r) => r.email == email.toLowerCase()),
-      ),
-    );
-  }
+  // Zero-intersection (tester fix): manual attendance-taking lives ONLY
+  // in the Add section (`DirectAddSection` below, `direct-` keys). The
+  // former AppBar `Add student` sheet (`sheet-` keys, same module form)
+  // duplicated it, so it is removed — no second entry point, no second
+  // form instance. [_addDirectEntry] below stays (it is the Add section's
+  // submit path: driver + draft + snapshot).
 
-  /// Segmented sub-nav tap: highlight + scroll the section into view.
+  /// Segmented sub-nav tap: swap to the tapped sub-tab. State-preserving
+  /// by construction (IndexedStack keeps inactive views mounted — this is
+  /// the fix for the reverted grouping probe, where unmounting broke the
+  /// mid-approve inbox flow).
   void _selectSection(int i) {
     setState(() => _section = i);
-    final key = [_rosterKey, _inboxKey, _addKey, _setupKey][i];
-    final ctx = key.currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(
-        ctx,
-        duration: ProxDurations.small,
-        curve: ProxCurves.standard,
-      );
-    }
   }
 
   /// 1-tap duplicate-face override: the driver clears the whole group and
@@ -848,137 +911,181 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     final hostLine = linked == null
         ? null
         : 'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}';
-    // No PopScope here (§3.5, navigation-shell rebuild): the shell owns
-    // back — in-tab back pops this tab's stack only. Ending the session
-    // stays an explicit action: the bar back button runs the same
-    // autosave + endHosting [_leave] the old pop handler ran
-    // (navigation-only change; timers, drivers, and drafts untouched).
-    // System-back pops through dispose, whose best-effort top-up + port
-    // close path is unchanged.
-    return AdaptiveScaffold(
-      title: widget.courseName,
-      leading: BackButton(onPressed: () => _leave()),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.person_add_outlined),
-          tooltip: 'Add student',
-          onPressed: _openAddSheet,
-        ),
-        IconButton(
-          icon: const Icon(Icons.terminal_outlined),
-          tooltip: 'System log',
-          // Overlay drawer (§4.5): the radio UI keeps listening beneath
-          // it. `Expand` inside pushes the full-screen debug/log.
-          onPressed: () => showLogDrawer(context),
-        ),
-      ],
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Fixed control-cluster header (§7.1): elapsed clock + pulsing
-          // on-air dot + counters stay on screen while the sections
-          // scroll beneath. The dot is the only repeating motion here —
-          // everything else updates in place so the 1s elapsed tick
-          // never replays entrances (waiting rows are keyed; present
-          // rows mount static, see the roster section).
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: LiveSessionHeader(
-              live: live,
-              elapsed: elapsed,
-              present: present,
-              waiting: waiting,
-              windowsTaken: windowsTaken,
-              windowNo: _windowNo,
-              hosting: hosting,
-              hostLine: hostLine,
-              onStart: _startNext,
-              onRetake: () => _start(_windowNo),
-              onTakeAnother: _startNext,
-              onStop: _stopEarly,
-              onEnd: _endAttendance,
-            ),
-          ),
-          if (_resumed)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: DraftResumedBanner(
-                present: present,
-                windowsTaken: windowsTaken,
-                onDiscard: _discardDraft,
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: _LiveSubNav(
-              selected: _section,
-              inboxCount: manualPending.length,
-              onSelect: _selectSection,
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.all(16),
-              children: [
-                Container(
-                  key: _setupKey,
-                  child: LiveSetupSection(
-                    hosting: hosting,
-                    live: live,
-                    nameCtrl: _nameCtrl,
-                    onNameChanged: (v) {
-                      try {
-                        ref.read(hostDriverProvider).setDisplayName(v);
-                      } catch (_) {}
-                    },
-                    serverLine: serverLine,
-                    allIps: _session?.allIps ?? const [],
-                    currentIp: _ip,
-                    onPickIp: _pickIp,
-                    serverError: serverError,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  key: _rosterKey,
-                  child: WaitingListSection(
-                    waitingRows: waitingRows,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ManualInboxSection(
-                  key: _inboxKey,
-                  pending: manualPending,
-                  onApproveOne: _approveOne,
-                  onRejectOne: _rejectOne,
-                  onDecide: _decideSelected,
-                ),
-                const SizedBox(height: 8),
-                DirectAddSection(
-                  key: _addKey,
-                  course: widget.courseName,
-                  sessionId: _recordId ?? '',
-                  onAdd: _addDirectEntry,
-                  // Present = every round taken (intersection): re-adding one
-                  // shows "Already marked present."; partials still go through.
-                  isPresent: (email) => tally.confirmed
-                      .any((r) => r.email == email.toLowerCase()),
-                ),
-                const SizedBox(height: 16),
-                DupFlagSection(
-                  groups: _driver?.dupGroups ?? const {},
-                  names: tally.nameMap(),
-                  onResolve: _resolveDup,
-                ),
-                const SizedBox(height: 8),
-                MarkedRosterSection(
-                  tally: tally,
-                ),
-              ],
-            ),
+    // Back-intercept (§3.5, navigation-shell rebuild): the shell still owns
+    // tab back — in-tab back pops this tab's stack only, and this screen
+    // never leaves the shell or touches mode. The route carries its own
+    // PopScope (canPop:false) so back arriving via maybePop runs the SAME
+    // awaited teardown as the bar BackButton ([_leave]: timers → save →
+    // endHosting) before popping, instead of racing it through dispose.
+    // Single-flight ([_leaving]) + programmatic-pop ([_bypass]) guards are
+    // load-bearing against double-back mid-await. dispose() below stays
+    // the backstop (timers + non-clobbering top-up + unconditional port
+    // close), unchanged.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _bypass) return;
+        _interceptBack();
+      },
+      child: AdaptiveScaffold(
+        title: widget.courseName,
+        leading: BackButton(onPressed: () {
+          // Composition wrapper (body untouched): leaving the Live tab
+          // bumps the history-refresh tick so the Courses tab re-reads on
+          // re-show (its IndexedStack-kept state never re-reads alone).
+          _leave().whenComplete(bumpLiveHistoryTick);
+        }),
+        // Zero-intersection: no AppBar add entry — manual entry lives
+        // ONLY in the Add section below (single home). System log stays.
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.terminal_outlined),
+            tooltip: 'System log',
+            // Overlay drawer (§4.5): the radio UI keeps listening beneath
+            // it. `Expand` inside pushes the full-screen debug/log.
+            onPressed: () => showLogDrawer(context),
           ),
         ],
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Fixed control-cluster header (§7.1): elapsed clock + pulsing
+            // on-air dot + counters stay on screen while the sections
+            // scroll beneath. The dot is the only repeating motion here —
+            // everything else updates in place so the 1s elapsed tick
+            // never replays entrances (waiting rows are keyed; present
+            // rows mount static, see the roster section).
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: LiveSessionHeader(
+                live: live,
+                elapsed: elapsed,
+                present: present,
+                waiting: waiting,
+                windowsTaken: windowsTaken,
+                windowNo: _windowNo,
+                hosting: hosting,
+                hostLine: hostLine,
+                onStart: _startNext,
+                onRetake: () => _start(_windowNo),
+                onTakeAnother: _startNext,
+                // Composition wrappers (bodies untouched): stopping a round
+                // and ending attendance both upsert class history — bump the
+                // history-refresh tick so the Courses tab re-reads on
+                // re-show instead of serving its stale snapshot.
+                onStop: () =>
+                    _stopEarly().whenComplete(bumpLiveHistoryTick),
+                onEnd: () =>
+                    _endAttendance().whenComplete(bumpLiveHistoryTick),
+              ),
+            ),
+            if (_resumed)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: DraftResumedBanner(
+                  present: present,
+                  windowsTaken: windowsTaken,
+                  onDiscard: _discardDraft,
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: _LiveSubNav(
+                selected: _section,
+                inboxCount: manualPending.length,
+                onSelect: _selectSection,
+              ),
+            ),
+            Expanded(
+              // Real sub-tabs (tester fix): the sub-nav SWAPS content via
+              // this IndexedStack — each sub-tab shows ONLY its view, no
+              // shared scroll, no intersection. Inactive views stay mounted
+              // (state-preserving switch): roster search, mid-approve inbox
+              // selection, and direct-add fields survive tab switches — the
+              // reverted grouping probe failed exactly because unmounting
+              // broke the inbox approve flow. Order is the explicit
+              // product-owner order (roster/inbox/add/setup), overriding
+              // the old scroll-spy. Each tab scrolls independently.
+              child: IndexedStack(
+                index: _section,
+                children: [
+                  // 0 — Roster only: waiting + dup flags + marked (search +
+                  // present + partial). Same `LiveRosterBody` composer as
+                  // the dedicated roster screen, identical wiring. No
+                  // inbox/add/setup composition here.
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: LiveRosterBody(
+                      waitingRows: waitingRows,
+                      groups: _driver?.dupGroups ?? const {},
+                      names: tally.nameMap(),
+                      onResolve: _resolveDup,
+                      tally: tally,
+                    ),
+                  ),
+                  // 1 — Inbox only: pending manual requests. Wrappers bump
+                  // the history-refresh tick (decisions upsert history).
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: ManualInboxSection(
+                      pending: manualPending,
+                      onApproveOne: (email) => _approveOne(email)
+                          .whenComplete(bumpLiveHistoryTick),
+                      onRejectOne: (email) => _rejectOne(email)
+                          .whenComplete(bumpLiveHistoryTick),
+                      onDecide: (emails, approve) =>
+                          _decideSelected(emails, approve)
+                              .whenComplete(bumpLiveHistoryTick),
+                    ),
+                  ),
+                  // 2 — Add only: direct manual entry (the single home —
+                  // no AppBar sheet extra). The wrapper preserves the
+                  // submit's error propagation (`whenComplete` rethrows)
+                  // and bumps the tick (adds upsert history).
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: DirectAddSection(
+                      course: widget.courseName,
+                      sessionId: _recordId ?? '',
+                      onAdd: ({
+                        required String name,
+                        required String roll,
+                        required String email,
+                      }) =>
+                          _addDirectEntry(
+                                  name: name, roll: roll, email: email)
+                              .whenComplete(bumpLiveHistoryTick),
+                      // Present = every round taken (intersection):
+                      // re-adding one shows "Already marked present.";
+                      // partials still go through.
+                      isPresent: (email) => tally.confirmed
+                          .any((r) => r.email == email.toLowerCase()),
+                    ),
+                  ),
+                  // 3 — Setup only: name/IP/discovery before Start.
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: LiveSetupSection(
+                      hosting: hosting,
+                      live: live,
+                      nameCtrl: _nameCtrl,
+                      onNameChanged: (v) {
+                        try {
+                          ref.read(hostDriverProvider).setDisplayName(v);
+                        } catch (_) {}
+                      },
+                      serverLine: serverLine,
+                      allIps: _session?.allIps ?? const [],
+                      currentIp: _ip,
+                      onPickIp: _pickIp,
+                      serverError: serverError,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -19,6 +19,7 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/records/my_attendance_screen.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/routes.dart';
+import 'package:proximity_app/features/setup/setup_step_scope.dart';
 import 'package:proximity_app/screens/setup_flow_screen.dart';
 import 'package:proximity_app/screens/shells.dart';
 import 'package:proximity_app/screens/student_home.dart';
@@ -93,14 +94,14 @@ void main() {
           1);
     });
 
-    test('student role without key → device+intro step', () {
+    test('student role without key → device step (pagination split)', () {
       expect(
           setupStartIndex(
               signedIn: true,
               hasStudentRole: true,
               hasKey: false,
               phase: EnrollPhase.signedIn),
-          2);
+          SetupStep.device);
     });
 
     test('key without face → capture step', () {
@@ -110,7 +111,7 @@ void main() {
               hasStudentRole: true,
               hasKey: true,
               phase: EnrollPhase.keyReady),
-          3);
+          SetupStep.capture);
     });
 
     test('validated face → result step', () {
@@ -120,7 +121,7 @@ void main() {
               hasStudentRole: true,
               hasKey: true,
               phase: EnrollPhase.faceDone),
-          4);
+          SetupStep.result);
     });
 
     test('uploaded claim → result step', () {
@@ -130,7 +131,7 @@ void main() {
               hasStudentRole: true,
               hasKey: true,
               phase: EnrollPhase.uploaded),
-          4);
+          SetupStep.result);
     });
   });
 

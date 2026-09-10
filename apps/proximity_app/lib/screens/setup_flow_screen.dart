@@ -2,12 +2,15 @@
 //
 // One flow, two triggers: the fresh-install path (AppMode.enroll home) and
 // the Mark-tab enrollment gate (shell pushes this when linkedIdentity is
-// null). Steps, each 1:1 with an existing SCREEN_MAP entry (container
-// change, no route removal):
-//   0 Sign in (welcome) → 1 Pick role (roles hub) →
-//   2 Confirm device + about-to-enroll (combined device+intro step) →
-//   3 Capture face (5-angle session, camera logic untouched) →
-//   4 Done (save + claim outcome).
+// null). Pages, one purpose per page (## Setup pagination; container change,
+// no route removal — standalone enroll/* routes stay for deep-links):
+//   0 Sign in (welcome) → 1 Pick role (roles hub) → 2 Confirm device →
+//   3 Account & key (ID + key) → 4 Capture face (5-angle session, camera
+//   logic untouched) → 5 Done (save + claim outcome).
+//
+// (## About-page removal 2026-09-10: the About-to-enroll explainer page is
+// gone from the flow; its sections stay live on the standalone
+// deep-linkable EnrollIntroScreen.)
 //
 // Stepper chrome owned here: thin progress line (SetupProgressLine — no
 // numbered circles, no step labels; the current title lives in each step's
@@ -61,7 +64,7 @@ int setupStartIndex({
     return SetupStep.result;
   }
   if (hasKey) return SetupStep.capture;
-  return SetupStep.deviceIntro;
+  return SetupStep.device;
 }
 
 /// Serialized setup flow. See file docs for the step map and triggers.
@@ -209,8 +212,10 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
           key: ValueKey<String>(acct.email.toLowerCase()),
           account: acct,
         );
-      case SetupStep.deviceIntro:
-        return const DeviceIntroStep();
+      case SetupStep.device:
+        return const DeviceConfirmStep();
+      case SetupStep.accountKey:
+        return const AccountKeyStep();
       case SetupStep.capture:
         // Lazy camera session (see _seenCapture): an unvisited capture
         // step is an empty page, never an opened camera.
@@ -241,6 +246,10 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
         }
       },
       child: Scaffold(
+        // Single persistent progress overlay below the steps' own app bars
+        // (at the body top, inside the safe area) — never one line per
+        // page above the inner Scaffolds. Stepper behavior (start index,
+        // listeners, lazy camera mount, step back) is untouched.
         body: SetupStepScope(
           index: _index,
           count: SetupStep.count,
@@ -248,18 +257,19 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
           back: _back,
           goTo: _goTo,
           complete: () => widget.onComplete(),
-          child: PageView(
-            controller: _pages,
-            physics: const NeverScrollableScrollPhysics(),
-            onPageChanged: (i) => setState(() => _index = i),
+          child: Stack(
             children: [
-              for (var i = SetupStep.welcome; i < SetupStep.count; i++)
-                Column(
-                  children: [
-                    SetupProgressLine(index: _index, count: SetupStep.count),
-                    Expanded(child: _page(i, acct)),
-                  ],
-                ),
+              PageView(
+                controller: _pages,
+                physics: const NeverScrollableScrollPhysics(),
+                onPageChanged: (i) => setState(() => _index = i),
+                children: [
+                  for (var i = SetupStep.welcome; i < SetupStep.count; i++)
+                    _page(i, acct),
+                ],
+              ),
+              SetupProgressOverlay(
+                  index: _index, count: SetupStep.count),
             ],
           ),
         ),

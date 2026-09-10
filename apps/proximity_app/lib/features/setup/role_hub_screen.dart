@@ -15,26 +15,26 @@
 // this file owns only the hub UI.
 library;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
-import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
-import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
-import '../../widgets/web_banner.dart';
 import 'device_identity_screen.dart';
 import '../entry/entry_flow.dart';
+import 'role_sections.dart';
 
 /// Authenticated role hub. [account] comes from `accountProvider`
 /// (proposed: landing router shows this when the stream is non-null).
+///
+/// Thin composer over the [role_sections] widgets: owns the role-future
+/// cache, the busy/status state machine, and the entry_flow calls.
 class RoleHubScreen extends ConsumerStatefulWidget {
   final SignedAccount account;
   const RoleHubScreen({super.key, required this.account});
@@ -151,205 +151,34 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                         role == null) ...[
                       const Center(child: CircularProgressIndicator()),
                     ] else if (!hasProf && !hasStudent) ...[
-                      // Web records builds register nothing (no
-                      // enrollment/hosting there): roles arrive from the
-                      // cloud seed above, registered on the native app.
-                      if (kIsWeb) ...[
-                        const WebRecordsBanner(),
-                        const SizedBox(height: ProxSpacing.sm),
-                        const Text(
-                          'This sign-in holds no Proximity role yet. Register once '
-                          'in the native app, then return here to view records.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ] else if (!canUseFace()) ...[
-                        // Records-only desktop (Track 5): professor
-                        // registration only — no student enrollment UI
-                        // here at all (no dead route to it). Students
-                        // enroll once in the mobile app.
-                        Text(
-                          'Register this sign-in as professor (this desktop is records + hosting):',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        TextField(
-                          controller: _profNameCtrl,
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Professor display name (for Register as Professor)',
-                            helperText:
-                                'Gmail name is the default; shown to students.',
-                          ),
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        ProxPrimaryButton(
-                          icon: const Icon(Icons.present_to_all),
-                          label: const Text('Register as Professor'),
-                          onPressed: _busy ? null : _registerProf,
-                        ),
-                        const SizedBox(height: ProxSpacing.xs),
-                        const Text(
-                          'Student enrollment runs once in the mobile app (Android/iOS) — '
-                          'this desktop stays records + hosting only.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ] else ...[
-                        Text(
-                          'Register this sign-in (once per account):',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        TextField(
-                          controller: _profNameCtrl,
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Professor display name (for Register as Professor)',
-                            helperText:
-                                'Gmail name is the default; shown to students.',
-                          ),
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        ProxPrimaryButton(
-                          icon: const Icon(Icons.present_to_all),
-                          label: const Text('Register as Professor'),
-                          onPressed: _busy ? null : _registerProf,
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        ProxSecondaryButton(
-                          icon: const Icon(Icons.school),
-                          label: const Text('Register as Student'),
-                          onPressed: _busy ? null : _registerStudent,
-                          expanded: true,
-                        ),
-                        const SizedBox(height: ProxSpacing.xs),
-                        Text(
-                          'Same Gmail can hold both roles — switch anytime. Professor '
-                          'works on many devices; student enrollment lives on exactly '
-                          'one device (moves to a new phone once a month).',
-                          textAlign: TextAlign.center,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                        ),
-                      ],
+                      RoleRegisterSection(
+                        profNameCtrl: _profNameCtrl,
+                        busy: _busy,
+                        onRegisterProf: _registerProf,
+                        onRegisterStudent: _registerStudent,
+                      ),
                     ] else ...[
-                      for (var i = 0; i < ordered.length; i++) ...[
-                        if (i == 0)
-                          ProxPrimaryButton(
-                            icon: Icon(ordered[i] == 'prof'
-                                ? Icons.present_to_all
-                                : Icons.school),
-                            label: Text(ordered[i] == 'prof'
-                                ? 'Continue as Professor'
-                                : 'Continue as Student'),
-                            onPressed: _busy
-                                ? null
-                                : () => _continueWithRole(role!, ordered[i]),
-                          )
-                        else
-                          ProxSecondaryButton(
-                            icon: Icon(ordered[i] == 'prof'
-                                ? Icons.present_to_all
-                                : Icons.school),
-                            label: Text(ordered[i] == 'prof'
-                                ? 'Continue as Professor'
-                                : 'Continue as Student'),
-                            onPressed: _busy
-                                ? null
-                                : () => _continueWithRole(role!, ordered[i]),
-                            expanded: true,
-                          ),
-                        if (i == 0 && roleLastMode(role).isNotEmpty)
-                          const Padding(
-                            padding: EdgeInsets.only(top: ProxSpacing.xs),
-                            child: Text(
-                              'Last used — continues where you left off.',
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        const SizedBox(height: ProxSpacing.sm),
-                      ],
-                      // No extra registration on web records builds; no
-                      // student registration on records-only desktops
-                      // (Track 5 — removed, not disabled).
-                      if (!kIsWeb &&
-                          (!hasProf || (canUseFace() && !hasStudent))) ...[
-                        Text(
-                          'Add the other role on this same sign-in:',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: ProxSpacing.sm),
-                        if (!hasProf)
-                          ProxSecondaryButton(
-                            icon: const Icon(Icons.present_to_all),
-                            label: const Text('Register as Professor'),
-                            onPressed: _busy ? null : _registerProf,
-                            expanded: true,
-                          ),
-                        if (!hasStudent && canUseFace())
-                          ProxSecondaryButton(
-                            icon: const Icon(Icons.school),
-                            label: const Text('Register as Student'),
-                            onPressed: _busy ? null : _registerStudent,
-                            expanded: true,
-                          ),
-                        const SizedBox(height: ProxSpacing.xs),
-                        Text(
-                          'Professor works on many devices; student enrollment lives '
-                          'on exactly one device — it can move to a new phone once '
-                          'a week (unlimited times).',
-                          textAlign: TextAlign.center,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                        ),
-                      ],
-                      if (hasProf && !kIsWeb) ...[
-                        const SizedBox(height: ProxSpacing.sm),
-                        const Divider(),
-                        Text(
-                          'A student who lost their phone waits out the week for '
-                          're-enrollment — meanwhile mark them manually from the '
-                          'take-attendance screen (Request manual attendance or '
-                          'direct entry). No reset shortcut exists by design.',
-                          textAlign: TextAlign.center,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                        ),
-                      ],
+                      RoleResumeSection(
+                        role: role!,
+                        ordered: ordered,
+                        lastMode: roleLastMode(role),
+                        busy: _busy,
+                        onContinue: _continueWithRole,
+                      ),
+                      RoleAddRoleSection(
+                        hasProf: hasProf,
+                        hasStudent: hasStudent,
+                        busy: _busy,
+                        onRegisterProf: _registerProf,
+                        onRegisterStudent: _registerStudent,
+                      ),
                     ],
-                    const SizedBox(height: ProxSpacing.sm),
-                    TextButton.icon(
-                      icon: const Icon(Icons.devices_outlined),
-                      label: const Text('Device & identity'),
-                      onPressed: _busy ? null : _openDeviceIdentity,
+                    RoleFooterSection(
+                      busy: _busy,
+                      status: _status,
+                      onDeviceIdentity: _openDeviceIdentity,
+                      onSignOut: _signOut,
                     ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.switch_account),
-                      label: const Text('Switch account (sign out)'),
-                      onPressed: _busy ? null : _signOut,
-                    ),
-                    if (_status.isNotEmpty) ...[
-                      const SizedBox(height: ProxSpacing.sm),
-                      ProxErrorNote(_status),
-                    ],
-                    if (_busy) ...[
-                      const SizedBox(height: ProxSpacing.sm),
-                      const Center(child: CircularProgressIndicator()),
-                    ],
                   ],
                 );
               },

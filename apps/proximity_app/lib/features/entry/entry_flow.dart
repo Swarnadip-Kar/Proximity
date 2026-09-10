@@ -54,6 +54,10 @@ Future<SignedAccount?> entrySignIn(WidgetRef ref) async {
     BleLog.log('NAV', 'entry sign-in cancelled');
   } else {
     BleLog.log('NAV', 'entry sign-in ok ${acct.email.toLowerCase()}');
+    // Enrolled returner, no restart: restore the startup-preseed identity
+    // (same-Gmail match, fail-soft) so the Mark gate + join gate see the
+    // enrollment instead of routing into setup. Never throws (helper).
+    await relinkLinkedIdentity(ref, acct);
   }
   return acct;
 }
@@ -83,6 +87,43 @@ Future<void> entrySignOut(WidgetRef ref) async {
     ref.read(linkedIdentityProvider.notifier).state = null;
   } catch (_) {}
   BleLog.log('STATE', 'entry role cache cleared; landing next');
+}
+
+/// Repopulate [linkedIdentityProvider] from the on-device enrollment when
+/// it belongs to [acct] (same Gmail, case-insensitive).
+///
+/// Mirrors the startup preseed rule in `main.dart` (`initialLinked`, ~line
+/// 168) field-by-field — `LinkedIdentity(name: stored.name,
+/// gmail: stored.email, roll: stored.roll, org: stored.org)` — so a
+/// re-sign-in restores exactly what a restart would have preseeded from
+/// the same enrollment doc. Fail-soft throughout: a store read throw, an
+/// empty store, an empty account email, or a Gmail mismatch leaves state
+/// untouched (today's behavior; the setup flow handles it). No
+/// heartbeat/touch call here — no network-semantics change. Never throws
+/// (a post-await provider touch on a dead screen is swallowed, same as
+/// [entrySignOut]'s clearing touch).
+Future<void> relinkLinkedIdentity(WidgetRef ref, SignedAccount acct) async {
+  try {
+    StoredEnrollment? stored;
+    try {
+      stored = await ref.read(deviceStoreProvider).readEnrollment();
+    } catch (_) {
+      stored = null;
+    }
+    if (stored == null) return;
+    final want = acct.email.toLowerCase();
+    if (want.isEmpty) return;
+    if (stored.email.toLowerCase() != want) return;
+    final linked = LinkedIdentity(
+        name: stored.name,
+        gmail: stored.email,
+        roll: stored.roll,
+        org: stored.org);
+    try {
+      ref.read(linkedIdentityProvider.notifier).state = linked;
+    } catch (_) {}
+    BleLog.log('STATE', 'entry relink $want');
+  } catch (_) {}
 }
 
 /// Offline-professor path: no sign-in, no cloud — classes stay on this
@@ -247,20 +288,33 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
   final store = ref.read(deviceStoreProvider);
   final installId = await getOrCreateInstallId(store);
   final binding = await cloud.fetchStudentDevice(lower);
+  // Scoped install-read denial (verdict-by-evidence, same rule as the
+  // enroll pre-claim): a denied install-doc read after a clean own-doc
+  // read proves the install holds another Gmail — the rules deny
+  // cross-org install reads while a missing own doc reads clean. A bare
+  // null here used to misread that as "free to enroll"; an
+  // installConflict verdict refuses with the friendly copy instead.
+  // Other install-read failures stay null ("unknown", as before).
   String? installEmail;
+  var installDenied = false;
   try {
     installEmail = await cloud.fetchInstallEmail(installId);
+  } on StateError catch (e) {
+    if (isRulesDenialMessage(e.message)) installDenied = true;
   } catch (_) {}
   String localPk = '';
   try {
     localPk = (await store.readEnrollment())?.pkHex ?? '';
   } catch (_) {}
-  final verdict = evaluateStudentClaim(
+  final probed = evaluateStudentClaim(
       localPkHex: localPk,
       localInstallId: installId,
       binding: binding,
       installEmail: installEmail,
       email: lower);
+  final verdict = installDenied && probed.ok
+      ? const StudentClaimResult(StudentClaim.installConflict)
+      : probed;
   BleLog.log('STATE', 'entry claim gate $lower → ${verdict.claim.name}');
   // Owner-lazy six-month purge (no backend): a binding this stale is
   // already purge-eligible, so best-effort delete own user data now (rules
@@ -375,6 +429,13 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
     SignedAccount acct, Map<String, String> role, String which) async {
   BleLog.log(
       'NAV', 'entry continue $which ${acct.email.toLowerCase()}');
+  // Silent-pickup path (no fresh sign-in ran): restore the
+  // startup-preseed identity before branching so the Mark/join gates see
+  // the enrollment. Mounted-guarded per this file's law; never throws
+  // (helper).
+  if (isMounted()) {
+    await relinkLinkedIdentity(ref, acct);
+  }
   if (which == 'prof') {
     unawaited(entryMergeProfCloud(
         ref,

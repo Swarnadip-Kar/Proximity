@@ -23,6 +23,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/platformx.dart' as platformx;
 import '../design/tokens.dart';
 
 /// Hold-and-tap membership for one list. IDs are caller-owned row keys
@@ -97,6 +98,62 @@ class SelectionScope extends StatelessWidget {
             .overrideWith((ref) => SelectionController()),
       ],
       child: child,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Desktop mouse-first selection entry (tester-verified defect fix).
+//
+// Long-press is undiscoverable with a mouse, so desktop lists get two
+// mouse-first affordances alongside the unchanged touch path: an explicit
+// Select/Done toggle ([SelectionModeToggle], placed per list) and
+// right-click-to-select (wired in `student_card.dart`). Both are gated on
+// [isDesktopSelection]; both drive the SAME controller + toolbar (no new
+// selection semantics, no Checkbox widgets anywhere).
+// ---------------------------------------------------------------------------
+
+/// True on desktop platforms via the repo's existing platformx flags —
+/// never hardcoded [TargetPlatform] values. Web is excluded by the flags
+/// themselves. Gates the mouse-first affordances only; touch paths never
+/// read this (mobile behavior byte-identical).
+bool get isDesktopSelection =>
+    platformx.isMacOS || platformx.isWindows || platformx.isLinux;
+
+/// Explicit Select/Done mode toggle for hold-and-tap lists (desktop only).
+///
+/// On desktop this renders a `Select` text button that arms selection
+/// mode (plain left-clicks then toggle via the existing row behavior),
+/// switching to `Done` (disarm + clear) while armed/selecting. Arming
+/// only widens the rows' `selectionMode` in the owning list — the
+/// [SelectionController] and [SelectionToolbar] contracts are untouched.
+/// Renders nothing off-desktop (no toggle button on mobile).
+class SelectionModeToggle extends StatelessWidget {
+  /// Effective selection mode (`controller.selecting || armed`).
+  final bool selecting;
+
+  /// Arm selection mode (show `Done`, clicks toggle).
+  final VoidCallback? onSelect;
+
+  /// Disarm + clear (back to `Select`).
+  final VoidCallback? onDone;
+
+  const SelectionModeToggle({
+    super.key,
+    required this.selecting,
+    this.onSelect,
+    this.onDone,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isDesktopSelection) return const SizedBox.shrink();
+    return TextButton(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(64, ProxSpacing.minTap),
+      ),
+      onPressed: selecting ? onDone : onSelect,
+      child: Text(selecting ? 'Done' : 'Select'),
     );
   }
 }

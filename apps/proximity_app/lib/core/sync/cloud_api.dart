@@ -59,6 +59,19 @@ abstract class CloudSync {
   Future<PurgeOutcome> purgeExpiredSelfData(
       {required String emailLower, String uid = '', DateTime? now});
 
+  /// Updates the student's ID (roll) on their own binding + directory row.
+  ///
+  /// CLIENT-SIDE ONLY — requires
+  /// `firebase deploy --only firestore:rules --project proximity-attendence`
+  /// for the roll-update path to succeed in production (same rules-error
+  /// pattern as every other cloud write: permission-denied surfaces as
+  /// StateError(cloudRulesHint('id update')), never raw Firebase text).
+  /// Callers must uniqueness-check via searchStudents(rollPrefix:, org:)
+  /// before calling (collision → friendly "already held" copy, no overwrite
+  /// here). Historical session rolls/names are untouched by design.
+  Future<void> updateStudentRoll(
+      {required String emailLower, required String newRoll});
+
   /// deviceInstalls/{installId} owner Gmail, or null when this install never
   /// enrolled. Drives the same-phone second-enrollment refusal.
   Future<String?> fetchInstallEmail(String installId);

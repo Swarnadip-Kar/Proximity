@@ -7,10 +7,12 @@
 // Backend: `face_verification` plugin (^0.3.9, MIT, Android/iOS, bundled
 // FaceNet TFLite, offline) following its example/ Quick Demo pattern:
 // init() once → registerFromImagePath(id, imagePath, imageId) per still →
-// verifyFromImagePath/verifyFromImagePathIsolate(imagePath, threshold,
-// staffId). Passive only: no blink/turn-head prompts, no second ticket
+// verifyFromImagePath(imagePath, threshold, staffId) on the MAIN isolate.
+// Passive only: no blink/turn-head prompts, no second ticket
 // key — the match binds into the ALREADY-SIGNED Sig_s ticket, not a new
-// key. Marking hot path uses the isolate variant.
+// key. The isolate variant (`verifyFromImagePathIsolate`) is BANNED here:
+// its background-isolate ML Kit reply aborts the engine (SIGABRT,
+// temp.log 2026-09-10) — see face_verifier_plugin.dart.
 //
 // L1 mobile gate: every method calls [requireMobileFace] first
 // (isAndroid||isIOS via platformx) — desktop/web fail closed through
@@ -80,8 +82,10 @@ abstract class FaceVerifier {
   /// (clean re-enroll).
   Future<void> enroll(String faceId, List<String> imagePaths);
 
-  /// Verifies one still against [faceId]. Marking hot path uses the
-  /// isolate variant internally. Returns {score, match}.
+  /// Verifies one still against [faceId]. Runs on the main isolate
+  /// internally (the plugin isolate variant is banned — SIGABRT, see
+  /// above), bounded by a timeout that surfaces as a throw the callers
+  /// map to inconclusive. Returns {score, match}.
   Future<FaceVerifyResult> verify(String faceId, String imagePath,
       {double threshold = kFaceThreshold});
 

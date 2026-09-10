@@ -25,6 +25,8 @@ import 'package:permission_handler/permission_handler.dart';
 import '../core/platformx.dart';
 import '../design/tokens.dart';
 import '../features/face_identity/face_blocked.dart';
+import '../features/setup/enroll_capture_sections.dart'
+    show displayedPreviewAspect;
 
 /// Still-capture seam (navigation plumbing, NOT face math): production
 /// pushes [FaceCaptureScreen] (real camera plugin); widget tests override
@@ -454,20 +456,36 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
                     )
                   : ctl == null || !ctl.value.isInitialized
                       ? const CircularProgressIndicator()
-                      : Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CameraPreview(ctl),
-                            // The oval ACTUALLY renders on the preview: this
-                            // overlay is inside the preview Stack (not beside
-                            // it), pointer-transparent, repainting per shot.
-                            FaceCaptureOvalOverlay(
-                              progress: widget.captures <= 1
-                                  ? 1.0
-                                  : _taken / widget.captures,
-                            ),
-                          ],
+                    : Center(
+                        // Squish fix: the old StackFit.expand forced the
+                        // feed to fill the body-minus-panel area (an
+                        // arbitrary ratio), stretching faces whenever it
+                        // differed from the sensor ratio. Size the box by
+                        // the ORIENTATION-ADJUSTED ratio the plugin paints
+                        // (see displayedPreviewAspect) so the feed is never
+                        // stretched; leftovers become plain background, and
+                        // the oval draws on the true video box.
+                        child: AspectRatio(
+                          aspectRatio:
+                              displayedPreviewAspect(ctl.value),
+                          child: Stack(
+                            children: [
+                              CameraPreview(ctl),
+                              // The oval ACTUALLY renders on the preview:
+                              // this overlay fills the aspect box above
+                              // (not beside it), pointer-transparent,
+                              // repainting per shot.
+                              Positioned.fill(
+                                child: FaceCaptureOvalOverlay(
+                                  progress: widget.captures <= 1
+                                      ? 1.0
+                                      : _taken / widget.captures,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                      ),
             ),
           ),
           Padding(

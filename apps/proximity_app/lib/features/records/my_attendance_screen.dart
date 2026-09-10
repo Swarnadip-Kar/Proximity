@@ -6,6 +6,8 @@
 // totals): restyle only.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
@@ -40,6 +42,11 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
   List<ClassRecord> _sessions = [];
   Set<String> _hidden = {};
 
+  /// Last-started load wins: a stale init finishing AFTER a deliberate
+  /// refresh (e.g. its 8s probe timing out late) must not clobber the
+  /// fresher UI — completion paths check their generation and drop.
+  int _gen = 0;
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +54,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
   }
 
   Future<void> _load() async {
+    final gen = ++_gen;
     setState(() {
       _loading = true;
       _error = '';
@@ -56,7 +64,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
       final acct = ref.read(authServiceProvider).current ??
           await ref.read(accountProvider.future);
       if (acct == null) {
-        if (mounted) {
+        if (mounted && gen == _gen) {
           setState(() {
             _loading = false;
             _error = 'Sign in to view your synced attendance.';
@@ -77,56 +85,145 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
       if (!online) {
         // Offline: the last synced device copy, not a dead end. Renames
         // and fresh pushes converge here on the next online pull.
-        List<ClassRecord> cached = const [];
-        try {
-          cached = await store.readStudentSessions();
-        } catch (_) {}
-        final visible =
-            cached.where((s) => !_hidden.contains(s.id)).toList();
-        BleLog.log('SYNC',
-            'my-attendance: offline, ${visible.length} cached sessions');
-        if (mounted) {
-          setState(() {
-            _loading = false;
-            _online = false;
-            _sessions = visible;
-            _error = visible.isEmpty
-                ? 'You appear offline — connect to load synced records.'
-                : '';
-            _offlineNote = visible.isEmpty
-                ? ''
-                : 'Offline — showing last synced records.';
-          });
-        }
+        await _showCachedOffline(store, 'offline', gen);
         return;
       }
       // Identity org wins, else the Gmail domain ([orgOf]).
       final myOrg = acct.org.isNotEmpty ? acct.org : orgOf(email);
-      final sessions = await cloud.pullStudentSessions(email, org: myOrg);
-      // Device copy: same docs, same order (newest first). Professor
-      // attendance pushes and course renames land here on every pull.
+      List<ClassRecord> sessions;
       try {
-        await store.writeStudentSessions(sessions);
-      } catch (_) {}
-      final visible =
-          sessions.where((s) => !_hidden.contains(s.id)).toList();
-      BleLog.log(
-          'SYNC', 'my-attendance: pulled ${sessions.length} sessions');
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _online = true;
-          _sessions = visible;
-        });
+        // Bounded like the Firestore query itself (10s): an unbounded pull
+        // held the refresh spinner indefinitely on a dropped radio.
+        sessions = await cloud
+            .pullStudentSessions(email, org: myOrg)
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {
+        // Probe passed but the pull itself failed (radio dropped between
+        // the two): the same honest cached copy as the offline branch,
+        // never raw transport text.
+        await _showCachedOffline(store, 'pull failed', gen);
+        return;
       }
+      _applyPulled(sessions, gen);
+      await _writeCache(store, sessions);
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _gen) {
         setState(() {
           _loading = false;
           _error = '$e'.replaceFirst('StateError: ', '');
         });
       }
     }
+  }
+
+  /// Deliberate pull-to-refresh (RefreshIndicator): re-reads cloud promptly
+  /// without gating on the 8s online probe first — the probe is what stalled
+  /// the drag (up to 8s of spinner before the pull even started, then an
+  /// unbounded pull, then a cache write before the visible update). Same
+  /// pull/filter/order/cache/honesty-copy as [_load]: no new polling, no
+  /// engine call (student mode pulls directly; the engine flush is the
+  /// professor push path and was verified uninvolved here — this screen
+  /// never references it). The stale list stays visible under the indicator
+  /// (no `_loading` swap); the UI reflects the re-read on completion.
+  Future<void> _refresh() async {
+    final gen = ++_gen;
+    try {
+      final acct = ref.read(authServiceProvider).current ??
+          await ref.read(accountProvider.future);
+      if (acct == null) {
+        if (mounted && gen == _gen) {
+          setState(() {
+            _loading = false;
+            _error = 'Sign in to view your synced attendance.';
+          });
+        }
+        return;
+      }
+      final cloud = ref.read(cloudSyncProvider);
+      final store = ref.read(deviceStoreProvider);
+      try {
+        _hidden = await store.readHiddenSessions();
+      } catch (_) {}
+      final email = acct.email.toLowerCase();
+      final myOrg = acct.org.isNotEmpty ? acct.org : orgOf(email);
+      try {
+        final sessions = await cloud
+            .pullStudentSessions(email, org: myOrg)
+            .timeout(const Duration(seconds: 10));
+        _applyPulled(sessions, gen);
+        // Cache trails the visible update (see [_applyPulled]).
+        unawaited(_writeCache(store, sessions));
+      } catch (_) {
+        await _showCachedOffline(store, 'refresh offline', gen);
+      }
+    } catch (e) {
+      if (mounted && gen == _gen) {
+        setState(() {
+          _loading = false;
+          _error = '$e'.replaceFirst('StateError: ', '');
+        });
+      }
+    }
+  }
+
+  /// Online pull applied to the VISIBLE list first: the refresh indicator
+  /// and the list reflect the re-read on completion. Also clears stale
+  /// offline state (the init path used to rely on its entry `_loading`
+  /// reset; refresh keeps the list up so it must clear here). Same docs,
+  /// same newest-first order, same hidden filter as before. Drops silently
+  /// when a newer load started after ([_gen]).
+  void _applyPulled(List<ClassRecord> sessions, int gen) {
+    if (!mounted || gen != _gen) return;
+    final visible =
+        sessions.where((s) => !_hidden.contains(s.id)).toList();
+    BleLog.log(
+        'SYNC', 'my-attendance: pulled ${sessions.length} sessions');
+    setState(() {
+      _loading = false;
+      _online = true;
+      _error = '';
+      _offlineNote = '';
+      _sessions = visible;
+    });
+  }
+
+  /// Device-copy write, best-effort AFTER the visible update (it used to be
+  /// awaited before `setState`, so a slow cache write held the refresh
+  /// hostage). Professor pushes and renames still land in the device copy
+  /// on every pull — ordering only, same content.
+  Future<void> _writeCache(
+      DeviceStore store, List<ClassRecord> sessions) async {
+    try {
+      await store.writeStudentSessions(sessions);
+    } catch (_) {}
+  }
+
+  /// Last-synced device copy with the honest offline strings, shared by the
+  /// init probe, a failed pull, and a failed refresh — same copy everywhere.
+  /// Drops silently when a newer load started after ([_gen]).
+  Future<void> _showCachedOffline(
+      DeviceStore store, String why, int gen) async {
+    if (gen != _gen) return;
+    List<ClassRecord> cached = const [];
+    try {
+      cached = await store.readStudentSessions();
+    } catch (_) {}
+    if (!mounted || gen != _gen) return;
+    final visible =
+        cached.where((s) => !_hidden.contains(s.id)).toList();
+    BleLog.log(
+        'SYNC', 'my-attendance: $why, ${visible.length} cached sessions');
+    setState(() {
+      _loading = false;
+      _online = false;
+      _sessions = visible;
+      _error = visible.isEmpty
+          ? 'You appear offline — connect to load synced records.'
+          : '';
+      _offlineNote = visible.isEmpty
+          ? ''
+          : 'Offline — showing last synced records.';
+    });
   }
 
   Future<void> _openCourse(String course, List<ClassRecord> sessions,
@@ -182,7 +279,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
           constraints:
               const BoxConstraints(maxWidth: ProxSpacing.maxContentWidth),
           child: RefreshIndicator(
-            onRefresh: _load,
+            onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.symmetric(

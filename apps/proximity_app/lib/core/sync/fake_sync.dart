@@ -107,6 +107,67 @@ class FakeCloudSync implements CloudSync {
   Future<String?> fetchInstallEmail(String installId) async =>
       installs[installId];
 
+  /// Test seam for the rules-denied branch: when true, [updateStudentRoll]
+  /// throws StateError(cloudRulesHint('id update')) like production rules
+  /// would before a rules deploy.
+  bool denyIdUpdate = false;
+
+  @override
+  Future<void> updateStudentRoll(
+      {required String emailLower, required String newRoll}) async {
+    _needOnline();
+    // CLIENT-SIDE ONLY — production needs
+    // `firebase deploy --only firestore:rules --project proximity-attendence`
+    // for this path; denied rules surface as the deploy hint (existing
+    // rules-error pattern), never raw text.
+    if (denyIdUpdate) throw StateError(cloudRulesHint('id update'));
+    final want = newRoll.trim();
+    if (want.isEmpty) throw StateError('ID Number is required.');
+    final key = emailLower.toLowerCase();
+    final binding = devices[key];
+    if (binding == null) {
+      throw StateError(
+          'No enrolled device found for this account — enroll this device first.');
+    }
+    final atMillis = DateTime.now().toUtc().millisecondsSinceEpoch;
+    devices[key] = StudentDeviceDoc(
+      email: binding.email,
+      uid: binding.uid,
+      pkHex: binding.pkHex,
+      name: binding.name,
+      roll: want,
+      modelVer: binding.modelVer,
+      installId: binding.installId,
+      platform: binding.platform,
+      org: binding.org,
+      createdAtMillis: binding.createdAtMillis,
+      lastMoveAtMillis: binding.lastMoveAtMillis,
+      lastSeenAtMillis: binding.lastSeenAtMillis,
+      updatedAtMillis: atMillis,
+      moveCount: binding.moveCount,
+      pkDHex: binding.pkDHex,
+      attestationLevel: binding.attestationLevel,
+      attestedAtMillis: binding.attestedAtMillis,
+      attestedUntilMillis: binding.attestedUntilMillis,
+    );
+    final row = dir[key];
+    if (row != null) {
+      dir[key] = StudentDirectoryEntry(
+          email: row.email,
+          name: row.name,
+          roll: want,
+          org: row.org,
+          updatedAtMillis: atMillis);
+    } else {
+      dir[key] = StudentDirectoryEntry(
+          email: key,
+          name: binding.name,
+          roll: want,
+          org: binding.org,
+          updatedAtMillis: atMillis);
+    }
+  }
+
   @override
   Future<List<StudentDirectoryEntry>> searchStudents(
       {String emailPrefix = '',

@@ -1,0 +1,258 @@
+// Desktop Select + live inbox (tester-verified defects, 2026-09-10).
+//
+// FIX 1 — mouse-first selection, checkbox-free (no Checkbox widgets
+// anywhere): desktop shows an explicit Select/Done toggle per selectable
+// list (inbox + sessions multi-delete); plain left-clicks toggle while
+// selecting (existing row behavior); right-click (secondary tap) enters
+// selection with that row. Mobile path unchanged (long-press entry, no
+// toggle, same coach-mark copy). Same controller, same toolbar.
+//
+// FIX 2 — inbox live updates: ManualInboxSection self-refreshes on the
+// existing 2s cadence (local driver reads only); arrivals appear without
+// navigation; decided rows still clear via the existing decide + prune
+// paths.
+//
+// Platform-override hygiene: `debugDefaultTargetPlatformOverride` must be
+// cleared inline (try/finally) before the test body completes — the
+// flutter_test binding verifies foundation vars before `tearDown`
+// callbacks run, so a tearDown-only reset fails every test.
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/ble_radio.dart';
+import 'package:proximity_app/core/device_store.dart';
+import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/student_driver.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/live/manual_inbox.dart';
+import 'package:proximity_app/features/records/course_overview_screen.dart';
+import 'package:proximity_ble/ble.dart';
+import 'package:proximity_storage/storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+Widget _inbox({
+  required List<ManualRow> pending,
+  Future<void> Function(String email)? onApproveOne,
+  Future<void> Function(String email)? onRejectOne,
+  Future<void> Function(List<String> emails, bool approve)? onDecide,
+}) =>
+    MaterialApp(
+      theme: proxLightTheme(),
+      home: Scaffold(
+        body: ManualInboxSection(
+          pending: pending,
+          onApproveOne: onApproveOne ?? (_) async {},
+          onRejectOne: onRejectOne ?? (_) async {},
+          onDecide: onDecide ?? (_, __) async {},
+        ),
+      ),
+    );
+
+const _rows = [
+  ManualRow(email: 'a@x.in', name: 'A One', roll: '11'),
+  ManualRow(email: 'b@x.in', name: 'B Two', roll: '12'),
+];
+
+/// Runs [body] under a platform override, clearing it inline before the
+/// test completes (see file header).
+Future<void> _asPlatform(
+    TargetPlatform platform, Future<void> Function() body) async {
+  debugDefaultTargetPlatformOverride = platform;
+  try {
+    await body();
+  } finally {
+    debugDefaultTargetPlatformOverride = null;
+  }
+}
+
+ProviderScope _scopedSessions(InMemoryDeviceStore s, Widget home) =>
+    ProviderScope(
+      overrides: [
+        deviceStoreProvider.overrideWithValue(s),
+        hostDriverProvider.overrideWithValue(FakeHostDriver()),
+        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
+        bleEngineProvider
+            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
+        blePermissionProvider.overrideWithValue(() async => true),
+        cameraPermissionProvider.overrideWithValue(() async => true),
+        btPowerProvider.overrideWithValue(() async => BtState.on),
+      ],
+      child: MaterialApp(theme: proxLightTheme(), home: home),
+    );
+
+void main() {
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  testWidgets('desktop inbox: Select arms, click toggles, Done exits',
+      (t) async {
+    await _asPlatform(TargetPlatform.macOS, () async {
+      SharedPreferences.setMockInitialValues({});
+      await t.pumpWidget(_inbox(pending: _rows));
+      await t.pumpAndSettle();
+      // Explicit mode toggle on desktop; coach-mark copy unchanged.
+      expect(find.text('Select'), findsOneWidget);
+      expect(find.text('Hold to select'), findsOneWidget);
+      expect(find.text('Approve 1'), findsNothing);
+      // Arm: Done replaces Select, nothing selected yet.
+      await t.tap(find.text('Select'));
+      await t.pumpAndSettle();
+      expect(find.text('Done'), findsOneWidget);
+      expect(find.text('Approve 1'), findsNothing);
+      // Plain left-click toggles while armed (existing row behavior).
+      await t.tap(find.text('A One'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsOneWidget);
+      expect(find.text('Select all'), findsOneWidget);
+      await t.tap(find.text('B Two'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 2'), findsOneWidget);
+      // Done exits entirely.
+      await t.tap(find.text('Done'));
+      await t.pumpAndSettle();
+      expect(find.text('Select'), findsOneWidget);
+      expect(find.text('Approve 1'), findsNothing);
+      // Checkbox-free throughout.
+      expect(find.byType(Checkbox), findsNothing);
+      expect(find.byType(CheckboxListTile), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  testWidgets('desktop inbox: right-click enters selection with that row',
+      (t) async {
+    await _asPlatform(TargetPlatform.macOS, () async {
+      await t.pumpWidget(_inbox(pending: _rows));
+      await t.pumpAndSettle();
+      await t.tap(find.text('A One'), buttons: kSecondaryMouseButton);
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsOneWidget);
+      expect(find.byType(Checkbox), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  testWidgets('mobile inbox: no toggle, secondary no-op, long-press intact',
+      (t) async {
+    await _asPlatform(TargetPlatform.android, () async {
+      SharedPreferences.setMockInitialValues({});
+      await t.pumpWidget(_inbox(pending: _rows));
+      await t.pumpAndSettle();
+      // No mode toggle on touch devices; same coach-mark copy.
+      expect(find.text('Select'), findsNothing);
+      expect(find.text('Done'), findsNothing);
+      expect(find.text('Hold to select'), findsOneWidget);
+      // Secondary tap is unwired on mobile: selects nothing, acts nothing.
+      await t.tap(find.text('A One'), buttons: kSecondaryMouseButton);
+      await t.pump();
+      expect(find.text('Approve 1'), findsNothing);
+      // Long-press entry unchanged, taps toggle, Cancel exits.
+      await t.longPress(find.text('A One'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsOneWidget);
+      await t.tap(find.text('B Two'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 2'), findsOneWidget);
+      await t.tap(find.byTooltip('Cancel'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  testWidgets('desktop sessions: Select arms, click toggles, Done exits',
+      (t) async {
+    await _asPlatform(TargetPlatform.macOS, () async {
+      final s = InMemoryDeviceStore();
+      await s.addCourse('CS201');
+      await s.appendHistory(ClassRecord(
+        courseId: 'CS201',
+        classLabel: 'CS201',
+        dateIso: '2026-09-03',
+        w1: const {'a@x.in': true},
+        w2: const {'a@x.in': false},
+        names: const {'a@x.in': 'A'},
+        rolls: const {'a@x.in': '1'},
+      ));
+      await t.pumpWidget(
+          _scopedSessions(s, const CourseOverviewScreen(courseName: 'CS201')));
+      await t.pumpAndSettle();
+      expect(find.text('Select'), findsOneWidget);
+      expect(find.text('Delete 1'), findsNothing);
+      await t.tap(find.text('Select'));
+      await t.pumpAndSettle();
+      expect(find.text('Done'), findsOneWidget);
+      // Plain left-click toggles the session row while armed (no detail
+      // navigation — the tap selects instead).
+      await t.tap(find.textContaining('Thu, 3 Sep'));
+      await t.pumpAndSettle();
+      expect(find.text('Delete 1'), findsOneWidget);
+      expect(find.text('Select all'), findsOneWidget);
+      await t.tap(find.text('Done'));
+      await t.pumpAndSettle();
+      expect(find.text('Select'), findsOneWidget);
+      expect(find.text('Delete 1'), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  testWidgets('inbox self-refresh: arrival appears, decided row clears',
+      (t) async {
+    await _asPlatform(TargetPlatform.macOS, () async {
+      final host = FakeHostDriver();
+      await host.startHosting(classLabel: 'CS201');
+      host.seedManual(const [
+        ManualRow(email: 'a@x.in', name: 'A One', roll: '11'),
+      ]);
+      await t.pumpWidget(ProviderScope(
+        overrides: [hostDriverProvider.overrideWithValue(host)],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Scaffold(
+            body: ManualInboxSection(
+              pending: host.manualPending,
+              onApproveOne: (e) => host.decideManual(e, true),
+              onRejectOne: (e) => host.decideManual(e, false),
+              onDecide: (emails, approve) async {
+                for (final e in emails) {
+                  await host.decideManual(e, approve);
+                }
+              },
+            ),
+          ),
+        ),
+      ));
+      await t.pumpAndSettle();
+      expect(find.text('Manual requests (1)'), findsOneWidget);
+      expect(find.text('B Two'), findsNothing);
+      // Arrival injected mid-mount: no navigation, no parent rebuild —
+      // the section's 2s self-refresh picks it up from local driver state.
+      host.seedManual(const [
+        ManualRow(email: 'a@x.in', name: 'A One', roll: '11'),
+        ManualRow(email: 'b@x.in', name: 'B Two', roll: '12'),
+      ]);
+      await t.pump(const Duration(seconds: 2));
+      await t.pumpAndSettle();
+      expect(find.text('Manual requests (2)'), findsOneWidget);
+      expect(find.text('B Two'), findsOneWidget);
+      // Existing decide path still clears the row: approve the arrival,
+      // selection drops via the prune path and the row leaves on refresh.
+      await t.longPress(find.text('B Two'));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsOneWidget);
+      await t.tap(find.text('Approve 1'));
+      await t.pump();
+      await t.pump(const Duration(seconds: 1));
+      await t.pump(const Duration(seconds: 2));
+      await t.pumpAndSettle();
+      expect(find.text('Approve 1'), findsNothing);
+      expect(find.text('Manual requests (1)'), findsOneWidget);
+      expect(find.text('B Two'), findsNothing);
+      expect(find.text('A One'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+  });
+}

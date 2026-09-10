@@ -25,16 +25,15 @@ import '../core/student_driver.dart';
 import '../core/sync/org.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
-import '../features/setup/enroll_flow.dart';
 import '../features/mark/browse_classes.dart';
 import '../features/mark/face_check.dart';
 import '../features/mark/manual_status.dart';
 import '../features/mark/mark_flow.dart';
 import '../features/mark/mark_phase.dart';
+import '../features/mark/paused_view.dart';
 import '../features/mark/proving_view.dart';
-import '../features/mark/verdict_view.dart';
+import '../features/mark/verdict_section.dart';
 import '../features/mark/waiting_room.dart';
-import '../features/records/my_attendance_screen.dart';
 import '../main.dart';
 import '../mode.dart';
 import '../widgets/log_drawer.dart';
@@ -1220,10 +1219,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
   }
 
-  Widget _browsing(
-      BuildContext context, LinkedIdentity? linked, String identityLine) {
+  Widget _browsing(BuildContext context, String identityLine) {
+    // Mark slim-down: no enrollment entry and no records entry on this
+    // screen (Setup/Account own enrollment, Courses owns records; the Mark
+    // gate already routes unenrolled users). Only wiring lives here —
+    // callbacks stay host-owned (nav/gate logic untouched).
     return BrowseClassesView(
-      linked: linked,
       identityLine: identityLine,
       ipInitial: _fieldInitial,
       onIpChanged: (v) {
@@ -1266,17 +1267,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               org: c.last.org);
         }
       },
-      onEnroll: () {
-        BleLog.log(ProxLogTags.nav, 'browse → enroll bundle');
-        EnrollFlow.openBundle(context).then((_) {
-          if (mounted) setState(() {});
-        });
-      },
-      onViewRecords: () {
-        BleLog.log(ProxLogTags.nav, 'browse → records');
-        Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const MyAttendanceScreen()));
-      },
       onRefresh: () async {
         if (mounted) setState(() => _live = _allLive());
       },
@@ -1302,8 +1292,22 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // Browsing never exits to the roles hub, and waiting / face / proving
     // end only via their explicit Cancel/Leave actions (timers, drivers,
     // relays, and drafts untouched).
+    //
+    // Verdict-back exception (tester fix, verdict phases only): back from
+    // any terminal verdict (marked/late/manual-decided/wrong-org/
+    // needs-review/no-signal) lands DIRECTLY on mark/browse — the phase
+    // resets to browsing in one step, never stepping through
+    // waiting/face/proving. Waiting/face/proving/listening still end only
+    // via their explicit Cancel/Leave actions above (this scope stays
+    // pass-through there); the shell keeps owning those backs.
     final target = _parseTarget();
-    return AdaptiveScaffold(
+    return PopScope(
+      canPop: !_isVerdictPhase(phase),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_isVerdictPhase(phase)) _cancelToBrowsing();
+      },
+      child: AdaptiveScaffold(
       title: 'Student — Join class',
       actions: [
         IconButton(
@@ -1322,7 +1326,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       body: MarkFlowShell(
         phase: phase,
         child: switch (phase) {
-          StudentPhase.browsing => _browsing(context, linked, identityLine),
+          StudentPhase.browsing => _browsing(context, identityLine),
           StudentPhase.waiting => WaitingRoomView(
               connected: _connected,
               roomClass: _roomClass.isNotEmpty
@@ -1352,37 +1356,25 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               status: listenStatus,
               driftBanner: _driftBanner(),
             ),
-          StudentPhase.marked => MarkVerdictView(
-              kind: MarkVerdict.marked,
-              detail: ackDetail,
+          // Terminal verdicts (composition lives in `verdict_section.dart`):
+          // every verdict back runs the SAME `_cancelToBrowsing` teardown
+          // so back lands directly on browsing in one step. Retry/manual
+          // callbacks stay host-owned (flow logic untouched).
+          StudentPhase.marked ||
+          StudentPhase.late ||
+          StudentPhase.wrongOrg ||
+          StudentPhase.needsReview ||
+          StudentPhase.noSignal =>
+            markVerdictSection(
+              phase: phase,
+              ackDetail: ackDetail,
+              infoDetail: infoDetail,
+              wrongClassOrg: wrongClassOrg,
+              wrongMyOrg: wrongMyOrg,
               roundMarks: _roundMarks,
-              onRetryFace: () {},
-              onManualInstead: () {},
-              onBack: () {},
-            ),
-          StudentPhase.late => MarkVerdictView(
-              kind: MarkVerdict.late,
-              detail: ackDetail,
-              roundMarks: _roundMarks,
-              onRetryFace: () {},
-              onManualInstead: _requestManual,
-              onBack: () {},
-            ),
-          StudentPhase.wrongOrg => MarkVerdictView(
-              kind: MarkVerdict.wrongOrg,
-              detail: ackDetail,
-              classOrg: wrongClassOrg,
-              myOrg: wrongMyOrg,
-              roundMarks: const [],
-              onRetryFace: () {},
-              onManualInstead: _requestManual,
-              onBack: () => setState(() => phase = StudentPhase.browsing),
-            ),
-          StudentPhase.needsReview => MarkVerdictView(
-              kind: MarkVerdict.needsReview,
-              detail: '',
-              roundMarks: const [],
               attemptsLeft: 4 - _faceAttempts,
+              onBackToBrowsing: _cancelToBrowsing,
+              onRequestManual: _requestManual,
               onRetryFace: () {
                 final t = _waitingTarget ?? target;
                 final l = linked;
@@ -1391,34 +1383,28 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                   _scheduleAutoScan(t, l);
                 }
               },
-              onManualInstead: _requestManual,
-              onBack: () => setState(() => phase = StudentPhase.browsing),
             ),
-          StudentPhase.noSignal => MarkVerdictView(
-              kind: MarkVerdict.noSignal,
-              detail: ackDetail,
-              infoDetail: infoDetail,
-              roundMarks: const [],
-              onRetryFace: () {},
-              onManualInstead: _requestManual,
+          StudentPhase.paused => PausedView(
               onBack: () => setState(() => phase = StudentPhase.browsing),
-            ),
-          StudentPhase.paused => Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Paused — reopen'),
-                  const SizedBox(height: 8),
-                  FilledButton(
-                    onPressed: () =>
-                        setState(() => phase = StudentPhase.browsing),
-                    child: const Text('Back to join'),
-                  ),
-                ],
-              ),
             ),
         },
       ),
+      ),
     );
   }
+
+  /// Terminal verdict phases: back (explicit or system) resets directly to
+  /// browsing in one step. Waiting/face/proving/listening are NOT here —
+  /// they end only via their explicit Cancel/Leave actions, and manual-
+  /// pending keeps its own Back (same browsing teardown, separate arm).
+  /// Paused keeps its own `Back to join` (same browsing destination).
+  static bool _isVerdictPhase(StudentPhase phase) => switch (phase) {
+        StudentPhase.marked ||
+        StudentPhase.late ||
+        StudentPhase.wrongOrg ||
+        StudentPhase.needsReview ||
+        StudentPhase.noSignal =>
+          true,
+        _ => false,
+      };
 }

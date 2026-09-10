@@ -6,6 +6,19 @@
 // (same record id, startIso preserved). Web records builds never reach the
 // editor — SessionDetailScreen covers viewing there; [readOnly] keeps the
 // same guarantee if one is ever pushed on web.
+//
+// Layout (tester-directed, presentation only): two sub-tabs — Marks (person
+// rows + partial + absent quick lists + Save) and Add person (the
+// ManualAddForm edit-* + queue behavior, unchanged). The sub-nav SWAPS
+// content via an IndexedStack — each sub-tab shows ONLY its view, no shared
+// scroll; inactive views stay mounted so their state survives switches.
+// Draft-preservation contract (documented, no silent loss): typing in Add
+// person then switching to Marks (or back) preserves the unsent form input
+// (controllers stay mounted); Save lives on Marks only and persists the
+// *marked* state — it does NOT consume a typed-but-unsent Add draft. The
+// professor must tap `Add & mark present` on the Add tab first, then Save
+// on Marks. Web readOnly hides the Add tab exactly as the inline form was
+// hidden (parity: no toggles, adds, removes, or save).
 library;
 
 import 'dart:async';
@@ -50,6 +63,12 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
   late List<Map<String, bool>> _windows;
   late Map<String, String> _names;
   late Map<String, String> _rolls;
+
+  /// Active sub-tab (0 Marks, 1 Add person). State-preserving by
+  /// construction (IndexedStack keeps the inactive view mounted — the Add
+  /// form draft survives switches). Forced to 0 under [readOnly] (the Add
+  /// tab is hidden there, parity with the old inline form).
+  int _tab = 0;
 
   @override
   void initState() {
@@ -210,6 +229,120 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
     showLogDrawer(context);
   }
 
+  void _selectTab(int i) {
+    setState(() => _tab = i);
+  }
+
+  /// Marks sub-tab content: partial + absent quick lists, person rows,
+  /// Save (Save stays here only). Data widgets byte-identical to the old
+  /// single-scroll layout — only the Add form moved out.
+  Widget _marksTab(
+      BuildContext context,
+      List<String> persons,
+      List<PartialEntry> partials,
+      List<RosterEntry> absent) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (partials.isNotEmpty)
+          ProxCard(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ProxSectionHeader(
+                  title: 'Partial in this session (${partials.length})',
+                  padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                ),
+                for (final e in partials)
+                  ProxListTile(
+                    dense: true,
+                    title: e.name,
+                    subtitle:
+                        '${e.sessions.first.$3} · ${rosterSubtitle(e.roll, e.email)}',
+                    trailing: widget.readOnly
+                        ? null
+                        : TextButton(
+                            child: const Text('Mark present'),
+                            onPressed: () => _markPresent(e.email),
+                          ),
+                  ),
+              ],
+            ),
+          ),
+        if (absent.isNotEmpty)
+          ProxCard(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ProxSectionHeader(
+                  title: 'Absent (${absent.length})',
+                  padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
+                ),
+                Text(
+                  'Attended another session of this course.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                for (final m in absent)
+                  ProxListTile(
+                    dense: true,
+                    title: m.name,
+                    subtitle: rosterSubtitle(m.roll, m.email),
+                    trailing: widget.readOnly
+                        ? null
+                        : TextButton(
+                            child: const Text('Mark present'),
+                            onPressed: () => _markPresent(m.email,
+                                name: m.name, roll: m.roll),
+                          ),
+                  ),
+              ],
+            ),
+          ),
+        // Restrained motion: person rows stagger on load only (capped),
+        // keyed by email so ticking a checkbox never replays entrances.
+        for (var pi = 0; pi < persons.length; pi++)
+          ProxFadeSlideIn(
+            key: ValueKey<String>('person-${persons[pi]}'),
+            delay: Duration(
+                milliseconds:
+                    (pi * ProxDurations.staggerStep.inMilliseconds).clamp(
+                        0, ProxDurations.staggerCap.inMilliseconds)),
+            child: _personTile(persons[pi]),
+          ),
+        if (!widget.readOnly) ...[
+          const SizedBox(height: 16),
+          ProxPrimaryButton(
+            icon: const Icon(Icons.save),
+            label: const Text('Save changes'),
+            onPressed: _save,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Add-person sub-tab content: the ManualAddForm edit-* + queue behavior,
+  /// unchanged (same fieldPrefix/course/sessionId/onAdd/isPresent). Kept
+  /// mounted in the IndexedStack so unsent input survives tab switches.
+  Widget _addTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: ManualAddForm(
+        fieldPrefix: 'edit',
+        course: widget.record.courseId.isNotEmpty
+            ? widget.record.courseId
+            : widget.record.classLabel,
+        sessionId: widget.record.id,
+        onAdd: _add,
+        isPresent: _isPresent,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final persons = _persons;
@@ -218,6 +351,10 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
     // the professor ticks boxes or marks people present).
     final partials = partialsOfCourse([_draft]);
     final absent = _absent;
+    // Web readOnly parity: the Add tab is hidden exactly as the inline
+    // form was (no second tab, Marks content only).
+    final showTabs = !widget.readOnly;
+    final tab = showTabs ? _tab : 0;
     return AdaptiveScaffold(
       title: 'Edit attendance',
       actions: [
@@ -227,112 +364,56 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
           onPressed: _openLog,
         ),
       ],
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            '${widget.record.classLabel} · ${widget.record.dateIso}',
-            style: Theme.of(context).textTheme.titleMedium,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${widget.record.classLabel} · ${widget.record.dateIso}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text('$present present · ${persons.length} listed'),
+                if (widget.readOnly) ...[
+                  const SizedBox(height: 8),
+                  const WebRecordsBanner(),
+                ],
+              ],
+            ),
           ),
-          const SizedBox(height: 4),
-          Text('$present present · ${persons.length} listed'),
-          if (widget.readOnly) ...[
-            const SizedBox(height: 8),
-            const WebRecordsBanner(),
-          ],
-          const SizedBox(height: 12),
-          if (partials.isNotEmpty)
-            ProxCard(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ProxSectionHeader(
-                    title: 'Partial in this session (${partials.length})',
-                    padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-                  ),
-                  for (final e in partials)
-                    ProxListTile(
-                      dense: true,
-                      title: e.name,
-                      subtitle:
-                          '${e.sessions.first.$3} · ${rosterSubtitle(e.roll, e.email)}',
-                      trailing: widget.readOnly
-                          ? null
-                          : TextButton(
-                              child: const Text('Mark present'),
-                              onPressed: () => _markPresent(e.email),
-                            ),
-                    ),
+          if (showTabs)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('Marks')),
+                  ButtonSegment(value: 1, label: Text('Add person')),
                 ],
+                selected: {tab},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => _selectTab(s.first),
               ),
             ),
-          if (absent.isNotEmpty)
-            ProxCard(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ProxSectionHeader(
-                    title: 'Absent (${absent.length})',
-                    padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
-                  ),
-                  Text(
-                    'Attended another session of this course.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                  for (final m in absent)
-                    ProxListTile(
-                      dense: true,
-                      title: m.name,
-                      subtitle: rosterSubtitle(m.roll, m.email),
-                      trailing: widget.readOnly
-                          ? null
-                          : TextButton(
-                              child: const Text('Mark present'),
-                              onPressed: () => _markPresent(m.email,
-                                  name: m.name, roll: m.roll),
-                            ),
-                    ),
-                ],
-              ),
-            ),
-          // Restrained motion: person rows stagger on load only (capped),
-          // keyed by email so ticking a checkbox never replays entrances.
-          for (var pi = 0; pi < persons.length; pi++)
-            ProxFadeSlideIn(
-              key: ValueKey<String>('person-${persons[pi]}'),
-              delay: Duration(
-                  milliseconds:
-                      (pi * ProxDurations.staggerStep.inMilliseconds).clamp(
-                          0, ProxDurations.staggerCap.inMilliseconds)),
-              child: _personTile(persons[pi]),
-            ),
-          if (!widget.readOnly) ...[
-            const SizedBox(height: 12),
-            const ProxSectionHeader(
-              title: 'Add person',
-              padding: EdgeInsets.zero,
-            ),
-            ManualAddForm(
-              fieldPrefix: 'edit',
-              course: widget.record.courseId.isNotEmpty
-                  ? widget.record.courseId
-                  : widget.record.classLabel,
-              sessionId: widget.record.id,
-              onAdd: _add,
-              isPresent: _isPresent,
-            ),
-            const SizedBox(height: 16),
-            ProxPrimaryButton(
-              icon: const Icon(Icons.save),
-              label: const Text('Save changes'),
-              onPressed: _save,
-            ),
-          ],
+          Expanded(
+            child: showTabs
+                // Real sub-tabs: the sub-nav SWAPS content via this
+                // IndexedStack — each sub-tab shows ONLY its view, no
+                // shared scroll, no intersection. Inactive views stay
+                // mounted (state-preserving switch): Add-person input
+                // survives tab switches; Save stays on Marks.
+                ? IndexedStack(
+                    index: tab,
+                    children: [
+                      _marksTab(context, persons, partials, absent),
+                      _addTab(),
+                    ],
+                  )
+                : _marksTab(context, persons, partials, absent),
+          ),
         ],
       ),
     );

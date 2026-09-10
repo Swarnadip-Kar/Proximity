@@ -1,20 +1,21 @@
-// Enrollment boundary + beacon + two-oval contracts.
+// Enrollment boundary + beacon + single-oval contracts (override
+// 2026-09-10 — see INTEGRATION_LOG.md `## Overlay redesign`).
 // (UI-boundary overflow fix, area stability, overlay layering verdict.)
 //
-// Elongation root cause was bottom-slot sizing (single prompt vs original
-// prompt+status+button enlarged the preview area; Stack tight +
-// CameraPreview AspectRatio-ignore stretches the feed to the area), so these
-// pin the device-boundary path: Scaffold defaults, no SafeArea double-apply,
-// no constraining wrappers/fixed boxes in the preview path, AppBar height,
-// identical preview area in EVERY lifecycle variant (mid-flow, validated,
-// save-error, after back-navigation), and the researched layering decision
-// (chrome stays overlay — the two-oval overlay paints inside the preview
-// Stack, prompt/buttons sit in the bottom bar, never inline above the feed,
-// never copy inside the Stack). Two-oval tests pin green-outer/blue-inner distinctness
-// (colors, radii, jobs) and reduced-motion steady glows. Clock: the beacon
-// timer is periodic — drive live sessions with bounded pumps, never
-// pumpAndSettle with the session mounted (settle only once the loop and
-// sweep are stopped: result screen, validated-after-back, save-error).
+// Squish fix is the bare surface (zero-treatment frame as a direct child
+// of a loose, centered Stack — see `## Capture preview fidelity`), so
+// these pin the device-boundary path: edge-to-edge Scaffold (body behind
+// the transparent app bar — see `## Edge-to-edge capture`), no SafeArea
+// double-apply, no wrapper of any kind, overlay + toast layering, and the
+// researched layering decision (chrome stays overlay — the single-oval
+// overlay paints inside the preview Stack, the prompt rides the overlay
+// below the oval, buttons sit in the bottom bar, never inline above the
+// feed, never extra copy inside the Stack). Single-oval tests pin the
+// guide rect + comet geometry and the reduce-motion minimal tail.
+// Clock: the beacon timer is periodic — drive live sessions with bounded
+// pumps, never pumpAndSettle with the session mounted (settle only once
+// the loop and sweep are stopped: result screen, validated-after-back,
+// save-error).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,11 +101,14 @@ Future<void> _pumpUntil(WidgetTester t, Finder f, {int ticks = 60}) async {
   fail('auto-capture loop never settled: $f');
 }
 
-/// The preview Stack: the only StackFit.expand Stack carrying the two-oval
-/// overlay (Navigator/Overlay internals use loose fits, so this is unique).
+/// The preview Stack: the only loose, centered Stack carrying the
+/// single-oval overlay (Navigator/Overlay internals use different fits, so
+/// this is unique). Loose + centered is the bare-surface contract: the
+/// frame self-sizes to its native aspect and is never force-filled.
 Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
     w is Stack &&
-    w.fit == StackFit.expand &&
+    w.fit == StackFit.loose &&
+    w.alignment == Alignment.center &&
     w.children.whereType<CaptureOverlay>().isNotEmpty);
 
 void main() {
@@ -116,10 +120,13 @@ void main() {
       await _openSession(t);
       final scaffold =
           t.element(find.byType(Scaffold).last).widget as Scaffold;
-      // Defaults: keyboard-aware, body below AppBar, never behind system UI.
+      // Edge-to-edge (2026-09-10 `## Edge-to-edge capture`, supersedes the
+      // old body-below-AppBar pin): keyboard-aware, body fullscreen behind
+      // the status bar + transparent overlay app bar; chrome avoids the
+      // notch via SafeArea overlays while the video paints under it.
       expect(scaffold.resizeToAvoidBottomInset ?? true, isTrue);
-      expect(scaffold.extendBody, isFalse);
-      expect(scaffold.extendBodyBehindAppBar, isFalse);
+      expect(scaffold.extendBody, isTrue);
+      expect(scaffold.extendBodyBehindAppBar, isTrue);
       // Same AppBar height (default toolbar, no custom preferredSize).
       final appBar =
           t.element(find.byType(AppBar).last).widget as AppBar;
@@ -161,24 +168,23 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('mid-flow keeps single prompt + overlay, reserves original height',
+    testWidgets('mid-flow keeps single prompt + overlay, no reservation',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // Single static prompt + the two-oval overlay exactly (no dots, no
-      // per-angle labels — §6.2).
+      // Single static prompt (overlay-owned) + the single-oval overlay
+      // exactly (no dots, no per-angle labels — override 2026-09-10).
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(find.byType(CaptureOverlay), findsOneWidget);
-      // Invisible original-height reservation (boundary parity, no semantics).
-      final reservations = find.byWidgetPredicate(
-          (w) => w is Visibility && !w.visible && w.maintainSize);
-      expect(reservations, findsOneWidget);
-      // Reservation carries the original status+button shape (hidden).
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      // Cover-fit removed the parity reservation: no hidden placeholder
+      // and no button (visible or hidden) mid-flow.
       expect(
-          find.descendant(
-              of: reservations, matching: find.byType(FilledButton)),
-          findsOneWidget);
+          find.byWidgetPredicate(
+              (w) => w is Visibility && !w.visible && w.maintainSize),
+          findsNothing);
+      expect(find.byType(FilledButton), findsNothing);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
       expect(t.takeException(), isNull);
@@ -300,14 +306,13 @@ void main() {
     });
   });
 
-  group('preview area identical across lifecycle variants', () {
-    testWidgets('forward then back: validated area equals capturing area',
+  group('preview chrome across lifecycle variants', () {
+    testWidgets('forward then back: overlay survives, Continue appears',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       expect(_previewStackFinder(), findsOneWidget);
-      final capturingSize = t.getSize(_previewStackFinder());
       // All 5 buckets validate → auto-advance to the result step.
       await _pumpUntil(t, find.text('Save enrollment'));
       // Result screen is static: settle its entrance before going back.
@@ -318,11 +323,11 @@ void main() {
       await t.pumpAndSettle();
       expect(find.byType(EnrollCaptureScreen), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'Continue'), findsOneWidget);
-      // Single-prompt rule: no instructional text in the terminal state.
-      expect(find.text(enrollCapturePrompt), findsNothing);
-      // The feed area never moved (no mid-flow expansion on return).
+      // Overlay-owned prompt persists in the terminal state (the overlay
+      // is always mounted over the preview); the bare frame self-sizes
+      // through the bottom-bar change, so no size pin here.
+      expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(_previewStackFinder(), findsOneWidget);
-      expect(t.getSize(_previewStackFinder()), capturingSize);
       expect(t.takeException(), isNull);
       // Drain via cancel (disposes the session camera).
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
@@ -331,13 +336,12 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('save-error area equals capturing area (short message)',
+    testWidgets('save-error keeps overlay + toast, retry offered',
         (t) async {
       final ctl = await _keyReady(verifier: _EnrollBoom());
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       expect(_previewStackFinder(), findsOneWidget);
-      final capturingSize = t.getSize(_previewStackFinder());
       // All 5 stills accepted, gallery write throws → fail-closed error bar
       // (loop + sweep stopped — settle-safe), progress kept.
       await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
@@ -346,15 +350,15 @@ void main() {
       expect(find.textContaining('No face detected'), findsOneWidget);
       expect(find.text('Save enrollment'), findsNothing);
       // Notice rides as a toast overlay (zero layout — message length never
-      // moves the feed); retry lives in the bottom bar.
+      // moves the feed); retry lives in the bottom bar; the overlay-owned
+      // prompt stays mounted underneath.
       expect(
           find.ancestor(
               of: find.byType(EnrollNotice),
               matching: find.byType(Positioned)),
           findsOneWidget);
-      // Same feed area (no resize on the error transition).
       expect(_previewStackFinder(), findsOneWidget);
-      expect(t.getSize(_previewStackFinder()), capturingSize);
+      expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -364,13 +368,14 @@ void main() {
   });
 
   group('layering decision (overlay refinement, never inline)', () {
-    testWidgets('overlay rides paint-only in the preview Stack; prompt in bar',
+    testWidgets('overlay rides in the preview Stack; prompt overlay-owned',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // The two-oval overlay is the paint-only child; mid-flow carries no
-      // Positioned chrome at all (the save-error toast is saveError-gated).
+      // The single-oval overlay is a direct (non-Positioned) Stack child;
+      // the bare frame is the other direct child — NOTHING is Positioned
+      // mid-flow (the save-error toast is saveError-gated).
       // Touch-transparency comes from the overlay root itself.
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(
@@ -379,10 +384,12 @@ void main() {
               matching: find.byType(Positioned)),
           findsNothing);
       final stack = t.element(_previewStackFinder()).widget as Stack;
-      expect(stack.fit, StackFit.expand);
+      expect(stack.fit, StackFit.loose);
+      expect(stack.alignment, Alignment.center);
       expect(stack.children.whereType<Positioned>(), isEmpty);
-      // Prompt is bottom-bar chrome, never preview chrome: no Stack between
-      // the prompt text and the page Scaffold, and it sits in Padding(16).
+      // Prompt is overlay chrome, never bottom-bar chrome mid-flow: a
+      // Stack sits between the prompt text and the page Scaffold, and no
+      // prompt copy lives in the Padding(16) bottom bar.
       final promptEl = find.text(enrollCapturePrompt).evaluate().single;
       var stackBetween = false;
       promptEl.visitAncestorElements((a) {
@@ -391,36 +398,36 @@ void main() {
         if (w is Stack) stackBetween = true;
         return true;
       });
-      expect(stackBetween, isFalse);
+      expect(stackBetween, isTrue);
       expect(
-          find.ancestor(
-              of: find.text(enrollCapturePrompt),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Padding && w.padding == const EdgeInsets.all(16))),
-          findsOneWidget);
+          find.descendant(
+              of: find.byWidgetPredicate((w) =>
+                  w is Padding && w.padding == const EdgeInsets.all(16)),
+              matching: find.text(enrollCapturePrompt)),
+          findsNothing);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('preview Stack carries no copy (overlay is paint-only)',
+    testWidgets('preview Stack carries exactly the one prompt line',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       expect(_previewStackFinder(), findsOneWidget);
-      // Progress rides the large oval arc, the placeholder carries no copy,
-      // and the overlay status line stays null mid-flow (rejects are silent)
-      // — no readable text is laid out over the feed.
+      // Progress rides the slim top bar; the placeholder carries no copy;
+      // the overlay contributes exactly ONE line (the prompt — rejects stay
+      // silent in-UI, BleLog only).
+      final texts = <String>[];
       for (final e in find
           .descendant(
               of: _previewStackFinder(), matching: find.byType(Text))
           .evaluate()) {
         final w = e.widget as Text;
-        final s = w.data ?? w.textSpan?.toPlainText() ?? '';
-        expect(s, isEmpty,
-            reason: 'copy inside preview Stack (overlay must be paint-only)');
+        texts.add(w.data ?? w.textSpan?.toPlainText() ?? '');
       }
+      expect(texts, [enrollCapturePrompt]);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);

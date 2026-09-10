@@ -31,6 +31,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -532,6 +533,36 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
               if (domain == 'googlemail.com') return 'gmail.com';
               return domain;
             })();
+      final now = DateTime.now().toUtc();
+      final nowMillis = now.millisecondsSinceEpoch;
+      // 30-day face rescan quota (per-account, SAVE path only): replacing
+      // an existing template is a rescan; first enrollment (no stored doc,
+      // different Gmail, or empty faceId) is never gated. Started-but-
+      // unsaved rescans never stamp (restartFace/enrollFace touch memory +
+      // plugin only). Zero stamps (never rescanned, incl. pre-upgrade docs)
+      // are always allowed once, then stamp. Durations derive from
+      // kFaceRescanCooldown, never literals.
+      StoredEnrollment? prevEnrollment;
+      try {
+        prevEnrollment = await _store.readEnrollment();
+      } catch (_) {
+        prevEnrollment = null;
+      }
+      final isFaceRescan = prevEnrollment != null &&
+          prevEnrollment.email.toLowerCase() == email &&
+          prevEnrollment.faceId.isNotEmpty;
+      if (isFaceRescan &&
+          faceRescanBlocked(
+              stampMillis: prevEnrollment.lastFaceRescanAtMillis, now: now)) {
+        final eligible =
+            faceRescanEligibleAt(prevEnrollment.lastFaceRescanAtMillis);
+        BleLog.log('FACE',
+            'face rescan refused (cooldown until ${dateIsoOf(eligible)})');
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            message: faceRescanCooldownMessage(eligible));
+        return null;
+      }
       final pk32 = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pk32);
       final installId = await getOrCreateInstallId(_store);
@@ -573,6 +604,63 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your face capture is kept.');
           return null;
         }
+        // Pre-claim verdict-by-evidence (before the transaction): a
+        // cross-org second-account enroll is denied at the install-doc
+        // READ, so the transaction could never see the evidence and would
+        // surface a deploy hint instead of the friendly refusal. Scope it
+        // here: a clean own-doc read + denied install-doc read proves the
+        // install holds another Gmail → friendly installConflict copy
+        // verbatim (same [studentClaimMessage] source as every other
+        // refusal path). Own-doc denied → genuine rules problem → deploy
+        // hint verbatim. Unknown read failures skip the pre-claim and the
+        // transaction below decides, exactly as before.
+        var skipPreclaim = false;
+        StudentDeviceDoc? preBinding;
+        try {
+          preBinding = await cloud.fetchStudentDevice(email);
+        } on StateError catch (e) {
+          if (isRulesDenialMessage(e.message)) {
+            state = state.copyWith(
+                phase: EnrollPhase.error, message: e.message);
+            return null;
+          }
+          skipPreclaim = true;
+        } catch (_) {
+          skipPreclaim = true;
+        }
+        if (!skipPreclaim) {
+          var installDenied = false;
+          String? preInstall;
+          try {
+            preInstall = await cloud.fetchInstallEmail(installId);
+          } on StateError catch (e) {
+            if (isRulesDenialMessage(e.message)) {
+              installDenied = true;
+            } else {
+              skipPreclaim = true;
+            }
+          } catch (_) {
+            skipPreclaim = true;
+          }
+          if (!skipPreclaim) {
+            final preVerdict = evaluateStudentClaim(
+                localPkHex: pkHex,
+                localInstallId: installId,
+                binding: preBinding,
+                installEmail: preInstall,
+                email: email);
+            final effective = installDenied && preVerdict.ok
+                ? const StudentClaimResult(StudentClaim.installConflict)
+                : preVerdict;
+            if (!effective.ok) {
+              BleLog.log('SYNC', 'device claim refused (see screen message)');
+              state = state.copyWith(
+                  phase: EnrollPhase.error,
+                  message: studentClaimMessage(effective, preBinding));
+              return null;
+            }
+          }
+        }
         try {
           final outcome = await cloud.claimStudentDevice(
               doc: StudentDeviceDoc(
@@ -602,12 +690,43 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           state = state.copyWith(
               phase: EnrollPhase.error, message: e.message);
           return null;
+        } on FirebaseException catch (e) {
+          // No raw Firebase/grpc text past this point (presentation-only
+          // mapping, no server semantics): permission-denied is the
+          // install-conflict evidence (rules refused the save) → the
+          // friendly installConflict copy; any other transport failure →
+          // the verbatim offline copy (retry-safe guidance, capture kept).
+          BleLog.log('SYNC', 'device claim transport refused (${e.code})');
+          if (e.code == 'permission-denied') {
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                message: studentClaimMessage(
+                    const StudentClaimResult(
+                        StudentClaim.installConflict),
+                    null));
+          } else {
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                message:
+                    'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your face capture is kept.');
+          }
+          return null;
         } catch (e) {
           state = state.copyWith(
               phase: EnrollPhase.error, message: 'Save failed: $e');
           return null;
         }
       }
+      // Rescan stamp: a successful template replacement stamps now; a
+      // first enrollment preserves any same-account stamp (normally 0) and
+      // a different account starts at 0. Failed saves return above, so they
+      // never stamp. Old template handling otherwise unchanged.
+      final rescanStampMillis = isFaceRescan
+          ? nowMillis
+          : (prevEnrollment != null &&
+                  prevEnrollment.email.toLowerCase() == email
+              ? prevEnrollment.lastFaceRescanAtMillis
+              : 0);
       await _store.writeEnrollment(StoredEnrollment(
         email: email,
         name: name,
@@ -616,13 +735,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         pkHex: pkHex,
         sealedKeyHex: hexEncode(sealed),
         faceId: faceId,
-        enrolledAt: DateTime.now().toUtc(),
+        enrolledAt: now,
         verifierVer: _verifier.verifierVer,
         org: org,
         pkDHex: hexEncode(pkDRaw),
         attestationLevel: attestationLevelName(_deviceKey.level),
         attestedAt: _deviceKey.attestedAt,
         attestedUntil: _deviceKey.attestedUntil,
+        lastFaceRescanAtMillis: rescanStampMillis,
       ));
       state = state.copyWith(phase: EnrollPhase.uploaded);
       return LinkedIdentity(name: name, gmail: email, roll: roll, org: org);
@@ -630,6 +750,76 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Save failed: $e');
       return null;
+    }
+  }
+
+  /// Next-eligible UTC date for a SAVED face re-scan for the current
+  /// account. Null = allowed now (no stored template, different Gmail,
+  /// never rescanned, or the [kFaceRescanCooldown] window elapsed).
+  ///
+  /// Read-only UI accessor for the account-copy follow-up (exact eligible
+  /// date via dateIsoOf + manual-attendance pointer): the SAVE path
+  /// ([upload]) enforces the same rule — this never stamps, never blocks.
+  /// Durations derive from [kFaceRescanCooldown], never literals.
+  Future<DateTime?> faceRescanBlockedUntil({DateTime? now}) async {
+    final at = (now ?? DateTime.now()).toUtc();
+    StoredEnrollment? stored;
+    try {
+      stored = await _store.readEnrollment();
+    } catch (_) {
+      return null;
+    }
+    if (stored == null || stored.faceId.isEmpty) return null;
+    final acctEmail = state.account?.email.toLowerCase();
+    if (acctEmail != null &&
+        acctEmail.isNotEmpty &&
+        stored.email.toLowerCase() != acctEmail) {
+      return null;
+    }
+    if (!faceRescanBlocked(
+        stampMillis: stored.lastFaceRescanAtMillis, now: at)) {
+      return null;
+    }
+    return faceRescanEligibleAt(stored.lastFaceRescanAtMillis);
+  }
+
+  /// Local roll update after a successful cloud ID edit (Account overhaul,
+  /// explicitly-requested business addition — minimal called-out addition).
+  ///
+  /// Rewrites ONLY the stored enrollment's roll (+ in-memory draft roll when
+  /// it belongs to the same Gmail); keys/face/install/org/stamps untouched.
+  /// Historical session rolls/names untouched by design (class history is
+  /// immutable — past records keep the roll shown at mark time).
+  Future<void> updateLocalRoll(String newRoll) async {
+    final want = newRoll.trim();
+    if (want.isEmpty) throw StateError('ID Number is required.');
+    final stored = await _store.readEnrollment();
+    if (stored == null) {
+      throw StateError(
+          'No enrolled device found for this account — enroll this device first.');
+    }
+    await _store.writeEnrollment(StoredEnrollment(
+      email: stored.email,
+      name: stored.name,
+      roll: want,
+      seedHex: stored.seedHex,
+      pkHex: stored.pkHex,
+      sealedKeyHex: stored.sealedKeyHex,
+      faceId: stored.faceId,
+      enrolledAt: stored.enrolledAt,
+      verifierVer: stored.verifierVer,
+      org: stored.org,
+      pkDHex: stored.pkDHex,
+      attestationLevel: stored.attestationLevel,
+      attestedAt: stored.attestedAt,
+      attestedUntil: stored.attestedUntil,
+      lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+    ));
+    // Keep the draft consistent when it tracks the same Gmail.
+    final acctEmail = state.account?.email.toLowerCase() ?? '';
+    if (acctEmail.isEmpty ||
+        acctEmail == stored.email.trim().toLowerCase()) {
+      state = state.copyWith(roll: want);
     }
   }
 

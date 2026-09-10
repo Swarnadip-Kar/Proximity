@@ -6,6 +6,7 @@
 // stub does not mirror as fail-closed.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:face_verification/face_verification.dart';
@@ -14,21 +15,65 @@ import 'package:proximity_protocol/protocol.dart';
 import '../../core/platformx.dart';
 import 'face_verifier.dart';
 
+/// Main-isolate verify delegate: exactly the signature of the plugin's
+/// supported main-isolate verify
+/// (`FaceVerification.verifyFromImagePath`), injected only by tests so the
+/// crash fix (no isolate variant), timeout, and fail-closed mapping are
+/// unit-testable without native channels. Production always passes null
+/// and reaches the real plugin below.
+typedef MainIsolateVerify = Future<String?> Function({
+  required String imagePath,
+  required double threshold,
+  required String? staffId,
+});
+
 /// Production backend: the `face_verification` plugin. Mobile-only —
 /// every method gates on [requireMobileFace] (L1).
 class PluginFaceVerifier implements FaceVerifier {
-  final FaceVerification _plugin;
+  final FaceVerification? _plugin;
+
+  /// Test-only override for the main-isolate verify call (see
+  /// [MainIsolateVerify]). Null in production.
+  final MainIsolateVerify? _verifyForTest;
   bool _ready = false;
 
-  PluginFaceVerifier() : _plugin = FaceVerification.instance;
+  /// Upper bound for one main-isolate verify (ML Kit detect on the still +
+  /// FaceNet embedding + gallery compare). The device log for the crash
+  /// showed detection alone at ~290ms, so this is generous on slow
+  /// devices; anything slower is infrastructure failure and degrades to
+  /// the rescan-safe error below (driver maps it to inconclusive, burns
+  /// nothing) instead of hanging the face-check UI.
+  final Duration verifyTimeout;
+
+  /// Upper bound for the one-time bundled-model + store load.
+  final Duration initTimeout;
+
+  PluginFaceVerifier({
+    MainIsolateVerify? verifyForTest,
+    this.verifyTimeout = const Duration(seconds: 10),
+    this.initTimeout = const Duration(seconds: 30),
+  })  : _verifyForTest = verifyForTest,
+        _plugin = verifyForTest == null ? FaceVerification.instance : null;
 
   @override
   Future<void> init() async {
     requireMobileFace();
     if (_ready) return;
+    // Test seam: with an injected verify delegate there is no real plugin
+    // to initialize (flutter_test has no native channels).
+    if (_verifyForTest != null) {
+      _ready = true;
+      return;
+    }
     // Quick-Demo pattern: init loads the bundled FaceNet TFLite + store.
     try {
-      await _plugin.init();
+      await _plugin!.init().timeout(initTimeout);
+    } on TimeoutException catch (e) {
+      // Hung model load (stuck native call): fail closed with a
+      // rescan-safe StateError (callers map this to inconclusive/error,
+      // never a throw past them), never a hang of the face-check UI.
+      throw StateError(
+          'Face engine timed out loading — retry in good light, holding still ($e)');
     } catch (e) {
       // Missing/corrupt model: fail closed with a rescan-safe StateError
       // (callers map this to inconclusive/error, never a throw past them).
@@ -83,7 +128,7 @@ class PluginFaceVerifier implements FaceVerifier {
     // Clean re-enroll: previous faces for this id go first so a changed
     // appearance never matches against a stale still.
     try {
-      await _plugin.deleteUserFaces(faceId);
+      await _plugin!.deleteUserFaces(faceId);
     } catch (_) {
       // No previous enrollment — nothing to clear.
     }
@@ -92,7 +137,7 @@ class PluginFaceVerifier implements FaceVerifier {
       // without saying which still — the wrapper names it so the UI can
       // point the rescan at the right angle.
       try {
-        await _plugin.registerFromImagePath(
+        await _plugin!.registerFromImagePath(
           id: faceId,
           imagePath: imagePaths[i],
           imageId: faceEnrollSlots[i],
@@ -111,14 +156,43 @@ class PluginFaceVerifier implements FaceVerifier {
     // Empty-frame guard first: never hand empty bytes to native.
     _requireReadableStill(imagePath, 'captured');
     await init();
-    // Marking hot path: the isolate variant (per approved spec). It returns
-    // the matched id or null — never a distance, never a throw for no-face
-    // (errors collapse to null inside the plugin).
-    final String? hit = await _plugin.verifyFromImagePathIsolate(
-      imagePath: imagePath,
-      threshold: threshold,
-      staffId: faceId,
-    );
+    // Marking hot path: the MAIN-ISOLATE verify — the plugin's supported
+    // path. The isolate variant (`verifyFromImagePathIsolate`) is NEVER
+    // used here: it runs ML Kit face detection on a background isolate via
+    // BackgroundIsolateBinaryMessenger, and the success reply on that
+    // background response handle aborts the engine with
+    // `FATAL platform_message_response_dart_port.cc Check failed: did_send`
+    // → SIGABRT (temp.log 2026-09-10, uncatchable in Dart — no try/catch,
+    // no timeout, no driver mapping can survive it). Main-isolate
+    // detection measured ~290ms in that same log; the existing busy UI
+    // covers it, so no new user-visible step is needed.
+    //
+    // Exactly ONE plugin call per verify (no retry loop here): a second
+    // in-flight MethodChannel reply for the same response handle is the
+    // same crash class, so single-invocation is load-bearing, not style.
+    // It returns the matched id or null — never a distance.
+    late final String? hit;
+    try {
+      final call = _verifyForTest != null
+          ? _verifyForTest(
+              imagePath: imagePath, threshold: threshold, staffId: faceId)
+          : _plugin!.verifyFromImagePath(
+              imagePath: imagePath, threshold: threshold, staffId: faceId);
+      hit = await call.timeout(verifyTimeout);
+    } on TimeoutException catch (e) {
+      // Hung native call (stuck detector/embedder): fail closed as a
+      // rescan-safe error — the driver maps this to inconclusive (rescan
+      // path, burns nothing), never a hang, never a mis-mark.
+      throw StateError(
+          'Face check timed out — adjust light and try again ($e)');
+    } catch (e) {
+      // ANY infrastructure throw (unreadable still, closed store, native
+      // error): fail closed as a rescan-safe error — the driver maps this
+      // to inconclusive (rescan path, burns nothing), never a crash,
+      // never a mis-mark. A readable null below stays the only non-match.
+      throw StateError(
+          'Face check did not read clearly — adjust light and try again ($e)');
+    }
     // Nullable plugin result, guarded WITHOUT `!`: null covers no-face,
     // unreadable and below-threshold alike — all non-match. (The driver
     // maps unreadable throws to inconclusive before this; a readable null
@@ -134,7 +208,7 @@ class PluginFaceVerifier implements FaceVerifier {
   Future<void> remove(String faceId) async {
     requireMobileFace();
     await init();
-    await _plugin.deleteUserFaces(faceId);
+    await _plugin!.deleteUserFaces(faceId);
   }
 
   @override
@@ -150,7 +224,7 @@ class PluginFaceVerifier implements FaceVerifier {
     // purpose: FaceRecord is not re-exported by the plugin's public
     // library, so this couples to the method + `.embedding` member (breaks
     // loudly on plugin upgrade, same as any API drift).
-    final records = await _plugin.getFacesForUser(faceId);
+    final records = await _plugin!.getFacesForUser(faceId);
     if (records.isEmpty) {
       throw StateError(
           'No enrolled face found on this phone — recapture in good light, holding still.');

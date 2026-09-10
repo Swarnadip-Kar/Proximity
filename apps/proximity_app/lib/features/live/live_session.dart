@@ -1,6 +1,7 @@
 // Live session header (prof live, §7.1): the mid-class always-on block —
-// LIVE/IDLE state, elapsed open time, present/waiting counters, and the
-// Start ⇄ Stop control cluster. Nothing else is always-on mid-class.
+// LIVE/IDLE state, elapsed open time, session date/day line, present/
+// waiting counters, and the Start ⇄ Stop control cluster. Nothing else
+// is always-on mid-class.
 //
 // Presentation rebuild (behavior frozen): the fixed header picks up
 // `gradient.brand` while state is LIVE and stays flat `surface.raised`
@@ -9,6 +10,12 @@
 // (`Start`/`Stop`/`Retake round N`/`Take another round`/`End attendance`),
 // the elapsed `mm:ss` clock, and the present/waiting denominator rule are
 // byte-identical to the pre-rebuild header.
+//
+// Date line (tester fix, presentation only): the current hosting date
+// (today) renders via the frozen records helpers (`fullDateOf` +
+// `todayIso`, same formats as the session detail/roomy lines) so the
+// Live page shows date/day like Courses does. Pure display, no lifecycle/
+// draft/snapshot/timing change.
 //
 // Motion intent: the elapsed tick rebuilds in place (keyed rows elsewhere
 // never replay entrances); the control cluster cross-fades via
@@ -20,8 +27,10 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../core/sync/store/record_helpers.dart';
 import '../../design/tokens.dart';
 import '../../widgets/animated.dart';
+import '../../widgets/clock.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
@@ -151,6 +160,32 @@ class LiveSessionHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 PresentTicker(present: present, total: denom),
+                // Session date/day header (today, tester fix): frozen
+                // records format via `fullDateOf(todayIso())` — same helper
+                // + format as the session detail/roomy lines, so Live
+                // matches Courses. A proper visible header element (not a
+                // caption): label-weight row with a calendar icon, rendered
+                // unconditionally so IDLE and LIVE read identically — the
+                // date never reads as absent in either state.
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.calendar_today_outlined,
+                      size: 14,
+                      color: ink,
+                    ),
+                    const SizedBox(width: ProxSpacing.sm),
+                    Flexible(
+                      child: Text(
+                        fullDateOf(todayIso()),
+                        style: ProxType.label(color: ink),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ),
                 ProxSwitcher(
                   child: Text(
                     windowsTaken <= 1

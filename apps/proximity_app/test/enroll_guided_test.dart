@@ -252,79 +252,150 @@ void main() {
   });
 
   group('preview parity with the 5186c65 original', () {
-    // The ratio-critical lines of the FaceCaptureScreen preview block,
-    // byte-identical in the enrollment session (see the provenance note
-    // in enroll_capture.dart). If this fails, the preview construction
-    // drifted from the certified original — do not "fix" the test, fix
-    // the block. Paths are package-relative (flutter test runs at the
-    // package root). The CameraPreview line carries 2sp extra from the
-    // fake-guard `if` (documented delta b), so it is pinned unindented.
-    const originalLines = [
-      '          Expanded(',
-      '            child: Center(',
-      '                  ? Padding(',
-      '                      padding: const EdgeInsets.all(24),',
-      '                      ? const CircularProgressIndicator()',
-      '                          fit: StackFit.expand,',
-      'CameraPreview(ctl)',
-      '                            // The oval ACTUALLY renders on the preview: this',
-      '                            // overlay is inside the preview Stack (not beside',
-      '                            // it), pointer-transparent, repainting per shot.',
-    ];
+    // BREAKUP 2026-09-10 (see INTEGRATION_LOG.md `## Enroll capture
+    // breakup`, hardened in `## Capture preview fidelity`): the monolith
+    // is split three ways — session driver (enroll_capture_session.dart),
+    // section widgets (enroll_capture_sections.dart), thin composer
+    // (enroll_capture.dart). The tight-stretch chain, the cover-fit chain,
+    // AND the outer-AspectRatio wrapper are all retired: the feed renders
+    // as a BARE CameraPreview (zero treatment, direct child of a loose,
+    // centered Stack — never stretched, never cover-cropped, never
+    // double-boxed). These pins track the NEW homes: driver identifiers
+    // byte-identical in the session file, the bare-surface chain in the
+    // sections file, composition in the screen file. If this fails, the
+    // split drifted — do not "fix" the test, fix the block. Paths are
+    // package-relative (flutter test runs at the package root).
+    String lib(String name) => File('lib/features/setup/$name')
+        .readAsStringSync();
+    String sessionLib() => lib('enroll_capture_session.dart');
+    String sectionsLib() => lib('enroll_capture_sections.dart');
+    String screenLib() => lib('enroll_capture.dart');
 
-    test('ratio-critical lines survive verbatim, in order', () {
-      final session = File(
-              'lib/features/setup/enroll_capture.dart')
-          .readAsStringSync();
+    void inOrder(String src, List<String> lines) {
       var from = 0;
-      for (final line in originalLines) {
-        final at = session.indexOf(line, from);
+      for (final line in lines) {
+        final at = src.indexOf(line, from);
         expect(at, isNot(-1), reason: 'missing verbatim line: $line');
         from = at + line.length;
       }
+    }
+
+    test('driver lives in the session file, in order', () {
+      // Relocation only: open/close, classify-fill loop, save, dispose,
+      // timers — byte-identical bodies, called out in the breakup entry.
+      inOrder(sessionLib(), [
+        'Future<void> _openCamera()',
+        'void _startLoop()',
+        'Future<void> _autoLoop()',
+        'Future<String?> _captureOne()',
+        'Future<void> _saveAll()',
+      ]);
+      // Camera seam moved with the driver (screen re-exports for compat).
+      expect(sessionLib().contains('class FakeEnrollSessionCamera'), isTrue);
+      expect(sessionLib().contains('enrollSessionCameraProvider'), isTrue);
+      expect(screenLib().contains('class FakeEnrollSessionCamera'), isFalse);
+      expect(screenLib().contains('Future<void> _autoLoop'), isFalse);
     });
 
-    test('exactly the documented two-oval deltas, nothing else', () {
-      final session = File(
-              'lib/features/setup/enroll_capture.dart')
-          .readAsStringSync();
-      // (a) three-state message instead of the single status…
-      expect(session.contains('child: Text(_status,'), isFalse);
-      expect(session.contains('previewMessage'), isTrue);
-      // (b) spinner branch restored verbatim, but its CONDITION now keys
-      // on opening — the original `ctl == null … ? spinner` two-liner is
-      // gone (that exact condition survives only in the camera seam's
-      // null-safe accessor, which short-circuits before any dereference).
-      expect(session.contains('const CircularProgressIndicator()'), isTrue);
+    test('bare-surface chain lives in the sections file, in order', () {
+      inOrder(sectionsLib(), [
+        'displayedPreviewAspect',
+        'class EnrollCapturePreview',
+        'CameraPreview(',
+        'CaptureOverlay(',
+        'if (saveError)',
+      ]);
+      // Fail branches kept their shapes (fail message + spinner).
+      expect(sectionsLib().contains('previewMessage'), isFalse);
+      expect(sectionsLib().contains('padding: const EdgeInsets.all(24),'),
+          isTrue);
       expect(
-          session.contains('!ctl.value.isInitialized\n'
+          sectionsLib().contains(
+              'const Center(child: CircularProgressIndicator())'),
+          isTrue);
+      // The overlay comment travels with the Stack it documents.
+      expect(
+          sectionsLib().contains(
+              '// overlay is inside the preview Stack (not beside'),
+          isTrue);
+    });
+
+    test('composer screen owns build only, in order', () {
+      inOrder(screenLib(), [
+        'Expanded(',
+        'EnrollCapturePreview(',
+        'EnrollCaptureBottomBar(',
+      ]);
+      expect(screenLib().contains('previewMessage'), isTrue);
+      expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
+      // The composer wires the frozen prompt into the preview section.
+      expect(screenLib().contains('statusLine: enrollCapturePrompt'), isTrue);
+    });
+
+    test('exactly the documented breakup deltas, nothing else', () {
+      // Combined surface: pins that moved files still read as one contract.
+      // Code only for the negative pins: doc comments name the retired
+      // chains (cover-fit, tight-stretch) for provenance.
+      String codeOf(String src) => src
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      final combined = sessionLib() + sectionsLib() + screenLib();
+      final code = codeOf(sessionLib()) + codeOf(sectionsLib()) + codeOf(screenLib());
+      // (a) three-state message instead of the single status…
+      expect(combined.contains('child: Text(_status,'), isFalse);
+      expect(combined.contains('previewMessage'), isTrue);
+      // (b) spinner branch restored verbatim, keyed on opening.
+      expect(
+          combined.contains(
+              'const Center(child: CircularProgressIndicator())'),
+          isTrue);
+      expect(
+          combined.contains('!ctl.value.isInitialized\n'
               '                      ? const CircularProgressIndicator()'),
           isFalse);
-      // (c) THE shared two-oval overlay (§6.2): CaptureOverlay present with
-      // the angle count from the controller's own slot list (verified 5 via
-      // faceEnrollSlots, never hardcoded); the old single oval + dots are
-      // gone (EnrollAngleDots violated the two-ovals-only rule — its usage
-      // was removed in Integration, its class removed in Phase 6).
-      expect(session.contains('CaptureOverlay('), isTrue);
-      expect(session.contains('faceEnrollSlots.length'), isTrue);
-      expect(session.contains('FaceOval('), isFalse);
-      expect(session.contains('FaceCaptureOvalOverlay('), isFalse);
-      expect(session.contains('EnrollAngleDots('), isFalse);
-      // (d) ONE Positioned overlay child (the save-error toast,
-      // saveError-gated — paint-only) plus the sweep param on the overlay,
-      // and no trace of the removed single-oval beacon spans…
-      expect('Positioned('.allMatches(session).length, 1);
-      expect(session.contains('if (saveError)'), isTrue);
-      expect(session.contains('sweepAngle:'), isTrue);
-      expect(session.contains('sweepSpan'), isFalse);
-      expect(session.contains('dotUnit'), isFalse);
-      expect(session.contains('guideDotUnit'), isFalse);
+      // (c) THE shared single-oval overlay (override 2026-09-10):
+      // CaptureOverlay present with the angle count from the controller's
+      // own slot list (verified 5 via faceEnrollSlots, never hardcoded)
+      // and the frozen enroll prompt as its single line; the old single
+      // oval + dots are gone.
+      expect(combined.contains('CaptureOverlay('), isTrue);
+      expect(combined.contains('faceEnrollSlots.length'), isTrue);
+      expect(combined.contains('statusLine: enrollCapturePrompt'), isTrue);
+      expect(combined.contains('FaceOval('), isFalse);
+      expect(combined.contains('FaceCaptureOvalOverlay('), isFalse);
+      expect(combined.contains('EnrollAngleDots('), isFalse);
+      // (d) bare-surface squish fix: BARE CameraPreview (zero treatment,
+      // direct child of a loose, centered Stack) with the DISPLAYED
+      // (orientation-adjusted) ratio plumbed to the overlay; NO fit
+      // transform and NO outer ratio box anywhere (cover cropped the face
+      // area, stretch elongated it, the outer AspectRatio double-boxed
+      // against the plugin internals — all three retired). Code-only:
+      // doc comments keep naming the retired chains for provenance.
+      expect(code.contains('AspectRatio('), isFalse);
+      expect(code.contains('LetterboxedPreview'), isFalse);
+      expect(code.contains('StackFit.expand'), isFalse);
+      expect(code.contains('CameraPreview('), isTrue);
+      expect(code.contains('StackFit.loose'), isTrue);
+      expect(code.contains('displayedPreviewAspect'), isTrue);
+      expect(code.contains('FittedBox('), isFalse);
+      expect(code.contains('BoxFit.cover'), isFalse);
+      expect(code.contains('BoxFit.fill'), isFalse);
+      expect(code.contains('BoxFit.contain'), isFalse);
+      // (e) save-error toast stays Positioned + saveError-gated with the
+      // sweep param on the overlay, and no trace of the removed single-
+      // oval beacon spans…
+      expect(combined.contains('if (saveError)'), isTrue);
+      expect(combined.contains('sweepAngle:'), isTrue);
+      expect(combined.contains('sweepSpan'), isFalse);
+      expect(combined.contains('dotUnit'), isFalse);
+      expect(combined.contains('guideDotUnit'), isFalse);
       // …and the original single-status/progress expressions are gone.
-      expect(session.contains('_taken / widget.captures'), isFalse);
+      expect(combined.contains('_taken / widget.captures'), isFalse);
       // …and no per-angle titles / narration strings survive anywhere.
-      expect(session.contains('enrollAngleInstructions'), isFalse);
-      expect(session.contains('Hold still'), isFalse);
-      expect(session.contains('Checking angle'), isFalse);
+      expect(combined.contains('enrollAngleInstructions'), isFalse);
+      expect(combined.contains('Hold still'), isFalse);
+      expect(combined.contains('Checking angle'), isFalse);
     });
   });
 
@@ -393,32 +464,22 @@ void main() {
       await t.pumpWidget(_captureHarness(ctl: ctl));
       // Camera open, loop still in its initial beat (600ms).
       await _openSession(t);
-      // Overlay ONLY in the preview Stack: THE shared two-oval overlay. No
-      // dots, no single oval, no cards. The single static prompt lives in
-      // the bottom bar (area constancy, see chain test).
+      // Full-bleed preview Stack: THE shared single-oval overlay (slim top
+      // bar + oval + beacon + one prompt). No dots, no single oval, no
+      // cards. The single static prompt rides inside the overlay (the
+      // bottom bar stays empty mid-flow so it never duplicates).
       expect(find.byType(CaptureOverlay), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.byType(FaceCaptureOvalOverlay), findsNothing);
       expect(find.byType(ProxCard), findsNothing);
-      // No VISIBLE buttons mid-flow (the boundary-parity reservation keeps
-      // one hidden FilledButton to hold the original bottom-slot height —
-      // invisible, no semantics, no interaction — so it never counts here).
-      final filled = find.byType(FilledButton);
-      if (filled.evaluate().isNotEmpty) {
-        for (final e in filled.evaluate()) {
-          var hidden = false;
-          e.visitAncestorElements((a) {
-            final w = a.widget;
-            if (w is Visibility && !w.visible && w.maintainSize) {
-              hidden = true;
-            }
-            return true;
-          });
-          expect(hidden, isTrue,
-              reason: 'visible button mid-flow (only the hidden parity '
-                  'reservation may exist)');
-        }
-      }
-      // Exactly one instructional text during capture…
+      // No VISIBLE buttons mid-flow and no hidden parity reservation (the
+      // cover-fit fix removed it — area constancy is unnecessary).
+      expect(find.byType(FilledButton), findsNothing);
+      expect(
+          find.byWidgetPredicate(
+              (w) => w is Visibility && !w.visible && w.maintainSize),
+          findsNothing);
+      // Exactly one instructional text during capture (overlay-owned)…
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       // …and no per-angle titles, hints, or status narration anywhere.
       for (final banned in [
@@ -442,14 +503,13 @@ void main() {
               of: find.byType(CaptureOverlay),
               matching: find.byType(Stack)),
           findsWidgets);
-      // …and the preview area is constraint-loose (Expanded + Center, the
-      // certified FaceCaptureScreen construction — CameraPreview, an
-      // AspectRatio internally, sizes itself), never a fixed-height box.
+      // …and the preview is full-bleed (Expanded, no Center wrapper, no
+      // fixed-height box).
       expect(
           find.ancestor(
               of: find.byType(CaptureOverlay),
               matching: find.byType(Center)),
-          findsOneWidget);
+          findsNothing);
       expect(
           find.ancestor(
               of: find.byType(CaptureOverlay),
@@ -469,13 +529,14 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('preview ancestor chain matches the original screen',
+    testWidgets('preview ancestor chain matches the bare-surface screen',
         (t) async {
-      // Root cause guard for the elongation bug: StackFit.expand lays
-      // non-positioned children tight(biggest) and AspectRatio adopts
-      // tight sizes ignoring ratio (SDK stack.dart/proxy_box.dart), so the
-      // displayed ratio IS the preview-area ratio — and the area is set by
-      // THIS chain. Any wrapper inserted here re-elongates the feed.
+      // Squish-fix guard: the feed renders as a BARE frame (zero
+      // treatment, direct child of a loose, centered Stack), so nothing
+      // force-fills it — the area is set by THIS chain (Scaffold >
+      // Column(max) > Expanded(flex 1) > preview Stack), with no wrapper
+      // of any kind between the frame and the Stack. Any wrapper inserted
+      // here must stay bare-surface-safe.
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
@@ -489,8 +550,8 @@ void main() {
         return out;
       }
 
-      // Preview path: overlay > Stack(expand) > Center > Expanded(flex 1)
-      // > Column(max) > Scaffold — with no constraining wrapper between.
+      // Preview path: overlay > Stack(loose, centered) > Expanded(flex 1)
+      // > Column(max) > Scaffold — with no wrapper between.
       final preview =
           chainOf(find.byType(CaptureOverlay)).map((e) => e.widget).toList();
       int after(int from, bool Function(Widget) test, String what) {
@@ -500,8 +561,15 @@ void main() {
       }
 
       var i = after(
-          0, (w) => w is Stack && w.fit == StackFit.expand, 'Stack(expand)');
-      i = after(i + 1, (w) => w is Center, 'Center');
+          0,
+          (w) =>
+              w is Stack &&
+              w.fit == StackFit.loose &&
+              w.alignment == Alignment.center,
+          'Stack(loose, centered)');
+      expect(
+          preview.sublist(0, i).whereType<Center>(), isEmpty,
+          reason: 'Center wrapper back in preview path');
       final expandedAt =
           after(i + 1, (w) => w is Expanded, 'Expanded');
       expect((preview[expandedAt] as Expanded).flex, 1);
@@ -511,23 +579,20 @@ void main() {
           'body Column(max)');
       i = after(bodyAt + 1, (w) => w is Scaffold, 'Scaffold');
       final between = preview.sublist(0, i);
-      for (final ban in [AspectRatio, FittedBox, ConstrainedBox]) {
+      for (final ban in [AspectRatio, ConstrainedBox]) {
         expect(between.where((w) => w.runtimeType == ban), isEmpty,
             reason: 'constraining wrapper in preview path: $ban');
       }
 
-      // Prompt path: prompt > Column(min) > Padding(16) — the original
-      // bottom-bar slot, same padding, static content (constant area).
-      final prompt =
-          chainOf(find.text(enrollCapturePrompt)).map((e) => e.widget).toList();
-      final promptColAt = prompt.indexWhere(
-          (w) => w is Column && w.mainAxisSize == MainAxisSize.min);
-      expect(promptColAt, isNot(-1),
-          reason: 'missing chain link: prompt Column(min)');
-      final padAt = prompt.indexWhere((w) => w is Padding, promptColAt + 1);
-      expect(padAt, isNot(-1), reason: 'missing chain link: Padding(16)');
-      expect((prompt[padAt] as Padding).padding,
-          const EdgeInsets.all(16));
+      // Prompt path: the single prompt rides inside the overlay's own
+      // Stack (below the oval) — exactly one instance, never in the
+      // bottom bar mid-flow.
+      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(
+          find.ancestor(
+              of: find.text(enrollCapturePrompt),
+              matching: find.byType(CaptureOverlay)),
+          findsOneWidget);
       expect(t.takeException(), isNull);
       // Drain via cancel (loop + sweep timer must both die on dispose).
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));

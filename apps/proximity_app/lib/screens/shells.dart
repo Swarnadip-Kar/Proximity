@@ -1,8 +1,8 @@
 // Student + professor app shells (§3.1/§3.5): IndexedStack 3-tab bodies
 // (student Mark/Courses/Account; professor Live/Courses/Account) where each
 // tab keeps its own Navigator — every tab preserves its stack + scroll
-// position while switching. Tab chrome only: tab content screens are owned
-// by their sections and render here untouched.
+// position while switching, by tap or by swipe. Tab chrome only: tab content
+// screens are owned by their sections and render here untouched.
 //
 // Back contract (§3.5): in-tab back pops that tab's stack only, never
 // crosses tabs, never leaves the shell; tab-root back never exits the shell
@@ -35,9 +35,11 @@ import '../mode.dart';
 import '../routes.dart';
 import '../screens/setup_flow_screen.dart';
 import '../screens/student_home.dart';
+import '../widgets/clock.dart';
 import '../widgets/prox_buttons.dart';
 import '../widgets/web_banner.dart';
 import 'take_attendance.dart';
+import 'package:proximity_storage/storage.dart';
 
 /// Shared-axis push transition (§3.2): forward slides + fades in over
 /// [ProxDurations.push]; the outgoing page fades toward 60% and scales to
@@ -89,9 +91,11 @@ PageRoute<T> proxSharedAxisRoute<T>(
   );
 }
 
-/// Account-tab icon: signed-in initial (Gmail-photo-only would need a photo
-/// field — [SignedAccount] carries none and no auth plumbing is invented
-/// here; see the integration log). Active tab gets the accent.brand ring.
+/// Account-tab icon: Google OAuth profile photo when the watched account
+/// carries one (ordinary account metadata, NOT `face_verification`
+/// output); null/empty falls back to the signed-in initial. Active tab
+/// gets the accent.brand ring. Same 20dp avatar, same ring, no layout
+/// change.
 class _AccountTabIcon extends ConsumerWidget {
   final bool active;
   const _AccountTabIcon({required this.active});
@@ -102,19 +106,130 @@ class _AccountTabIcon extends ConsumerWidget {
     final acct = ref.watch(accountProvider).valueOrNull;
     final name = (acct?.displayName ?? '').trim();
     final initial = name.isEmpty ? '?' : name.characters.first.toUpperCase();
+    Widget initialsAvatar() => CircleAvatar(
+          radius: 10,
+          backgroundColor: c.contentTertiary.withValues(alpha: 0.25),
+          child: Text(
+            initial,
+            style: TextStyle(fontSize: 11, color: c.contentPrimary),
+          ),
+        );
+    final photoUrl = (acct?.photoUrl ?? '').trim();
+    final avatar = photoUrl.isEmpty
+        ? initialsAvatar()
+        : ClipOval(
+            child: Image.network(
+              photoUrl,
+              width: 20,
+              height: 20,
+              fit: BoxFit.cover,
+              // Failed loads fall back to initials, never a broken icon.
+              errorBuilder: (_, __, ___) => initialsAvatar(),
+            ),
+          );
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: active ? Border.all(color: c.accentBrand, width: 2) : null,
       ),
-      child: CircleAvatar(
-        radius: 10,
-        backgroundColor: c.contentTertiary.withValues(alpha: 0.25),
-        child: Text(
-          initial,
-          style: TextStyle(fontSize: 11, color: c.contentPrimary),
-        ),
+      child: avatar,
+    );
+  }
+}
+
+/// Minimum fling velocity that counts as a tab-switch swipe (§3.1 swipe
+/// rebuild): well above touch-slop noise, well below a deliberate fling
+/// (tests drive 800–1000px/s). Direction comes from the velocity sign —
+/// finger left pages forward, finger right pages back.
+const _minSwipeVelocity = 200.0;
+
+/// Directional tab-switch slide (§3.1, tester-directed): the single motion
+/// for every tab switch, tap or swipe (never double-animated — swipes
+/// funnel through the same [_selectTab] path as taps). Direction follows
+/// tab order (+1 = tapped rightward / swiped forward, content slides in
+/// from the right; −1 mirrors). One [ProxDurations.tabSlide] ease on
+/// [ProxCurves.standard] (easeOutCubic); reduced motion parks the slide at
+/// rest and collapses to instant opacity.
+///
+/// Keep-alive contract: the build shape is FIXED in every state (always
+/// `SlideTransition > AnimatedOpacity > Navigator`, same unkeyed slot), so
+/// the tab Navigator below never reparents across switches — every tab's
+/// stack + scroll position survives exactly as with the old bare
+/// [AnimatedOpacity]. Only the incoming tab's controller restarts, keyed
+/// off [seq] (bumped per cross-tab switch, so unrelated rebuilds never
+/// retrigger). Interruptible: a new switch restarts from its edge.
+class _TabSlide extends StatefulWidget {
+  final bool active;
+  final double direction;
+  final int seq;
+  final bool reduced;
+  final Widget child;
+  const _TabSlide({
+    required this.active,
+    required this.direction,
+    required this.seq,
+    required this.reduced,
+    required this.child,
+  });
+
+  @override
+  State<_TabSlide> createState() => _TabSlideState();
+}
+
+class _TabSlideState extends State<_TabSlide>
+    with SingleTickerProviderStateMixin {
+  static const Animation<Offset> _rest =
+      AlwaysStoppedAnimation<Offset>(Offset.zero);
+  late final AnimationController _controller;
+  CurvedAnimation? _curve;
+  Animation<Offset> _slide = _rest;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: ProxDurations.tabSlide,
+      vsync: this,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _TabSlide oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.seq != oldWidget.seq &&
+        widget.active &&
+        widget.direction != 0 &&
+        !widget.reduced) {
+      _curve?.dispose();
+      _curve = CurvedAnimation(
+        parent: _controller,
+        curve: ProxCurves.standard,
+      );
+      _slide = Tween<Offset>(
+        begin: Offset(widget.direction, 0),
+        end: Offset.zero,
+      ).animate(_curve!);
+      // Same restart the implicit animations make in didUpdateWidget.
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _curve?.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: widget.reduced ? _rest : _slide,
+      child: AnimatedOpacity(
+        opacity: widget.active ? 1 : 0,
+        duration: widget.reduced ? Duration.zero : ProxDurations.tabSlide,
+        child: widget.child,
       ),
     );
   }
@@ -261,6 +376,13 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   final _coursesNav = GlobalKey<NavigatorState>();
   final _accountNav = GlobalKey<NavigatorState>();
   DateTime? _lastBack;
+  // Tab-slide driver: [seq] restarts the incoming slide per cross-tab
+  // switch, [dir] carries its direction (+1 from the right, −1 from the
+  // left). Same-tab taps leave both untouched (no animation). Swipes
+  // funnel through [_selectTab]/[_swipeTo], so tap and swipe share the one
+  // motion and never double-animate.
+  var _slideSeq = 0;
+  var _slideDir = 0.0;
 
   /// True while the gate flow route is on the Mark stack (prevents
   /// duplicate pushes from re-taps + listener races).
@@ -278,8 +400,43 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       [_markNav, _coursesNav, _accountNav][i];
 
   void _selectTab(int i) {
+    if (i != _index) {
+      _slideDir = i > _index ? 1 : -1;
+      _slideSeq++;
+    }
     setState(() => _index = i);
     if (i == 0) _gateMark();
+  }
+
+  /// Swipe landing (§3.1 swipe rebuild): same gate as taps. An unenrolled
+  /// swipe toward Mark routes the setup flow, travels, and snaps back to
+  /// the origin tab on the next frame — never lands, never shows bare
+  /// mark (the flow covers Mark from the first frame there).
+  void _swipeTo(int target) {
+    if (target < 0 || target > 2 || target == _index) return;
+    if (target == 0 && ref.read(linkedIdentityProvider) == null) {
+      _gateMark();
+      final origin = _index;
+      _selectTab(target);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _selectTab(origin);
+      });
+      return;
+    }
+    _selectTab(target);
+  }
+
+  /// Horizontal fling anywhere on tab [i]'s content (vertical lists win
+  /// their own axis in the arena, so scrolling never misfires). Root-only:
+  /// a pushed sub-page keeps its own gestures and back behavior — the
+  /// check reads the live Navigator state at gesture time, so no observer
+  /// or rebuild is needed. Sub-threshold drags are ignored.
+  void _onTabFling(int i, DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < _minSwipeVelocity) return;
+    final nav = _nav(i).currentState;
+    if (nav != null && nav.canPop()) return;
+    _swipeTo(velocity < 0 ? i + 1 : i - 1);
   }
 
   /// Mark enrollment gate (§3.4): unenrolled tapping Mark routes into the
@@ -330,6 +487,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   @override
   Widget build(BuildContext context) {
     _armGate();
+    // Tester fix (stale account after switch): the IndexedStack keeps the
+    // Account Navigator (and its tab root) alive across sign-out/sign-in,
+    // so the root is keyed by the signed-in Gmail — a switch unmounts the
+    // previous account's page, dropping its cached reads, and mounts a
+    // fresh one for the current account. Watched (not read) so the key
+    // tracks the live account stream; signed out keys as 'signed-out', so
+    // sign-out clears the displayed identity immediately.
+    final accountTabKey = ValueKey(
+        'student-account-${ref.watch(accountProvider).valueOrNull?.email.trim().toLowerCase() ?? 'signed-out'}');
     final narrow = MediaQuery.sizeOf(context).width < 360;
     return PopScope(
       canPop: false,
@@ -342,24 +508,30 @@ class _StudentShellState extends ConsumerState<StudentShell> {
           index: _index,
           children: [
             for (var i = 0; i < 3; i++)
-              AnimatedOpacity(
-                // Tab-switch cross-fade (120ms); the IndexedStack keeps
-                // every tab's stack + scroll alive underneath.
-                opacity: i == _index ? 1 : 0,
-                duration: ProxMotion.reduced(context)
-                    ? Duration.zero
-                    : ProxDurations.tabCrossFade,
-                child: Navigator(
-                  key: _nav(i),
-                  onGenerateRoute: (s) => _tabRoute(
-                    s,
-                    [
-                      const StudentHomeScreen(),
-                      const MyAttendanceScreen(),
-                      const StudentAccountScreen(),
-                    ][i],
+              _TabSlide(
+                // Directional slide-in on tab switch; the IndexedStack
+                // keeps every tab's stack + scroll alive underneath.
+                // The detector adds the swipe path (fling → same funnel
+                // as taps); vertical lists keep their own axis.
+                active: i == _index,
+                direction: _slideDir,
+                seq: _slideSeq,
+                reduced: ProxMotion.reduced(context),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: (d) => _onTabFling(i, d),
+                  child: Navigator(
+                    key: _nav(i),
+                    onGenerateRoute: (s) => _tabRoute(
+                      s,
+                      [
+                        const StudentHomeScreen(),
+                        const MyAttendanceScreen(),
+                        StudentAccountScreen(key: accountTabKey),
+                      ][i],
+                    ),
+                    onUnknownRoute: proxOnUnknownRoute,
                   ),
-                  onUnknownRoute: proxOnUnknownRoute,
                 ),
               ),
           ],
@@ -410,15 +582,50 @@ class _ProfShellState extends ConsumerState<ProfShell> {
   final _liveNav = GlobalKey<NavigatorState>();
   final _coursesNav = GlobalKey<NavigatorState>();
   final _accountNav = GlobalKey<NavigatorState>();
+  // Direct handle to the Live-tab root state: the per-tab Navigator caches
+  // its route, so parent rebuilds never rebuild _LiveRoot — tab revisits
+  // must explicitly refresh it (see _selectTab).
+  final _liveRootKey = GlobalKey<_LiveRootState>();
   DateTime? _lastBack;
+  // Same tab-slide driver as the student shell (see above).
+  var _slideSeq = 0;
+  var _slideDir = 0.0;
 
   GlobalKey<NavigatorState> _nav(int i) =>
       [_liveNav, _coursesNav, _accountNav][i];
 
-  void _selectTab(int i) => setState(() => _index = i);
+  void _selectTab(int i) {
+    if (i != _index) {
+      _slideDir = i > _index ? 1 : -1;
+      _slideSeq++;
+    }
+    setState(() => _index = i);
+    if (i == 0) _liveRootKey.currentState?.refresh();
+  }
+
+  /// Swipe landing (§3.1 swipe rebuild): no gate on this shell — every
+  /// in-range swipe switches through the same slide as taps.
+  void _swipeTo(int target) {
+    if (target < 0 || target > 2 || target == _index) return;
+    _selectTab(target);
+  }
+
+  /// Horizontal fling on tab [i]'s content; root-only (see student shell).
+  void _onTabFling(int i, DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < _minSwipeVelocity) return;
+    final nav = _nav(i).currentState;
+    if (nav != null && nav.canPop()) return;
+    _swipeTo(velocity < 0 ? i + 1 : i - 1);
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Same stale-account keying as the student shell (see above): the
+    // professor Account root is keyed by the signed-in Gmail so a switch
+    // remounts it for the current account.
+    final accountTabKey = ValueKey(
+        'prof-account-${ref.watch(accountProvider).valueOrNull?.email.trim().toLowerCase() ?? 'signed-out'}');
     final narrow = MediaQuery.sizeOf(context).width < 360;
     return PopScope(
       canPop: false,
@@ -431,22 +638,28 @@ class _ProfShellState extends ConsumerState<ProfShell> {
           index: _index,
           children: [
             for (var i = 0; i < 3; i++)
-              AnimatedOpacity(
-                opacity: i == _index ? 1 : 0,
-                duration: ProxMotion.reduced(context)
-                    ? Duration.zero
-                    : ProxDurations.tabCrossFade,
-                child: Navigator(
-                  key: _nav(i),
-                  onGenerateRoute: (s) => _tabRoute(
-                    s,
-                    [
-                      _LiveRoot(onNeedCourses: () => _selectTab(1)),
-                      const ProfCoursesScreen(),
-                      const ProfAccountScreen(),
-                    ][i],
+              _TabSlide(
+                active: i == _index,
+                direction: _slideDir,
+                seq: _slideSeq,
+                reduced: ProxMotion.reduced(context),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: (d) => _onTabFling(i, d),
+                  child: Navigator(
+                    key: _nav(i),
+                    onGenerateRoute: (s) => _tabRoute(
+                      s,
+                      [
+                        _LiveRoot(
+                            key: _liveRootKey,
+                            onNeedCourses: () => _selectTab(1)),
+                        const ProfCoursesScreen(),
+                        ProfAccountScreen(key: accountTabKey),
+                      ][i],
+                    ),
+                    onUnknownRoute: proxOnUnknownRoute,
                   ),
-                  onUnknownRoute: proxOnUnknownRoute,
                 ),
               ),
           ],
@@ -489,21 +702,60 @@ class _ProfShellState extends ConsumerState<ProfShell> {
 /// existing host screen for a course. Web records builds cannot host
 /// (live/* stays native-only per the guards), so they get guidance, never
 /// a hosting affordance.
+///
+/// Zero-intersection (tester fix): Live rows are host entry ONLY — radio
+/// icon + `Tap to host live session` subtitle + `Host` trailing action,
+/// no management (no register/rename/delete/export, no session counts).
+/// Courses rows stay records/management only (verified records-only, no
+/// hosting affordance there). The two pickers no longer read as the same
+/// list.
 class _LiveRoot extends ConsumerStatefulWidget {
   final VoidCallback onNeedCourses;
-  const _LiveRoot({required this.onNeedCourses});
+  const _LiveRoot({super.key, required this.onNeedCourses});
 
   @override
   ConsumerState<_LiveRoot> createState() => _LiveRootState();
 }
 
 class _LiveRootState extends ConsumerState<_LiveRoot> {
-  late final Future<List<dynamic>> _courses;
+  late Future<List<dynamic>> _courses;
+
+  Future<List<dynamic>> _loadLive() {
+    final store = ref.read(deviceStoreProvider);
+    return Future.wait([store.readCourses(), store.readHistory()]);
+  }
 
   @override
   void initState() {
     super.initState();
-    _courses = ref.read(deviceStoreProvider).readCourses();
+    _courses = _loadLive();
+  }
+
+  /// Re-read the course catalog (same source the Courses tab writes via
+  /// `store.addCourse`) + the history read the Courses picker already uses
+  /// for its last-date labels (read-only reuse, no new query/semantics).
+  /// Called by the shell on every Live-tab select: the IndexedStack +
+  /// per-tab Navigator keeps this state alive, so the initState snapshot
+  /// alone would stay stale forever and hide Courses-tab registrations.
+  /// No filtering — empty state shows only when the catalog is truly empty.
+  void refresh() {
+    if (!mounted) return;
+    setState(() {
+      _courses = _loadLive();
+    });
+  }
+
+  /// Newest history dateIso for [course], same membership + newest-first
+  /// rule as the Courses picker (`courseId` match, legacy empty-courseId
+  /// falls back to class-label match). Null when never hosted.
+  String? _lastDateFor(String course, List<ClassRecord> history) {
+    final sessions = history
+        .where((r) =>
+            r.courseId == course ||
+            (r.courseId.isEmpty && r.classLabel == course))
+        .toList()
+      ..sort((a, b) => b.dateIso.compareTo(a.dateIso));
+    return sessions.isEmpty ? null : sessions.first.dateIso;
   }
 
   @override
@@ -534,6 +786,12 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
         ),
       );
     }
+    // Today's date header (tester fix, presentation only): the same frozen
+    // records helpers as the take-screen header (`fullDateOf(todayIso())`)
+    // so Live root reads consistently alongside it. Different screen, so
+    // no duplication — the take header owns its in-class block, this owns
+    // the tab-root line.
+    final todayLine = fullDateOf(todayIso());
     return AdaptiveScaffold(
       title: 'Live',
       body: FutureBuilder<List<dynamic>>(
@@ -542,7 +800,12 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          final courses = snap.data ?? const [];
+          final data = snap.data ?? const [];
+          final courses =
+              data.isEmpty ? const <Course>[] : data[0] as List<Course>;
+          final history = data.length < 2
+              ? const <ClassRecord>[]
+              : data[1] as List<ClassRecord>;
           if (courses.isEmpty) {
             return Center(
               child: SingleChildScrollView(
@@ -550,11 +813,14 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 460),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'No courses yet — register one in Courses to '
-                        'start hosting.',
+              child: Column(
+                children: [
+                  // Live ticking clock, same as the student Mark tab.
+                  const ClockHeader(),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No courses yet — register one in Courses to '
+                    'start hosting.',
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 12),
@@ -568,24 +834,108 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
               ),
             );
           }
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: courses.length,
-            itemBuilder: (context, i) {
-              final name = (courses[i] as dynamic).name as String;
-              return ListTile(
-                title: Text(name),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  BleLog.log('NAV', 'live root → host $name');
-                  Navigator.of(context).push(proxSharedAxisRoute(
-                    context,
-                    name: ProxRoutes.live(name),
-                    child: TakeAttendanceScreen(courseName: name),
-                  ));
-                },
-              );
-            },
+          // Tab header date + per-course last-hosted dates (tester fix,
+          // presentation only): today line reuses the frozen take-header
+          // format; each row reuses the frozen Courses-picker date format
+          // (`lastDateLabel`) read-only from history, with an honest
+          // `Not hosted yet` state when absent. Host entry only (no
+          // management, no session counts): radio + host subtitle + Host.
+          final c = ProximityColors.of(context);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
+                // Live ticking clock, same as the student Mark tab.
+                child: ClockHeader(),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.calendar_today_outlined,
+                      size: 14,
+                      color: c.contentPrimary,
+                    ),
+                    const SizedBox(width: ProxSpacing.sm),
+                    Flexible(
+                      child: Text(
+                        todayLine,
+                        style: ProxType.label(color: c.contentPrimary),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  itemCount: courses.length,
+                  itemBuilder: (context, i) {
+                    final name = courses[i].name;
+                    final lastDate = _lastDateFor(name, history);
+                    // Frozen picker format for the date half; honest
+                    // empty state otherwise. §10.1: the date line never
+                    // ellipsizes (wraps); ellipsis lives only on the
+                    // non-date host line below.
+                    final dateLine = lastDate == null
+                        ? 'Not hosted yet'
+                        : 'Last hosted ${lastDateLabel(lastDate)}';
+                    // Host entry only (no management): radio affordance +
+                    // host subtitle + Host action. Push + log + route name
+                    // unchanged (presentation/navigation only).
+                    return ListTile(
+                      leading: const Icon(Icons.radio_outlined),
+                      title: Text(
+                        name,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      isThreeLine: true,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            dateLine,
+                            style: ProxType.caption(
+                                color: c.contentSecondary),
+                            softWrap: true,
+                            maxLines: 2,
+                            overflow: TextOverflow.visible,
+                          ),
+                          const Text(
+                            'Tap to host live session',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ],
+                      ),
+                      trailing: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Host'),
+                          SizedBox(width: 4),
+                          Icon(Icons.play_arrow),
+                        ],
+                      ),
+                      onTap: () {
+                        BleLog.log('NAV', 'live root → host $name');
+                        Navigator.of(context).push(proxSharedAxisRoute(
+                          context,
+                          name: ProxRoutes.live(name),
+                          child: TakeAttendanceScreen(courseName: name),
+                        ));
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           );
         },
       ),

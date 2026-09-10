@@ -40,6 +40,12 @@ class StoredEnrollment {
   final String attestationLevel;
   final DateTime attestedAt;
   final DateTime attestedUntil;
+  /// Last SAVED face re-scan stamp, UTC epoch millis (0 = never rescanned
+  /// → allowed; covers pre-upgrade docs missing the key). Stamped only by
+  /// a successful rescan save (EnrollmentController.upload replacing an
+  /// existing template); first enrollment leaves 0, started-but-unsaved
+  /// rescans never stamp. Additive migration: old docs parse with 0.
+  final int lastFaceRescanAtMillis;
   StoredEnrollment({
     required this.email,
     required this.name,
@@ -55,10 +61,16 @@ class StoredEnrollment {
     this.attestationLevel = 'NONE',
     DateTime? attestedAt,
     DateTime? attestedUntil,
+    this.lastFaceRescanAtMillis = 0,
   })  : attestedAt = attestedAt ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         attestedUntil = attestedUntil ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+
+  /// Last saved rescan as a UTC DateTime (epoch 0 = never rescanned).
+  DateTime get lastFaceRescanAt => DateTime.fromMillisecondsSinceEpoch(
+      lastFaceRescanAtMillis,
+      isUtc: true);
 
   /// Stale pipeline: anything not stamped with the current plugin
   /// verifierVer is incomparable — forced re-face, key kept.
@@ -80,6 +92,7 @@ class StoredEnrollment {
         'attestationLevel': attestationLevel,
         'attestedAt': attestedAt.toIso8601String(),
         'attestedUntil': attestedUntil.toIso8601String(),
+        'lastFaceRescanAtMillis': lastFaceRescanAtMillis,
       };
 
   factory StoredEnrollment.fromJson(Map<String, dynamic> j) {
@@ -110,6 +123,8 @@ class StoredEnrollment {
       attestedUntil: j['attestedUntil'] == null
           ? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
           : DateTime.parse(j['attestedUntil'] as String),
+      lastFaceRescanAtMillis:
+          (j['lastFaceRescanAtMillis'] as num?)?.toInt() ?? 0,
     );
   }
 }

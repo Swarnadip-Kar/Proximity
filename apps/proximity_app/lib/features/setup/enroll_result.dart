@@ -18,43 +18,16 @@ import '../../design/tokens.dart';
 import '../../features/face_identity/face_blocked.dart';
 import '../../mode.dart';
 import '../../widgets/prox_buttons.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
-import '../../widgets/prox_verdict.dart';
 import 'enroll_widgets.dart';
+import 'result_sections.dart';
 import 'setup_step_scope.dart';
 
-/// Refusal classes, detected from the controller message (which carries the
-/// user-facing claim copy verbatim). Pure — the message stays the source of
-/// truth; this only picks the next-step card around it.
-enum _Refusal {
-  none,
-  cooldown,
-  installConflict,
-  offline,
-  pipeline,
-  partial,
-  roll,
-  generic,
-}
-
-_Refusal _classify(EnrollmentState st) {
-  if (st.phase == EnrollPhase.uploaded || st.message.isEmpty) {
-    return _Refusal.none;
-  }
-  final m = st.message.toLowerCase();
-  if (m.contains('another device')) return _Refusal.cooldown;
-  if (m.contains('already enrolled')) return _Refusal.installConflict;
-  if (m.contains('internet')) return _Refusal.offline;
-  if (m.contains('improved') || m.contains('scan your face again')) {
-    return _Refusal.pipeline;
-  }
-  if (m.contains('scan your face first')) return _Refusal.partial;
-  if (m.contains('id number')) return _Refusal.roll;
-  return _Refusal.generic;
-}
+/// Refusal classes live in [result_sections] ([EnrollRefusal] +
+/// [classifyEnrollRefusal]) alongside the next-step cards; the controller
+/// message stays the source of truth there too.
 
 class EnrollResultScreen extends ConsumerWidget {
   const EnrollResultScreen({super.key});
@@ -104,99 +77,18 @@ class EnrollResultScreen extends ConsumerWidget {
     final st = ref.watch(enrollmentControllerProvider);
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     if (st.phase == EnrollPhase.uploaded) {
-      return _success(context, ref, st, ctl);
+      return ProxScreen(
+        title: 'Enrolled',
+        child: ProxStaggered(
+          children: [
+            ResultSuccessSection(st: st, ctl: ctl),
+          ],
+        ),
+      );
     }
-    return _pending(context, ref, st, ctl);
-  }
-
-  Widget _success(BuildContext context, WidgetRef ref, EnrollmentState st,
-      EnrollmentController ctl) {
-    final restored = st.restored && st.faceScore <= 0;
-    return ProxScreen(
-      title: 'Enrolled',
-      child: ProxStaggered(
-        children: [
-          const SizedBox(height: ProxSpacing.lg),
-          ProxVerdictBadge(
-            kind: ProxVerdictKind.marked,
-            title: '✓ Done',
-            detail: restored
-                ? 'Key restored from this device — no fresh face match yet.'
-                : 'Identity linked for attendance.',
-          ),
-          const SizedBox(height: ProxSpacing.lg),
-          ProxCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (st.account != null)
-                  Text(
-                    '${st.account!.displayName}\n${st.account!.email}',
-                  ),
-                if (st.roll.isNotEmpty) ...[
-                  const SizedBox(height: ProxSpacing.xs),
-                  Text('ID: ${st.roll}'),
-                ],
-                if (!restored) ...[
-                  const SizedBox(height: ProxSpacing.xs),
-                  // Honest: the plugin returns identity only (match vs
-                  // non-match), so there is no measured score to show —
-                  // the boundary value lives in the FACE debug log only.
-                  Text(
-                    'Face matched on this phone — '
-                    'face data never leaves this phone.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: ProxSpacing.md),
-          ProxSecondaryButton(
-            icon: const Icon(Icons.face),
-            label: const Text('Re-scan face'),
-            expanded: true,
-            onPressed: () {
-              // Key kept; the saved enrollment is untouched (attendance
-              // still works) until 3 new stills validate.
-              EnrollLog.face('re-scan from result — key kept, slots cleared');
-              ctl.restartFace();
-              // STEP-SCOPE: inside SetupFlow, re-scan returns to the
-              // capture step instead of popping (standalone pop preserved).
-              final scope = SetupStepScope.of(context);
-              if (scope != null) {
-                scope.goTo(SetupStep.capture);
-              } else {
-                Navigator.of(context).pop();
-              }
-            },
-          ),
-          const SizedBox(height: ProxSpacing.sm),
-          ProxPrimaryButton(
-            label: const Text('Done'),
-            onPressed: () {
-              // STEP-SCOPE: inside SetupFlow, Done exits via the flow
-              // (lands on mark/browse, never the roles hub).
-              final scope = SetupStepScope.of(context);
-              if (scope != null) {
-                scope.complete();
-              } else {
-                EnrollNav.finish(context);
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _pending(BuildContext context, WidgetRef ref, EnrollmentState st,
-      EnrollmentController ctl) {
     final hasFace =
         st.phase == EnrollPhase.faceDone || st.phase == EnrollPhase.uploaded;
-    final refusal = _classify(st);
+    final refusal = classifyEnrollRefusal(st);
     return ProxScreen(
       title: 'Save enrollment',
       child: ProxStaggered(
@@ -216,44 +108,10 @@ class EnrollResultScreen extends ConsumerWidget {
                 ),
           ),
           const SizedBox(height: ProxSpacing.lg),
-          ProxCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (st.account != null)
-                  Text(
-                    '${st.account!.displayName}\n${st.account!.email}',
-                  ),
-                const SizedBox(height: ProxSpacing.xs),
-                // Honest: progress state (angles captured) stays user-visible;
-                // the numeric boundary lives in the FACE debug log only.
-                Text(
-                  'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}… · '
-                  'Face: ${hasFace ? '5 of 5 stills captured' : 'capture pending'}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-                const SizedBox(height: ProxSpacing.sm),
-                // Readonly flow-through of the single intro entry (no
-                // second prompt): Save reuses it, fail-closed when empty.
-                Text(
-                  st.roll.isNotEmpty
-                      ? 'ID: ${st.roll}'
-                      : 'ID: not entered — go back to the account step to '
-                          'enter it, then continue (your capture is kept).',
-                ),
-              ],
-            ),
-          ),
-          if (refusal != _Refusal.none) ...[
+          ResultStatusSection(st: st, hasFace: hasFace),
+          if (refusal != EnrollRefusal.none) ...[
             const SizedBox(height: ProxSpacing.md),
-            EnrollNotice(
-              message: st.message,
-              isError: refusal != _Refusal.partial,
-            ),
-            const SizedBox(height: ProxSpacing.sm),
-            _nextStep(context, ctl, refusal),
+            ResultRefusalSection(st: st, refusal: refusal, ctl: ctl),
           ],
           const SizedBox(height: ProxSpacing.lg),
           ProxPrimaryButton(
@@ -291,177 +149,5 @@ class EnrollResultScreen extends ConsumerWidget {
         ],
       ),
     );
-  }
-
-  /// Next-step card per refusal. The controller message (shown above,
-  /// verbatim) carries the details; this adds the action.
-  Widget _nextStep(
-      BuildContext context, EnrollmentController ctl, _Refusal refusal) {
-    switch (refusal) {
-      case _Refusal.cooldown:
-        // Message names the exact re-enroll date + old-device last-online +
-        // manual pointer; the action is patience + the manual fallback.
-        return const ProxCard(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.schedule_outlined),
-              SizedBox(width: ProxSpacing.sm),
-              Expanded(
-                child: Text(
-                  'Next step: wait for the re-enroll date above — moves are '
-                  'unlimited, at most one per 30 days. Until then, ask your '
-                  'professor to mark your attendance manually (Request '
-                  'manual attendance in class).',
-                ),
-              ),
-            ],
-          ),
-        );
-      case _Refusal.installConflict:
-        return const ProxCard(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.phonelink_erase_outlined),
-              SizedBox(width: ProxSpacing.sm),
-              Expanded(
-                child: Text(
-                  'Next step: to switch identity here, clear the app data / '
-                  'reinstall and enroll again — one phone holds one student '
-                  'enrollment. If you need attendance marked meanwhile, ask '
-                  'your professor for manual attendance.',
-                ),
-              ),
-            ],
-          ),
-        );
-      case _Refusal.offline:
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Next step: connect to the internet and tap Save again — '
-                'your capture is kept, no re-scan needed.',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-                expanded: true,
-                onPressed: ctl.dismissError,
-              ),
-            ],
-          ),
-        );
-      case _Refusal.pipeline:
-        // Stale template, valid key: fresh face capture, key kept.
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Next step: your device key was kept — scan your face again '
-                'on the previous screen. Attendance on the saved enrollment '
-                'keeps working meanwhile.',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.face),
-                label: const Text('Back to face scan'),
-                expanded: true,
-                onPressed: () {
-                  // STEP-SCOPE: inside SetupFlow, back steps within the
-                  // flow instead of popping (standalone pop preserved).
-                  final scope = SetupStepScope.of(context);
-                  if (scope != null) {
-                    scope.back();
-                  } else {
-                    Navigator.of(context).pop();
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      case _Refusal.partial:
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Next step: go back and capture the 5 stills — '
-                'a failed capture stores nothing, so just retry.',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.face),
-                label: const Text('Back to face scan'),
-                expanded: true,
-                onPressed: () {
-                  // STEP-SCOPE: inside SetupFlow, back steps within the
-                  // flow instead of popping (standalone pop preserved).
-                  final scope = SetupStepScope.of(context);
-                  if (scope != null) {
-                    scope.back();
-                  } else {
-                    Navigator.of(context).pop();
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      case _Refusal.roll:
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Next step: go back to the account step and enter your ID '
-                'number once, then continue — your capture is kept, no '
-                're-scan needed.',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Back to account step'),
-                expanded: true,
-                onPressed: () {
-                  // STEP-SCOPE: inside SetupFlow, the account step is the
-                  // combined device+intro step (standalone popUntil
-                  // preserved).
-                  final scope = SetupStepScope.of(context);
-                  if (scope != null) {
-                    scope.goTo(SetupStep.deviceIntro);
-                  } else {
-                    Navigator.of(context).popUntil((route) =>
-                        route.isFirst ||
-                        route.settings.name == '${EnrollNav.routePrefix}intro');
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      case _Refusal.generic:
-      case _Refusal.none:
-        return ProxCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('Next step: review the note above and try again.'),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-                expanded: true,
-                onPressed: ctl.dismissError,
-              ),
-            ],
-          ),
-        );
-    }
   }
 }

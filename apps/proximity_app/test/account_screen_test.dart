@@ -1,10 +1,9 @@
-// Account-section widget contracts (§5.1–§5.3 + §4.3/§4.5/§4.7).
+// Account-section widget contracts (overhaul: compact menu + sub-pages).
 //
-// Pins the consolidated pages only: sections render, the ID row is
-// read-only (gap-2 verdict — no server write path, so no TextField),
-// face-id shows status with NEVER a preview widget, the theme control
-// persists, the professor page carries no face content, and records-only
-// devices see the records note instead of key/move UI.
+// Pins the menu root (header + mode tabs + rows only, no section bodies)
+// plus the one-feature sub-pages: enrollment (+ editable ID), device
+// (facts + truthful trust), appearance (theme), face-id (never preview),
+// professor menu. Records-only hides native rows behind the records note.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,9 +16,10 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/account/account_device_page.dart';
+import 'package:proximity_app/features/account/account_enrollment_page.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/account/face_id_screen.dart';
-import 'package:proximity_app/features/account/theme_mode.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/mode.dart';
@@ -119,9 +119,7 @@ List<Override> _accountOverrides({
   ];
 }
 
-/// Stepped pumps (repo convention NAV-D6): lets each periodic tick's async
-/// tail + one-shot entrance timers settle without `pumpAndSettle`'s
-/// no-pending-timers teardown assertion tripping on them.
+/// Stepped pumps (repo convention NAV-D6).
 Future<void> _drain(WidgetTester t, [int steps = 6]) async {
   await t.pump();
   for (var i = 0; i < steps; i++) {
@@ -138,65 +136,88 @@ Future<void> _pumpAccount(WidgetTester t, Widget home,
   await _drain(t);
 }
 
+const _acct = SignedAccount(
+    email: _email, displayName: 'Test User', uid: 'test-uid', org: 'example.com');
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  group('student account page', () {
-    testWidgets('renders all sections with enrolled facts', (t) async {
+  group('student account menu (compact root)', () {
+    testWidgets('root renders header + rows only, no section bodies', (t) async {
       final store = await _enrolledStore();
       await _pumpAccount(t, const StudentAccountScreen(), extra: [
         deviceStoreProvider.overrideWithValue(store),
         cloudSyncProvider.overrideWithValue(_boundCloud()),
       ]);
 
-      // Header (initials avatar — no photo field exists to render).
       expect(find.text('Test User'), findsWidgets);
       expect(find.text(_email), findsWidgets);
-      // Sections.
-      expect(find.text('Enrollment'), findsOneWidget);
-      expect(find.text('ID'), findsOneWidget);
-      expect(find.text('Face ID'), findsWidgets);
-      expect(find.text('Device'), findsOneWidget);
-      expect(find.text('Device model'), findsOneWidget);
-      expect(find.text('Theme'), findsWidgets);
-      expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
+      expect(find.byKey(const Key('account-row-enrollment')), findsOneWidget);
+      expect(find.byKey(const Key('account-row-device')), findsOneWidget);
+      expect(find.byKey(const Key('account-row-appearance')), findsNothing);
+      expect(find.byKey(const Key('account-row-face-id')), findsOneWidget);
       expect(find.text('System log'), findsOneWidget);
       expect(find.text('Switch account (sign out)'), findsOneWidget);
-      // Enrolled facts.
+      // Appearance lives inline at the root end (no sub-page, no row).
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
+      // Compactness: no embedded fact bodies on the root.
+      expect(find.text('2026-09-01'), findsNothing);
+      expect(find.text('Active'), findsNothing);
+      expect(find.text('android'), findsNothing);
+      expect(find.textContaining('Device NONE'), findsNothing);
+      expect(find.byKey(const Key('account-id-row')), findsNothing);
+      expect(find.text('Re-enroll this device'), findsNothing);
+      expect(find.text('Enroll this device'), findsNothing);
+      expect(find.text('Move to this device'), findsNothing);
+    });
+
+    testWidgets('enrollment sub-page holds enrolled facts + editable ID',
+        (t) async {
+      final store = await _enrolledStore();
+      await _pumpAccount(t, AccountEnrollmentPage(acct: _acct), extra: [
+        deviceStoreProvider.overrideWithValue(store),
+        cloudSyncProvider.overrideWithValue(_boundCloud()),
+      ]);
+
       expect(find.textContaining('Enrolled as $_email'), findsWidgets);
       expect(find.text('2026-09-01'), findsOneWidget);
       expect(find.text('example.com'), findsWidgets);
-      expect(find.text('Active'), findsOneWidget);
-      expect(find.text('android'), findsOneWidget);
-      // Trust tier visible, explainer collapsed behind Details.
-      expect(find.textContaining('Device NONE'), findsWidgets);
-      expect(find.text('What this means'), findsWidgets);
-      // Re-enroll entry stays fallback weight (text button, not primary).
-      expect(find.text('Re-enroll this device'), findsOneWidget);
+      expect(find.byKey(const Key('account-id-row')), findsOneWidget);
+      expect(find.text('R1001'), findsWidgets);
+      // Editable (overhaul business addition): Edit opens the field.
+      expect(find.byKey(const Key('account-id-edit')), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      await t.tap(find.byKey(const Key('account-id-edit')));
+      await _drain(t);
+      expect(find.byKey(const Key('account-id-field')), findsOneWidget);
+      expect(find.byKey(const Key('account-id-save')), findsOneWidget);
     });
 
-    testWidgets('ID row is read-only: value shown, no edit control',
-        (t) async {
+    testWidgets('device sub-page holds facts + truthful trust', (t) async {
       final store = await _enrolledStore();
-      await _pumpAccount(t, const StudentAccountScreen(), extra: [
+      await _pumpAccount(t, AccountDevicePage(acct: _acct), extra: [
         deviceStoreProvider.overrideWithValue(store),
         cloudSyncProvider.overrideWithValue(_boundCloud()),
       ]);
 
-      expect(find.byKey(const Key('account-id-row')), findsOneWidget);
-      expect(find.text('R1001'), findsWidgets);
-      // Gap-2 verdict pin: no write path exists server-side, so no editor.
-      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Device model'), findsOneWidget);
+      expect(find.byKey(const Key('account-device-id-row')), findsOneWidget);
+      expect(find.byKey(const Key('account-device-id-full')), findsOneWidget);
+      expect(find.byKey(const Key('account-device-key-row')), findsOneWidget);
+      expect(find.text('Active'), findsOneWidget);
+      expect(find.text('android'), findsOneWidget);
+      expect(find.textContaining('Device NONE'), findsWidgets);
+      expect(find.byKey(const Key('account-trust-note')), findsOneWidget);
     });
 
-    testWidgets('cooldown gate shows verbatim re-enroll date, no move entry',
-        (t) async {
+    testWidgets('cooldown gate shows verbatim re-enroll date', (t) async {
       final store = await _enrolledStore();
       final movedAt = DateTime.now().toUtc().millisecondsSinceEpoch -
           const Duration(days: 1).inMilliseconds;
-      await _pumpAccount(t, const StudentAccountScreen(), extra: [
+      await _pumpAccount(t, AccountDevicePage(acct: _acct), extra: [
         deviceStoreProvider.overrideWithValue(store),
         cloudSyncProvider.overrideWithValue(_boundCloud(
           installId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -214,18 +235,42 @@ void main() {
 
     testWidgets('eligible move shows the Move-to-this-device fallback',
         (t) async {
-      final store = await _enrolledStore();
-      await _pumpAccount(t, const StudentAccountScreen(), extra: [
-        deviceStoreProvider.overrideWithValue(store),
-        // Pre-timestamp binding on another install → allowedMove.
-        cloudSyncProvider.overrideWithValue(_boundCloud(
-          installId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          pkHex: 'aa' * 32,
-        )),
-      ]);
+      final store = InMemoryDeviceStore();
+      await store.writeInstallId(_installId);
+      await store.writeEnrollment(StoredEnrollment(
+        email: 'other@example.edu',
+        name: 'Other User',
+        roll: 'R9999',
+        seedHex: 'cd' * 32,
+        pkHex: 'bb' * 32,
+        faceId: 'face-other-id',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.edu',
+        pkDHex: 'aa' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      await t.pumpWidget(ProviderScope(
+        overrides: _accountOverrides(
+          store: store,
+          linked: null,
+          cloud: _boundCloud(
+            installId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            pkHex: 'aa' * 32,
+          ),
+        ),
+        child: MaterialApp(
+            theme: proxLightTheme(), home: AccountDevicePage(acct: _acct)),
+      ));
+      await _drain(t);
 
       expect(find.text('Eligible to move here'), findsOneWidget);
       expect(find.text('Move to this device'), findsOneWidget);
+      expect(find.textContaining('Enrolled as other@example.edu'),
+          findsNothing);
+      expect(find.text('R9999'), findsNothing);
     });
 
     testWidgets('face-id row pushes the isolated status page', (t) async {
@@ -235,15 +280,48 @@ void main() {
         cloudSyncProvider.overrideWithValue(_boundCloud()),
       ]);
 
-      await t.ensureVisible(find.byKey(const Key('account-face-id-row')));
+      await t.ensureVisible(find.byKey(const Key('account-row-face-id')));
       await _drain(t);
-      await t.tap(find.byKey(const Key('account-face-id-row')));
+      await t.tap(find.byKey(const Key('account-row-face-id')));
       await _drain(t);
 
       expect(find.byType(FaceIdScreen), findsOneWidget);
       expect(find.textContaining('Enrolled ·'), findsOneWidget);
-      // Never-preview assertion: no image widget anywhere on the page.
       expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('enrollment row pushes the enrollment sub-page', (t) async {
+      final store = await _enrolledStore();
+      await _pumpAccount(t, const StudentAccountScreen(), extra: [
+        deviceStoreProvider.overrideWithValue(store),
+        cloudSyncProvider.overrideWithValue(_boundCloud()),
+      ]);
+
+      await t.tap(find.byKey(const Key('account-row-enrollment')));
+      await _drain(t);
+      expect(find.byType(AccountEnrollmentPage), findsOneWidget);
+      expect(find.byKey(const Key('account-id-row')), findsOneWidget);
+    });
+
+    testWidgets('device row pushes the device sub-page', (t) async {
+      final store = await _enrolledStore();
+      await _pumpAccount(t, const StudentAccountScreen(), extra: [
+        deviceStoreProvider.overrideWithValue(store),
+        cloudSyncProvider.overrideWithValue(_boundCloud()),
+      ]);
+
+      await t.tap(find.byKey(const Key('account-row-device')));
+      await _drain(t);
+      expect(find.byType(AccountDevicePage), findsOneWidget);
+      expect(find.byKey(const Key('account-device-id-row')), findsOneWidget);
+    });
+
+    testWidgets('appearance renders inline at the root end, no sub-page',
+        (t) async {
+      await _pumpAccount(t, const StudentAccountScreen());
+      expect(find.byKey(const Key('account-row-appearance')), findsNothing);
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
     });
 
     testWidgets('signed out renders Welcome (hub-route behavior preserved)',
@@ -276,28 +354,7 @@ void main() {
       expect(container.read(linkedIdentityProvider), isNull);
     });
 
-    testWidgets('theme control persists the choice', (t) async {
-      final container = ProviderContainer(overrides: _accountOverrides());
-      addTearDown(container.dispose);
-      await t.pumpWidget(UncontrolledProviderScope(
-        container: container,
-        child:
-            MaterialApp(theme: proxLightTheme(), home: const StudentAccountScreen()),
-      ));
-      await _drain(t);
-
-      expect(container.read(themeModeProvider), ThemeMode.system);
-      await t.ensureVisible(find.text('Dark'));
-      await _drain(t);
-      await t.tap(find.text('Dark'));
-      await _drain(t);
-
-      expect(container.read(themeModeProvider), ThemeMode.dark);
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString(themeModePrefsKey), 'dark');
-    });
-
-    testWidgets('records-only device sees the records note, no key/move UI',
+    testWidgets('records-only device sees the records note, no native rows',
         (t) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       try {
@@ -310,10 +367,13 @@ void main() {
             find.text(
                 'Records view only here — enrollment, keys, and device moves live in the mobile app (Android/iOS).'),
             findsOneWidget);
-        expect(find.text('Move status'), findsNothing);
-        expect(find.text('Face ID'), findsNothing);
-        // Header, theme, log, sign-out stay.
-        expect(find.text('Theme'), findsWidgets);
+        expect(find.byKey(const Key('account-row-enrollment')), findsNothing);
+        expect(find.byKey(const Key('account-row-device')), findsNothing);
+        expect(find.byKey(const Key('account-row-face-id')), findsNothing);
+        expect(find.byKey(const Key('account-row-appearance')), findsNothing);
+        // Header, inline appearance, log, sign-out stay.
+        expect(find.text('Appearance'), findsOneWidget);
+        expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
         expect(find.text('System log'), findsOneWidget);
         expect(find.text('Switch account (sign out)'), findsOneWidget);
       } finally {
@@ -359,8 +419,8 @@ void main() {
     });
   });
 
-  group('professor account page', () {
-    testWidgets('device/key/theme/log/sign-out, no face content', (t) async {
+  group('professor account menu', () {
+    testWidgets('rows push device/appearance, no face content', (t) async {
       final store = InMemoryDeviceStore();
       await store.writeInstallId(_installId);
       await store.writeHostName('Prof Name');
@@ -369,21 +429,29 @@ void main() {
       ]);
 
       expect(find.text('Test User'), findsWidgets);
-      expect(find.text('This device'), findsOneWidget);
-      expect(find.text('Prof Name'), findsOneWidget);
-      expect(find.textContaining('aaaaaaaaaaaa'), findsOneWidget);
-      expect(find.text('Theme'), findsWidgets);
+      expect(find.byKey(const Key('account-row-device')), findsOneWidget);
+      expect(find.byKey(const Key('account-row-appearance')), findsNothing);
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
       expect(find.text('System log'), findsOneWidget);
       expect(find.text('Switch account (sign out)'), findsOneWidget);
-      // No Face-ID section/route, no enrollment-status section.
+      expect(find.byKey(const Key('account-row-face-id')), findsNothing);
+      expect(find.byKey(const Key('account-row-enrollment')), findsNothing);
       expect(find.text('Face ID'), findsNothing);
       expect(find.text('Enrollment'), findsNothing);
       expect(find.byType(FaceIdScreen), findsNothing);
+      // Facts live one level down, not on the root.
+      expect(find.text('Prof Name'), findsNothing);
+      await t.tap(find.byKey(const Key('account-row-device')));
+      await _drain(t);
+      expect(find.text('Prof Name'), findsOneWidget);
+      expect(find.textContaining('aaaaaaaaaaaa'), findsWidgets);
+      expect(find.byKey(const Key('account-device-id-full')), findsOneWidget);
     });
   });
 
   group('shell tabs', () {
-    testWidgets('Account tabs host the consolidated pages', (t) async {
+    testWidgets('Account tabs host the menu roots', (t) async {
       final store = await _enrolledStore();
       await t.pumpWidget(ProviderScope(
         overrides: [
@@ -403,16 +471,14 @@ void main() {
         await t.pump(const Duration(milliseconds: 500));
       }
 
-      // Mark gate stays shut (linked), Mark tab lands on browse.
       expect(find.byType(StudentHomeScreen), findsOneWidget);
-      // Tap the bar label itself (tapping the whole bar hits its center).
       await t.tap(find.text('Account'));
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
 
       expect(find.byType(StudentAccountScreen), findsOneWidget);
-      expect(find.byKey(const Key('account-id-row')), findsOneWidget);
+      expect(find.byKey(const Key('account-row-enrollment')), findsOneWidget);
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }

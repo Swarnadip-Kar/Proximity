@@ -8,6 +8,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import 'claim.dart';
@@ -33,9 +34,7 @@ bool _isOfflineError(Object e) {
 
 /// Wraps Firestore permission failures with the actionable fix (rules not
 /// deployed or a binding conflict), instead of a bare code.
-StateError _rulesError(String op) => StateError(
-    'Cloud $op refused by security rules (permission-denied) — deploy them with:\n'
-    'firebase deploy --only firestore:rules --project proximity-attendence');
+StateError _rulesError(String op) => StateError(cloudRulesHint(op));
 
 class FirestoreCloudSync implements CloudSync {
   @override
@@ -475,19 +474,86 @@ class FirestoreCloudSync implements CloudSync {
     } on StateError {
       rethrow; // refusal copy reaches the UI verbatim
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') throw _rulesError('enrollment');
+      if (e.code == 'permission-denied') {
+        // Scoped denial (verdict-by-evidence): the transaction's own reads
+        // cannot distinguish "rules not deployed" from "install holds
+        // another Gmail" (a cross-org install-doc read denies before the
+        // client verdict ever runs). Probe by evidence — server source so
+        // cached reads cannot mask the rules verdict:
+        // - own binding denied → genuine rules problem → deploy hint.
+        // - own binding clean + install doc denied → the install holds a
+        //   different Gmail → friendly installConflict copy (the incumbent
+        //   email is unreadable, so the 'another account' fallback applies).
+        // - both readable → the denial came from a write the client verdict
+        //   allowed (race/desync) → deploy hint for the dev to reconcile.
+        throw await _scopedClaimDenial(key, installId);
+      }
       if (_isOfflineError(e)) {
         throw StateError(
-            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 3 stills are kept.');
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
       }
       rethrow;
     } catch (e) {
       if (_isOfflineError(e)) {
         throw StateError(
-            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your 3 stills are kept.');
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
       }
       rethrow;
     }
+  }
+
+  /// Scoped mapping for a permission-denied claim transaction (see the call
+  /// site): own-doc denied → deploy hint; install-doc denied after a clean
+  /// own-doc read → friendly installConflict copy; both readable → deploy
+  /// hint. Offline probes surface the offline copy (verbatim). Never throws
+  /// raw Firebase text — every branch is a StateError with user/dev copy.
+  Future<StateError> _scopedClaimDenial(String key, String installId) async {
+    const probeTimeout = Duration(seconds: 8);
+    try {
+      await _db
+          .collection('studentDevices')
+          .doc(key)
+          .get(const GetOptions(source: Source.server))
+          .timeout(probeTimeout);
+    } on FirebaseException catch (e) {
+      if (_isOfflineError(e)) {
+        return StateError(
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
+      }
+      // Own binding unreadable (denied or otherwise) → rules problem.
+      return _rulesError('enrollment');
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        return StateError(
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
+      }
+      return _rulesError('enrollment');
+    }
+    // Own-doc reads clean: probe the install mapping.
+    try {
+      await _db
+          .collection('deviceInstalls')
+          .doc(installId)
+          .get(const GetOptions(source: Source.server))
+          .timeout(probeTimeout);
+    } on FirebaseException catch (e) {
+      if (_isOfflineError(e)) {
+        return StateError(
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
+      }
+      if (e.code == 'permission-denied') {
+        return StateError(studentClaimMessage(
+            const StudentClaimResult(StudentClaim.installConflict), null));
+      }
+      return _rulesError('enrollment');
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        return StateError(
+            'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your capture is kept.');
+      }
+      return _rulesError('enrollment');
+    }
+    return _rulesError('enrollment');
   }
 
   @override
@@ -587,6 +653,87 @@ class FirestoreCloudSync implements CloudSync {
       return PurgeOutcome(deleted);
     }
     return PurgeOutcome(deleted);
+  }
+
+  @override
+  Future<void> updateStudentRoll(
+      {required String emailLower, required String newRoll}) async {
+    // CLIENT-SIDE ONLY — requires
+    // `firebase deploy --only firestore:rules --project proximity-attendence`
+    // for the roll-update path (same-device owner update + directory row).
+    // Permission-denied maps to the shared deploy hint (existing
+    // rules-error pattern via _rulesError), never raw Firebase text.
+    // Historical session rolls/names untouched — only the binding +
+    // directory row change.
+    _needAvailable();
+    final want = newRoll.trim();
+    if (want.isEmpty) throw StateError('ID Number is required.');
+    final key = emailLower.toLowerCase();
+    try {
+      await _db.runTransaction((tx) async {
+        final devRef = _db.collection('studentDevices').doc(key);
+        final snap = await tx.get(devRef);
+        if (!snap.exists) {
+          throw StateError(
+              'No enrolled device found for this account — enroll this device first.');
+        }
+        final binding = _deviceFrom(snap.data(), key);
+        final at = DateTime.now().toUtc();
+        final atMillis = at.millisecondsSinceEpoch;
+        final org =
+            binding.org.isNotEmpty ? binding.org : orgOf(key);
+        // Same-device roll edit: preserve identity/binding stamps, refresh
+        // only the fresh stamps the rules require (lastSeen/updated within
+        // 1h) + the roll. lastMove/moveCount/created/pk/install untouched.
+        tx.set(devRef, {
+          'email': key,
+          'uid': binding.uid,
+          'pkHex': binding.pkHex,
+          'installId': binding.installId,
+          'name': binding.name,
+          'roll': want,
+          'modelVer': binding.modelVer,
+          'platform': binding.platform,
+          'org': org,
+          'createdAtMillis': binding.createdAtMillis,
+          'lastMoveAtMillis': binding.lastMoveAtMillis,
+          'lastSeenAtMillis': atMillis,
+          'updatedAtMillis': atMillis,
+          'moveCount': binding.moveCount,
+          'pkDHex': binding.pkDHex,
+          'attestationLevel': binding.attestationLevel,
+          'attestedAtMillis': binding.attestedAtMillis,
+          'attestedUntilMillis': binding.attestedUntilMillis,
+          'updatedAt': at.toIso8601String(),
+        }, SetOptions(merge: true));
+        tx.set(_db.collection('studentDirectory').doc(key), {
+          'email': key,
+          'name': binding.name,
+          'roll': want,
+          'nameLower': binding.name.toLowerCase(),
+          'org': org,
+          'updatedAtMillis': atMillis,
+          'updatedAt': at.toIso8601String(),
+        }, SetOptions(merge: true));
+      }).timeout(const Duration(seconds: 12));
+      BleLog.log('SYNC', 'id update ok $key');
+    } on StateError {
+      rethrow;
+    } on FirebaseException catch (e) {
+      BleLog.log('SYNC', 'id update refused (${e.code}) — deploy hint');
+      if (e.code == 'permission-denied') throw _rulesError('id update');
+      if (_isOfflineError(e)) {
+        throw StateError(
+            'You appear offline — connect to the internet to update your ID.');
+      }
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        throw StateError(
+            'You appear offline — connect to the internet to update your ID.');
+      }
+      rethrow;
+    }
   }
 
   @override

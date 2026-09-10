@@ -42,6 +42,7 @@ import '../../widgets/student_card.dart';
 import '../../widgets/sync_badge.dart';
 import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
+import '../live/live_refresh.dart';
 import 'export_center_screen.dart';
 import 'session_detail_screen.dart';
 
@@ -60,14 +61,32 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   String? _syncMsg;
   bool _syncing = false;
 
+  /// History-refresh trigger (post-End freshness, presentation/navigation
+  /// only). Root cause: this state lives inside the shell IndexedStack +
+  /// per-tab Navigator (pushed atop the Courses tab), which keeps it alive
+  /// across Live-tab visits — the `FutureBuilder` future below never
+  /// re-reads on its own, so an overview opened before End keeps serving
+  /// its pre-End snapshot. The take host bumps [liveHistoryTick] when its
+  /// visit writes history or exits; this listener `setState`s, which
+  /// re-creates the inline future so the next read is fresh. Data/filter/
+  /// sort/union/tombstone/rename logic untouched.
+  VoidCallback? _historyTickListener;
+
   @override
   void initState() {
     super.initState();
     Future.microtask(_syncFromCloud);
+    _historyTickListener = () {
+      if (mounted) setState(() {});
+    };
+    liveHistoryTick.addListener(_historyTickListener!);
   }
 
   @override
   void dispose() {
+    if (_historyTickListener != null) {
+      liveHistoryTick.removeListener(_historyTickListener!);
+    }
     _renameCtrl.dispose();
     super.dispose();
   }
@@ -326,8 +345,11 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
 /// Overview content inside one [SelectionScope]: session rows use
 /// hold-and-tap selection with a bottom toolbar
 /// (Delete N · Select all · Cancel). No checkbox appears here; the
-/// session-edit page keeps the per-round correction boxes.
-class _OverviewBody extends ConsumerWidget {
+/// session-edit page keeps the per-round correction boxes. On desktop
+/// only, a Select/Done toggle arms selection mode (same pattern as the
+/// manual inbox) and right-click enters with that row — same controller,
+/// same toolbar.
+class _OverviewBody extends ConsumerStatefulWidget {
   final List<ClassRecord> sessions;
   final bool loading;
   final bool hasData;
@@ -361,11 +383,45 @@ class _OverviewBody extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_OverviewBody> createState() => _OverviewBodyState();
+}
+
+class _OverviewBodyState extends ConsumerState<_OverviewBody> {
+  /// Desktop Select-toggle arm (mirrors the manual inbox): widens
+  /// selectionMode so plain left-clicks toggle while armed. Same
+  /// controller, same toolbar — presentation state only, never set
+  /// off-desktop (no toggle renders there).
+  var _armed = false;
+
+  void _disarm() {
+    if (_armed && mounted) setState(() => _armed = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final controller = ref.watch(selectionControllerProvider);
     final selecting = controller.selecting && !kIsWeb;
+    // Off-desktop the arm is never set, so this equals the old
+    // `selecting` exactly (mobile/web paths byte-identical).
+    final effective = selecting || (_armed && isDesktopSelection);
     final count = controller.count;
+    // Local copies of the widget props (read-only aliases for the
+    // rest of this build).
+    final sessions = widget.sessions;
+    final loading = widget.loading;
+    final hasData = widget.hasData;
+    final rosterCount = widget.rosterCount;
+    final syncing = widget.syncing;
+    final syncMsg = widget.syncMsg;
+    final notice = widget.notice;
+    final onOpenExport = widget.onOpenExport;
+    final onOpenSession = widget.onOpenSession;
+    final onDeleteSessions = widget.onDeleteSessions;
+    final onDeleteCourse = widget.onDeleteCourse;
+    final sessionLabel = widget.sessionLabel;
+    final sessionDateLine = widget.sessionDateLine;
+    final partialMarker = widget.partialMarker;
     return Column(
       children: [
         Expanded(
@@ -380,7 +436,7 @@ class _OverviewBody extends ConsumerWidget {
               if (syncing)
                 const ProxLoadingRow(label: 'Syncing with cloud…')
               else if (syncMsg != null)
-                ProxSyncNote(syncMsg!),
+                ProxSyncNote(syncMsg),
               const Align(
                 alignment: Alignment.centerLeft,
                 child: UnsyncedBadge(),
@@ -393,12 +449,29 @@ class _OverviewBody extends ConsumerWidget {
                 expanded: true,
               ),
               const SizedBox(height: ProxSpacing.sm),
-              Text(
-                '$rosterCount people · ${sessions.length} sessions',
-                style: proxTabular(
-                    context, ProxType.label(color: c.contentPrimary)),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$rosterCount people · ${sessions.length} sessions',
+                      style: proxTabular(
+                          context, ProxType.label(color: c.contentPrimary)),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                  // Mouse-first entry (desktop only): arms selection mode
+                  // so left-clicks toggle; Done disarms + clears. Renders
+                  // nothing on touch devices.
+                  SelectionModeToggle(
+                    selecting: effective,
+                    onSelect: () => setState(() => _armed = true),
+                    onDone: () {
+                      controller.clear();
+                      _disarm();
+                    },
+                  ),
+                ],
               ),
               DetailsExpander(
                 title: 'Details',
@@ -409,7 +482,7 @@ class _OverviewBody extends ConsumerWidget {
               ),
               if (notice != null) ...[
                 const SizedBox(height: ProxSpacing.sm),
-                ProxErrorNote(notice!),
+                ProxErrorNote(notice),
               ],
               const SizedBox(height: ProxSpacing.sm),
               if (loading)
@@ -425,7 +498,7 @@ class _OverviewBody extends ConsumerWidget {
                 if (!kIsWeb)
                   SelectionCoachMark(
                     listType: SelectionCoachMarks.sessions,
-                    selecting: selecting,
+                    selecting: effective,
                   ),
                 for (final r in sessions)
                   Padding(
@@ -444,7 +517,7 @@ class _OverviewBody extends ConsumerWidget {
                                     status: ProxStatus.review,
                                     label: partialMarker(r),
                                   ),
-                            selectionMode: selecting,
+                            selectionMode: effective,
                             selected: controller.isSelected(r.id),
                             // No multi-delete selection on web records builds.
                             onSelectionChanged: kIsWeb
@@ -493,11 +566,19 @@ class _OverviewBody extends ConsumerWidget {
                       final ids = controller.selectedIds;
                       final deleted = await onDeleteSessions(ids);
                       if (deleted) controller.clear();
+                      // A delete that empties the list also drops the
+                      // desktop arm.
+                      if (_armed && !controller.selecting) _disarm();
                     },
             ),
           ],
           onSelectAll: () => controller.selectAll(sessions.map((s) => s.id)),
-          onCancel: controller.clear,
+          // Toolbar Cancel exits selection mode entirely (clears the
+          // desktop arm too); the toolbar contract itself is unchanged.
+          onCancel: () {
+            controller.clear();
+            _disarm();
+          },
         ),
       ],
     );

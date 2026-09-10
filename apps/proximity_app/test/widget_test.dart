@@ -237,8 +237,12 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
+    // Server line lives on the Setup sub-tab (real sub-tabs: tap swaps,
+    // no shared scroll to drag).
+    await t.tap(find.text('Setup'));
+    await t.pumpAndSettle();
     expect(find.textContaining('waiting for window'), findsOneWidget);
-    // start single window
+    // start single window (Start lives in the fixed header: on every tab)
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
     expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
@@ -510,37 +514,50 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.tap(find.text('Register as Student'));
     await t.pumpAndSettle();
     // Register lands on the shell, whose Mark gate is already pushing the
-    // setup flow at the combined device+intro step (§3.3/§3.4 rebuild: no
-    // separate enroll-bundle entry tap anymore).
-    expect(find.text('Enroll this device'), findsWidgets);
-    // 1. intro: account picked up silently (already signed in on the
-    // landing): no second Google tap. Identity imports from Gmail.
-    // (The flow's sign-in page exists offstage; the visible step is the
-    // combined device+intro step.)
+    // setup flow at the Confirm-device page (flow: device → account&key →
+    // capture → result; no separate enroll-bundle entry tap anymore).
+    // 1. device: which account / which device / move status (single
+    // purpose; the flow's sign-in page exists offstage).
     expect(find.text('Confirm device'), findsOneWidget);
+    expect(find.textContaining('Which account'), findsOneWidget);
+    // device → account & key (Continue sits below the device facts:
+    // scroll into view inside the shell-hosted flow viewport first).
+    await t.scrollUntilVisible(find.widgetWithText(FilledButton, 'Continue'),
+        300,
+        scrollable: find
+            .descendant(
+                of: find.byKey(const ValueKey('setup-device-scroll')),
+                matching: find.byType(Scrollable))
+            .first);
+    await t.pumpAndSettle();
+    await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await t.pumpAndSettle();
+    // 2. account & key: ID entry + device key + Continue to face scan.
+    // Account picked up silently (already signed in on the landing): no
+    // second Google tap.
+    expect(find.text('Account & key'), findsOneWidget);
     expect(find.textContaining('Signed in as Test User'), findsWidgets);
     expect(find.textContaining('student@example.com'), findsWidgets);
     // ID number (compulsory, saved unverified)
     await t.enterText(
         find.widgetWithText(TextField, 'ID Number'), '12342210');
     await t.pump();
-    // 2. device key (scroll into view: the combined step carries the
-    // device facts above the intro cards).
+    // device key (scroll into view on the account&key page).
     await t.scrollUntilVisible(find.text('Generate device key'), 300,
         scrollable: find
             .descendant(
-                of: find.byKey(const ValueKey('setup-combined-scroll')),
+                of: find.byKey(const ValueKey('setup-account-key-scroll')),
                 matching: find.byType(Scrollable))
             .first);
     await t.pumpAndSettle();
     await t.tap(find.text('Generate device key'));
     await t.pumpAndSettle();
     expect(find.textContaining('Key: '), findsOneWidget);
-    // Intro → capture.
+    // Account & key → capture.
     await t.scrollUntilVisible(find.text('Continue to face scan'), 300,
         scrollable: find
             .descendant(
-                of: find.byKey(const ValueKey('setup-combined-scroll')),
+                of: find.byKey(const ValueKey('setup-account-key-scroll')),
                 matching: find.byType(Scrollable))
             .first);
     await t.pumpAndSettle();
@@ -719,6 +736,17 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(find.text('Take another round'), findsOneWidget);
     await t.tap(find.text('Retake round 1'));
     await t.pumpAndSettle();
+    // Server line lives on the Setup sub-tab (real sub-tabs: tap swaps);
+    // Stop lives in the fixed header, tappable from any tab.
+    // Bounded pumps, never settle: a settle still pumping when the live
+    // 800ms dot-toggle fires chains opacity flights and never observes
+    // idle (pre-existing live-regime constraint, same class as the roster
+    // stagger note — the swap itself is instant).
+    await t.tap(find.text('Setup'));
+    await t.pump();
+    for (var i = 0; i < 4; i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
     expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
     await t.tap(find.text('Stop'));
@@ -742,36 +770,32 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     // lives only in Live; Courses is records-only).
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
+    // Real sub-tabs (tester fix): the inbox lives behind its sub-nav
+    // segment — tap to swap to it (no shared scroll to drag).
+    await t.tap(find.textContaining('Inbox'));
+    await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
     // Hold-and-tap inbox (§4.1 rebuild): long-press enters selection for
     // the inbox list, the toolbar bulk-approves (no checkboxes).
-    await t.scrollUntilVisible(find.text('M One'), 500,
-        scrollable: find.byType(Scrollable).first);
-    await t.pumpAndSettle();
     await t.longPress(find.text('M One'));
     await t.pumpAndSettle();
     expect(find.text('Approve 1'), findsOneWidget);
     await t.tap(find.text('Select all'));
     await t.pumpAndSettle();
-    await t.scrollUntilVisible(find.text('Approve 2'), 500,
-        scrollable: find.byType(Scrollable).first);
-    await t.pumpAndSettle();
     await t.tap(find.text('Approve 2'));
     await t.pumpAndSettle();
-    // The added directory-search block lengthened the list: the header may
-    // have scrolled out of the built viewport — scroll back up to read it.
-    await t.drag(
-        find.byType(Scrollable).first, const Offset(0, 600));
-    await t.pumpAndSettle();
+    // The inbox stays mounted on its own tab: the header updates in
+    // place, no scroll-back needed.
     expect(find.text('Manual requests (0)'), findsOneWidget);
-    // Direct manual entry by typing details.
-    await t.scrollUntilVisible(find.byKey(const ValueKey('direct-name')), 500,
-        scrollable: find.byType(Scrollable).first);
+    // Direct manual entry lives behind the Add segment: tap to swap,
+    // then type details (visible immediately, no scrolling).
+    await t.tap(find.text('Add'));
     await t.pumpAndSettle();
     await t.enterText(
         find.byKey(const ValueKey('direct-name')), 'Direct Entry');
     await t.enterText(
         find.byKey(const ValueKey('direct-email')), 'direct@example.com');
+    // The Add tab scrolls independently: bring the submit into view.
     await t.scrollUntilVisible(find.text('Add & mark present'), 500,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
@@ -900,6 +924,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.tap(find.descendant(
         of: round1, matching: find.byType(Checkbox)));
     await t.pump();
+    // Session-edit sub-tabs: the Add form lives on the Add person tab.
+    await t.tap(find.text('Add person'));
+    await t.pumpAndSettle();
     await t.enterText(find.byKey(const ValueKey('edit-name')), 'B');
     await t.enterText(find.byKey(const ValueKey('edit-roll')), '2');
     await t.enterText(
@@ -909,6 +936,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     await t.pumpAndSettle();
     await t.tap(find.text('Add & mark present'));
     await t.pump();
+    // Save stays on the Marks tab.
+    await t.tap(find.text('Marks'));
+    await t.pumpAndSettle();
     await t.scrollUntilVisible(find.text('Save changes'), 300,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
@@ -1149,6 +1179,9 @@ Future<void> enterIp(WidgetTester t, String ip) async {
           home: SessionEditScreen(record: rec)),
     ));
     await t.pumpAndSettle();
+    // Session-edit sub-tabs: the Add form lives on the Add person tab.
+    await t.tap(find.text('Add person'));
+    await t.pumpAndSettle();
     // The form fields ARE the search: typing an email prefix lists the
     // enrolled student as a card in the same place.
     final dirField = find.byKey(const ValueKey('edit-email'));
@@ -1173,11 +1206,14 @@ Future<void> enterIp(WidgetTester t, String ip) async {
     expect(field('edit-name'), 'Student One');
     expect(field('edit-roll'), '12342210');
     // Selecting completes the add; saving persists without errors.
+    // Save stays on the Marks tab.
     await t.scrollUntilVisible(find.text('Add & mark present'), 300,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
     await t.tap(find.text('Add & mark present'));
     await t.pump();
+    await t.tap(find.text('Marks'));
+    await t.pumpAndSettle();
     await t.scrollUntilVisible(find.text('Save changes'), 300,
         scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();

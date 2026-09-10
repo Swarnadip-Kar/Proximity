@@ -7,7 +7,6 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../design/app_theme.dart';
 import '../design/tokens.dart';
 
 /// Fade + slide entrance. The default "screen belongs to the same product"
@@ -156,33 +155,6 @@ class ProxSwitcher extends StatelessWidget {
         ),
       ),
       child: child,
-    );
-  }
-}
-
-/// Animated integer ticker (present counts, waiting counts). Slides the
-/// digit vertically on change; identical values don't rebuild-flash.
-class ProxAnimatedCount extends StatelessWidget {
-  final int value;
-  final TextStyle? style;
-  final String Function(int value)? format;
-
-  const ProxAnimatedCount({
-    super.key,
-    required this.value,
-    this.style,
-    this.format,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ProxSwitcher(
-      child: Text(
-        format != null ? format!(value) : '$value',
-        key: ValueKey<int>(value),
-        style: proxTabular(
-            context, style ?? Theme.of(context).textTheme.headlineSmall),
-      ),
     );
   }
 }

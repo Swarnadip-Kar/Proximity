@@ -26,11 +26,11 @@ import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
-import '../../widgets/trust_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
 import '../entry/entry_flow.dart';
+import 'device_sections.dart';
 
 /// Device & identity status. Pushed from the RoleHub (plain
 /// MaterialPageRoute — no mode change, so preview flags and relaunch
@@ -68,6 +68,9 @@ class DeviceIdentityBody extends ConsumerWidget {
 /// Scroll-free content, shared by the standalone route above and the
 /// SetupFlow combined device+intro step (mechanical extraction — the state
 /// implementation below is verbatim, only the scroll wrapper moved up).
+///
+/// Thin composer over the [device_sections] widgets: owns the
+/// store/gate reads and sign-out, sections own the layout.
 class DeviceIdentityContent extends ConsumerStatefulWidget {
   const DeviceIdentityContent({super.key});
 
@@ -146,92 +149,17 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
           ),
         ),
         const SizedBox(height: ProxSpacing.lg),
-        ProxSectionHeader(
-          title: 'Signed in',
-          padding: EdgeInsets.zero,
-        ),
-        if (acct == null)
-          const ProxSyncNote('Not signed in — sign in from the welcome screen.')
-        else ...[
-          Text('Signed in as ${acct.displayName}',
-              textAlign: TextAlign.center, style: text.titleMedium),
-          Text(acct.email,
-              textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              )),
-          if (linked != null &&
-              linked.gmail.toLowerCase() != acct.email.toLowerCase()) ...[
-            const SizedBox(height: ProxSpacing.sm),
-            ProxErrorNote(
-              'Note: this device is enrolled as ${linked.gmail} — different from the signed-in account. '
-              'Wrong account? Switch below.',
-            ),
-          ],
-        ],
+        DeviceAccountSection(account: acct, linked: linked),
         // Mobile-only: enrollment key + binding gate need the
         // device store + cloud claim + face/device trust stack,
         // none of which exists on web/desktop records builds
         // (Track 5 — removed, not disabled).
         if (canUseFace()) ...[
-          const ProxSectionHeader(title: 'This device'),
-          FutureBuilder<StoredEnrollment?>(
-            future: _enrollment(),
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final e = snap.data;
-              if (e == null) {
-                return const ProxSyncNote(
-                  'No student key on this device yet — enrollment creates one (device key + face, online once).',
-                );
-              }
-              final shortPk = e.pkHex.length <= 12
-                  ? e.pkHex
-                  : '${e.pkHex.substring(0, 12)}…';
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ProxStateBadge(
-                      state: ProxState.marked, label: 'Enrolled as ${e.email}'),
-                  ProxSyncNote(
-                    '${e.name} · ${e.roll} · key $shortPk',
-                  ),
-                ],
-              );
-            },
-          ),
-          const ProxSectionHeader(title: 'Move status'),
-          if (acct == null)
-            const ProxSyncNote(
-                'Sign in to check this Gmail against the one-device rule.')
-          else
-            FutureBuilder<StudentGate?>(
-              future: _gate(acct.email),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final gate = snap.data;
-                if (gate == null) {
-                  return const ProxSyncNote(
-                    'Connect to check move status — one enrolled device per Gmail is checked online.',
-                  );
-                }
-                return _gateBody(gate);
-              },
-            ),
+          DeviceKeySection(loadEnrollment: _enrollment),
+          DeviceMoveSection(email: acct?.email, loadGate: _gate),
           const SizedBox(height: ProxSpacing.sm),
           const Divider(),
-          Text(
-            'Offline professors keep everything on this device. Sign in later '
-            'to back up, sync across devices, and share CSVs from the cloud.',
-            textAlign: TextAlign.center,
-            style: text.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
+          const DeviceOfflineNote(),
         ] else ...[
           const SizedBox(height: ProxSpacing.sm),
           const Text(
@@ -255,76 +183,5 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
         ],
       ],
     );
-  }
-
-  /// Move-status body for a known gate verdict. Refusal copy comes from
-  /// [studentClaimMessage] — the same words the enroll claim refuses with.
-  /// The binding's trust tier rides below every verdict
-  /// (Tracks 2+3 FULL/STD/STALE/NONE — never silent).
-  Widget _gateBody(StudentGate gate) {
-    final b = gate.binding;
-    final trust = b == null
-        ? null
-        : DeviceTrustBadge(
-            level: b.attestationLevel,
-            attestedUntilMillis: b.attestedUntilMillis,
-            pkDHex: b.pkDHex,
-          );
-    switch (gate.verdict.claim) {
-      case StudentClaim.firstBind:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ProxStateBadge(
-                state: ProxState.neutral, label: 'Not enrolled yet'),
-            const ProxSyncNote(
-                'This install is free to enroll — first bind takes it.'),
-            if (trust != null) ...[
-              const SizedBox(height: ProxSpacing.sm),
-              trust,
-            ],
-          ],
-        );
-      case StudentClaim.sameDevice:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ProxStateBadge(
-                state: ProxState.marked,
-                label: 'This device holds the enrollment'),
-            const ProxSyncNote('Re-keys and re-enrolls here are always free.'),
-            if (trust != null) ...[
-              const SizedBox(height: ProxSpacing.sm),
-              trust,
-            ],
-          ],
-        );
-      case StudentClaim.allowedMove:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ProxStateBadge(
-                state: ProxState.waiting, label: 'Eligible to move here'),
-            const ProxSyncNote(
-                'The 30 days since the last move have passed — enrolling here moves it (at most once a month).'),
-            if (trust != null) ...[
-              const SizedBox(height: ProxSpacing.sm),
-              trust,
-            ],
-          ],
-        );
-      case StudentClaim.cooldownBlocked:
-      case StudentClaim.installConflict:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ProxErrorNote(studentClaimMessage(gate.verdict, gate.binding)),
-            if (trust != null) ...[
-              const SizedBox(height: ProxSpacing.sm),
-              trust,
-            ],
-          ],
-        );
-    }
   }
 }

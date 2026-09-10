@@ -1,28 +1,50 @@
-// CaptureOverlay — THE two-oval face-scan overlay (§6.2).
+// CaptureOverlay — single-oval face-scan overlay (PRODUCT-OWNER OVERRIDE,
+// 2026-09-10, supersedes PROXIMITY_UI_REDESIGN.md §6.2 two-oval rule and the
+// previous CaptureOverlay two-oval contract — logged as deviation in
+// INTEGRATION_LOG.md `## Overlay redesign`, old rule NOT followed).
 //
-// Full-bleed camera preview with exactly two overlay elements, nothing
+// Full-bleed camera preview with exactly three overlay elements, nothing
 // else — shared by `mark/face` and `enroll/capture` (one overlay design,
 // not two):
-// - SMALL oval — the live head-position target. Its center shifts toward
-//   the current capture angle's direction, so it is the only element
-//   telling the user *what to do right now*.
-// - LARGE oval — the overall progress ring around the capture frame,
-//   filling as each angle is captured. The only element telling the user
-//   *how far along they are*.
+//  1. ONE slim progress bar pinned just BELOW the top app bar (angle
+//     completion 0..1).
+//  2. ONE static oval centered as the face guide with ONE glowing green
+//     COMET that travels along/around it indicating the current target
+//     direction: a bright head dot plus a short fading tail streaming
+//     behind it (opposite the travel direction). Under reduce-motion the
+//     comet holds static at the target with a minimal tail.
+//  3. ONE short guiding prompt line below the oval (rotate with the beacon).
 //
-// No corner brackets, no separate progress bar, no per-angle text labels,
-// no extra chrome. Inconclusive vs mismatch ride on these same two ovals
-// (neutral pulse vs `status.error` flash) plus ONE short line of copy
-// ([statusLine]), never a dialog — modals would interrupt a flow that must
-// keep listening on radio.
+// No dots, no labels, no extra rings/progress arcs stacked on the preview.
+// Inconclusive vs mismatch ride on the beacon + progress-bar tone (neutral
+// pulse vs `status.error`) plus the ONE line, never a dialog — modals would
+// interrupt a flow that must keep listening on radio.
 //
 // Angle-count-agnostic: [currentAngle]/[totalAngles] take whatever the
-// actual capture controller does (gap 3 stays open — 3, 5, or any N work
-// identically; nothing here hardcodes a count). The default target
-// direction places angle `i` of `N` around a circle; callers with semantic
-// directions (left/right/up/down) may pass [targetDirection] explicitly.
+// actual capture controller does (3, 5, or any N work identically; nothing
+// here hardcodes a count). The default target direction places angle `i`
+// of `N` around a circle; callers with semantic directions (left/right/up/
+// down) may pass [targetDirection] explicitly.
+//
+// Single-shot mode (mark/face, additive 2026-09-10 — see INTEGRATION_LOG.md
+// `## Face-check single-shot`): callers pass `showProgress: false` +
+// `showBeacon: false` to hide the multi-angle guidance (slim progress bar
+// + travelling comet) and keep the static framing oval + one prompt line
+// only. Defaults are true, so enroll rendering is byte-identical.
+//
+// Edge-to-edge (additive 2026-09-10 — see INTEGRATION_LOG.md
+// `## Edge-to-edge capture`): `topInset` (default 0, byte-identical) lets
+// the top bar clear a transparent overlay app bar, and the bar rides
+// inside a SafeArea so chrome avoids the notch while the video + scrim
+// paint fullscreen under it. Beacon/progress semantics, prompt copy, and
+// reduce-motion behavior are unchanged.
 //
 // Overlay-only: pointer-transparent, zero layout effect on the preview.
+// Glow + scrim stay token-sourced (§2.5): scrim via `gradientScrim`, beacon
+// halo via `glowMarked` blur/opacity, no hand-authored gradients.
+// Reduce-motion: the beacon holds static at the target direction (the
+// sweep timer never advances it — callers pass null under reduce-motion,
+// and the widget ignores [sweepAngle] when `ProxMotion.reduced`).
 library;
 
 import 'dart:async';
@@ -32,24 +54,31 @@ import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
 
-/// Frame-level capture signal, carried by oval color (plus one short
-/// line — never a dialog).
+/// THE single guiding prompt (new copy, product-owner override 2026-09-10):
+/// shown when the caller passes no explicit [CaptureOverlay.statusLine]
+/// (e.g. mark/face at rest). Enroll passes its own frozen prompt
+/// (`enrollCapturePrompt`) explicitly, so this string renders in exactly
+/// one consumer — minimal new copy, one line.
+const captureGuidePrompt = 'Rotate your face slowly with the green beacon.';
+
+/// Frame-level capture signal, carried by beacon + progress-bar tone (plus
+/// one short line — never a dialog).
 enum CaptureSignal {
-  /// Normal capture: target ring + progress ring.
+  /// Normal capture: green beacon + green progress bar.
   neutral,
 
   /// Unreadable frame (inconclusive, burns nothing): neutral pulse on the
-  /// ovals + `Hold still, retrying`-style line. Automatic, no user action.
+  /// beacon + `Hold still, retrying`-style line. Automatic, no user action.
   inconclusive,
 
-  /// Readable wrong-person frame (mismatch, burns one): error flash on
-  /// the ovals + one short line.
+  /// Readable wrong-person frame (mismatch, burns one): error tone on the
+  /// beacon + progress bar + one short line.
   mismatch,
 }
 
-/// Two-oval capture overlay. See file docs for the contract.
+/// Single-oval capture overlay. See file docs for the contract.
 class CaptureOverlay extends StatefulWidget {
-  /// Overall progress 0..1 (captured / total). Drives the large oval arc.
+  /// Overall progress 0..1 (captured / total). Drives the slim top bar.
   final double progress;
 
   /// Index of the live head-position target angle.
@@ -62,15 +91,44 @@ class CaptureOverlay extends StatefulWidget {
   /// [directionForAngle] circular placement.
   final Offset? targetDirection;
 
-  /// Frame signal (oval color pulse/flash + status line tone).
+  /// Frame signal (beacon + progress-bar tone).
   final CaptureSignal signal;
 
-  /// ONE short line of copy (e.g. `Hold still, retrying`). Null hides it.
+  /// ONE short line of copy (e.g. `Hold still, retrying`, or the enroll
+  /// prompt). Null/empty shows [captureGuidePrompt].
   final String? statusLine;
 
-  /// Ambient sweep-head angle on the small oval (radians). Null renders
-  /// statically — callers pass null under reduce-motion.
+  /// Beacon travel angle on the oval (radians). Null renders statically at
+  /// the target direction — callers pass null under reduce-motion (and the
+  /// widget forces the static path when `ProxMotion.reduced` regardless).
   final double? sweepAngle;
+
+  /// Native sensor aspect (width / height) of the letterboxed preview
+  /// behind this overlay (e.g. `controller.value.aspectRatio`). When
+  /// non-null, the oval/beacon/prompt are derived from the ACTUAL video
+  /// box (the largest centered [aspectRatio] rect inside the Stack), never
+  /// from the full Stack size — so the guide stays aligned with the
+  /// undistorted feed when letterbox bars are present. Null (unknown /
+  /// placeholder surface) falls back to the full size (legacy behavior,
+  /// zero visual change when there are no bars).
+  final double? previewAspectRatio;
+
+  /// Single-shot flags (additive, default true = multi-angle guidance).
+  /// `showProgress: false` hides the slim top angle-completion bar;
+  /// `showBeacon: false` hides the travelling comet, leaving the static
+  /// framing oval only. Mark/face passes both false (instant single-shot
+  /// check — progress/beacon are meaningless there); enroll leaves the
+  /// defaults (rendering byte-identical).
+  final bool showProgress;
+  final bool showBeacon;
+
+  /// Top chrome inset (additive edge-to-edge option, default 0 =
+  /// byte-identical): extra offset above the slim progress bar so it
+  /// clears a transparent overlay app bar when the preview extends behind
+  /// it (enroll passes the app-bar height). Callers without an overlay app
+  /// bar leave 0. Pure layout — zero effect on beacon/progress semantics,
+  /// prompt copy, signal tones, or motion.
+  final double topInset;
 
   const CaptureOverlay({
     super.key,
@@ -81,11 +139,15 @@ class CaptureOverlay extends StatefulWidget {
     this.signal = CaptureSignal.neutral,
     this.statusLine,
     this.sweepAngle,
+    this.previewAspectRatio,
+    this.showProgress = true,
+    this.showBeacon = true,
+    this.topInset = 0.0,
   });
 
   /// Default target direction for angle [index] of [total]: spread around
   /// a circle starting at the top. Pure for unit tests. Works for any
-  /// total (1..N) — the agnosticism gap 3 requires.
+  /// total (1..N).
   static Offset directionForAngle(int index, int total) {
     if (total <= 0) return Offset.zero;
     final i = index.clamp(0, total - 1);
@@ -94,7 +156,77 @@ class CaptureOverlay extends StatefulWidget {
     return Offset(math.cos(a), math.sin(a));
   }
 
+  /// THE face-guide oval framing rect: one static centered oval, fractions
+  /// of the preview size. Pure for unit tests.
+  static Rect guideRectFor(Size size) => guideRectForAspect(size, null);
+
+  /// Actual video box behind the overlay: the largest centered rect with
+  /// [aspectRatio] (width / height) that fits inside [size]. Null /
+  /// non-finite / non-positive ratios fall back to the full [size] (no
+  /// bars — legacy behavior). Pure for unit tests. This is the box the
+  /// letterboxed preview surface (`AspectRatio` + `Center` over plain
+  /// bars) actually paints the camera frame into — the overlay MUST derive
+  /// from here, never from the full Stack size, or the guide drifts off
+  /// the undistorted feed whenever bars are present.
+  static Rect previewRectFor(Size size, double? aspectRatio) {
+    if (aspectRatio == null ||
+        !aspectRatio.isFinite ||
+        aspectRatio <= 0 ||
+        size.isEmpty) {
+      return Offset.zero & size;
+    }
+    final sizeAspect = size.width / size.height;
+    if ((sizeAspect - aspectRatio).abs() < 1e-9) {
+      return Offset.zero & size;
+    }
+    double w;
+    double h;
+    if (sizeAspect > aspectRatio) {
+      // Box wider than the feed: height constrains, bars left/right.
+      h = size.height;
+      w = h * aspectRatio;
+    } else {
+      // Box taller than the feed: width constrains, bars top/bottom.
+      w = size.width;
+      h = w / aspectRatio;
+    }
+    return Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: w,
+      height: h,
+    );
+  }
+
+  /// Face-guide oval derived from the ACTUAL preview box (see
+  /// [previewRectFor]): the same 0.70w x 0.52h fractions applied to the
+  /// video rect, not the full Stack size. Null aspect == [guideRectFor]
+  /// legacy behavior. Pure for unit tests.
+  static Rect guideRectForAspect(Size size, double? aspectRatio) {
+    final preview = previewRectFor(size, aspectRatio);
+    return Rect.fromCenter(
+      center: preview.center,
+      width: preview.width * 0.70,
+      height: preview.height * 0.52,
+    );
+  }
+
+  /// Beacon position for travel/target [angle] on [oval] (east = 0,
+  /// clockwise on screen). Pure for unit tests.
+  static Offset beaconPointFor(Rect oval, double angle) => Offset(
+        oval.center.dx + oval.width / 2 * math.cos(angle),
+        oval.center.dy + oval.height / 2 * math.sin(angle),
+      );
+
+  /// Target angle (radians) for a direction vector. Zero vector defaults
+  /// to the top (-pi/2) so the beacon still parks somewhere meaningful.
+  static double angleForDirection(Offset direction) {
+    if (direction == Offset.zero) return -math.pi / 2;
+    return math.atan2(direction.dy, direction.dx);
+  }
+
   /// Large (progress) oval framing rect: fractions of the preview size.
+  /// Kept for test compatibility (geometry helpers stay pure); the painter
+  /// now draws the single [guideRectFor] oval.
   static Rect largeRectFor(Size size) => Rect.fromCenter(
         center: size.center(Offset.zero),
         width: size.width * 0.78,
@@ -103,6 +235,7 @@ class CaptureOverlay extends StatefulWidget {
 
   /// Small (head-position target) oval framing rect: smaller, center
   /// shifted toward [direction] (max ±8% of the preview size).
+  /// Kept for test compatibility; the painter no longer draws it.
   static Rect smallRectFor(Size size, Offset direction) {
     final d = Offset(
       direction.dx.clamp(-1.0, 1.0),
@@ -117,14 +250,39 @@ class CaptureOverlay extends StatefulWidget {
     );
   }
 
-  /// Oval accent color for a signal. Neutral = brand target ring;
-  /// inconclusive = neutral pulse tone; mismatch = error flash.
+  /// Beacon + progress-bar tone for a signal. Neutral = completion green
+  /// (the glowing beacon spec); inconclusive = neutral pulse tone;
+  /// mismatch = error flash.
   static Color signalColorFor(CaptureSignal signal, ProximityColors c) =>
       switch (signal) {
         CaptureSignal.mismatch => c.statusError,
         CaptureSignal.inconclusive => c.contentSecondary,
-        CaptureSignal.neutral => c.accentBrand,
+        CaptureSignal.neutral => c.statusMarked,
       };
+
+  /// Comet tail length while sweeping (radians of oval arc behind the
+  /// head — short by design, well under a quarter revolution, so no
+  /// remnant survives to the next pass).
+  static const double cometTailSpan = 0.55;
+
+  /// Comet tail length when static (reduce-motion or null sweep — the
+  /// head parks at the target direction with this minimal tail so it
+  /// still reads as a comet without implying motion).
+  static const double cometMinTailSpan = 0.22;
+
+  /// Comet tail paint slices (paint-only, zero layout effect).
+  static const int cometSlices = 8;
+
+  /// Comet tail alpha profile: quadratic 0 (tail tip, fully transparent)
+  /// → 1 (head, bright), head-ward monotonic. Pure for unit tests
+  /// (tip-fully-faded invariant: no remnant survives to the next pass).
+  static List<double> cometTailAlphas([int slices = cometSlices]) {
+    final n = slices.clamp(1, 64);
+    return [
+      for (var i = 0; i < n; i++)
+        n == 1 ? 1.0 : (i / (n - 1)) * (i / (n - 1)),
+    ];
+  }
 
   @override
   State<CaptureOverlay> createState() => _CaptureOverlayState();
@@ -147,11 +305,13 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
   }
 
   void _syncPulse() {
-    // Pulse only for non-neutral signals (and never under reduce-motion —
-    // the ovals then hold their signal color statically).
-    final want =
-        widget.signal != CaptureSignal.neutral &&
-            !ProxMotion.reduced(context);
+    // Pulse only for non-neutral signals with a visible beacon (and never
+    // under reduce-motion — the beacon then holds its signal color
+    // statically). Single-shot mode (showBeacon false) has no beacon to
+    // pulse, so no timer there — enroll path unchanged.
+    final want = widget.signal != CaptureSignal.neutral &&
+        widget.showBeacon &&
+        !ProxMotion.reduced(context);
     if (want && _pulse == null) {
       _pulse = Timer.periodic(ProxDurations.dotPulse, (_) {
         if (!mounted) return;
@@ -173,49 +333,123 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
+    final reduced = ProxMotion.reduced(context);
     final direction = widget.targetDirection ??
         CaptureOverlay.directionForAngle(
           widget.currentAngle,
           widget.totalAngles,
         );
-    final accent =
-        CaptureOverlay.signalColorFor(widget.signal, c);
-    final line = widget.statusLine;
+    final tone = CaptureOverlay.signalColorFor(widget.signal, c);
+    final line = (widget.statusLine != null &&
+            widget.statusLine!.isNotEmpty)
+        ? widget.statusLine!
+        : captureGuidePrompt;
+    // Reduce-motion: beacon static at the target direction even when a
+    // sweep angle is supplied.
+    final sweeping = !reduced && widget.sweepAngle != null;
+    final beaconAngle = sweeping
+        ? widget.sweepAngle!
+        : CaptureOverlay.angleForDirection(direction);
+    // Comet tail: full short tail while travelling, minimal static tail
+    // when parked (reduce-motion or null sweep) — same head + tone either
+    // way, only the tail length changes.
+    final tailSpan = sweeping
+        ? CaptureOverlay.cometTailSpan
+        : CaptureOverlay.cometMinTailSpan;
 
     return IgnorePointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CustomPaint(
-            painter: _CaptureOverlayPainter(
-              scrim: c.gradientScrim,
-              baseRing: c.contentPrimary,
-              progressColor: widget.signal == CaptureSignal.neutral
-                  ? c.statusMarked
-                  : accent,
-              targetColor: accent,
-              progress: widget.progress,
-              direction: direction,
-              sweepAngle: widget.sweepAngle,
-              dim: _dim,
-            ),
-            child: const SizedBox.expand(),
-          ),
-          // The ONE allowed short line — never a dialog, never stacked.
-          if (line != null && line.isNotEmpty)
-            Positioned(
-              left: ProxSpacing.screenMargin,
-              right: ProxSpacing.screenMargin,
-              bottom: ProxSpacing.xl,
-              child: Text(
-                line,
-                style: ProxType.label(color: accent),
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Preview Stack is always bounded (Expanded body); fall back to
+          // bottom-anchored copy on unbounded constraints rather than
+          // producing infinite rects.
+          final bounded = constraints.hasBoundedWidth &&
+              constraints.hasBoundedHeight;
+          final size = bounded
+              ? Size(constraints.maxWidth, constraints.maxHeight)
+              : const Size(400, 800);
+          // Fidelity fix: the oval is derived from the ACTUAL preview box
+          // (letterboxed video rect), never the full Stack size — so the
+          // guide/beacon stay aligned with the undistorted feed when bars
+          // are present. Null aspect == legacy full-size behavior.
+          final oval = CaptureOverlay.guideRectForAspect(
+              size, widget.previewAspectRatio);
+          final promptTop = bounded
+              ? (oval.bottom + ProxSpacing.md)
+                  .clamp(0.0, size.height - ProxSpacing.xxl)
+              : null;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              CustomPaint(
+                painter: _CaptureOverlayPainter(
+                  scrim: c.gradientScrim,
+                  guideRing: c.contentPrimary,
+                  beaconColor: tone,
+                  beaconGlow: c.glowMarked,
+                  oval: oval,
+                  beaconAngle: beaconAngle,
+                  tailSpan: tailSpan,
+                  dim: _dim,
+                  showBeacon: widget.showBeacon,
+                ),
+                child: const SizedBox.expand(),
               ),
-            ),
-        ],
+              // (1) ONE slim progress bar, pinned just below the top app
+              // bar. Edge-to-edge: the bar clears a transparent overlay app
+              // bar via [topInset] plus the notch via SafeArea (the video +
+              // scrim paint fullscreen under both); standalone callers keep
+              // topInset 0 so this stays pinned at the top. Hidden in
+              // single-shot mode (mark/face) — angle completion is
+              // meaningless for an instant check.
+              if (widget.showProgress)
+                Positioned(
+                  top: widget.topInset + ProxSpacing.sm,
+                  left: ProxSpacing.screenMargin,
+                  right: ProxSpacing.screenMargin,
+                  child: SafeArea(
+                    bottom: false,
+                    child: ClipRRect(
+                      borderRadius: ProxRadii.chipRadius,
+                      child: LinearProgressIndicator(
+                        value: widget.progress.clamp(0.0, 1.0),
+                        minHeight: 4,
+                        backgroundColor: c.divider,
+                        valueColor: AlwaysStoppedAnimation<Color>(tone),
+                      ),
+                    ),
+                  ),
+                ),
+              // (3) ONE short guiding prompt line below the oval.
+              if (promptTop != null)
+                Positioned(
+                  top: promptTop,
+                  left: ProxSpacing.screenMargin,
+                  right: ProxSpacing.screenMargin,
+                  child: Text(
+                    line,
+                    style: ProxType.label(color: c.contentPrimary),
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                )
+              else
+                Positioned(
+                  left: ProxSpacing.screenMargin,
+                  right: ProxSpacing.screenMargin,
+                  bottom: ProxSpacing.xl,
+                  child: Text(
+                    line,
+                    style: ProxType.label(color: c.contentPrimary),
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -223,92 +457,103 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
 
 class _CaptureOverlayPainter extends CustomPainter {
   final LinearGradient scrim;
-  final Color baseRing;
-  final Color progressColor;
-  final Color targetColor;
-  final double progress;
-  final Offset direction;
-  final double? sweepAngle;
+  final Color guideRing;
+  final Color beaconColor;
+  final ProxGlow beaconGlow;
+  final Rect oval;
+  final double beaconAngle;
+
+  /// Comet tail length (radians of oval arc behind the head, opposite the
+  /// travel direction). Short by contract; the minimal static span parks
+  /// under reduce-motion.
+  final double tailSpan;
   final bool dim;
+
+  /// Single-shot mode: false hides the comet entirely (static framing oval
+  /// only). True (default) keeps the enroll comet byte-identical.
+  final bool showBeacon;
 
   _CaptureOverlayPainter({
     required this.scrim,
-    required this.baseRing,
-    required this.progressColor,
-    required this.targetColor,
-    required this.progress,
-    required this.direction,
-    required this.sweepAngle,
+    required this.guideRing,
+    required this.beaconColor,
+    required this.beaconGlow,
+    required this.oval,
+    required this.beaconAngle,
+    required this.tailSpan,
     required this.dim,
+    this.showBeacon = true,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     // Camera surround: the scrim token's own shader (never a hand-authored
-    // dim) so the preview stays legible behind the ovals.
+    // dim) so the preview stays legible behind the oval.
     canvas.drawRect(
       Offset.zero & size,
       Paint()..shader = scrim.createShader(Offset.zero & size),
     );
 
     final alpha = dim ? 0.55 : 1.0;
-    final large = CaptureOverlay.largeRectFor(size);
-    final small = CaptureOverlay.smallRectFor(size, direction);
-
-    // LARGE oval — overall progress ring (base ring + completion arc).
+    // (2a) ONE static face-guide oval (always drawn — the single-shot
+    // screen keeps this framing guide).
     canvas.drawOval(
-      large,
+      oval,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3
-        ..color = baseRing.withValues(alpha: 0.85 * alpha),
+        ..color = guideRing.withValues(alpha: 0.95 * alpha),
     );
-    final p = progress.clamp(0.0, 1.0);
-    if (p > 0) {
+    // (2b) ONE glowing COMET travelling on the oval (static at the target
+    // under reduce-motion — the angle is resolved in build): bright head
+    // dot + halo, with a short fading tail streaming behind it, opposite
+    // the travel direction (travel is increasing angle, so the tail is the
+    // arc ending at the head). Skipped entirely in single-shot mode
+    // (showBeacon false — mark/face keeps the static oval only).
+    // Target-direction semantics, tone, and pulse cadence are unchanged —
+    // only the tail is new.
+    if (!showBeacon) return;
+    final at = CaptureOverlay.beaconPointFor(oval, beaconAngle);
+    final alphas = CaptureOverlay.cometTailAlphas();
+    final slice = tailSpan / alphas.length;
+    for (var i = 0; i < alphas.length; i++) {
+      final a = alphas[i];
+      if (a <= 0) continue; // tail tip fully transparent — no remnant.
       canvas.drawArc(
-        large,
-        -math.pi / 2,
-        2 * math.pi * p,
+        oval,
+        beaconAngle - tailSpan + i * slice,
+        slice,
         false,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 5
-          ..strokeCap = StrokeCap.round
-          ..color = progressColor.withValues(alpha: alpha),
+          ..strokeCap = StrokeCap.butt
+          ..color = beaconColor.withValues(alpha: a * alpha),
       );
     }
-
-    // SMALL oval — live head-position target ring.
-    canvas.drawOval(
-      small,
+    final halo = beaconGlow.copyWith(color: beaconColor);
+    canvas.drawCircle(
+      at,
+      14,
       Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = targetColor.withValues(alpha: alpha),
+        ..color = halo.glowColor.withValues(alpha: halo.opacity * alpha)
+        ..maskFilter =
+            MaskFilter.blur(BlurStyle.normal, halo.blurSigma / 3),
     );
-    // Ambient sweep head on the small oval (same element, not another one).
-    final sweep = sweepAngle;
-    if (sweep != null) {
-      canvas.drawArc(
-        small,
-        sweep,
-        1.047,
-        false,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 7
-          ..strokeCap = StrokeCap.round
-          ..color = targetColor.withValues(alpha: alpha),
-      );
-    }
+    canvas.drawCircle(
+      at,
+      6,
+      Paint()..color = beaconColor.withValues(alpha: alpha),
+    );
   }
 
   @override
   bool shouldRepaint(_CaptureOverlayPainter old) =>
-      old.progress != progress ||
-      old.direction != direction ||
-      old.sweepAngle != sweepAngle ||
+      old.beaconAngle != beaconAngle ||
+      old.tailSpan != tailSpan ||
       old.dim != dim ||
-      old.progressColor != progressColor ||
-      old.targetColor != targetColor;
+      old.oval != oval ||
+      old.beaconColor != beaconColor ||
+      old.showBeacon != showBeacon ||
+      old.guideRing != guideRing;
 }

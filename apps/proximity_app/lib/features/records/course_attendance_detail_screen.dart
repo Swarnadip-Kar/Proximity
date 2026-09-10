@@ -21,7 +21,6 @@ import '../../widgets/course_attendance.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/student_card.dart';
-import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
 
 class CourseAttendanceDetailScreen extends ConsumerStatefulWidget {
@@ -72,30 +71,11 @@ class _CourseAttendanceDetailScreenState
     showLogDrawer(context);
   }
 
-  ProxStatus _statusFor(String status) {
-    if (status == 'Present') return ProxStatus.marked;
-    if (status.startsWith('Partial')) return ProxStatus.review;
-    return ProxStatus.waiting;
-  }
-
   List<RoundTick> _trailFor(ClassRecord session) => [
         for (var i = 0; i < session.windows.length; i++)
           RoundTick('R${i + 1}',
               present: session.windows[i][widget.email] == true),
       ];
-
-  /// Tile subtitle, same fields as the shared session tile minus the status
-  /// (the `VerdictBadge` already carries the exact `sessionStatusOf` word —
-  /// repeating it here rendered `Partial p/t` twice per tile).
-  /// Rounds · label · org.
-  String _tileSubtitle(ClassRecord session) {
-    final org = session.org.isNotEmpty ? ' · ${session.org}' : '';
-    final label =
-        session.classLabel.isNotEmpty && session.classLabel != widget.course
-            ? ' · ${session.classLabel}'
-            : '';
-    return '${session.windowCount} round${session.windowCount == 1 ? '' : 's'}$label$org';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,29 +167,18 @@ class _CourseAttendanceDetailScreenState
                   Padding(
                     padding:
                         const EdgeInsets.only(bottom: ProxSpacing.sm),
-                    child: Row(
+                    // Date-visibility layout lives in the shared
+                    // `StudentSessionTile`: frozen `sessionDateTimeLine`
+                    // date on its own wrapping line (never ellipsized),
+                    // status badge + rounds/label/org secondary below.
+                    // Same fields as before, better hierarchy.
+                    child: StudentSessionTile(
                       key: ValueKey<String>('session-${session.id}'),
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: StudentCard(
-                            name: sessionDateTimeLine(session),
-                            subtitle: _tileSubtitle(session),
-                            status: VerdictBadge(
-                              status: _statusFor(sessionStatusOf(
-                                  session, widget.email)),
-                              label: sessionStatusOf(
-                                  session, widget.email),
-                            ),
-                            roundTrail: _trailFor(session),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Remove from this device',
-                          onPressed: () => _hide(session),
-                        ),
-                      ],
+                      session: session,
+                      email: widget.email,
+                      course: widget.course,
+                      roundTrail: _trailFor(session),
+                      onHide: () => _hide(session),
                     ),
                   ),
             ],

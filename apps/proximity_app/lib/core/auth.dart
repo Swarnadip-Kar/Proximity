@@ -16,16 +16,22 @@ import 'sync/org.dart';
 /// [org] is the Google-account domain (see orgOf): derived at sign-in from
 /// the idToken `hd` claim when present, else the verified-email domain.
 /// Never user-entered.
+/// [photoUrl] is the Google OAuth profile photo (ordinary account metadata,
+/// NOT `face_verification` output): prefer the Google-account photo, fall
+/// back to the Firebase user photo; null when unavailable. Renderers treat
+/// null/empty as the deterministic initials avatar.
 class SignedAccount {
   final String email;
   final String displayName;
   final String uid;
   final String org;
+  final String? photoUrl;
   const SignedAccount(
       {required this.email,
       required this.displayName,
       this.uid = '',
-      this.org = ''});
+      this.org = '',
+      this.photoUrl});
 }
 
 abstract class AuthService {
@@ -68,7 +74,7 @@ class FirebaseAuthService implements AuthService {
       : _auth = auth ?? FirebaseAuth.instance,
         _gsi = gsi ?? GoogleSignIn(scopes: const ['email']);
 
-  SignedAccount? _map(User? u, {String? hd}) {
+  SignedAccount? _map(User? u, {String? hd, String? photoUrl}) {
     if (u?.email == null) return null;
     final email = u!.email!;
     return SignedAccount(
@@ -76,7 +82,23 @@ class FirebaseAuthService implements AuthService {
       displayName: u.displayName ?? email,
       uid: u.uid,
       org: orgFromHd(hd, email),
+      // Prefer the Google-account photo; fall back to the Firebase user
+      // photo; null when neither carries one. Blank strings count as
+      // absent so renderers hit the initials fallback.
+      photoUrl: _pickPhoto(photoUrl, u.photoURL),
     );
+  }
+
+  /// First non-blank of the Google-account photo vs the Firebase user
+  /// photo, else null. Pure helper — no caching, no persistence.
+  static String? _pickPhoto(String? googlePhoto, String? firebasePhoto) {
+    if (googlePhoto != null && googlePhoto.trim().isNotEmpty) {
+      return googlePhoto;
+    }
+    if (firebasePhoto != null && firebasePhoto.trim().isNotEmpty) {
+      return firebasePhoto;
+    }
+    return null;
   }
 
   /// Best-effort `hd` out of a raw Google idToken JWT (null when absent).
@@ -87,7 +109,7 @@ class FirebaseAuthService implements AuthService {
   Stream<SignedAccount?> watchAccount() {
     if (!available) return Stream.value(null);
     try {
-      return _auth.authStateChanges().map(_map);
+      return _auth.authStateChanges().map((u) => _map(u));
     } catch (_) {
       return Stream.value(null);
     }
@@ -157,17 +179,20 @@ class FirebaseAuthService implements AuthService {
     final userCred = await _auth.signInWithCredential(cred);
     // Prefer the Google idToken `hd` claim (hosted domain) when present;
     // the email domain is the fallback. Both are verified, never typed.
+    // Photo: prefer the Google-account photo, fall back to the Firebase
+    // user photo inside _map (null when neither carries one).
+    final googlePhoto = acct.photoUrl;
     final hd = parseHdFromIdToken(gAuth.idToken);
     if (hd == null) {
       try {
         final res = await userCred.user?.getIdTokenResult();
         final raw = res?.claims?['hd'];
         if (raw is String && raw.trim().isNotEmpty) {
-          return _map(userCred.user, hd: raw);
+          return _map(userCred.user, hd: raw, photoUrl: googlePhoto);
         }
       } catch (_) {}
     }
-    return _map(userCred.user, hd: hd);
+    return _map(userCred.user, hd: hd, photoUrl: googlePhoto);
   }
 
   @override
@@ -211,7 +236,10 @@ class FakeAuthService implements AuthService {
           email: a.email,
           displayName: a.displayName,
           uid: a.uid,
-          org: orgOf(a.email));
+          org: orgOf(a.email),
+          // photoUrl passthrough for tests: org derivation must not drop
+          // the OAuth photo.
+          photoUrl: a.photoUrl);
 
   @override
   Stream<SignedAccount?> watchAccount() => Stream.value(_account);

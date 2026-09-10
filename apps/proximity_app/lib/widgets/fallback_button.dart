@@ -51,50 +51,62 @@ Future<T?> showProxSheet<T>({
           bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
         ),
         child: SingleChildScrollView(
-          child: Container(
-            decoration: BoxDecoration(
-              color: cc.surfaceRaised,
-              borderRadius: ProxRadii.sheetTopRadius,
-              boxShadow: [cc.elevationSheet],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: ProxSpacing.sm),
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: cc.divider,
-                      borderRadius:
-                          BorderRadius.circular(ProxRadii.pill),
+          // Landscape breathing (§10 ≥600dp rule): sheets stay bounded
+          // and centered instead of stretching full width on wide
+          // landscape phones. Portrait widths (<560) fill as before —
+          // the ConstrainedBox only caps, never stretches — so portrait
+          // rendering is pixel-identical.
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                  maxWidth: ProxSpacing.maxContentWidth),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cc.surfaceRaised,
+                  borderRadius: ProxRadii.sheetTopRadius,
+                  boxShadow: [cc.elevationSheet],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: ProxSpacing.sm),
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: cc.divider,
+                          borderRadius:
+                              BorderRadius.circular(ProxRadii.pill),
+                        ),
+                      ),
                     ),
-                  ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.md,
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm,
+                      ),
+                      child: Text(
+                        title,
+                        style: ProxType.title(color: cc.contentPrimary),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin,
+                        0,
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.screenMargin,
+                      ),
+                      child: builder(sheetContext),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    ProxSpacing.screenMargin,
-                    ProxSpacing.md,
-                    ProxSpacing.screenMargin,
-                    ProxSpacing.sm,
-                  ),
-                  child: Text(
-                    title,
-                    style: ProxType.title(color: cc.contentPrimary),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    ProxSpacing.screenMargin,
-                    0,
-                    ProxSpacing.screenMargin,
-                    ProxSpacing.screenMargin,
-                  ),
-                  child: builder(sheetContext),
-                ),
-              ],
+              ),
             ),
           ),
         ),

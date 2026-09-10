@@ -13,6 +13,7 @@
 // never imports the ML Kit plugin (see pose_gate_stub.dart).
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -22,30 +23,54 @@ import 'pose_gate.dart';
 
 /// Production backend: ML Kit on the still file. Mobile-only — the L1 gate
 /// fires first (records-only devices fail closed before any channel call).
+///
+/// MAIN-ISOLATE ONLY: every call here must run on the main isolate. ML Kit
+/// face detection answers over a MethodChannel, and a reply redeemed on a
+/// background isolate's response handle aborts the engine with
+/// `FATAL platform_message_response_dart_port.cc Check failed: did_send` →
+/// SIGABRT (temp.log 2026-09-10: the plugin's `verifyFromImagePathIsolate`
+/// worker detected 0 faces successfully and THEN the success reply killed
+/// the process — uncatchable in Dart). The enrollment loop that drives
+/// this gate already runs on the main isolate; never wrap these calls in
+/// `compute`/`Isolate.spawn`, and never pass this gate across isolates.
 class MlkitPoseGate implements PoseGate {
-  final FaceDetector _detector = FaceDetector(
-    options: FaceDetectorOptions(
-      enableLandmarks: true,
-      enableContours: true,
-      performanceMode: FaceDetectorMode.accurate,
-    ),
-  );
+  final FaceDetector _detector;
 
-  MlkitPoseGate();
+  /// Upper bound for one still-file detection pass (device log showed
+  /// ~290ms). A hung detector degrades to null (the caller wastes the
+  /// beat silently) instead of stalling the enrollment loop.
+  final Duration detectTimeout;
+
+  MlkitPoseGate({
+    FaceDetector? detector,
+    this.detectTimeout = const Duration(seconds: 10),
+  }) : _detector = detector ??
+            FaceDetector(
+              options: FaceDetectorOptions(
+                enableLandmarks: true,
+                enableContours: true,
+                performanceMode: FaceDetectorMode.accurate,
+              ),
+            );
 
   /// One detection pass, shared by every caller. Null on all non-usable
   /// outcomes (blank/missing/unreadable file, anything but exactly one
-  /// face, detector/channel error) — the caller maps null to a silent
-  /// wasted beat, never a throw past the L1 gate, never an accept.
+  /// face, detector/channel error, timeout) — the caller maps null to a
+  /// silent wasted beat, never a throw past the L1 gate, never an accept.
   /// The nullable detector result is guarded WITHOUT `!`.
   Future<Face?> _detect(String imagePath) async {
     if (imagePath.trim().isEmpty) return null;
     try {
       if (!File(imagePath).existsSync()) return null;
-      final faces =
-          await _detector.processImage(InputImage.fromFilePath(imagePath));
+      final faces = await _detector
+          .processImage(InputImage.fromFilePath(imagePath))
+          .timeout(detectTimeout);
       if (faces.length != 1) return null;
       return faces.first;
+    } on TimeoutException {
+      // Hung detector: same fail-closed null as any other unreadable
+      // outcome — the loop wastes the beat silently, never throws.
+      return null;
     } catch (_) {
       return null;
     }

@@ -72,6 +72,14 @@ class StudentDeviceDoc {
 /// self-asserted this phase.
 const kStudentMoveCooldown = Duration(days: 30);
 
+/// Face re-scan quota: at most one SAVED face-template replacement per
+/// account every 30 days. Same duration as [kStudentMoveCooldown] but a
+/// SEPARATE rule (device moves vs face-template replaces): changing one
+/// must never change the other, hence the separate constant even though
+/// both are currently 30 days. Enforced locally on the rescan-SAVE path
+/// only (see EnrollmentController.upload); no claim/rules/server change.
+const kFaceRescanCooldown = Duration(days: 30);
+
 /// Lost-phone exemption window: when the STORED binding's last-seen is
 /// older than this, a different device may re-enroll immediately — the old
 /// phone is probably lost (a live phone heartbeats lastSeen on every
@@ -233,6 +241,57 @@ String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
     default:
       return '';
   }
+}
+
+/// True when a saved face re-scan at [stampMillis] (UTC epoch ms) blocks
+/// another saved re-scan at [now]. Zero/missing stamps (never rescanned,
+/// incl. pre-upgrade docs) NEVER block — the first post-upgrade rescan is
+/// always allowed once, then it stamps. Durations derive from
+/// [kFaceRescanCooldown], never literals.
+bool faceRescanBlocked({required int stampMillis, required DateTime now}) {
+  if (stampMillis <= 0) return false;
+  return now.toUtc().millisecondsSinceEpoch - stampMillis <
+      kFaceRescanCooldown.inMilliseconds;
+}
+
+/// Eligible UTC date for the next saved face re-scan after [stampMillis].
+/// Derives from [kFaceRescanCooldown], never literals.
+DateTime faceRescanEligibleAt(int stampMillis) =>
+    DateTime.fromMillisecondsSinceEpoch(
+        stampMillis + kFaceRescanCooldown.inMilliseconds,
+        isUtc: true);
+
+/// Friendly refusal copy for a blocked face re-scan. Names the exact
+/// eligible date via [dateIsoOf] and points at manual attendance for the
+/// gap (same voice as the move-cooldown copy). Single source of truth —
+/// EnrollmentController.upload returns this verbatim. Verbatim — do not
+/// reword without updating the rescan tests.
+String faceRescanCooldownMessage(DateTime eligible) =>
+    'You already updated your face scan recently. '
+    'You can scan again on ${dateIsoOf(eligible.toUtc())} — '
+    'face re-scans are allowed once every ${kFaceRescanCooldown.inDays} days. '
+    'Until then, ask your professor to mark your attendance manually '
+    '(Request manual attendance in class).';
+
+/// Actionable deploy hint wrapping Firestore permission failures (rules not
+/// deployed or a binding conflict) instead of a bare code. Single source of
+/// truth for the hint text — [firestore_sync]'s `_rulesError` delegates
+/// here, and the enroll pre-claim reuses it for the genuine-rules-problem
+/// branch (own binding unreadable), so the hint stays byte-identical
+/// everywhere. Verbatim — do not reword.
+String cloudRulesHint(String op) =>
+    'Cloud $op refused by security rules (permission-denied) — deploy them with:\n'
+    'firebase deploy --only firestore:rules --project proximity-attendence';
+
+/// True when [message] is a rules-denial deploy hint (see [cloudRulesHint])
+/// rather than friendly claim copy. Pure evidence check shared by the
+/// enroll pre-claim and the entry gate: a denied install-doc read after a
+/// clean own-doc read proves the install holds another Gmail (rules deny
+/// cross-org install reads while missing own docs read clean), i.e. an
+/// installConflict the transaction could never see.
+bool isRulesDenialMessage(String message) {
+  final m = message.toLowerCase();
+  return m.contains('security rules') && m.contains('permission-denied');
 }
 
 /// Outcome of a successful [CloudSync.claimStudentDevice].

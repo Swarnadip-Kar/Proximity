@@ -1,0 +1,475 @@
+// Setup pagination proofs (## Setup pagination + ## About-page removal):
+// the flow is six one-purpose pages (device → account&key; the
+// About-to-enroll explainer page is removed from the flow, its sections
+// staying live on the standalone EnrollIntroScreen);
+// welcome/capture/result stay one page each. Start-index semantics,
+// listeners, lazy camera mount, back behavior, and scope branches are
+// behavior-identical (capture/result are 4/5; progress counts 6 pages).
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/auth.dart';
+import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_app/core/device_store.dart';
+import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/face_identity/device_key.dart';
+import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/pose_gate.dart';
+import 'package:proximity_app/features/setup/device_identity_screen.dart';
+import 'package:proximity_app/features/setup/device_intro_step.dart';
+import 'package:proximity_app/features/setup/device_sections.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/enroll_result.dart';
+import 'package:proximity_app/features/setup/intro_sections.dart';
+import 'package:proximity_app/features/setup/result_sections.dart';
+import 'package:proximity_app/features/setup/role_hub_screen.dart';
+import 'package:proximity_app/features/setup/role_sections.dart';
+import 'package:proximity_app/features/setup/setup_progress.dart';
+import 'package:proximity_app/features/setup/setup_step_scope.dart';
+import 'package:proximity_app/features/setup/welcome_screen.dart';
+import 'package:proximity_app/features/setup/welcome_sections.dart';
+import 'package:proximity_app/screens/setup_flow_screen.dart';
+import 'package:proximity_app/widgets/capture_overlay.dart';
+
+const _acct = SignedAccount(
+    email: 'student@example.com', displayName: 'Test User', uid: 'test-uid');
+const _stills = ['c.jpg', 'l.jpg', 'r.jpg', 'u.jpg', 'd.jpg'];
+
+Future<void> _settleStepped(WidgetTester t) async {
+  await t.pump();
+  for (var i = 0; i < 4; i++) {
+    await t.pump(const Duration(milliseconds: 500));
+  }
+}
+
+Widget _app(Widget home, List<Override> overrides) {
+  return ProviderScope(
+    overrides: overrides,
+    child: MaterialApp(theme: proxLightTheme(), home: home),
+  );
+}
+
+List<Override> _base({SignedAccount? acct = _acct}) {
+  return [
+    authServiceProvider.overrideWithValue(FakeAuthService(acct)),
+    cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+    deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+  ];
+}
+
+Map<String, String> _studentRole() => {
+      'roles': 'student',
+      'role': 'student',
+      'lastMode': 'student',
+      'email': _acct.email.toLowerCase(),
+      'uid': 'test-uid',
+      'displayName': 'Test User',
+      'org': 'example.com',
+    };
+
+void main() {
+  group('page map (7 → 6 after About-page removal)', () {
+    test('order + count', () {
+      expect(SetupStep.welcome, 0);
+      expect(SetupStep.role, 1);
+      expect(SetupStep.device, 2);
+      expect(SetupStep.accountKey, 3);
+      expect(SetupStep.capture, 4);
+      expect(SetupStep.result, 5);
+      expect(SetupStep.count, 6);
+    });
+  });
+
+  group('setupStartIndex semantics (first incomplete page wins)', () {
+    test('signed out → welcome', () {
+      expect(
+          setupStartIndex(
+              signedIn: false,
+              hasStudentRole: false,
+              hasKey: false,
+              phase: EnrollPhase.signedOut),
+          SetupStep.welcome);
+    });
+
+    test('signed in without student role → role', () {
+      expect(
+          setupStartIndex(
+              signedIn: true,
+              hasStudentRole: false,
+              hasKey: false,
+              phase: EnrollPhase.signedIn),
+          SetupStep.role);
+    });
+
+    test('student role without key → device (first of the split group)',
+        () {
+      expect(
+          setupStartIndex(
+              signedIn: true,
+              hasStudentRole: true,
+              hasKey: false,
+              phase: EnrollPhase.signedIn),
+          SetupStep.device);
+    });
+
+    test('key without face → capture (skips device/accountKey)', () {
+      expect(
+          setupStartIndex(
+              signedIn: true,
+              hasStudentRole: true,
+              hasKey: true,
+              phase: EnrollPhase.keyReady),
+          SetupStep.capture);
+    });
+
+    test('validated face → result', () {
+      expect(
+          setupStartIndex(
+              signedIn: true,
+              hasStudentRole: true,
+              hasKey: true,
+              phase: EnrollPhase.faceDone),
+          SetupStep.result);
+    });
+
+    test('uploaded claim → result', () {
+      expect(
+          setupStartIndex(
+              signedIn: true,
+              hasStudentRole: true,
+              hasKey: true,
+              phase: EnrollPhase.uploaded),
+          SetupStep.result);
+    });
+  });
+
+  group('each page renders its single purpose', () {
+    testWidgets('device page: device facts + Continue, no intro inputs',
+        (t) async {
+      await t.pumpWidget(_app(const DeviceConfirmStep(), _base()));
+      await _settleStepped(t);
+      expect(find.byType(DeviceIdentityContent), findsOneWidget);
+      expect(find.byType(DeviceAccountSection), findsOneWidget);
+      expect(find.byType(DeviceKeySection), findsOneWidget);
+      expect(find.byType(DeviceMoveSection), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Continue'), findsOneWidget);
+      // Intro purposes live on later pages, never here.
+      expect(find.byType(IntroOverviewSection), findsNothing);
+      expect(find.byType(IntroAccountSection), findsNothing);
+      expect(find.byType(IntroKeySection), findsNothing);
+      expect(find.text('Continue to face scan'), findsNothing);
+      await _settleStepped(t);
+    });
+
+    testWidgets('account&key page: inputs + gated Continue, no explainer',
+        (t) async {
+      final auth = FakeAuthService(_acct);
+      final store = InMemoryDeviceStore();
+      final cloud = FakeCloudSync();
+      final box = <EnrollmentController>[];
+      await t.pumpWidget(_app(
+        const AccountKeyStep(),
+        [
+          authServiceProvider.overrideWithValue(auth),
+          cloudSyncProvider.overrideWithValue(cloud),
+          deviceStoreProvider.overrideWithValue(store),
+          enrollmentControllerProvider.overrideWith((ref) {
+            final ctl = EnrollmentController(
+                auth: auth,
+                store: store,
+                verifier: FakeFaceVerifier(),
+                deviceKey: FakeDeviceKey(),
+                cloud: cloud);
+            box.add(ctl);
+            return ctl;
+          }),
+        ],
+      ));
+      final ctl = box.single;
+      await ctl.signIn();
+      await t.pumpAndSettle();
+      expect(find.byType(IntroAccountSection), findsOneWidget);
+      expect(find.byType(IntroKeySection), findsOneWidget);
+      expect(find.text('Continue to face scan'), findsOneWidget);
+      // Explainer + device purposes live on earlier pages, never here.
+      expect(find.byType(IntroOverviewSection), findsNothing);
+      expect(find.byType(IntroOnlineSection), findsNothing);
+      expect(find.byType(IntroOneDeviceSection), findsNothing);
+      expect(find.byType(DeviceIdentityContent), findsNothing);
+    });
+
+    testWidgets('welcome stays one page (hero + sign-in)', (t) async {
+      await t.pumpWidget(_app(
+        const WelcomeScreen(),
+        [
+          authServiceProvider.overrideWithValue(FakeAuthService()),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+        ],
+      ));
+      await _settleStepped(t);
+      expect(find.byType(WelcomeHeroSection), findsOneWidget);
+      expect(find.byType(WelcomeSignInSection), findsOneWidget);
+      expect(find.text('Sign in with Google'), findsOneWidget);
+      await _settleStepped(t);
+    });
+
+    testWidgets('role stays one page (register + footer)', (t) async {
+      await t.pumpWidget(_app(const RoleHubScreen(account: _acct), _base()));
+      await t.pumpAndSettle();
+      expect(find.byType(RoleRegisterSection), findsOneWidget);
+      expect(find.byType(RoleFooterSection), findsOneWidget);
+      expect(find.text('Register as Student'), findsOneWidget);
+    });
+
+    testWidgets('capture stays one page (overlay, no device/intro)', (t) async {
+      final auth = FakeAuthService(_acct);
+      final store = InMemoryDeviceStore();
+      final ctl = EnrollmentController(
+          auth: auth,
+          store: store,
+          verifier: FakeFaceVerifier(),
+          deviceKey: FakeDeviceKey());
+      await ctl.signIn();
+      await ctl.generateKey();
+      // Pushed-route harness (production shape): Cancel pops + disposes
+      // the session so no loop/sweep timer is pending at test end.
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          enrollmentControllerProvider.overrideWith((ref) => ctl),
+          enrollSessionCameraProvider
+              .overrideWithValue(FakeEnrollSessionCamera()),
+          poseGateProvider.overrideWithValue(FakePoseGate()),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const EnrollCaptureScreen()),
+                ),
+                child: const Text('open-capture'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await t.tap(find.text('open-capture'));
+      await t.pump(const Duration(milliseconds: 100));
+      await t.pump(const Duration(milliseconds: 300));
+      expect(find.byType(CaptureOverlay), findsOneWidget);
+      expect(find.byType(DeviceIdentityContent), findsNothing);
+      expect(find.byType(IntroOverviewSection), findsNothing);
+      expect(find.byType(IntroAccountSection), findsNothing);
+      // Drain: cancel the live loop (pops back to the launcher), then
+      // let beats and sweep ticks fire post-dispose (same _drain pattern
+      // as enroll_guided_test — stepped, never one big pump).
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      for (var i = 0; i < 15; i++) {
+        await t.pump(const Duration(milliseconds: 200));
+      }
+      expect(find.text('open-capture'), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
+    });
+
+    testWidgets('result stays one page (status, no device/intro)', (t) async {
+      final auth = FakeAuthService(_acct);
+      final store = InMemoryDeviceStore();
+      final cloud = FakeCloudSync();
+      final box = <EnrollmentController>[];
+      await t.pumpWidget(_app(
+        const EnrollResultScreen(),
+        [
+          authServiceProvider.overrideWithValue(auth),
+          cloudSyncProvider.overrideWithValue(cloud),
+          deviceStoreProvider.overrideWithValue(store),
+          enrollmentControllerProvider.overrideWith((ref) {
+            final ctl = EnrollmentController(
+                auth: auth,
+                store: store,
+                verifier: FakeFaceVerifier(),
+                deviceKey: FakeDeviceKey(),
+                cloud: cloud);
+            box.add(ctl);
+            return ctl;
+          }),
+        ],
+      ));
+      final ctl = box.single;
+      await ctl.signIn();
+      ctl.setRoll('R1001');
+      await ctl.generateKey();
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      await t.pumpAndSettle();
+      expect(find.byType(ResultStatusSection), findsOneWidget);
+      expect(find.byType(DeviceIdentityContent), findsNothing);
+      expect(find.byType(IntroOverviewSection), findsNothing);
+    });
+  });
+
+  group('flow navigation (one page at a time)', () {
+    testWidgets('device Continue advances exactly one page to account&key',
+        (t) async {
+      final store = InMemoryDeviceStore();
+      await store.writeRole(_studentRole());
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      // Start lands on the first incomplete page (device).
+      expect(find.text('Confirm device'), findsOneWidget);
+      await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+      await _settleStepped(t);
+      // Exactly one page forward — account&key, not capture (the about
+      // page is removed from the flow).
+      expect(find.text('Account & key'), findsOneWidget);
+      expect(find.text('About to enroll'), findsNothing);
+      await _settleStepped(t);
+    });
+
+    testWidgets('system back moves exactly one page (account&key → device)',
+        (t) async {
+      final store = InMemoryDeviceStore();
+      await store.writeRole(_studentRole());
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Confirm device'), findsOneWidget);
+      await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+      await _settleStepped(t);
+      expect(find.text('Account & key'), findsOneWidget);
+      // System back: one page back to device (never welcome/role).
+      await t.binding.handlePopRoute();
+      await _settleStepped(t);
+      expect(find.text('Confirm device'), findsOneWidget);
+      expect(find.text('Account & key'), findsNothing);
+      await _settleStepped(t);
+    });
+  });
+
+  group('progress reflects pages (same overlay, count 6)', () {
+    testWidgets('signed out starts 1/6 on welcome', (t) async {
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService()),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Sign in with Google'), findsOneWidget);
+      final overlay =
+          t.widget<SetupProgressOverlay>(find.byType(SetupProgressOverlay));
+      expect(overlay.count, SetupStep.count);
+      expect(overlay.index, SetupStep.welcome);
+      final bar =
+          t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator));
+      expect(bar.value, closeTo(1 / SetupStep.count, 0.001));
+      await _settleStepped(t);
+    });
+
+    testWidgets('student role without key starts 3/6 on device', (t) async {
+      final store = InMemoryDeviceStore();
+      await store.writeRole(_studentRole());
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Confirm device'), findsOneWidget);
+      final overlay =
+          t.widget<SetupProgressOverlay>(find.byType(SetupProgressOverlay));
+      expect(overlay.count, SetupStep.count);
+      expect(overlay.index, SetupStep.device);
+      final bar =
+          t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator));
+      expect(
+          bar.value,
+          closeTo(
+              (SetupStep.device + 1) / SetupStep.count, 0.001));
+      await _settleStepped(t);
+    });
+  });
+}

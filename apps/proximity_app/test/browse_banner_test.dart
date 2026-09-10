@@ -16,7 +16,6 @@ Widget _themed(Widget body) => MaterialApp(
 
 Widget _browse({bool broadcastBlocked = false}) => _themed(
       BrowseClassesView(
-        linked: null,
         identityLine: 'S',
         ipInitial: '',
         onIpChanged: (_) {},
@@ -24,8 +23,6 @@ Widget _browse({bool broadcastBlocked = false}) => _themed(
         joinError: '',
         live: const [],
         onTapLive: (_) {},
-        onEnroll: () {},
-        onViewRecords: () {},
         onRefresh: () async {},
         broadcastBlocked: broadcastBlocked,
       ),

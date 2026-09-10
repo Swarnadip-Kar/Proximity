@@ -140,7 +140,8 @@ void main() {
         CaptureOverlay.signalColorFor(CaptureSignal.inconclusive, light);
     final mismatch =
         CaptureOverlay.signalColorFor(CaptureSignal.mismatch, light);
-    expect(neutral, light.accentBrand);
+    // Override 2026-09-10: neutral is the glowing-green beacon tone.
+    expect(neutral, light.statusMarked);
     expect(inconclusive, light.contentSecondary);
     expect(mismatch, light.statusError);
     expect({neutral, inconclusive, mismatch}, hasLength(3));
@@ -386,7 +387,7 @@ void main() {
 
   // --- CaptureOverlay ----------------------------------------------------
 
-  testWidgets('CaptureOverlay renders two ovals + one line, any count',
+  testWidgets('CaptureOverlay renders bar + single oval + one line',
       (t) async {
     for (final total in [3, 5]) {
       await t.pumpWidget(_app(CaptureOverlay(
@@ -396,6 +397,9 @@ void main() {
         statusLine: 'Hold still, retrying',
       )));
       await t.pump();
+      // Exactly three overlay elements: slim progress bar, single
+      // oval + beacon (one CustomPaint), one prompt line.
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.byType(CustomPaint), findsWidgets);
       expect(find.text('Hold still, retrying'), findsOneWidget);
       // No per-angle labels, dots, brackets, or dialogs.
@@ -403,6 +407,18 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
       await t.pumpWidget(const SizedBox());
     }
+  });
+
+  testWidgets('CaptureOverlay defaults to the single guide prompt', (t) async {
+    await t.pumpWidget(_app(const CaptureOverlay(
+      progress: 0,
+      currentAngle: 0,
+      totalAngles: 5,
+    )));
+    await t.pump();
+    expect(find.text(captureGuidePrompt), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
   });
 
   testWidgets('CaptureOverlay mismatch signal holds error tone', (t) async {

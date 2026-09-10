@@ -8,7 +8,10 @@
 //
 // Selection is hold-and-tap (§4.1, no checkboxes anywhere): long-press
 // enters selection for this list, taps toggle, the [SelectionToolbar]
-// offers `Approve N · Reject N · Select all · Cancel`. Selection state
+// offers `Approve N · Reject N · Select all · Cancel`. On desktop only,
+// a Select/Done toggle arms selection mode and right-click enters with
+// that row (same controller, same toolbar — see
+// `widgets/selection_controller.dart`). Selection state
 // lives in this list's OWN [SelectionScope] instance (per-list rule —
 // never shared with the roster or any other list).
 //
@@ -87,6 +90,17 @@ class _ManualInboxBody extends ConsumerStatefulWidget {
 class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
   static String _id(String email) => email.toLowerCase();
 
+  /// Desktop Select-toggle arm (mouse-first entry): while true, plain
+  /// left-clicks toggle even with an empty selection. Presentation state
+  /// only — the controller + toolbar contracts are untouched, and the arm
+  /// is never set off-desktop (no toggle renders there), so the mobile
+  /// path observes `controller.selecting` exactly as before.
+  var _armed = false;
+
+  void _disarm() {
+    if (_armed && mounted) setState(() => _armed = false);
+  }
+
   /// Drops selection for rows that left the pending list (approved /
   /// rejected elsewhere) without touching live membership mid-build.
   void _pruneStale(SelectionController ctl) {
@@ -124,10 +138,17 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
       } else {
         await _rejectOne(emails.first);
       }
-      return;
+    } else {
+      await widget.onDecide(emails, approve);
+      if (mounted) ctl.clear();
     }
-    await widget.onDecide(emails, approve);
-    if (mounted) ctl.clear();
+    // A decide that empties the list also drops the desktop arm (Done
+    // would otherwise linger over an empty selection).
+    if (mounted &&
+        _armed &&
+        !ref.read(selectionControllerProvider).selecting) {
+      setState(() => _armed = false);
+    }
   }
 
   @override
@@ -136,6 +157,10 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
     final ctl = ref.watch(selectionControllerProvider);
     _pruneStale(ctl);
     final selecting = ctl.selecting;
+    // Effective mode: the desktop Select-toggle arm widens selectionMode
+    // so plain left-clicks toggle while armed. Off-desktop the arm is
+    // never set, so this equals controller.selecting exactly.
+    final effective = selecting || (_armed && isDesktopSelection);
     final n = ctl.count;
     final c = ProximityColors.of(context);
     return Column(
@@ -154,6 +179,17 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
                   maxLines: 1,
                 ),
               ),
+              // Mouse-first entry (desktop only): arms selection mode so
+              // left-clicks toggle; Done disarms + clears. Renders nothing
+              // on touch devices.
+              SelectionModeToggle(
+                selecting: effective,
+                onSelect: () => setState(() => _armed = true),
+                onDone: () {
+                  ref.read(selectionControllerProvider).clear();
+                  _disarm();
+                },
+              ),
             ],
           ),
         ),
@@ -165,7 +201,7 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
           // while selecting (the toolbar owns that moment).
           SelectionCoachMark(
             listType: SelectionCoachMarks.inbox,
-            selecting: selecting,
+            selecting: effective,
           ),
           for (final m in pending)
             Padding(
@@ -178,7 +214,7 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
                 // keep widget tests from settling; meaning rides on
                 // icon + word, not motion.
                 status: const VerdictBadge(status: ProxStatus.review),
-                selectionMode: selecting,
+                selectionMode: effective,
                 selected: ctl.isSelected(_id(m.email)),
                 onSelectionChanged: (v) {
                   if (v) {
@@ -205,7 +241,12 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
             ),
           ],
           onSelectAll: () => ctl.selectAll(pending.map((m) => _id(m.email))),
-          onCancel: ctl.clear,
+          // Toolbar Cancel exits selection mode entirely (clears the
+          // desktop arm too); the toolbar contract itself is unchanged.
+          onCancel: () {
+            ctl.clear();
+            _disarm();
+          },
         ),
       ],
     );

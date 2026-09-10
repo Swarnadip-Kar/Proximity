@@ -17,7 +17,10 @@
 // - NO checkbox ever renders on this card. Selection is a full-card
 //   affordance: long-press → card scales to 0.96 with a haptic tick and a
 //   filled ring appears around the avatar; subsequent taps toggle the ring
-//   on any card in that list. Selection state itself lives in a
+//   on any card in that list. On desktop only, right-click (secondary tap)
+//   enters selection with that row — the mouse-first entry alongside the
+//   per-list Select toggle (see selection_controller.dart); touch devices
+//   wire no secondary handler at all. Selection state itself lives in a
 //   [SelectionController] scoped per list (see selection_controller.dart) —
 //   this card is controlled (`selected` + callbacks), never global.
 //
@@ -33,6 +36,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../design/tokens.dart';
+import 'selection_controller.dart' show isDesktopSelection;
 import 'verdict_badge.dart';
 
 /// One round tick in the round trail (e.g. R1 present, R2 absent).
@@ -86,6 +90,19 @@ Color _marked(ProximityColors c) => c.statusMarked;
 Color _late(ProximityColors c) => c.statusLate;
 Color _review(ProximityColors c) => c.statusReview;
 Color _error(ProximityColors c) => c.statusError;
+
+/// Avatar-initials foreground for a name.
+///
+/// Task 3 (D3): the avatar fill stays `studentAvatarColor` @15% (spec hex
+/// untouched); initials text on a late/review avatar uses the darkened
+/// on-tint in light. Dark on-tints equal the status hexes, so dark output
+/// is pixel-identical. Non-late/review avatars are unchanged.
+Color studentAvatarForeground(ProximityColors c, String name) {
+  final base = studentAvatarColor(c, name);
+  if (base == c.statusLate) return c.onTintLate;
+  if (base == c.statusReview) return c.onTintReview;
+  return base;
+}
 
 /// The one card shape, used on rosters, waiting lists, inbox, manual-add
 /// results, and records (reduced variant: name/email replaced by session
@@ -161,10 +178,20 @@ class _StudentCardState extends State<StudentCard> {
     if (_pressed) setState(() => _pressed = false);
   }
 
+  void _handleSecondaryTap() {
+    // Desktop mouse-first entry: right-click selects this row, mirroring
+    // long-press entry (always select, never toggle off — the
+    // controller's select() is idempotent). No haptic/press pulse: mouse
+    // users get the avatar ring on rebuild. Gated to null in build on
+    // touch devices, so the mobile path is byte-identical.
+    widget.onSelectionChanged?.call(true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final avatarColor = studentAvatarColor(c, widget.name);
+    final avatarFg = studentAvatarForeground(c, widget.name);
     final ringOn = widget.selected || _pressed;
 
     final card = Container(
@@ -204,7 +231,7 @@ class _StudentCardState extends State<StudentCard> {
             alignment: Alignment.center,
             child: Text(
               studentInitials(widget.name),
-              style: ProxType.label(color: avatarColor),
+              style: ProxType.label(color: avatarFg),
               overflow: TextOverflow.clip,
             ),
           ),
@@ -274,6 +301,13 @@ class _StudentCardState extends State<StudentCard> {
         onTap: _handleTap,
         onLongPressStart: _handleLongPressStart,
         onLongPressEnd: _handleLongPressEnd,
+        // Mouse-first entry (desktop only): right-click enters selection
+        // with this row. Null on touch devices (and on non-selectable
+        // cards) — mobile gesture wiring unchanged.
+        onSecondaryTap: widget.onSelectionChanged == null ||
+                !isDesktopSelection
+            ? null
+            : _handleSecondaryTap,
         child: scaled,
       ),
     );

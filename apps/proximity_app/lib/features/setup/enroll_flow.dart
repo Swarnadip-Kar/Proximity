@@ -17,22 +17,6 @@
 // fail-closed (no validated capture → no save; Save blocked till the 5
 // validate via self-check); atomic claim (one device per Gmail + install
 // binding + 30-day move + heartbeats); key always kept.
-//
-// PROPOSALS (not applied — off-limits files, for the owner):
-// 1. Wire-up (lib/main.dart, lib/screens/student_home.dart,
-//    lib/screens/landing.dart): route `PROX_MODE=enroll` previews and the
-//    "Enroll this device" pushes from `EnrollFlow.openBundle(context)`
-//    instead of `EnrollmentScreen()`; keep the old route until the pilot
-//    confirms the bundle.
-// 2. Collapse-dup (lib/screens/enrollment.dart): EnrollProgress /
-//    EnrollAngleRow / EnrollNotice here absorb `_AnimatedEnrollProgress` /
-//    `_AngleRow` / `_EnrollNotice` there line-for-line in motion language.
-//    Once the bundle replaces the old screen, delete it and repoint its two
-//    importers (main.dart, student_home.dart) — do not keep both.
-// 3. Roll-field single entry (applied): the ID Number is typed exactly
-//    once on Intro via the shared `EnrollRollField` (enroll_widgets.dart);
-//    Result shows it readonly. Validation stays single + fail-closed in
-//    the controller's Save path.
 import 'package:flutter/material.dart';
 
 import 'enroll_capture.dart';

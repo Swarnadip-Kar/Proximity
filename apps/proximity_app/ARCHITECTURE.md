@@ -15,7 +15,7 @@ lib/
     prox_cards.dart     # ProxCard / ProxListTile (+dense) / ProxDot (pulse opt-in)
     prox_states.dart    # ProxStateBadge (pulse opt-in) / SectionHeader /
                         # Empty / Loading / Sync+Error notes
-    prox_motion.dart    # ProxFadeSlideIn / ProxStaggered / ProxSwitcher / ProxAnimatedCount
+    prox_motion.dart    # ProxFadeSlideIn / ProxStaggered / ProxSwitcher
     prox_verdict.dart   # Verdict badges with distinct motion per kind
     animated.dart       # FaceOval / PresentTicker (live contract: face
                         #   check + take header; MarkedBadge removed Track 5 —

@@ -126,7 +126,11 @@ class _VerdictBadgeState extends State<VerdictBadge>
 
   @override
   Widget build(BuildContext context) {
+    // Task 3 (D3): backgrounds/borders keep the spec-frozen status color;
+    // text + meaningful icon use the on-tint foreground (darkened light
+    // late/review/pending, pixel-identical elsewhere).
     final color = ProxIcons.statusColor(context, widget.status);
+    final fg = ProxIcons.statusForeground(context, widget.status);
     final icon = ProxIcons.statusIcon(widget.status, active: widget.active);
     final word = widget.label ?? VerdictBadge.labelFor(widget.status);
 
@@ -143,12 +147,12 @@ class _VerdictBadgeState extends State<VerdictBadge>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: color),
+          Icon(icon, size: 14, color: fg),
           const SizedBox(width: ProxSpacing.xs),
           Flexible(
             child: Text(
               word,
-              style: ProxType.label(color: color),
+              style: ProxType.label(color: fg),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
             ),

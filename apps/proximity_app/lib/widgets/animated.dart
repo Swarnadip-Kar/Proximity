@@ -4,8 +4,8 @@ import '../design/app_theme.dart';
 import '../design/tokens.dart';
 
 /// Animated present-count ticker (counts up, no jank: simple AnimatedSwitcher).
-/// Honors reduced motion (instant swap). Prefer [ProxAnimatedCount] in new
-/// code; kept for the take-attendance header contract.
+/// Honors reduced motion (instant swap). Kept for the take-attendance header
+/// contract.
 class PresentTicker extends StatelessWidget {
   final int present;
   final int total;

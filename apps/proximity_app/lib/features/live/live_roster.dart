@@ -1,5 +1,5 @@
 // Live roster (prof live, §7.1): waiting area + present (intersection) +
-// partial + search + per-student per-round ticks (R1 ✓ · R2 ✗).
+// partial + dup flags + search + per-student per-round ticks (R1 ✓ · R2 ✗).
 //
 // Presentation rebuild (behavior frozen): waiting/present/partial rows
 // render as the one shared `StudentCard` (§4.1) with round-tick pills
@@ -12,10 +12,12 @@
 // Partial with per-round ticks instead of vanishing while the header
 // still reads an intersection count.
 //
-// One section, two composable blocks sharing the same data: the take
-// screen composes [WaitingListSection], then the manual inbox + direct
-// add, then [MarkedRosterSection] (search + present + partial) — the
-// inbox stays near the top where approvals happen mid-class. The search
+// One roster, single-purpose blocks sharing the same data: [LiveRosterBody]
+// composes [WaitingListSection], [DupFlagSection], then
+// [MarkedRosterSection] (search + [PresentSection] + [PartialSection]).
+// Manual inbox + direct add NEVER compose here — they live behind the
+// sub-nav as their own sections (the inbox/add screens composing the
+// `features/manual_attendance/` module, §4.8). The search
 // state lives in [MarkedRosterSection]; waiting joins are keyed so the
 // 1s elapsed tick rebuilds without replaying their entrances.
 //
@@ -105,63 +107,97 @@ class WaitingListSection extends StatelessWidget {
   }
 }
 
-/// Search + present (intersection) + partial. Owns the search field state.
-class MarkedRosterSection extends StatefulWidget {
+/// Thin roster-only composer: waiting + dup flags + marked (search +
+/// present + partial). Manual inbox + direct add never compose here —
+/// they are their own sections behind the sub-nav (the inbox/add screens
+/// composing the `features/manual_attendance/` module).
+class LiveRosterBody extends StatelessWidget {
+  final List<WaitingRow> waitingRows;
+
+  /// Symmetric email → peer emails, from [HostDriver.dupGroups].
+  final Map<String, Set<String>> groups;
+
+  /// Email → display name (falls back to the email).
+  final Map<String, String> names;
+
+  /// Called with ONE member email; the driver clears the whole group.
+  final Future<void> Function(String email) onResolve;
+
   final TallyStore tally;
 
-  const MarkedRosterSection({super.key, required this.tally});
+  const LiveRosterBody({
+    super.key,
+    required this.waitingRows,
+    required this.groups,
+    required this.names,
+    required this.onResolve,
+    required this.tally,
+  });
 
   @override
-  State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        WaitingListSection(waitingRows: waitingRows),
+        const SizedBox(height: ProxSpacing.sm),
+        DupFlagSection(
+          groups: groups,
+          names: names,
+          onResolve: onResolve,
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        MarkedRosterSection(tally: tally),
+      ],
+    );
+  }
 }
 
-class _MarkedRosterSectionState extends State<MarkedRosterSection> {
-  String _search = '';
+/// Controlled-by-parent search field for the marked roster. The text state
+/// lives in [MarkedRosterSection] (via [onChanged]); this widget is only
+/// the field — same key, label, and icon as before.
+class RosterSearchField extends StatelessWidget {
+  final ValueChanged<String> onChanged;
+
+  const RosterSearchField({super.key, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      key: const ValueKey('prof-search'),
+      decoration: const InputDecoration(
+          labelText: 'Search by name, ID, or email',
+          prefixIcon: Icon(Icons.search)),
+      onChanged: onChanged,
+    );
+  }
+}
+
+/// Present (intersection) rows: every round taken. Single purpose — header
+/// + present rows only; the intersection gate and search narrowing stay in
+/// [MarkedRosterSection], which passes the already-filtered rows down.
+class PresentSection extends StatelessWidget {
+  final int present;
+  final int windowsTaken;
+  final List<AttendanceRecord> confirmedRows;
+  final List<int> windowNos;
+
+  const PresentSection({
+    super.key,
+    required this.present,
+    required this.windowsTaken,
+    required this.confirmedRows,
+    required this.windowNos,
+  });
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final tally = widget.tally;
-    final present = tally.confirmedCount;
-    final windowNos = tally.windowNos;
-    final windowsTaken = tally.windowCount;
-    // Intersection + partials: search narrows the confirmed set but keeps
-    // the intersection gate (a partial never promotes via search).
-    final confirmedRows = _search.isEmpty
-        ? tally.confirmed
-        : tally.search(_search).where((r) {
-            if (windowNos.isEmpty) return r.wins.isNotEmpty;
-            for (final w in windowNos) {
-              if (!r.wins.contains(w)) return false;
-            }
-            return true;
-          }).toList();
-    final partialRows = _search.isEmpty
-        ? tally.presentAny.where((r) {
-            if (windowNos.isEmpty) return false;
-            var all = true;
-            for (final w in windowNos) {
-              if (!r.wins.contains(w)) {
-                all = false;
-                break;
-              }
-            }
-            return !all;
-          }).toList()
-        : const <AttendanceRecord>[];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        TextField(
-          key: const ValueKey('prof-search'),
-          decoration: const InputDecoration(
-              labelText: 'Search by name, ID, or email',
-              prefixIcon: Icon(Icons.search)),
-          onChanged: (v) => setState(() => _search = v),
-        ),
-        const SizedBox(height: ProxSpacing.sm),
         Text(
           'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
           style: ProxType.title(color: c.contentPrimary),
@@ -195,27 +231,120 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
                 roundTrail: rosterTickPills(r.wins, windowNos),
               ),
             ),
-        if (partialRows.isNotEmpty) ...[
-          const SizedBox(height: ProxSpacing.xs),
-          Text(
-            'Partial — some rounds (${partialRows.length})',
-            style: ProxType.title(color: c.contentPrimary),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
-          ),
-          const SizedBox(height: ProxSpacing.sm),
-          for (final r in partialRows)
-            Padding(
-              key: ValueKey<String>('partial-${r.email}'),
-              padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-              child: StudentCard(
-                name: r.name,
-                subtitle:
-                    '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
-                roundTrail: rosterTickPills(r.wins, windowNos),
-              ),
+      ],
+    );
+  }
+}
+
+/// Partial rows: some (but not all) rounds taken. Single purpose — header
+/// + partial rows only; renders nothing when there are no partials.
+class PartialSection extends StatelessWidget {
+  final List<AttendanceRecord> partialRows;
+  final List<int> windowNos;
+
+  const PartialSection({
+    super.key,
+    required this.partialRows,
+    required this.windowNos,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (partialRows.isEmpty) return const SizedBox.shrink();
+    final c = ProximityColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: ProxSpacing.xs),
+        Text(
+          'Partial — some rounds (${partialRows.length})',
+          style: ProxType.title(color: c.contentPrimary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        for (final r in partialRows)
+          Padding(
+            key: ValueKey<String>('partial-${r.email}'),
+            padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+            child: StudentCard(
+              name: r.name,
+              subtitle:
+                  '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+              roundTrail: rosterTickPills(r.wins, windowNos),
             ),
-        ],
+          ),
+      ],
+    );
+  }
+}
+
+/// Search + present (intersection) + partial. Owns the search field state
+/// and the intersection-gated filtering; renders via [RosterSearchField],
+/// [PresentSection], and [PartialSection] (presentational split only —
+/// driver reads and filtering are unchanged).
+class MarkedRosterSection extends StatefulWidget {
+  final TallyStore tally;
+
+  const MarkedRosterSection({super.key, required this.tally});
+
+  @override
+  State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
+}
+
+class _MarkedRosterSectionState extends State<MarkedRosterSection> {
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final tally = widget.tally;
+    final present = tally.confirmedCount;
+    final windowNos = tally.windowNos;
+    final windowsTaken = tally.windowCount;
+    // Intersection + partials: search narrows the confirmed set but keeps
+    // the intersection gate (a partial never promotes via search).
+    final confirmedRows = _search.isEmpty
+        ? tally.confirmed
+        : tally.search(_search).where((r) {
+            if (windowNos.isEmpty) return r.wins.isNotEmpty;
+            for (final w in windowNos) {
+              if (!r.wins.contains(w)) return false;
+            }
+            return true;
+          }).toList();
+    final partialRows = _search.isEmpty
+        ? tally.presentAny.where((r) {
+            if (windowNos.isEmpty) return false;
+            var all = true;
+            for (final w in windowNos) {
+              if (!r.wins.contains(w)) {
+                all = false;
+                break;
+              }
+            }
+            return !all;
+          }).toList()
+        : const <AttendanceRecord>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        RosterSearchField(
+          onChanged: (v) => setState(() => _search = v),
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        PresentSection(
+          present: present,
+          windowsTaken: windowsTaken,
+          confirmedRows: confirmedRows,
+          windowNos: windowNos,
+        ),
+        PartialSection(
+          partialRows: partialRows,
+          windowNos: windowNos,
+        ),
       ],
     );
   }

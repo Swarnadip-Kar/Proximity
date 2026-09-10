@@ -83,8 +83,10 @@ Widget _noHostNote(String course) => ProxSyncNote(
       'No live host for $course on this device right now — open Take attendance on its course to host, then return here.',
     );
 
-/// Waiting + present (intersection) + partial + search, without the
-/// Start⇄Stop cluster. For mid-lecture reading of who is where.
+/// Waiting + present (intersection) + partial + dup flags + search,
+/// without the Start⇄Stop cluster and WITHOUT any manual-entry UI (no
+/// inbox, no direct-add form — those are their own sections behind the
+/// sub-nav). For mid-lecture reading of who is where.
 class LiveRosterScreen extends ConsumerWidget {
   final String course;
   const LiveRosterScreen({super.key, required this.course});
@@ -108,21 +110,15 @@ class LiveRosterScreen extends ConsumerWidget {
     return _LiveSectionShell(
       title: 'Roster · $course',
       reason: 'Who is waiting, present, or partial — live.',
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          WaitingListSection(waitingRows: d.waitingRows),
-          const SizedBox(height: ProxSpacing.sm),
-          DupFlagSection(
-            groups: d.dupGroups,
-            names: d.tally.nameMap(),
-            onResolve: (email) =>
-                ref.read(hostDriverProvider).resolveDupFlag(email),
-          ),
-          const SizedBox(height: ProxSpacing.sm),
-          MarkedRosterSection(tally: d.tally),
-        ],
+      // Roster-only composition (waiting + dup + marked): manual inbox +
+      // direct add stay in their own sections behind the sub-nav.
+      child: LiveRosterBody(
+        waitingRows: d.waitingRows,
+        groups: d.dupGroups,
+        names: d.tally.nameMap(),
+        onResolve: (email) =>
+            ref.read(hostDriverProvider).resolveDupFlag(email),
+        tally: d.tally,
       ),
     );
   }

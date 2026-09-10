@@ -22,6 +22,7 @@ import 'package:proximity_storage/storage.dart';
 import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
+import '../live/live_refresh.dart';
 import '../../main.dart';
 import '../../mode.dart';
 import '../../widgets/clock.dart';
@@ -52,14 +53,33 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
   final _nameCtrl = TextEditingController();
   String? _syncMsg;
 
+  /// History-refresh trigger (post-End freshness, presentation/navigation
+  /// only). Root cause: this state lives inside the shell IndexedStack +
+  /// per-tab Navigator, which caches its route — tab switches never
+  /// rebuild it, so the `FutureBuilder` futures below never re-read and
+  /// the Courses tab serves its pre-End snapshot (new session missing
+  /// without an app restart). The take host bumps [liveHistoryTick] when
+  /// its visit writes history or exits (End/stop/decisions/adds/leave);
+  /// this listener `setState`s, which re-creates the inline futures so the
+  /// next read is fresh — even while offstage, so the data is current
+  /// before the tab is shown. Data/filter/sort logic untouched.
+  VoidCallback? _historyTickListener;
+
   @override
   void initState() {
     super.initState();
     Future.microtask(_syncFromCloud);
+    _historyTickListener = () {
+      if (mounted) setState(() {});
+    };
+    liveHistoryTick.addListener(_historyTickListener!);
   }
 
   @override
   void dispose() {
+    if (_historyTickListener != null) {
+      liveHistoryTick.removeListener(_historyTickListener!);
+    }
     _nameCtrl.dispose();
     super.dispose();
   }

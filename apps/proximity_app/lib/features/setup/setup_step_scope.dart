@@ -9,8 +9,18 @@ library;
 
 import 'package:flutter/widgets.dart';
 
-/// Canonical SetupFlow step indices (single source of truth shared by the
+/// Canonical SetupFlow page indices (single source of truth shared by the
 /// orchestrator and the step-local back targets).
+///
+/// Pagination (2026-09-10 `## Setup pagination`, revised by
+/// `## About-page removal` the same day): the flow is six one-purpose
+/// pages — Confirm device (device facts) → Account & key (inputs +
+/// Continue). Welcome, Capture, and Result stay one page each (audit in
+/// INTEGRATION_LOG). The About-to-enroll explainer page was removed from
+/// the flow per product-owner decision; its sections stay live on the
+/// standalone deep-linkable EnrollIntroScreen (intro_sections shared).
+/// Capture/Result indices are 4/5; order semantics and start-index
+/// conditions are behavior-identical (first incomplete page wins).
 abstract final class SetupStep {
   /// Sign in (welcome).
   static const welcome = 0;
@@ -18,16 +28,19 @@ abstract final class SetupStep {
   /// Pick role (roles hub).
   static const role = 1;
 
-  /// Confirm device + about-to-enroll (combined device+intro step).
-  static const deviceIntro = 2;
+  /// Confirm device (which account, which device, move status).
+  static const device = 2;
+
+  /// Account & key (ID entry + device key + Continue to face scan).
+  static const accountKey = 3;
 
   /// Capture face (5-angle session).
-  static const capture = 3;
+  static const capture = 4;
 
   /// Done (save + claim outcome).
-  static const result = 4;
+  static const result = 5;
 
-  static const count = 5;
+  static const count = 6;
 }
 
 /// Stepper controls for the enclosing SetupFlowScreen.

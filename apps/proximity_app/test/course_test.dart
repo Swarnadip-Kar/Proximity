@@ -186,6 +186,9 @@ void main() {
     await t.pumpWidget(wrap(await seeded(),
         const TakeAttendanceScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
+    // The name field lives on the Setup sub-tab (real sub-tabs: tap swaps).
+    await t.tap(find.text('Setup'));
+    await t.pumpAndSettle();
     expect(
         find.widgetWithText(
             TextField, 'Your name (optional, shown to students)'),
