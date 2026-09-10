@@ -32,8 +32,6 @@ class RoleDoc {
 
   /// Legacy single-role read (first role, or ''). New code uses [roles].
   String get role => roles.isEmpty ? '' : roles.first;
-  bool get isProf => roles.contains('prof');
-  bool get isStudent => roles.contains('student');
 }
 
 /// Local role-cache helpers. Cache shape (see DeviceStore.readRole):

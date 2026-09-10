@@ -23,9 +23,6 @@ final int kBaseS64 = _u64(0xB7E4A921, 0x5C6D8093);
 /// Bytes read "IPHINT01".
 final int kBaseI64 = _u64(0x49504849, 0x4E543031);
 
-/// BLE advertise interval (ms). §6.1
-const int kAdvIntervalMs = 200;
-
 /// Rotation period per sub-epoch (s). Challenges rotate every 5s for as
 /// long as the window is open (unbounded j); the window closes only when
 /// the professor stops it. 5s bounds replay to a radio-plausible window
@@ -44,11 +41,10 @@ const int kRssiDirectDbm = -70;
 /// Relay-admission RSSI threshold (dBm). §6.2.
 const int kRssiRelayMinDbm = -80;
 
-/// Max relay hops. Originate TTL=3, dense graphs cap at 2. §6.2. Three hops
-/// cover a 500-seat hall; the dense cap and the 4/s per-device relay cap
-/// bound pathological resonators without touching flood correctness.
+/// Max relay hops. Originate TTL=3. §6.2. Three hops cover a 500-seat
+/// hall; the 4/s per-device relay cap bounds pathological resonators
+/// without touching flood correctness.
 const int kTtlOriginate = 3;
-const int kTtlDenseCap = 2;
 
 /// Max relayed hop accepted as BLE sighting (flagged). §5.3 step 6.
 const int kMaxRelayHop = 2;
@@ -104,7 +100,6 @@ const int kSessionIdBytes = 16; // rand(128) per lecture
 const int kWindowIdBytes = 6; // rand(48) per window
 const int kWindowSecretBytes = 32; // S_w rand(256)
 const int kChallengeBytes = 8; // C_j 64-bit
-const int kPeerAliasBytes = 8; // peerW 8 bytes
 
 /// Mesh PDU types.
 const int kPduTypeChallenge = 0x01; // professor challenge relay (broadcast flood)

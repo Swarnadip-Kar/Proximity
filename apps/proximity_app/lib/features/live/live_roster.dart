@@ -40,16 +40,7 @@ import '../../widgets/prox_states.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/verdict_badge.dart';
 
-/// Per-round ticks for one student ('R1 ✓ · R2 ✗', or 'R1 ✓' pre-round).
-String rosterTicksFor(Set<int> wins, List<int> windowNos) {
-  if (windowNos.isEmpty) return wins.isEmpty ? 'no rounds yet' : 'R1 ✓';
-  return [
-    for (final w in windowNos) 'R$w ${wins.contains(w) ? '✓' : '✗'}',
-  ].join(' · ');
-}
-
-/// Round-tick pills for one student (the [StudentCard] trail form of
-/// [rosterTicksFor]; same information, componentized per §4.1).
+/// Round-tick pills for one student (per-round R1/R2 trail).
 List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
   if (windowNos.isEmpty) {
     return wins.isEmpty ? const [] : const [RoundTick('R1', present: true)];

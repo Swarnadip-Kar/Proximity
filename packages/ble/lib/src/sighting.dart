@@ -28,7 +28,6 @@ class BleSighting {
   /// (never relay). The relay storm-guard set still bounds each packet to
   /// one re-advertise per device.
   final int ttl;
-  final String? ingressLink;
   BleSighting({
     this.version = kAirVer,
     required this.type,
@@ -43,7 +42,6 @@ class BleSighting {
     required this.at,
     this.peerW,
     this.ttl = kTtlOriginate,
-    this.ingressLink,
   }) : assert(token8.length == 8);
 
   bool get isChallenge => type == kAirTypeChallenge;

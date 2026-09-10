@@ -14,7 +14,6 @@ import 'package:proximity_protocol/protocol.dart';
 const kBluezService = 'org.bluez';
 const kBluezAdvMgrIface = 'org.bluez.LEAdvertisingManager1';
 const kBluezAdvIface = 'org.bluez.LEAdvertisement1';
-const kBluezDeviceIface = 'org.bluez.Device1';
 const kAdvertPathPrefix = '/org/proximity/advert';
 
 /// Pure advertisement property map (unit-tested without a bus).

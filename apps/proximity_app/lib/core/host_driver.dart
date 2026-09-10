@@ -995,13 +995,7 @@ class FakeHostDriver implements HostDriver {
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
   }
 
-  /// Test helper: seed waiting/manual queues.
-  void seedWaiting(List<WaitingRow> rows) {
-    _waiting
-      ..clear()
-      ..addAll(rows);
-  }
-
+  /// Test helper: seed manual queue.
   void seedManual(List<ManualRow> rows) {
     _manual
       ..clear()

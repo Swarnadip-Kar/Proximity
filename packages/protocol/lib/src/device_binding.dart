@@ -210,8 +210,3 @@ List<String> detectFaceAnomalies({
   }
   return flags;
 }
-
-/// Exact-1.0 check helper (single proof, no history): a lone 1.000 is
-/// suspicious but not conclusive — the host records it; the REPEAT is the
-/// flag (see [detectFaceAnomalies]).
-bool isSaturatedScore(double score) => score >= 1.0;

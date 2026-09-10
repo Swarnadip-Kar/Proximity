@@ -64,10 +64,6 @@ const kFacePrintBands = 10;
 /// recall ≈0.9 at cosine 0.85 (see file header for the trade table).
 const kFacePrintRows = 8;
 
-/// Shortlist cap per enrollment check. Bounds the per-enrollment read
-/// cost even if an org's buckets collide pathologically.
-const kFacePrintQueryLimit = 25;
-
 /// Fixed seed for the Rademacher hyperplane stream. Arbitrary, pinned by
 /// the golden bucket test — changing it re-buckets every stored print
 /// (old prints become unfindable until re-enrolled).

@@ -331,19 +331,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     }
   }
 
-  /// Identity for the linked banner. Valid once uploaded/restored.
-  LinkedIdentity? get currentIdentity {
-    final acct = state.account;
-    if (acct == null || state.phase != EnrollPhase.uploaded) return null;
-    final roll = state.roll.isNotEmpty ? state.roll : (_restoredRoll ?? '');
-    return LinkedIdentity(
-      name: acct.displayName,
-      gmail: acct.email.toLowerCase(),
-      roll: roll,
-      org: acct.org,
-    );
-  }
-
   /// ID number (compulsory, unverified). Stored as-is.
   void setRoll(String roll) {
     state = state.copyWith(roll: roll.trim());

@@ -22,7 +22,6 @@ class FakeCloudSync implements CloudSync {
   final Map<String, String> installs = {}; // installId -> emailLower
   final Map<String, StudentDirectoryEntry> dir = {}; // emailLower -> entry
   final Map<String, Map<String, dynamic>> sessions = {};
-  String? lastPushedBy;
   FakeCloudSync({this.available = true, this.online = true});
 
   void _needOnline() {
@@ -285,11 +284,6 @@ class FakeCloudSync implements CloudSync {
     return true;
   }
 
-  /// Post-hoc double-pkD audit over the in-memory bindings (see
-  /// findDoublePkD in claim.dart): pkD values shared by 2+ Gmails.
-  /// Offline and permanent: clone-or-shared-device signal for review.
-  Map<String, List<String>> auditDoublePkD() => findDoublePkD(devices);
-
   @override
   Future<PurgeOutcome> purgeExpiredSelfData(
       {required String emailLower, String uid = '', DateTime? now}) async {
@@ -337,7 +331,6 @@ class FakeCloudSync implements CloudSync {
       required ClassRecord record,
       String? profOrg}) async {
     _needOnline();
-    lastPushedBy = profUid;
     // Session org immutable on update: a stamped doc keeps its org.
     final prev = sessions[record.id];
     final prevOrg = prev?['org'] as String? ?? '';

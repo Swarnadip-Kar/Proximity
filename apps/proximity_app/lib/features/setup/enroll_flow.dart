@@ -20,7 +20,6 @@
 import 'package:flutter/material.dart';
 
 import 'enroll_capture.dart';
-import 'enroll_intro.dart';
 import 'enroll_result.dart';
 import 'enroll_widgets.dart';
 
@@ -28,17 +27,6 @@ abstract final class EnrollFlow {
   static const introRoute = '${EnrollNav.routePrefix}intro';
   static const captureRoute = '${EnrollNav.routePrefix}capture';
   static const resultRoute = '${EnrollNav.routePrefix}result';
-
-  /// Bundle entry: pre-context + account + key.
-  static Future<void> openBundle(BuildContext context) {
-    EnrollLog.nav('enroll bundle opened (intro)');
-    return Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: introRoute),
-        builder: (_) => const EnrollIntroScreen(),
-      ),
-    );
-  }
 
   /// Intro → Capture (key must exist; the button gates it).
   static Future<void> openCapture(BuildContext context) {

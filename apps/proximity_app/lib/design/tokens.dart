@@ -22,20 +22,13 @@ import 'package:flutter/material.dart';
 // anything inside lib/design/ itself (this file IS the token definition
 // site). Every other hit must move onto ProximityColors/ProxStateColors/
 
-/// Duration scale. Named by intent, not by screen:
-/// - [micro]: press ripples, icon toggles (120ms)
-/// - [small]: fades, list-item entrances (200ms)
-/// - [medium]: counters, AnimatedSwitcher flips, sheet slides (350ms)
-/// - [large]: hero/verdict entrances, enrollment confirmations (600ms)
-/// Specialty cadences below reuse the same vocabulary so every timer in
-/// the app is greppable here instead of a bare `Duration(...)` in a
-/// widget. Network/behavior timeouts (scan waits, HTTPS bounds, cooldowns)
-/// are NOT here — those are timing guarantees, not motion.
+/// Duration scale. Named by intent, not by screen. Network/behavior
+/// timeouts (scan waits, HTTPS bounds, cooldowns) are NOT here — those
+/// are timing guarantees, not motion.
 abstract final class ProxDurations {
   static const micro = Duration(milliseconds: 120);
   static const small = Duration(milliseconds: 200);
   static const medium = Duration(milliseconds: 350);
-  static const large = Duration(milliseconds: 600);
 
   /// Stagger step for list entrances. Keep small so a 30-row class list
   /// finishes staging in < 1s and never delays scrolling or taps.
@@ -95,9 +88,6 @@ abstract final class ProxDurations {
   /// Shared with [ProximityColors] `glowMarked` (one event, same timing).
   static const verdictWash = Duration(milliseconds: 400);
 
-  /// Waiting-ring morph into the camera viewfinder frame (§6.2).
-  static const ringMorph = Duration(milliseconds: 300);
-
   /// Reduce-motion collapse target: all transitions become opacity-only
   /// cross-fades at this duration (§3.2, §9).
   static const reducedFade = Duration(milliseconds: 100);
@@ -120,9 +110,6 @@ abstract final class ProxCurves {
   /// Reserved for the ✓ Marked / verdict badge pop only. Nothing else
   /// should elastic-overshoot — it would cheapen the verdict language.
   static const Curve verdictSpring = Curves.elasticOut;
-
-  /// Clocks, progress sweeps, log autoscroll: no easing at all.
-  static const Curve linear = Curves.linear;
 }
 
 /// Spacing scale (4pt grid, generous breathing room by default).
@@ -134,42 +121,22 @@ abstract final class ProxSpacing {
   static const double xl = 24;
   static const double xxl = 32;
 
-  /// Standard screen padding.
-  static const EdgeInsets screen = EdgeInsets.all(lg);
-
   /// Max content width for phone-first layouts on desktop/web.
   static const double maxContentWidth = 560;
 
-  // --- Redesign §2.3 spec grid (Foundation addition). ---
-  // Legacy values above are FROZEN until each rebuild section migrates its
-  // screens (changing them now would silently restyle every current screen,
-  // which is out of Foundation scope). New code uses the `Spec` values
-
-  /// Spec grid unit: all new spacing composes from multiples of 8.
-  static const double grid = 8;
-
   /// Spec screen horizontal margin (§2.3).
   static const double screenMargin = 20;
-
-  /// Spec screen margins as insets (horizontal 20, vertical 0 — vertical
-  /// rhythm comes from slivers/list gaps, not page padding).
-  static const EdgeInsets screenMarginInsets =
-      EdgeInsets.symmetric(horizontal: screenMargin);
 
   /// Spec card internal padding (§2.3).
   static const double cardPadding = 16;
 
   /// Minimum tap target edge (§2.3, §9): 48x48 regardless of visual size.
   static const double minTap = 48;
-
-  /// Minimum tap target as a [Size] for hit-region constraints.
-  static const Size minTapSize = Size(minTap, minTap);
 }
 
 /// Corner radii. One family everywhere: cards [card], buttons [button],
 /// chips/badges [chip], terminal [terminal].
 abstract final class ProxRadii {
-  static const double sm = 8;
   static const double md = 12;
   static const double card = 14;
   static const double button = 12;

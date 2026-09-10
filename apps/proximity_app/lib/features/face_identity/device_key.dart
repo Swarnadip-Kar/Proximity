@@ -273,9 +273,6 @@ class FakeDeviceKey implements DeviceKey {
   }
 }
 
-/// Mobile-only guard for HW key use (mirrors the face L1 gate).
-void requireMobileDeviceKey() => requireMobileFace();
-
 final deviceKeyProvider = Provider<DeviceKey>((ref) {
   throw UnimplementedError('Override in main / tests');
 });

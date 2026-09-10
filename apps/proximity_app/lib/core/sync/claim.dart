@@ -86,22 +86,15 @@ const kFaceRescanCooldown = Duration(days: 30);
 /// Keys off the stored value ONLY: there is deliberately no parameter for
 /// asserting "I've been offline" at move time (worthless — self-forged),
 /// and the stored value is trustworthy only because every write stamping
-/// it must prove fresh against the server clock (see
-/// [kClaimTimestampSkew] + the rules' fresh-stamp gate). Mirrored
-/// server-side with request.time, so local-clock games change nothing.
+/// it must prove fresh against the server clock (see the rules'
+/// fresh-stamp gate). Mirrored server-side with request.time, so
+/// local-clock games change nothing.
 const kStudentLostPhoneStale = Duration(days: 60);
 
 /// Cloud-expiry window: owner-lazy purge eligibility per doc (see
 /// CloudSync.purgeExpiredSelfData). Six months as a fixed 180-day bound —
 /// not calendar months — so client pre-check and rules agree bit-exactly.
 const kStudentPurgeStale = Duration(days: 180);
-
-/// Freshness skew for incoming binding stamps: rules reject a binding
-/// write whose lastSeen/updated stamps stray further than this from
-/// request.time. 60x smaller than the lost-phone window it protects
-/// (forging a stale lastSeen is impossible), generous next to NTP drift;
-/// TLS already fails closed on grossly wrong clocks before any write.
-const kClaimTimestampSkew = Duration(hours: 1);
 
 /// True when [stampMillis] (UTC epoch ms) is older than [age] before [now].
 /// Zero/missing stamps are NEVER old (fail-closed: unknown age must unlock

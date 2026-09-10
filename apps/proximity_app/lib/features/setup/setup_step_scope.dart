@@ -4,7 +4,7 @@
 // The scope is present ONLY inside SetupFlowScreen. Every branch that
 // consults it falls back to the legacy push/pop when the scope is absent,
 // so standalone routes (deep-links, previews, widget tests) and the
-// openBundle/openCapture/openResult chain behave byte-for-byte as before.
+// openCapture/openResult chain behave as before.
 library;
 
 import 'package:flutter/widgets.dart';
