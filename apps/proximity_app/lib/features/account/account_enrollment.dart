@@ -1,8 +1,4 @@
-// (`_EnrollmentSection` → [AccountEnrollmentSection],
-// `_IdRow` → [AccountIdRow], `_FaceIdRow` → [AccountFaceIdRow];
-//
-// requested business addition, overriding the gap-2 read-only verdict).
-// See its docs for the validation + uniqueness + new CloudSync write path.
+// Enrollment sections: status + editable ID row.
 library;
 
 import 'package:flutter/material.dart';
@@ -17,12 +13,9 @@ import '../../design/tokens.dart';
 import '../../mode.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/fallback_button.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/trust_cards.dart';
-import '../face_identity/face_verifier.dart';
 import 'account_common.dart';
-import 'face_id_screen.dart';
 
 /// Enrollment section: date enrolled, organization, trust-tier badge +
 /// plain-language explainer (collapsed), re-enroll entry when relevant.
@@ -375,40 +368,4 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
   }
 }
 
-/// Face-ID row: status pushes the isolated `account/face-id` page.
-class AccountFaceIdRow extends ConsumerWidget {
-  final SignedAccount acct;
-  const AccountFaceIdRow({required this.acct, super.key});
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final currentVer = ref.watch(faceVerifierProvider).verifierVer;
-    return FutureBuilder<StoredEnrollment?>(
-      future: readAccountEnrollment(ref),
-      builder: (context, snap) {
-        final e = snap.data;
-        // Scoped to the current account (stale-account fix): another
-        // Gmail's enrollment never reads as this account's Face ID state.
-        final mine = storedForAccount(acct, e);
-        final fresh = mine != null &&
-            mine.faceId.isNotEmpty &&
-            !mine.isFaceStale(currentVer);
-        return ProxListTile(
-          key: const Key('account-face-id-row'),
-          title: 'Face ID',
-          subtitle: fresh ? 'Enrolled' : 'Needs re-face',
-          leading: const Icon(Icons.face),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                settings: const RouteSettings(name: 'account/face-id'),
-                builder: (_) => const FaceIdScreen(),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}

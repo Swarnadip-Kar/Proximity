@@ -348,11 +348,6 @@ void main() {
       expect(find.text('R1001'), findsOneWidget);
     });
 
-    testWidgets('face-id row renders standalone', (t) async {
-      await pumpSection(t, const AccountFaceIdRow(acct: _acct));
-      expect(find.byKey(const Key('account-face-id-row')), findsOneWidget);
-    });
-
     testWidgets('device section renders standalone', (t) async {
       await pumpSection(t, const AccountDeviceSection(acct: _acct));
       expect(find.text('Device model'), findsOneWidget);
