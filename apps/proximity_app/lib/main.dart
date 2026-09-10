@@ -231,7 +231,6 @@ class ProximityApp extends ConsumerStatefulWidget {
   ConsumerState<ProximityApp> createState() => _ProximityAppState();
 }
 
-/// App shell: route table (mode-driven home) + Track 4 sync triggers.
 /// The engine owns the flush; this only wakes it: connectivity-return edge
 /// (platform hint, server probe decides), app resume, and the 15min
 /// backstop while the outbox is non-empty.

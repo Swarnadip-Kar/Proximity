@@ -3,7 +3,6 @@
 // Pill, icon + short word, color from `status.*` tokens. Exhaustive set,
 // copied verbatim from the existing verdict vocabulary — this component only
 // standardizes rendering, never invents new states. Supersedes the old
-// `MarkedBadge` per SCREEN_MAP.md: the elastic "just marked" motion lives
 // INSIDE this component as a transition-in animation when its state flips
 // to `Marked`, not as a separate widget.
 //

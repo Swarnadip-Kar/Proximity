@@ -3,15 +3,12 @@
 // waiting counters, and the Start ⇄ Stop control cluster. Nothing else
 // is always-on mid-class.
 //
-// Presentation rebuild (behavior frozen): the fixed header picks up
 // `gradient.brand` while state is LIVE and stays flat `surface.raised`
 // while IDLE (§2.5) — the one flourish on the professor surface, since it
 // answers "is this actually running" at a glance. Verdict vocabulary
 // (`Start`/`Stop`/`Retake round N`/`Take another round`/`End attendance`),
 // the elapsed `mm:ss` clock, and the present/waiting denominator rule are
-// byte-identical to the pre-rebuild header.
 //
-// Date line (tester fix, presentation only): the current hosting date
 // (today) renders via the frozen records helpers (`fullDateOf` +
 // `todayIso`, same formats as the session detail/roomy lines) so the
 // Live page shows date/day like Courses does. Pure display, no lifecycle/
@@ -160,7 +157,6 @@ class LiveSessionHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 PresentTicker(present: present, total: denom),
-                // Session date/day header (today, tester fix): frozen
                 // records format via `fullDateOf(todayIso())` — same helper
                 // + format as the session detail/roomy lines, so Live
                 // matches Courses. A proper visible header element (not a

@@ -91,7 +91,6 @@ class EnrollIntroContent extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Desktop/web are records-only (Track 5): no enrollment UI here at
     // all — the blocked card is the whole screen, never a disabled form.
     // Deep-links to enroll/* on records-only devices redirect to records
     // guidance (see ProxRoutes.mobileGuardRedirect); this is the second

@@ -1,5 +1,3 @@
-// Account header section — moved verbatim from `account_screen.dart`
-// (`_HeaderCard` → [AccountHeaderCard]; presentational split only).
 library;
 
 import 'package:flutter/material.dart';
@@ -8,7 +6,6 @@ import '../../core/auth.dart';
 import '../../design/tokens.dart';
 import '../../widgets/account_chip.dart';
 
-/// Rounded Account header card. Tester fix (flat-square header): the
 /// large-header wash rendered as an unbordered square — it now sits in a
 /// token-driven card (spec card radius, flat elevation-border treatment,
 /// zero shadow like the app card theme), clipped to the same radius. The

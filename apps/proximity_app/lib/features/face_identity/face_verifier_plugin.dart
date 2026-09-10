@@ -1,6 +1,5 @@
 // PluginFaceVerifier: production `face_verification` backend (native
 // Android/iOS only). Split out of face_verifier.dart so the web
-// records-only build never imports dart:ffi (Track 4 §3 platformx-clean):
 // face_verifier.dart includes THIS file on native and
 // face_verifier_plugin_stub.dart on web. No logic lives here that the
 // stub does not mirror as fail-closed.

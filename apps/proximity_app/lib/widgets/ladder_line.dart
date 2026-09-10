@@ -1,4 +1,3 @@
-// One-line degradation-ladder status (Track 4 §2): the same rung order
 // the BleLog carries, rendered as a single caption line. [active] brackets
 // the current rung (-1 = path order only, for screens without rung state).
 library;

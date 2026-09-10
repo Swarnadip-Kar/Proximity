@@ -7,8 +7,6 @@
 // `manual_inbox.dart`); the form's search/queue orchestration lives in
 // `manual_directory.dart`.
 //
-// M3 compatibility: `widgets/manual_add.dart` is a re-export shim over
-// this barrel (Phase 6 owns deletions), so existing imports — the
 // saved-session editor, `direct_add.dart` (pre-rebuild), and
 // `manual_add_test.dart` — keep resolving.
 library;

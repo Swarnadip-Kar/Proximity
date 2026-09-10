@@ -1,9 +1,6 @@
 // Account → Device sub-page (one essential feature).
 //
-// Product-owner override (Account overhaul, SUBMENUS + DEVICE FACTS):
 // owns the device facts only — the existing `AccountDeviceSection`
-// (student) / `AccountProfDeviceFacts` (prof) moved verbatim in behavior
-// (same gating/scoping/move-status/refusal copy) plus the Device-ID +
 // key-fingerprint facts. Trust stays truthful (real NONE on
 // software-backed builds, never faked FULL).
 library;
@@ -82,7 +79,6 @@ class AccountProfDevicePage extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 // Inline days + why (Device page only — no shared file).
 //
-// Presentation only: explicit day counts from [kStudentMoveCooldown] /
 // [kStudentLostPhoneStale] (never invented) with the plain-language fraud
 // reason. Exact per-account dates live where the gate data is already
 // available (enrollment sub-page inline block + the verdict rows above

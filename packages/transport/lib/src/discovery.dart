@@ -298,7 +298,6 @@ ClassAnnouncement? decodeAnnouncement(Uint8List raw) {
   }
 }
 
-/// Discovery assumption table (Track 4 §2). NEVER silent: the app logs
 /// [discoveryAssumptionLines] on hosting start + browse entry (LAN tag)
 /// and renders [formatLadderLine] as a one-line UI status, so a dead
 /// enterprise AP reads as an explained state, not an empty list.

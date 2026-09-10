@@ -1,5 +1,4 @@
 // Session mapping + merge (pure, tested without Firebase).
-// Split out of core/cloud_sync.dart (M6 sync refactor) — bodies verbatim.
 library;
 
 import 'package:proximity_storage/storage.dart';
@@ -34,7 +33,6 @@ class SessionTombstone {
       );
 }
 
-/// Additive union of two records with the SAME id (Track 4
 /// union-merge-before-push): window maps OR together (a mark is never
 /// unmarked by merge), names/rolls union (newer non-empty wins per email),
 /// faceFlags union (a flag is never unflagged by merge — override is an
@@ -108,10 +106,8 @@ List<ClassRecord> applyTombstones(
   ];
 }
 
-/// Merge with union semantics + tombstones (Track 4 SyncEngine path):
 /// same-id records union (marks additive, never lost to LWW), deletes win
 /// over older upserts. (The old pure-LWW mergeHistories was deleted in the
-/// Track 4 audit: zero production callers, and its newer-wins test
 /// asserted the exact data-loss — a newer `false` wiping a local `true`
 /// mark — that union-merge-before-push was built to replace.)
 /// the engine converges through this. Pure — tested without Firebase.

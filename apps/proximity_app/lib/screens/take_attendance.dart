@@ -13,7 +13,6 @@
 //
 // Layout contract: this screen owns hosting/window/draft orchestration
 // and composes the live feature sections behind an explicit sub-nav
-// (Roster / Inbox / Add / Setup, product-owner order): the sub-nav SWAPS
 // content completely via an IndexedStack — each sub-tab shows ONLY its
 // view, no shared scroll, no intersection, inactive views stay mounted so
 // their state survives switches (mid-approve inbox selection, roster
@@ -56,7 +55,6 @@ export '../features/live/draft_recovery.dart'
     show recoverPromptThreshold, shouldPromptRecover;
 
 /// Lightweight segmented sub-nav (§7.1) under the fixed control cluster:
-/// roster / inbox / add / setup (explicit product-owner order). Tapping a
 /// segment SWAPS the content below via the host's IndexedStack — each
 /// sub-tab shows ONLY its view (no shared scroll, no intersection);
 /// inactive views stay mounted so their state survives switches.
@@ -146,7 +144,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   final _nameCtrl = TextEditingController();
 
   /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster, 1 inbox,
-  /// 2 add, 3 setup — product-owner order). The IndexedStack below swaps to
   /// it; every tab stays mounted so mid-lecture state (inbox selection,
   /// roster search, add fields) survives switches.
   int _section = 0;
@@ -876,7 +873,6 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _saveSnapshot();
   }
 
-  // Zero-intersection (tester fix): manual attendance-taking lives ONLY
   // in the Add section (`DirectAddSection` below, `direct-` keys). The
   // former AppBar `Add student` sheet (`sheet-` keys, same module form)
   // duplicated it, so it is removed — no second entry point, no second
@@ -997,14 +993,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               ),
             ),
             Expanded(
-              // Real sub-tabs (tester fix): the sub-nav SWAPS content via
               // this IndexedStack — each sub-tab shows ONLY its view, no
               // shared scroll, no intersection. Inactive views stay mounted
               // (state-preserving switch): roster search, mid-approve inbox
               // selection, and direct-add fields survive tab switches — the
               // reverted grouping probe failed exactly because unmounting
               // broke the inbox approve flow. Order is the explicit
-              // product-owner order (roster/inbox/add/setup), overriding
               // the old scroll-spy. Each tab scrolls independently.
               child: IndexedStack(
                 index: _section,

@@ -1,4 +1,3 @@
-// Live history-refresh signal (presentation/navigation only).
 //
 // Root cause it serves (post-End freshness): `ProfCoursesScreen` and
 // `CourseOverviewScreen` read via `FutureBuilder` futures built from

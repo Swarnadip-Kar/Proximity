@@ -17,7 +17,6 @@ class FaceBlockedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Shared library only (Track 5): one card language (ProxCard), no
     // per-screen Card+Padding copies.
     return ProxCard(
       padding: const EdgeInsets.all(ProxSpacing.lg),

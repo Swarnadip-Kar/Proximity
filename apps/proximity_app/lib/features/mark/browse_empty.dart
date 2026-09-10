@@ -5,7 +5,6 @@
 // kept verbatim as the subline.
 //
 // Single-purpose split from `browse_classes.dart` (Mark slim-down).
-// Presentation only: the sweep angle is driven by the host view's timer.
 library;
 
 import 'package:flutter/material.dart';

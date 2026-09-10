@@ -403,7 +403,6 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
     final controller = ref.watch(selectionControllerProvider);
     final selecting = controller.selecting && !kIsWeb;
     // Off-desktop the arm is never set, so this equals the old
-    // `selecting` exactly (mobile/web paths byte-identical).
     final effective = selecting || (_armed && isDesktopSelection);
     final count = controller.count;
     // Local copies of the widget props (read-only aliases for the

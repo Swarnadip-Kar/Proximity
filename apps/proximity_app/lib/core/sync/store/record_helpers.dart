@@ -1,13 +1,10 @@
-// Shared pure helpers for the DeviceStore backends (M6 sync refactor).
 //
-// Collapsed ONLY where byte-identical across SecureDeviceStore and
 // InMemoryDeviceStore:
 //   - [recordInCourse]: the course-membership predicate used by both
 //     renameCourse impls and both deleteCourse impls (was 4 copies).
 //   - [todayIso]: the course creation stamp used by Secure addCourse.
 //   - [dateIsoOf]: the ONE yyyy-MM-dd formatter (claim/trust/export all
 //     delegate here; core never imports widgets/).
-// Deliberately NOT collapsed (M3 verdict: documented-different, item
 // closed): renameCourse's record rebuild reuses the record's windows /
 // names / rolls references in Secure but defensively copies them in
 // InMemory (Map.of); deleteSessions / upsertHistory / writeHistory go

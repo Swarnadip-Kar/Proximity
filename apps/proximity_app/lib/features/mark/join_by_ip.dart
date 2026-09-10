@@ -5,7 +5,6 @@
 // Modal-ready by construction (compact column, no screen padding of its
 // own — the parent supplies it): it ships inline in the browse list today
 // to preserve the tested join contract (keys `ipfield`/`ipport`, 'Join'),
-// and can move into a `showModalBottomSheet` with no logic change.
 // The last-joined IP pre-fills the field so rejoining costs zero taps.
 library;
 

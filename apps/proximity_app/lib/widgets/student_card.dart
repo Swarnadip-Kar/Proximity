@@ -183,7 +183,6 @@ class _StudentCardState extends State<StudentCard> {
     // long-press entry (always select, never toggle off — the
     // controller's select() is idempotent). No haptic/press pulse: mouse
     // users get the avatar ring on rebuild. Gated to null in build on
-    // touch devices, so the mobile path is byte-identical.
     widget.onSelectionChanged?.call(true);
   }
 

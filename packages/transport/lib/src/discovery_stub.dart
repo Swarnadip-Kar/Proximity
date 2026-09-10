@@ -17,7 +17,6 @@ const kSessionPersist = Duration(seconds: 120);
 const kSessionRefresh = Duration(seconds: 15);
 const kSessionMaxFails = 3;
 
-// Mirrored pure data (Track 4 §2 assumption table + ladder): identical
 // values to discovery.dart, no dart:io — the records UI renders the same
 // one-line status on web.
 class DiscoveryAssumption {

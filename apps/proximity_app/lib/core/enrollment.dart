@@ -489,7 +489,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// a different device refuses here (30-day move cooldown with an exact
   /// re-enroll date; manual attendance covers the gap), as does an install
   /// enrolled as another Gmail. Racing devices lose atomically: exactly
-  /// one claim wins. Carries `org` into every new record (Track 1).
   Future<LinkedIdentity?> upload() async {
     // Binding point (claim email + org derive from the account): refuse a
     // draft the session moved under — a stale-account claim must never
@@ -566,7 +565,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final pk32 = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pk32);
       final installId = await getOrCreateInstallId(_store);
-      // Device binding (Track 3): ensure DKey, seal SKey (ciphertext
       // only at rest), stamp the extended claim. Records-only devices
       // cannot enroll (no HW key) — fail closed before the claim.
       Uint8List sealed;
@@ -783,7 +781,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     return faceRescanEligibleAt(stored.lastFaceRescanAtMillis);
   }
 
-  /// Local roll update after a successful cloud ID edit (Account overhaul,
   /// explicitly-requested business addition — minimal called-out addition).
   ///
   /// Rewrites ONLY the stored enrollment's roll (+ in-memory draft roll when

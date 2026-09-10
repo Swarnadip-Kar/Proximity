@@ -1,10 +1,6 @@
-// Manual-add form (M3 move, §4.8).
 //
-// M3 MECHANICAL MOVE (2026-09-10, Live section): `ManualAddForm` lived in
 // `widgets/manual_add.dart` (shared by the live direct entry and the
 // saved-session editor). It moved here into `features/manual_attendance/`
-// with the same public API (fieldPrefix/course/sessionId/onAdd/isPresent),
-// the same field keys (`<prefix>-roll|-name|-email`), and the same copy.
 // Search/queue orchestration now lives in `manual_directory.dart` (same
 // module); this file is the form UI only. Restyle is tokens-only (error /
 // secondary copy onto `ProximityColors`; directory hits render as the one

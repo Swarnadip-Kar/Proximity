@@ -1,9 +1,6 @@
-// Account enrollment sections — moved verbatim from `account_screen.dart`
 // (`_EnrollmentSection` → [AccountEnrollmentSection],
 // `_IdRow` → [AccountIdRow], `_FaceIdRow` → [AccountFaceIdRow];
-// presentational split only, gating/scoping behavior-identical).
 //
-// Account overhaul: [AccountIdRow] is now EDITABLE with Save (explicitly-
 // requested business addition, overriding the gap-2 read-only verdict).
 // See its docs for the validation + uniqueness + new CloudSync write path.
 library;
@@ -43,7 +40,6 @@ class AccountEnrollmentSection extends ConsumerWidget {
           return const Center(child: CircularProgressIndicator());
         }
         final e = snap.data;
-        // Both tester fixes gate here: only an enrollment for the CURRENT
         // account counts — a previous account's stored enrollment is not
         // this account's enrollment, and an enrolled account gets no CTA.
         if (!enrolledForAccount(acct, linked, e)) {
@@ -119,7 +115,6 @@ class AccountEnrollmentSection extends ConsumerWidget {
   }
 }
 
-/// ID row — EDITABLE with Save (Account overhaul, explicitly-requested
 /// business addition; overrides the gap-2 read-only verdict).
 ///
 /// Flow: validate non-empty → uniqueness-check via the existing directory

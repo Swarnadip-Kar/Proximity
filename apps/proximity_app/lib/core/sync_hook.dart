@@ -1,4 +1,3 @@
-// Thin sync call-site helpers (Track 4): every screen that used to
 // push/pull/rename/delete against CloudSync directly builds its prof
 // identity HERE and calls [syncEngine] — call sites stay one-liners and
 // the flush discipline lives in SyncEngine, not in widgets.

@@ -144,7 +144,6 @@ class _AccountTabIcon extends ConsumerWidget {
 /// finger left pages forward, finger right pages back.
 const _minSwipeVelocity = 200.0;
 
-/// Directional tab-switch slide (§3.1, tester-directed): the single motion
 /// for every tab switch, tap or swipe (never double-animated — swipes
 /// funnel through the same [_selectTab] path as taps). Direction follows
 /// tab order (+1 = tapped rightward / swiped forward, content slides in
@@ -487,7 +486,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   @override
   Widget build(BuildContext context) {
     _armGate();
-    // Tester fix (stale account after switch): the IndexedStack keeps the
     // Account Navigator (and its tab root) alive across sign-out/sign-in,
     // so the root is keyed by the signed-in Gmail — a switch unmounts the
     // previous account's page, dropping its cached reads, and mounts a
@@ -703,7 +701,6 @@ class _ProfShellState extends ConsumerState<ProfShell> {
 /// (live/* stays native-only per the guards), so they get guidance, never
 /// a hosting affordance.
 ///
-/// Zero-intersection (tester fix): Live rows are host entry ONLY — radio
 /// icon + `Tap to host live session` subtitle + `Host` trailing action,
 /// no management (no register/rename/delete/export, no session counts).
 /// Courses rows stay records/management only (verified records-only, no
@@ -786,7 +783,6 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
         ),
       );
     }
-    // Today's date header (tester fix, presentation only): the same frozen
     // records helpers as the take-screen header (`fullDateOf(todayIso())`)
     // so Live root reads consistently alongside it. Different screen, so
     // no duplication — the take header owns its in-class block, this owns
@@ -834,7 +830,6 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
               ),
             );
           }
-          // Tab header date + per-course last-hosted dates (tester fix,
           // presentation only): today line reuses the frozen take-header
           // format; each row reuses the frozen Courses-picker date format
           // (`lastDateLabel`) read-only from history, with an honest
@@ -887,7 +882,6 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
                         : 'Last hosted ${lastDateLabel(lastDate)}';
                     // Host entry only (no management): radio affordance +
                     // host subtitle + Host action. Push + log + route name
-                    // unchanged (presentation/navigation only).
                     return ListTile(
                       leading: const Icon(Icons.radio_outlined),
                       title: Text(

@@ -1,6 +1,5 @@
 // Org mapping: same Google-account domain join-gate + schema-level scoping.
 //
-// Track 1: an org IS a lowercased email domain. gmail.com is a normal org
 // (no blocklist); subdomains exact-match (mail.univ.edu != univ.edu);
 // malformed addresses map to '' (legacy / unknown).
 library;

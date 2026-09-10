@@ -1,8 +1,4 @@
-// Account device section — moved verbatim from `account_screen.dart`
-// (`_DeviceSection` → [AccountDeviceSection]; presentational split only,
-// gating/scoping behavior-identical).
 //
-// Account overhaul addition (DEVICE FACTS + TRUST HONESTY): the sub-page now
 // also shows the Device ID (install id, SelectableText abbreviated + full)
 // and the DKey fingerprint via the existing trust helper
 // (`trustPkDFingerprint`). The trust tier stays TRUTHFUL — a

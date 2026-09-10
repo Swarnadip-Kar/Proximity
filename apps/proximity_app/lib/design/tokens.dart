@@ -21,7 +21,6 @@ import 'package:flutter/material.dart';
 // Allowlist: `Colors.transparent` (absence of color, not a theme color) and
 // anything inside lib/design/ itself (this file IS the token definition
 // site). Every other hit must move onto ProximityColors/ProxStateColors/
-// ProxPalette/ProxLogColors, or be flagged in INTEGRATION_LOG.md.
 
 /// Duration scale. Named by intent, not by screen:
 /// - [micro]: press ripples, icon toggles (120ms)
@@ -77,7 +76,6 @@ abstract final class ProxDurations {
   /// Bottom-bar tab switch cross-fade (+ 4dp icon settle, §3.1).
   static const tabCrossFade = Duration(milliseconds: 120);
 
-  /// Bottom-bar tab-switch directional slide (§3.1, tester-directed):
   /// tap-triggered slide-in whose direction follows tab order, eased on
   /// [ProxCurves.standard] (easeOutCubic). Reduced motion collapses to
   /// instant opacity (see the shell `_TabSlide`). Kept separate from
@@ -146,7 +144,6 @@ abstract final class ProxSpacing {
   // Legacy values above are FROZEN until each rebuild section migrates its
   // screens (changing them now would silently restyle every current screen,
   // which is out of Foundation scope). New code uses the `Spec` values
-  // below; see INTEGRATION_LOG.md D4.
 
   /// Spec grid unit: all new spacing composes from multiples of 8.
   static const double grid = 8;
@@ -185,7 +182,6 @@ abstract final class ProxRadii {
 
   // --- Redesign §2.3 spec radii (Foundation addition, frozen-legacy rule
   // as in [ProxSpacing]: `card` stays 14 until section migrations; new code
-  // uses [cardSpec]. See INTEGRATION_LOG.md D4). ---
 
   /// Spec card radius (§2.3): 16. Canonical for all new cards/tiles.
   static const double cardSpec = 16;
@@ -370,7 +366,6 @@ abstract final class ProxLogColors {
 // ---------------------------------------------------------------------------
 // Foundation rebuild (redesign §2/§2.5/§9): semantic + effect token API.
 // Everything below is ADDITIVE: legacy classes above are frozen (see
-// INTEGRATION_LOG.md D3–D5) so current screens render byte-identical until
 // their rebuild section migrates them onto this API.
 // How a screen reads tokens:
 //   final c = ProximityColors.of(context); // ThemeExtension, dark/light pair
@@ -416,7 +411,6 @@ abstract final class ProxLayout {
 ///
 /// Canonical family is [family] (`Inter`, already bundled in pubspec with
 /// exactly the 400/500/600 cuts this scale needs).
-/// DEVIATION D3 (see INTEGRATION_LOG.md): the live `ThemeData.textTheme`
 /// still pairs Space Grotesk display + Inter body with Bold 700 cuts.
 /// `ProxType` declares the spec scale for all NEW components; the legacy
 /// textTheme is untouched by Foundation (flipping it now would restyle

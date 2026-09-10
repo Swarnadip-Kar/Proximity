@@ -21,7 +21,6 @@
 //   Sig_d    = Sign(DKey_P256, sessionID || windowID || j || C_j ||
 //                     faceTicketHash8 || pkS32)
 //
-// NOTE (M1): moved verbatim from src/crypto.dart. The whole ProxCrypto
 // class stays contiguous here on purpose — Dart cannot split one class's
 // statics across files without delegation indirection, which would add
 // drift risk to the security-critical preimages. The member preimages

@@ -1,5 +1,4 @@
 // DeviceStore abstract interface + StoredEnrollment.
-// Split out of core/device_store.dart (M6 sync refactor) — bodies verbatim.
 // Backends live in secure_store.dart / memory_store.dart; shared pure
 // helpers in record_helpers.dart.
 library;
@@ -33,7 +32,6 @@ class StoredEnrollment {
   /// template → always stale → forced re-face, key kept.
   final String verifierVer;
   final String org; // Google-account domain (see orgOf), '' = legacy
-  // --- Device binding (Track 3), persisted locally for dSig + heartbeat.
   /// DKey public bytes hex ('' = unbound legacy).
   final String pkDHex;
   /// Attestation level wire name ('FULL'/'STD'/'NONE').
@@ -210,7 +208,6 @@ abstract class DeviceStore {
   Future<List<Map<String, dynamic>>> readPendingAdds();
   Future<void> writePendingAdds(List<Map<String, dynamic>> items);
 
-  /// Durable session outbox (Track 4 SyncEngine): full session snapshots
   /// keyed by record id + per-entry retry state (see PendingSession in
   /// sync/sessions.dart). Every local history mutation upserts the outbox
   /// in the same call (SyncEngine.saveSessionLocal); the flush pushes due
@@ -225,7 +222,6 @@ abstract class DeviceStore {
   Future<List<Map<String, dynamic>>> readTombstones();
   Future<void> writeTombstones(List<Map<String, dynamic>> items);
 
-  /// One-time org-backfill gate (Track 1 grace sunset): true once this
   /// device completed a full online flush that observed zero org-less
   /// ('') records in local history AND in an unfiltered cloud pull.
   /// Per-device half of the `missingOrg()` rules-removal gate — removal

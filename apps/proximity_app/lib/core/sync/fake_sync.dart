@@ -1,5 +1,4 @@
 // In-memory CloudSync fake for widget/unit tests (no Firebase).
-// Split out of core/cloud_sync.dart (M6 sync refactor) — all bodies verbatim
 // EXCEPT claimStudentDevice, whose exact-duplicate verdict+write computation
 // now calls the shared pure helper [resolveStudentClaimWrite] (see claim.dart).
 library;

@@ -8,7 +8,6 @@
 //
 // Present rule default: Present = pass W1 AND W2, else Partial/Absent (§7.1).
 //
-// NOTE (M1): moved verbatim from src/transport_contract.dart (import paths
 // only). verifyProve decision ORDER + reason strings, rate-limit counts +
 // windows, and the revoked/unknown-id seams are untouched — the server
 // passes revoked:false today, but the parameter is the future revocation
@@ -81,7 +80,6 @@ class VerifyRequest {
   final int faceValidAtMs;
   final Uint8List pkD; // DKey raw (empty = unbound legacy)
   final Uint8List faceTicketHashBytes;
-  // Device proof (Track 3): platform-verified dSig result + attestation
   // window. [dSigValid] is the P-256 verify over deviceProvePreimage,
   // computed by the platform adapter before calling in.
   final AttestationLevel attestationLevel;
@@ -267,7 +265,6 @@ VerifyOutcome verifyProve({
       }
       return VerifyOutcome(ProveDecision.confirmed, 'ok', fallbackFlags);
     }
-    // Device-proof tiers (Track 3): FULL/STD→confirmed,
     // STALE (14d grace)→confirmed+banner, expired/bad-dSig→device-unproven.
     final proof = evaluateDeviceProof(
       level: req.attestationLevel,

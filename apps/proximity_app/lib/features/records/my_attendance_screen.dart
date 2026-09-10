@@ -199,7 +199,6 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
   }
 
   /// Last-synced device copy with the honest offline strings, shared by the
-  /// init probe, a failed pull, and a failed refresh — same copy everywhere.
   /// Drops silently when a newer load started after ([_gen]).
   Future<void> _showCachedOffline(
       DeviceStore store, String why, int gen) async {

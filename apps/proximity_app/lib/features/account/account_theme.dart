@@ -1,5 +1,3 @@
-// Account theme section — moved verbatim from `account_screen.dart`
-// (`_ThemeRow` → [AccountThemeRow]; presentational split only).
 library;
 
 import 'dart:async';

@@ -1,6 +1,5 @@
 // SecureDeviceStore (prod): flutter_secure_storage (enrollment secrets) +
 // shared_preferences (history JSON). Split out of core/device_store.dart
-// (M6 sync refactor) — all bodies verbatim EXCEPT the byte-identical
 // course-membership predicates, which now call the shared pure helper
 // [recordInCourse] (see record_helpers.dart).
 library;

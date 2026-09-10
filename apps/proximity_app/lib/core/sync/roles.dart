@@ -1,5 +1,4 @@
 // Role cache: professor/student role record + local cache helpers.
-// Split out of core/cloud_sync.dart (M6 sync refactor) — bodies verbatim.
 library;
 
 /// Professor and/or student role record. One doc per Firebase uid — the same

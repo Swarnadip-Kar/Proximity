@@ -6,9 +6,7 @@
 // (enrollment secrets) and shared_preferences (history JSON).
 // [InMemoryDeviceStore] drives tests and sim demos.
 //
-// M6 sync refactor: implementation split into core/sync/store/
 // (store_base, record_helpers, secure_store, memory_store). This file is
-// the compatibility barrel — same public class/method names, so callers
 // don't change. The abstract [DeviceStore] method set is unchanged.
 library;
 

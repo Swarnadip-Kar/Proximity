@@ -2,8 +2,6 @@
 // itself the moment this step appears (zero taps); the Scan button stays
 // as fallback/retry. The radio keeps listening under the camera UI.
 //
-// Presentation (tester-directed single-shot correction, 2026-09-10 — see
-// INTEGRATION_LOG.md `## Face-check single-shot`, deviation from the
 // shared-overlay uniformity in `## Overlay redesign`): this is an INSTANT
 // single-shot check, not an enrollment session, so it shows NO multi-angle
 // guidance — no rotation instruction, no orbiting beacon/comet, no progress
@@ -38,7 +36,6 @@
 // `ProxPrimaryButton` (button radius token inside). No BorderRadius.zero,
 // no missing card/sheet radius in this file.
 //
-// Edge-to-edge (2026-09-10 — see INTEGRATION_LOG.md `## Edge-to-edge
 // capture`): the residual squish was the view's own Column/Expanded/
 // Padding boxing plus the parent app-bar region — the preview now fills
 // edge-to-edge within this view as the fullscreen Stack background with
@@ -53,7 +50,6 @@ import '../../design/tokens.dart';
 import '../../widgets/capture_overlay.dart';
 import '../../widgets/prox_buttons.dart';
 
-/// THE single-shot guidance line (tester-directed, 2026-09-10): the only
 /// at-rest copy on mark/face. Replaces the enrollment rotation instruction
 /// (`captureGuidePrompt`), which is meaningless for an instant check.
 /// The host notice (inconclusive/retry signal) replaces this line when

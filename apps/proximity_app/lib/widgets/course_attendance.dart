@@ -34,8 +34,6 @@ String sessionDateTimeLine(ClassRecord s) {
 /// [sessionDateTimeLine] string, with the DAY/date restored when the synced
 /// record carries none.
 ///
-/// Tester fix (presentation composition only — the frozen helper above is
-/// byte-identical): cloud docs read via `docToRecord` default a missing
 /// `dateIso` to `''`, in which case the frozen helper yields `' · HH:MM'`
 /// (TIME with no DAY) or `''` (empty line) — the reported day-missing shape.
 /// This restores the day from the same start/timestamp the helper itself
@@ -156,7 +154,6 @@ class StudentSessionTile extends StatelessWidget {
     final c = ProximityColors.of(context);
     final status = sessionStatusOf(session, email);
     final present = status == 'Present';
-    // Date-visibility layout (tester fix, presentation only): the session
     // date (`studentSessionDateLine` — the frozen `sessionDateTimeLine`
     // string with the DAY restored when a synced record carries no dateIso,
     // so TIME-with-no-DAY never renders) is its own prominent first line and

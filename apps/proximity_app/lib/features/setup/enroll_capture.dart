@@ -2,7 +2,6 @@
 // (Android-face-unlock-style). ONE camera session opened once and closed
 // on done/cancel.
 //
-// THIN COMPOSER (2026-09-10 breakup — see INTEGRATION_LOG.md
 // `## Enroll capture breakup`). This file owns build ONLY:
 //   enroll_capture_session.dart — camera seam + session driver (open/close,
 //     classify-fill loop, save, dispose, timers; relocated verbatim).
@@ -12,7 +11,6 @@
 // in [EnrollCaptureSessionDriver] and reads it through its public getters.
 //
 // Preview fidelity (squish fix, hardened 2026-09-10 — see
-// INTEGRATION_LOG.md `## Capture preview fidelity`): the feed renders as
 // a BARE CameraPreview at its native aspect (zero treatment — no wrapper
 // of any kind; the plugin self-maintains its ratio under the loose,
 // centered Stack, so NO stretch, NO cover-crop, NO double-boxing).
@@ -20,14 +18,11 @@
 // fallback buttons) lives in the overlay layer above the untouched
 // preview surface. Reduced-motion behavior preserved (sweep timer never
 // starts; comet parks statically at the target).
-// Edge-to-edge (2026-09-10 — see INTEGRATION_LOG.md `## Edge-to-edge
 // capture`): the Scaffold extends the body behind the status bar and a
 // transparent overlay app bar, so the bare feed fills edge-to-edge with
 // chrome floating above it (top bar clears the app bar via the overlay
 // inset + SafeArea; toast + bottom bar are SafeArea-seated).
 //
-// Guidance is the shared single-oval overlay (PRODUCT-OWNER OVERRIDE
-// 2026-09-10, supersedes §6.2 two-oval rule — see INTEGRATION_LOG.md
 // `## Overlay redesign`): ONE slim progress bar pinned below the app bar
 // (overall completion), ONE static oval + ONE glowing green comet —
 // bright head plus short fading tail —
@@ -142,7 +137,6 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
     // replace the feed; the opening spinner shows until open completes.
     final failMessage =
         isDenied || isFailed || (!isOpening && noKey) ? previewMessage : null;
-    // Edge-to-edge (2026-09-10 — see INTEGRATION_LOG.md
     // `## Edge-to-edge capture`): the preview extends behind the status
     // bar and the app bar — transparent overlay app bar, body fullscreen
     // behind it. Cancel stays wired to the existing [_cancel] nav

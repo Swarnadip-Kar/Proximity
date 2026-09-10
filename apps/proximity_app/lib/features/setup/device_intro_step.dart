@@ -45,7 +45,6 @@ import 'setup_step_scope.dart';
 /// device, move status, offline note, sign-out) + a flow-only Continue.
 ///
 /// The content's own guards/branches (mobile key/move vs records-only note,
-/// wrong-account warning, sign-out pop) are behavior-identical — only the
 /// Continue CTA is added (the old combined step advanced via the intro's
 /// Continue; now each page advances one page via scope.next()).
 class DeviceConfirmStep extends StatelessWidget {

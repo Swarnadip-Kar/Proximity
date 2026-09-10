@@ -33,7 +33,6 @@
 // Firestore offline persistence queues writes automatically — first sign-in
 // merges both ways, later changes push on save and pull on open/refresh.
 //
-// M6 sync refactor: implementation split into core/sync/ (roles, claim,
 // sessions, directory, queue, backends). This file is the compatibility
 // barrel — same public class/method names, so callers don't change.
 library;

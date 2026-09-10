@@ -1,5 +1,4 @@
 // Offline manual-add queue: replay/apply order + single-flight guard.
-// Extracted out of widgets/manual_add.dart (M6 sync refactor) — the form
 // widget keeps only the UI and calls [processPendingAdds] (same signature);
 // bodies here are verbatim moves.
 library;

@@ -1,5 +1,4 @@
 // CloudSync public API surface: abstract interface + professor push
-// identity + provider. Split out of core/cloud_sync.dart (M6 sync
 // refactor) — bodies verbatim. Backend implementations live in
 // firestore_sync.dart / fake_sync.dart.
 library;

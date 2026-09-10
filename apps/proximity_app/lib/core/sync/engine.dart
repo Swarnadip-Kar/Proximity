@@ -1,4 +1,3 @@
-// SyncEngine: offline-first cloud sync-on-reconnect (Track 4 §4).
 //
 // Single-flight flush owned HERE (no wrapper-only modules): every screen
 // that used to push/pull/rename/delete against CloudSync directly now calls
@@ -406,7 +405,6 @@ class SyncEngine {
   /// (idempotent — stamped records never match again). Backfilled rows
   /// enqueue due-now so the stamp itself propagates on this flush.
   ///
-  /// Unfiltered legacy discovery (Track 1 grace sunset): returns the
   /// number of pre-org ('') cloud sessions seen, merged into local
   /// history for stamping (-1 when the pull failed — unknown, never a
   /// completion signal). Skipped once the gate flag fires (see

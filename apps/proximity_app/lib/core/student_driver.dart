@@ -748,7 +748,6 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         throw _TryNext('window fetch ($e)', suspicious: suspicious);
       }
       BleLog.log('NET', 'window ok code=${desc.display} j=${desc.jNow}');
-      // Org join-gate (Track 1, defense-in-depth behind the gated fetch
       // above): descriptor org is compared BEFORE any radio response or
       // POST — a mismatch returns a wrong-org receipt and sends no PII.
       // Legacy '' on either side passes (migration). Crypto preimages
@@ -864,7 +863,6 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       }
       // Clock-drift sample: the signed serverTime is the professor's clock
       // (time authority); the median over recent verdicts banners when the
-      // two disagree by >5s (Track 4 — never silent late verdicts).
       clockDrift.addSample(
           serverTime: res.serverTime, localNow: DateTime.now().toUtc());
       final driftBanner = clockDrift.banner;

@@ -1,11 +1,9 @@
 // Live roster (prof live, §7.1): waiting area + present (intersection) +
 // partial + dup flags + search + per-student per-round ticks (R1 ✓ · R2 ✗).
 //
-// Presentation rebuild (behavior frozen): waiting/present/partial rows
 // render as the one shared `StudentCard` (§4.1) with round-tick pills
 // instead of screen-local tiles and raw tick strings. Present rule,
 // intersection gate (partials never promote via search), search filter,
-// and all pinned copy are byte-identical to the pre-rebuild roster.
 //
 // Present rule (behavioral law): present = intersection of ALL windows
 // taken. A student who marked R1 but missed R2 stays visible under
@@ -282,7 +280,6 @@ class PartialSection extends StatelessWidget {
 
 /// Search + present (intersection) + partial. Owns the search field state
 /// and the intersection-gated filtering; renders via [RosterSearchField],
-/// [PresentSection], and [PartialSection] (presentational split only —
 /// driver reads and filtering are unchanged).
 class MarkedRosterSection extends StatefulWidget {
   final TallyStore tally;

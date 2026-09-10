@@ -499,7 +499,6 @@ class ProxServer {
     }
     try {
       final id = (body['ID'] as String).toLowerCase();
-      // Org join-gate (Track 1): cross-domain proofs never reach crypto or
       // the tally. Legacy '' on either side passes (migration). The shape
       // mirrors _fail so ProxClient.prove parses without retrying.
       final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();

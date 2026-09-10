@@ -1,5 +1,4 @@
 // Professor-searchable student directory row.
-// Split out of core/cloud_sync.dart (M6 sync refactor) — body verbatim.
 //
 // NOTE (kept separate deliberately): the two search implementations differ
 // and are NOT collapsed — FirestoreCloudSync fans out to parallel

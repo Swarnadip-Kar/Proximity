@@ -1,6 +1,5 @@
 // Welcome step sections: hero moment + sign-in block.
 //
-// Split from welcome_screen.dart (presentation only — same copy, same
 // guards, same motion). The screen owns the sign-in state machine and
 // composes these; sections own the layout. Secondary professor prose
 // sits collapsed behind a DetailsExpander (§4.7); the sign-in actions,

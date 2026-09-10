@@ -1,7 +1,6 @@
 // Enroll-intro sections: overview / online note / one-device rule /
 // account / device key.
 //
-// Split from enroll_intro.dart (presentation only — same copy, same
 // guards, same single-entry roll field). The content widget owns the
 // scope-aware Continue; account/key sections read the enrollment
 // controller themselves. Angle detail and WiFi detail sit collapsed

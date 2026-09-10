@@ -1,6 +1,5 @@
 // Enroll-result sections: save status / refusal next-step / success.
 //
-// Split from enroll_result.dart (presentation only — same copy, same
 // guards, same scope-aware navigation). The screen owns the save path
 // ([EnrollmentController.upload]) and the pending/success dispatch;
 // sections own the layout. Refusal classes are detected from the

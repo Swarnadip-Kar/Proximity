@@ -138,7 +138,6 @@ class FaceIdScreen extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 // Inline rescan note (student face-id section only — no shared file).
 //
-// Presentation only: the 30-day face re-scan rule with REAL data — the
 // rule line (days from [kFaceRescanCooldown], never a literal), the last
 // + next-eligible dates when a rescan stamp exists (via [dateIsoOf]),
 // and the refusal string verbatim when blocked (via

@@ -1,4 +1,3 @@
-// M6 sync barrel: the public CloudSync/DeviceStore-facing sync API.
 // Callers keep importing core/cloud_sync.dart (which re-exports this).
 library;
 

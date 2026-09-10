@@ -1,12 +1,10 @@
 // Pure-Dart over-the-air scan parser (v2 + legacy v1).
 //
-// Moved verbatim out of the app's ble_radio.dart: the same v2
 // manufacturer/service-data path, legacy v1 single-UUID path, and
 // split-packet probe logs — now operating on the platform-free [AirScan]
 // record and returning the platform-free [AirSighting], so protocol tests
 // cover it. The app keeps only a thin adapter (platform BleDevice ->
 // [AirScan] -> [AirParser] -> BleSighting) which wires [BleLog.log] as the
-// [AirLogFn] sink, keeping every emitted log line byte-identical.
 //
 // Crypto/security semantics untouched: this only decodes bytes into
 // sightings; challenge freshness, single-use, signature verification,

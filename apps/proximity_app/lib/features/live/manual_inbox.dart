@@ -1,6 +1,5 @@
 // Manual inbox (prof live, §7.1): pending manual-attendance requests.
 //
-// Presentation rebuild (behavior frozen): this section composes the
 // `features/manual_attendance/` module's [ManualInboxView] (§4.8) instead
 // of owning checkbox selection state inline. The old checkbox-list +
 // Select-all pattern is gone (hold-and-tap + SelectionToolbar per §4.1);
@@ -8,13 +7,11 @@
 // snapshot) with the same constructor, so the counts on screen always
 // match the driver queue.
 //
-// Self-refresh (inbox live-update fix, presentation/navigation only): the
 // host driver is a plain Provider over mutating server state — it never
 // notifies, so this section used to re-render only when its caller
 // rebuilt (the focused `LiveInboxScreen` builds once; the take host while
 // idle rebuilds only on waiting-room deltas). This section now polls the
 // LOCAL `manualPending` getter on the existing 2s cadence (take idle poll
-// / student manual-poll — no new timing) while mounted, rebuilding only
 // when the pending set actually changes: no extra network/proof load,
 // decided rows still leave via the existing decide + prune paths, and the
 // timer is cancelled on dispose. Read-only on the driver (no driver

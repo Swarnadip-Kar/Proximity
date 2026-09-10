@@ -1,14 +1,9 @@
-// Manual-attendance directory orchestration (M3 move target, §4.8).
 //
-// M3 MECHANICAL MOVE (2026-09-10, Live section): the search/queue
 // orchestration below lived inline in `widgets/manual_add.dart`
 // (`_ManualAddFormState`: debounce timer, online-probe cache,
 // `searchStudents` queries, `writePendingAdds` paths, all four submit
-// paths). It moved here verbatim — same debounce, same cache windows,
 // same queries, same queue writes, same user-facing copy — so the
 // `ManualAddForm` UI (now `manual_add_form.dart`, same module) and the
-// session editor keep byte-identical submit semantics. See
-// INTEGRATION_LOG.md (M3 entry) for the file-by-file move list.
 //
 // What this owns: directory search (400ms debounce, stale-generation
 // drop, 15s online-probe cache, 10s failure-log throttle), exact-ID
@@ -32,7 +27,6 @@ export '../../core/sync/queue.dart'
     show PendingManualAdd, SyncQueue, processPendingAdds;
 
 /// User-facing copy for a caught error: [StateError] stringifies as
-/// `Bad state: [message]`, so both prefixes come off. (Moved verbatim
 /// from `widgets/manual_add.dart`.)
 String manualAddUserMessage(Object e) => '$e'
     .replaceFirst('StateError: ', '')
@@ -244,7 +238,6 @@ class ManualDirectoryController extends ChangeNotifier {
     fillFields(h.name, h.roll, h.email);
   }
 
-  /// The four submit paths (moved verbatim from the old inline `_submit`):
   ///  1. name + valid email present (typed or card-filled) → added at once.
   ///  2. ID only + online + directory holds that exact ID → `Matched
   ///     online` + added.
@@ -363,7 +356,6 @@ class ManualDirectoryController extends ChangeNotifier {
     }
   }
 
-  /// Shared add (moved verbatim from the old inline `_add`): the form
   /// guarantees an ID plus a resolved or typed name/email — or queues
   /// offline itself.
   Future<void> add({

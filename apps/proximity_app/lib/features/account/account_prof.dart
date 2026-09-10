@@ -1,6 +1,3 @@
-// Professor device facts — moved verbatim from `account_screen.dart`
-// (`_ProfDeviceFacts` → [AccountProfDeviceFacts]; presentational split
-// only, read-only facts behavior-identical).
 library;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;

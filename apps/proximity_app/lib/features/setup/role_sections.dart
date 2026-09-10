@@ -1,6 +1,5 @@
 // Role-hub sections: register / resume / add-role / footer.
 //
-// Split from role_hub_screen.dart (presentation only — same copy, same
 // guards, same button labels). The screen owns the role-future cache, the
 // busy/status state machine, and the entry_flow calls; sections own the
 // layout. Secondary prose sits collapsed behind DetailsExpanders (§4.7);
@@ -55,7 +54,6 @@ class RoleRegisterSection extends StatelessWidget {
       );
     }
     if (!canUseFace()) {
-      // Records-only desktop (Track 5): professor registration only — no
       // student enrollment UI here at all (no dead route to it). Students
       // enroll once in the mobile app.
       return Column(
@@ -227,7 +225,6 @@ class RoleAddRoleSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // No extra registration on web records builds; no student
-        // registration on records-only desktops (Track 5 — removed, not
         // disabled).
         if (!kIsWeb && (!hasProf || (canUseFace() && !hasStudent))) ...[
           Text(

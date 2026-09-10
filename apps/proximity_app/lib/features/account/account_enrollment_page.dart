@@ -1,9 +1,7 @@
 // Account → Enrollment sub-page (enrollment facts + device/binding rules).
 //
-// Product-owner override (Account overhaul, SUBMENUS): the consolidated
 // page (§5.1) is split back into a compact menu + one-feature pushes.
 // This page owns enrollment status + the editable ID row + the inline
-// device/binding rules block (same gating/scoping/photo rules, same
 // `AccountEnrollmentSection` + `AccountIdRow` widgets, same enroll-entry
 // sheet + per-account scoping + re-enroll gating; rules are presentation
 // only, inline here — no shared rules file).
@@ -76,7 +74,6 @@ class AccountEnrollmentPage extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 // Inline device/binding rules (enrollment sub-page only — no shared file).
 //
-// Presentation only: one phone one enrollment incl. clones, 30-day moves
 // with the EXACT re-enroll/next-eligible date where the gate data is
 // already available, reinstall/app-data-clear to switch identity, manual
 // attendance meanwhile. Days + why are explicit: 30-day move limit and

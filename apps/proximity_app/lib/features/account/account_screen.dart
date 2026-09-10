@@ -1,13 +1,10 @@
-// Account tab — compact menu root per the Account overhaul.
 //
-// Product-owner override (SUBMENUS): OVERRIDES PROXIMITY_UI_REDESIGN.md §5.1
 // consolidated-page direction (one sectioned page + DetailsExpander).
 // The root is now compact by hard constraint: header chip + mode switch +
 // plain navigation rows only (Enrollment >, Device >, Face ID >,
 // System log >) + inline Appearance theme at the end (above sign-out) +
 // small sign-out action. No explainer cards, no embedded sections, no long
 // prose on the root; every fact block lives exactly one level down in its
-// sub-page, each sub-page one essential feature. Sections moved verbatim
 // in behavior into:
 // - Enrollment (+ editable ID + inline device/binding rules) → `account_enrollment_page.dart`
 // - Device (facts + trust honesty + inline days/why) → `account_device_page.dart`
@@ -20,7 +17,6 @@
 // sub-pages), photo (`AccountHeaderCard` passthrough), switch behavior
 // (`AccountModeSwitch` runs the identical continue/register machinery).
 //
-// Frozen-copy rule: claim/move/refusal strings come from
 // `studentClaimMessage` verbatim; move cadence reads `once a month`
 // (code is 30-day `kStudentMoveCooldown` — gap 6).
 library;

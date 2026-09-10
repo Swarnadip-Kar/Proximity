@@ -7,7 +7,6 @@
 // value + sign-in: nothing here needs an account to read.
 //
 // Absorbs the signed-out branch of screens/landing.dart
-// (_signedOutBody): same copy, same web guards (no offline hosting on web
 // records builds), same mounted-guarded navigation. The rings hero is
 // rebuilt here with real typographic hierarchy (theme display/body tokens
 // — Space Grotesk display + Inter body via the app theme, intentional

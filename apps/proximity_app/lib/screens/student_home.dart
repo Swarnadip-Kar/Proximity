@@ -561,7 +561,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         lastAck: _sessionAck[k],
         fails: _sessionFails[k] ?? 0));
     final beacons = _listener.live();
-    // Broadcast-blocked path (Track 4 §2): zero UDP beacons but BLE-hinted
     // classes listing = the AP eats broadcasts. Edge-logged once (never
     // silent, never spammy on the 2s refresh).
     final blocked = beacons.isEmpty && _hints.isNotEmpty;
@@ -1210,7 +1209,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   }
 
   /// Clock-drift banner copy from the live student driver (null when
-  /// clocks agree — Track 4 never-silent rule for late verdicts).
   String? _driftBanner() {
     try {
       return ref.read(studentDriverProvider).clockDrift.banner;
@@ -1293,7 +1291,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // end only via their explicit Cancel/Leave actions (timers, drivers,
     // relays, and drafts untouched).
     //
-    // Verdict-back exception (tester fix, verdict phases only): back from
     // any terminal verdict (marked/late/manual-decided/wrong-org/
     // needs-review/no-signal) lands DIRECTLY on mark/browse — the phase
     // resets to browsing in one step, never stepping through

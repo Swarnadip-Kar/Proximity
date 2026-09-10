@@ -1,7 +1,5 @@
-// CaptureOverlay — single-oval face-scan overlay (PRODUCT-OWNER OVERRIDE,
 // 2026-09-10, supersedes PROXIMITY_UI_REDESIGN.md §6.2 two-oval rule and the
 // previous CaptureOverlay two-oval contract — logged as deviation in
-// INTEGRATION_LOG.md `## Overlay redesign`, old rule NOT followed).
 //
 // Full-bleed camera preview with exactly three overlay elements, nothing
 // else — shared by `mark/face` and `enroll/capture` (one overlay design,
@@ -26,14 +24,10 @@
 // of `N` around a circle; callers with semantic directions (left/right/up/
 // down) may pass [targetDirection] explicitly.
 //
-// Single-shot mode (mark/face, additive 2026-09-10 — see INTEGRATION_LOG.md
 // `## Face-check single-shot`): callers pass `showProgress: false` +
 // `showBeacon: false` to hide the multi-angle guidance (slim progress bar
 // + travelling comet) and keep the static framing oval + one prompt line
-// only. Defaults are true, so enroll rendering is byte-identical.
 //
-// Edge-to-edge (additive 2026-09-10 — see INTEGRATION_LOG.md
-// `## Edge-to-edge capture`): `topInset` (default 0, byte-identical) lets
 // the top bar clear a transparent overlay app bar, and the bar rides
 // inside a SafeArea so chrome avoids the notch while the video + scrim
 // paint fullscreen under it. Beacon/progress semantics, prompt copy, and
@@ -54,7 +48,6 @@ import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
 
-/// THE single guiding prompt (new copy, product-owner override 2026-09-10):
 /// shown when the caller passes no explicit [CaptureOverlay.statusLine]
 /// (e.g. mark/face at rest). Enroll passes its own frozen prompt
 /// (`enrollCapturePrompt`) explicitly, so this string renders in exactly
@@ -118,12 +111,10 @@ class CaptureOverlay extends StatefulWidget {
   /// `showBeacon: false` hides the travelling comet, leaving the static
   /// framing oval only. Mark/face passes both false (instant single-shot
   /// check — progress/beacon are meaningless there); enroll leaves the
-  /// defaults (rendering byte-identical).
   final bool showProgress;
   final bool showBeacon;
 
   /// Top chrome inset (additive edge-to-edge option, default 0 =
-  /// byte-identical): extra offset above the slim progress bar so it
   /// clears a transparent overlay app bar when the preview extends behind
   /// it (enroll passes the app-bar height). Callers without an overlay app
   /// bar leave 0. Pure layout — zero effect on beacon/progress semantics,
@@ -470,7 +461,6 @@ class _CaptureOverlayPainter extends CustomPainter {
   final bool dim;
 
   /// Single-shot mode: false hides the comet entirely (static framing oval
-  /// only). True (default) keeps the enroll comet byte-identical.
   final bool showBeacon;
 
   _CaptureOverlayPainter({

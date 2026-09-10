@@ -1,15 +1,10 @@
-// Shared trust + honesty cards (Track 5).
 //
 // One place for every settled-design state that previously lived as ad-hoc
 // copy across entry/mark/records screens:
 //   - device trust tiers FULL/STD/STALE/NONE + attestation anomaly flags
 //     (Tracks 2+3 dual-key model + §3.4 server re-verifier);
-//   - org-scoped identity wrong-org refusals (Track 1);
-//   - honest-unreachable (Track 4: unreachable is stated, never silent);
 //   - SyncEngine status strip (unsynced badge counts, offline/online,
-//     backfill — Track 4 §4).
 //
-// Presentation only: all verdicts arrive as plain args from the
 // narrow domain interfaces (DeviceKey, StudentDeviceDoc, SyncEngine
 // pendingCount, WindowProbe). No widget here signs, verifies, or mutates
 // sync state.

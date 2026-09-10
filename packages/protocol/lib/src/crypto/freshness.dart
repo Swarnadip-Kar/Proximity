@@ -8,7 +8,6 @@
 // host). Single-use is per (ID,j); a new window carries fresh secrets so
 // old claims can never validate again.
 //
-// NOTE (M1): moved verbatim from src/window.dart (import paths only).
 library;
 
 import 'dart:typed_data';

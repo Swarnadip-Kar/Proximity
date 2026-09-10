@@ -1,4 +1,3 @@
-// Device key (Track 3 adopted): DKey abstraction over HW-backed P-256.
 //
 // Production mapping (platform shell, one implementer with the trust
 // interface): Android StrongBox→TEE / iOS Secure Enclave once the

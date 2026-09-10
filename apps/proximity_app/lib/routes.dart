@@ -33,7 +33,6 @@
 // (roster/inbox/add/setup — one purpose each, same host driver; recover
 // stays on the host which owns the draft); mark phases build the host
 // shell (one continuation — phases, not pages; take_attendance +
-// student_home retain orchestration, features are presentational).
 // `MaterialApp.home` + `PROX_MODE` previews + web records-only behavior
 // are preserved (see `main.dart` wiring).
 //
@@ -327,7 +326,6 @@ Map<String, WidgetBuilder> buildProxRoutes() => {
       ProxRoutes.profCourses: (_) => const ProfCoursesScreen(),
       // Student mark (one continuation inside StudentHomeScreen phases;
       // the shell retains discovery/waiting/proving orchestration, the
-      // mark bundle stays presentational).
       ProxRoutes.browse: (_) => const _MarkGate(),
       ProxRoutes.join: (_) => const _MarkGate(),
       ProxRoutes.waiting: (_) => const _MarkGate(),
@@ -505,7 +503,6 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
   }
 
   // Prof live: the host owns hosting/window/draft orchestration; each
-  // section is a focused screen (Track 5 split — one purpose each) reading
   // the same host driver. Recover stays on the host (it owns the draft).
   if (name.startsWith('live/')) {
     final rest = name.substring('live/'.length);

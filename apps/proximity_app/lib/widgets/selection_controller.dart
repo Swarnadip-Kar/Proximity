@@ -116,7 +116,6 @@ class SelectionScope extends StatelessWidget {
 /// True on desktop platforms via the repo's existing platformx flags —
 /// never hardcoded [TargetPlatform] values. Web is excluded by the flags
 /// themselves. Gates the mouse-first affordances only; touch paths never
-/// read this (mobile behavior byte-identical).
 bool get isDesktopSelection =>
     platformx.isMacOS || platformx.isWindows || platformx.isLinux;
 

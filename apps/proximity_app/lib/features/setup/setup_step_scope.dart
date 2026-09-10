@@ -16,11 +16,8 @@ import 'package:flutter/widgets.dart';
 /// `## About-page removal` the same day): the flow is six one-purpose
 /// pages — Confirm device (device facts) → Account & key (inputs +
 /// Continue). Welcome, Capture, and Result stay one page each (audit in
-/// INTEGRATION_LOG). The About-to-enroll explainer page was removed from
-/// the flow per product-owner decision; its sections stay live on the
 /// standalone deep-linkable EnrollIntroScreen (intro_sections shared).
 /// Capture/Result indices are 4/5; order semantics and start-index
-/// conditions are behavior-identical (first incomplete page wins).
 abstract final class SetupStep {
   /// Sign in (welcome).
   static const welcome = 0;

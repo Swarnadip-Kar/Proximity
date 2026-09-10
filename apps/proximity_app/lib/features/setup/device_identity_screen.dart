@@ -153,7 +153,6 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
         // Mobile-only: enrollment key + binding gate need the
         // device store + cloud claim + face/device trust stack,
         // none of which exists on web/desktop records builds
-        // (Track 5 — removed, not disabled).
         if (canUseFace()) ...[
           DeviceKeySection(loadEnrollment: _enrollment),
           DeviceMoveSection(email: acct?.email, loadGate: _gate),

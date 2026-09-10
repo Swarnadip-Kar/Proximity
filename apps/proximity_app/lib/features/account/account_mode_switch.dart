@@ -1,7 +1,4 @@
-// One-button mode switch — tester-directed simplification.
 //
-// Product-owner override (One-button mode switch): REPLACES the Prof|Student
-// segmented tabs + inline register entries from ## Account overhaul. ONE
 // compact button that behaves EXACTLY like the student mark screen's
 // top-right mode action (`screens/student_home.dart` AppBar — mirrored
 // call-for-call, never reinvented):
@@ -12,7 +9,6 @@
 //   )
 // Same icon, same `Switch mode` vocabulary (the mark action's tooltip,
 // verbatim), same `setMode(ref, AppMode.unset)` exit path → landing hub.
-// Presentation/navigation only; frozen copy-semantics/timings/thresholds/
 // network untouched.
 //
 // Handoff: the hub owns acquire/switch checks from here on — landing→hub

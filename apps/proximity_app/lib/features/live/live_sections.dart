@@ -1,6 +1,4 @@
-// Live focused section screens (§7.1, Track 5 split).
 //
-// Presentation rebuild (behavior frozen): the take host
 // (`TakeAttendanceScreen`) was one long page carrying setup + header +
 // roster + inbox + direct-add + recovery. Each section below is ONE
 // purpose, readable mid-lecture without the control cluster, and directly

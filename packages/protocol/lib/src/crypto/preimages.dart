@@ -1,4 +1,3 @@
-// Channel-binding preimage (canonical home, moved verbatim from
 // packages/transport tls.dart). The student captures the live cert
 // fingerprint during the TLS handshake and binds it into Sig_bind; the
 // professor rejects any POST whose fingerprint differs from its own cert.

@@ -7,7 +7,6 @@
 // editor — SessionDetailScreen covers viewing there; [readOnly] keeps the
 // same guarantee if one is ever pushed on web.
 //
-// Layout (tester-directed, presentation only): two sub-tabs — Marks (person
 // rows + partial + absent quick lists + Save) and Add person (the
 // ManualAddForm edit-* + queue behavior, unchanged). The sub-nav SWAPS
 // content via an IndexedStack — each sub-tab shows ONLY its view, no shared
@@ -234,7 +233,6 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
   }
 
   /// Marks sub-tab content: partial + absent quick lists, person rows,
-  /// Save (Save stays here only). Data widgets byte-identical to the old
   /// single-scroll layout — only the Add form moved out.
   Widget _marksTab(
       BuildContext context,

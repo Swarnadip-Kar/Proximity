@@ -1,7 +1,6 @@
 // Browse classes (student mark): discovered classes as a lightweight
 // StudentCard variant + fallback-weight IP entry + honest empty state.
 //
-// Presentation rebuild (§6.1); behavior frozen:
 // - Discovery stays passive (UDP beacons + BLE hints + typed IP) —
 //   pull-down only recomputes from local state, never scans the network
 //   (enterprise APs have kicked phones off WiFi under probe load).
@@ -55,7 +54,6 @@ class BrowseClassesView extends StatefulWidget {
   final ValueChanged<LiveClass> onTapLive;
   final Future<void> Function() onRefresh;
 
-  /// Track 4 §2: true when UDP beacons deliver nothing but BLE-hinted
   /// classes list (isolating AP) — the list below is hint-only, said aloud.
   final bool broadcastBlocked;
 

@@ -74,7 +74,6 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
     // elevation tokens, dark/light at parity. New components read
     // `ProximityColors.of(context)`; legacy scheme/scaffold/card defaults
     // below are FROZEN until each rebuild section migrates (see
-    // INTEGRATION_LOG.md D5) so current screens render unchanged.
     extensions: <ThemeExtension<dynamic>>[
       brightness == Brightness.dark
           ? const ProximityColors.dark()

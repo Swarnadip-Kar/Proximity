@@ -1,7 +1,6 @@
 // EnrollCapture section widgets — one purpose per widget.
 //
 // SPLIT from enroll_capture.dart (2026-09-10 breakup — see
-// INTEGRATION_LOG.md `## Enroll capture breakup`). The composer screen
 // (enroll_capture.dart) owns NO layout below the Scaffold/Column level:
 // every region below is one of these sections. The session driver lives in
 // enroll_capture_session.dart and is never touched here (pure props in,
@@ -23,7 +22,6 @@
 // under [ProxMotion.reduced]; the comet parks statically at the target —
 // that contract lives in the driver + CaptureOverlay, untouched).
 //
-// Edge-to-edge (2026-09-10 — see INTEGRATION_LOG.md `## Edge-to-edge
 // capture`): the composer extends the body behind the status bar + a
 // transparent overlay app bar; this file only threads the top inset
 // through ([EnrollCapturePreview.overlayTopInset] → overlay `topInset`)
@@ -34,7 +32,6 @@
 // Frozen (do NOT change here): all copy (fail messages, Continue /
 // Try again / Back, the single enroll prompt), the save-error toast widget
 // + message, STEP-SCOPE navigation (owned by the composer), auto-capture
-// driver/timings/retries (session file, byte-identical).
 library;
 
 import 'package:camera/camera.dart';
@@ -119,7 +116,6 @@ class EnrollCapturePreview extends StatelessWidget {
 
   /// Edge-to-edge top inset forwarded to the overlay's top bar so it
   /// clears the transparent overlay app bar (composer passes the app-bar
-  /// height; default 0 keeps standalone/test rendering byte-identical).
   final double overlayTopInset;
 
   const EnrollCapturePreview({
@@ -306,7 +302,6 @@ class EnrollCaptureBottomBar extends StatelessWidget {
 /// Same line heights as the visible pieces, hidden, no semantics, no
 /// buttons — pure boundary parity, zero visible or interactive effect.
 /// (Pre-split name `_SlotTopUp`; renamed public for the section library —
-/// build byte-identical.)
 class EnrollCaptureSlotTopUp extends StatelessWidget {
   const EnrollCaptureSlotTopUp({super.key});
   @override

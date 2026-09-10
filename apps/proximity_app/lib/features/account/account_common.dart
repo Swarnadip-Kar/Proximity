@@ -1,5 +1,3 @@
-// Account shared helpers — moved verbatim from `account_screen.dart`
-// (presentational split only; gating/scoping logic behavior-identical).
 //
 // Owns: the label+value row, the local enrollment + move-gate reads, the
 // enroll-entry push + fallback-sheet body, the per-account scoping helpers
@@ -128,7 +126,6 @@ Widget accountEnrollSheetBody(
 
 /// True when the device counts as enrolled for [acct]: the linked-identity
 /// Gmail or the stored-enrollment email matches the signed-in account
-/// (case-insensitive). Tester fix (re-enroll after enrollment): this — not
 /// the bare presence of any stored enrollment — drives every enroll entry
 /// point on this page. Enrolled ⇒ the page shows state and offers no
 /// enroll CTA; re-scan stays on the face-id sub-page only.
@@ -141,7 +138,6 @@ bool enrolledForAccount(
 }
 
 /// The stored enrollment, but only when filed under the CURRENT signed-in
-/// Gmail. Tester fix (stale account after switch): sign-out never wipes
 /// the device-store enrollment, so a previous account's enrollment
 /// lingering in the store must never render as this account's facts.
 StoredEnrollment? storedForAccount(SignedAccount acct, StoredEnrollment? e) {
@@ -171,7 +167,6 @@ String linkedOrgForAccount(SignedAccount acct, LinkedIdentity? linked) {
       : '';
 }
 
-/// Shared 'no key yet' note (single source — same copy on the enrollment
 /// page, the device page, and the setup device section).
 const accountNoKeyNote =
     'No student key on this device yet — enrollment creates one (device key + face, online once).';

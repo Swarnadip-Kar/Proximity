@@ -1,4 +1,3 @@
-// Unsynced badge (Track 4 §4): N pending out of the SyncEngine outbox.
 // Hidden when nothing is pending. [PendingCountChip] is shared with the
 // pure SyncStatusStrip (trust_cards.dart) so both render the same chip.
 library;

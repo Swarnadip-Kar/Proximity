@@ -1,4 +1,3 @@
-// Device binding (Track 3 adopted): device-key tiers + attestation
 // anomaly flags. Pure Dart — no platform code.
 //
 // Model:

@@ -1,5 +1,4 @@
 // Account system sections — extracted verbatim from the page footers in
-// `account_screen.dart` (presentational split only): system-log row +
 // sign-out row. No copy changed; sign-out still calls `entrySignOut`.
 library;
 

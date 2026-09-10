@@ -1,6 +1,5 @@
 // Device & identity sections: account / key / move status.
 //
-// Split from device_identity_screen.dart (presentation only — same copy,
 // same guards, same verdicts). The content state owns the store/gate
 // reads and sign-out; sections own the layout. Refusal copy comes from
 // studentClaimMessage verbatim; only the offline-professor note collapses

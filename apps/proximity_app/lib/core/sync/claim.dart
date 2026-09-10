@@ -1,5 +1,4 @@
 // Student device binding: claim verdict + shared verdict/write helper +
-// app-install identity. Split out of core/cloud_sync.dart (M6 sync refactor)
 // with getOrCreateInstallId/newInstallId folded in from
 // core/device_identity.dart — bodies verbatim except the ONE extracted
 // shared helper [resolveStudentClaimWrite] (see below).
@@ -277,7 +276,6 @@ String faceRescanCooldownMessage(DateTime eligible) =>
 /// deployed or a binding conflict) instead of a bare code. Single source of
 /// truth for the hint text — [firestore_sync]'s `_rulesError` delegates
 /// here, and the enroll pre-claim reuses it for the genuine-rules-problem
-/// branch (own binding unreadable), so the hint stays byte-identical
 /// everywhere. Verbatim — do not reword.
 String cloudRulesHint(String op) =>
     'Cloud $op refused by security rules (permission-denied) — deploy them with:\n'
@@ -415,7 +413,6 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
   return id;
 }
 
-// --- Track 3 device-proof seam (beside evaluateStudentClaim) ---
 //
 // The pure device-proof verdict itself lives in the protocol
 // ([evaluateDeviceProof] in package:proximity_protocol — same import
