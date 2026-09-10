@@ -509,16 +509,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final roll =
           state.roll.isNotEmpty ? state.roll : _restoredRoll ?? '';
       final name = acct.displayName;
-      final org = acct.org.isNotEmpty
-          ? acct.org
-          : (() {
-              final e = email.trim().toLowerCase();
-              final at = e.lastIndexOf('@');
-              if (at <= 0 || at == e.length - 1) return '';
-              var domain = e.substring(at + 1).trim();
-              if (domain == 'googlemail.com') return 'gmail.com';
-              return domain;
-            })();
+      final org = acct.org.isNotEmpty ? acct.org : orgOf(email);
       final now = DateTime.now().toUtc();
       final nowMillis = now.millisecondsSinceEpoch;
       // 30-day face rescan quota (per-account, SAVE path only): replacing

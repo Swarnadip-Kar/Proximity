@@ -189,29 +189,7 @@ class FirestoreCloudSync implements CloudSync {
       if (!snap.exists) return null;
       final d = snap.data();
       if (d == null) return null;
-      return StudentDeviceDoc(
-        email: key,
-        uid: d['uid'] as String? ?? '',
-        pkHex: d['pkHex'] as String? ?? '',
-        name: d['name'] as String? ?? '',
-        roll: d['roll'] as String? ?? '',
-        modelVer: d['modelVer'] as String? ?? '',
-        installId: d['installId'] as String? ?? '',
-        platform: d['platform'] as String? ?? '',
-        org: (d['org'] as String? ?? '').isNotEmpty
-            ? (d['org'] as String)
-            : orgOf(key),
-        createdAtMillis: (d['createdAtMillis'] as num?)?.toInt() ?? 0,
-        lastMoveAtMillis: (d['lastMoveAtMillis'] as num?)?.toInt() ?? 0,
-        lastSeenAtMillis: (d['lastSeenAtMillis'] as num?)?.toInt() ?? 0,
-        updatedAtMillis: (d['updatedAtMillis'] as num?)?.toInt() ?? 0,
-        moveCount: (d['moveCount'] as num?)?.toInt() ?? 0,
-        pkDHex: d['pkDHex'] as String? ?? '',
-        attestationLevel: d['attestationLevel'] as String? ?? 'NONE',
-        attestedAtMillis: (d['attestedAtMillis'] as num?)?.toInt() ?? 0,
-        attestedUntilMillis:
-            (d['attestedUntilMillis'] as num?)?.toInt() ?? 0,
-      );
+      return _deviceFrom(d, key);
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') throw _rulesError('device lookup');
       if (_isOfflineError(e)) return null;

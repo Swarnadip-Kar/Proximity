@@ -678,14 +678,8 @@ class SyncEngine {
     }
   }
 
-  bool _due(String nextRetryAtIso, DateTime now) {
-    if (nextRetryAtIso.isEmpty) return true;
-    try {
-      return !DateTime.parse(nextRetryAtIso).toUtc().isAfter(now);
-    } catch (_) {
-      return true;
-    }
-  }
+  bool _due(String nextRetryAtIso, DateTime now) =>
+      sessionDueAt(nextRetryAtIso, now.toUtc());
 
   /// Connectivity-hint entry: the platform hint is HINT-ONLY — a
   /// return-to-online hint schedules a ~5s debounced server probe

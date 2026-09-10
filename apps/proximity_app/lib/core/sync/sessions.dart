@@ -131,6 +131,17 @@ List<ClassRecord> mergeHistoriesUnion(
   return out;
 }
 
+/// Retry-due check shared by the session outbox and the tombstone queue.
+/// Empty or unparseable stamps are due now (fail-open retry, never stuck).
+bool sessionDueAt(String nextRetryAtIso, DateTime nowUtc) {
+  if (nextRetryAtIso.isEmpty) return true;
+  try {
+    return !DateTime.parse(nextRetryAtIso).toUtc().isAfter(nowUtc);
+  } catch (_) {
+    return true;
+  }
+}
+
 /// One durable outbox entry: a full session snapshot keyed by record id +
 /// per-entry retry state. Pure — tested without Firebase.
 class PendingSession {
@@ -148,14 +159,7 @@ class PendingSession {
       this.nextRetryAtIso = '',
       this.updatedAtIso = ''});
 
-  bool due(DateTime nowUtc) {
-    if (nextRetryAtIso.isEmpty) return true;
-    try {
-      return !DateTime.parse(nextRetryAtIso).toUtc().isAfter(nowUtc);
-    } catch (_) {
-      return true;
-    }
-  }
+  bool due(DateTime nowUtc) => sessionDueAt(nextRetryAtIso, nowUtc);
 
   String get course =>
       record.courseId.isNotEmpty ? record.courseId : record.classLabel;
