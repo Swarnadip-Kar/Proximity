@@ -372,12 +372,16 @@ class AdaptiveScaffold extends StatelessWidget {
   /// existing callers are unaffected.
   final Widget? leading;
 
+  /// Optional floating action button. Passed through to Material Scaffold.
+  final Widget? floatingActionButton;
+
   const AdaptiveScaffold(
       {super.key,
       required this.title,
       required this.body,
       this.actions,
-      this.leading});
+      this.leading,
+      this.floatingActionButton});
 
   @override
   Widget build(BuildContext context) {
@@ -388,6 +392,7 @@ class AdaptiveScaffold extends StatelessWidget {
       return Scaffold(
         appBar: AppBar(title: Text(title), actions: actions, leading: leading),
         body: body,
+        floatingActionButton: floatingActionButton,
       );
     }
     return CupertinoPageScaffold(

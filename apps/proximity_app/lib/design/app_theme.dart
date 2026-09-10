@@ -82,25 +82,28 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
     textTheme: text,
     scaffoldBackgroundColor: scheme.surface,
     appBarTheme: AppBarTheme(
-      backgroundColor: scheme.surface,
+      backgroundColor: Colors.transparent,
       foregroundColor: scheme.onSurface,
       elevation: 0,
+      scrolledUnderElevation: 0,
       centerTitle: false,
       titleTextStyle: text.titleLarge?.copyWith(
         color: scheme.onSurface,
         fontWeight: FontWeight.w600,
+        letterSpacing: -0.3,
       ),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: ProxRadii.cardRadius,
+        borderRadius: ProxRadii.cardSpecRadius,
         side: BorderSide(
-          // Depth in dark mode comes from elevation (lighter fill), not
-          // borders — so the border steps back where the fill steps up.
-          color: scheme.outlineVariant
-              .withValues(alpha: brightness == Brightness.dark ? 0.35 : 0.6),
+          // Dark: subtle inner-glow feel via lighter border on darker fill.
+          // Light: hairline at reduced opacity for a clean, airy feel.
+          color: brightness == Brightness.dark
+              ? const Color(0x14FFFFFF) // white 8% — inner glow
+              : scheme.outlineVariant.withValues(alpha: 0.4),
         ),
       ),
       // Dark-mode rule (Material + Apple HIG alignment): cards sit ABOVE
@@ -122,10 +125,13 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         // Material theme-driven — this is that theme).
         minimumSize: const Size(64, ProxSpacing.minTap),
         padding: const EdgeInsets.symmetric(
-          horizontal: ProxSpacing.lg,
+          horizontal: ProxSpacing.xl,
           vertical: ProxSpacing.md,
         ),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.2,
+        ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -136,10 +142,13 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         // §9 48dp floor (see filledButtonTheme above).
         minimumSize: const Size(64, ProxSpacing.minTap),
         padding: const EdgeInsets.symmetric(
-          horizontal: ProxSpacing.lg,
+          horizontal: ProxSpacing.xl,
           vertical: ProxSpacing.md,
         ),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.2,
+        ),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
@@ -151,7 +160,10 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
         // default is shorter — without this, dialog/sheet text actions
         // would be the one sub-48 target class left in the app.
         minimumSize: const Size(64, ProxSpacing.minTap),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.2,
+        ),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
@@ -163,15 +175,25 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
+      fillColor: brightness == Brightness.dark
+          ? const Color(0xFF15181D)
+          : const Color(0xFFF5F6FA),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(ProxRadii.md),
+        borderRadius: BorderRadius.circular(ProxRadii.card),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(ProxRadii.md),
-        borderSide: BorderSide(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(ProxRadii.card),
+        borderSide: BorderSide(
+          color: scheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(ProxRadii.card),
+        borderSide: BorderSide(color: scheme.primary, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(
-        horizontal: ProxSpacing.md,
+        horizontal: ProxSpacing.lg,
         vertical: ProxSpacing.md,
       ),
     ),
@@ -184,8 +206,43 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
       borderRadius: BorderRadius.circular(ProxRadii.chip),
     ),
     dividerTheme: DividerThemeData(
-      color: scheme.outlineVariant.withValues(alpha: 0.5),
-      thickness: 1,
+      color: scheme.outlineVariant.withValues(alpha: 0.35),
+      thickness: 0.5,
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ProxRadii.card),
+      ),
+      elevation: 0,
+      backgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF1D2128)
+          : const Color(0xFF14161A),
+      contentTextStyle: text.bodyMedium?.copyWith(
+        color: const Color(0xFFF2F3F5),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ProxRadii.sheet),
+      ),
+      elevation: 0,
+      backgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF15181D)
+          : const Color(0xFFFFFFFF),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(ProxRadii.sheet),
+        ),
+      ),
+      elevation: 0,
+      backgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF15181D)
+          : const Color(0xFFFFFFFF),
+      dragHandleColor: scheme.onSurfaceVariant.withValues(alpha: 0.3),
+      showDragHandle: true,
     ),
     iconTheme: IconThemeData(color: scheme.onSurfaceVariant, size: 20),
   );

@@ -91,6 +91,25 @@ abstract final class ProxDurations {
   /// Reduce-motion collapse target: all transitions become opacity-only
   /// cross-fades at this duration (§3.2, §9).
   static const reducedFade = Duration(milliseconds: 100);
+
+  // --- UI Overhaul additions (presentation only). ---
+
+  /// Shimmer gradient sweep across skeleton loading placeholders.
+  static const shimmer = Duration(milliseconds: 1500);
+
+  /// Hero element entrance (welcome radar, verdict heroes). Richer than
+  /// [small]: scale + fade + slight rotation for a premium reveal.
+  static const heroEntrance = Duration(milliseconds: 600);
+
+  /// Ambient glow breathing period for active-state indicators (radar ring,
+  /// live dot halo). Calm, low-frequency — never distracting.
+  static const glow = Duration(milliseconds: 2000);
+
+  /// Tab indicator pill slide from one position to another.
+  static const tabIndicator = Duration(milliseconds: 260);
+
+  /// Gradient wash sweep used on account header and welcome hero.
+  static const gradientSweep = Duration(milliseconds: 8000);
 }
 
 /// Easing vocabulary. Rule of thumb (see PROXIMITY_DESIGN §7 flows):
@@ -918,4 +937,158 @@ abstract final class ProxIcons {
       _ => statusColor(context, status),
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// UI Overhaul tokens: glass, shadows, shimmer, icon sizes.
+// Pure additive — legacy classes above are frozen.
+// ---------------------------------------------------------------------------
+
+/// Glassmorphism surface spec — blur sigma, tint color, tint opacity, border.
+/// Used by `ProxGlassPane` for bottom sheets, overlays, and the system log.
+@immutable
+class ProxGlassSpec {
+  final double blurSigma;
+  final Color tintColor;
+  final double tintOpacity;
+  final Color borderColor;
+
+  const ProxGlassSpec({
+    required this.blurSigma,
+    required this.tintColor,
+    required this.tintOpacity,
+    required this.borderColor,
+  });
+}
+
+/// Glass presets for dark and light themes.
+abstract final class ProxGlass {
+  /// Standard glass (bottom bar, sheets): moderate blur, subtle tint.
+  static const dark = ProxGlassSpec(
+    blurSigma: 12,
+    tintColor: Color(0xFF0B0D10),
+    tintOpacity: 0.72,
+    borderColor: Color(0x1AFFFFFF), // white 10%
+  );
+
+  static const light = ProxGlassSpec(
+    blurSigma: 12,
+    tintColor: Color(0xFFFFFFFF),
+    tintOpacity: 0.78,
+    borderColor: Color(0x14000000), // black 8%
+  );
+
+  /// Terminal glass (system log): darker, more opaque.
+  static const terminalDark = ProxGlassSpec(
+    blurSigma: 16,
+    tintColor: Color(0xFF050608),
+    tintOpacity: 0.88,
+    borderColor: Color(0x14FFFFFF),
+  );
+
+  static const terminalLight = ProxGlassSpec(
+    blurSigma: 16,
+    tintColor: Color(0xFF0A0A0B),
+    tintOpacity: 0.92,
+    borderColor: Color(0x0AFFFFFF),
+  );
+
+  /// Resolve the standard glass for the current brightness.
+  static ProxGlassSpec of(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? dark : light;
+
+  /// Resolve the terminal glass for the current brightness.
+  static ProxGlassSpec terminalOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? terminalDark
+          : terminalLight;
+}
+
+/// 4-level shadow ramp: rest → hover → pressed → float.
+/// Cards start at [rest], hover lifts to [hover], pressed drops to [pressed],
+/// floating elements (FAB, modals) sit at [float].
+abstract final class ProxShadows {
+  // Dark theme shadows.
+  static const restDark = BoxShadow(
+    offset: Offset(0, 1),
+    blurRadius: 2,
+    color: Color(0x66000000),
+  );
+  static const hoverDark = BoxShadow(
+    offset: Offset(0, 4),
+    blurRadius: 12,
+    color: Color(0x55000000),
+  );
+  static const pressedDark = BoxShadow(
+    offset: Offset(0, 0),
+    blurRadius: 1,
+    color: Color(0x44000000),
+  );
+  static const floatDark = BoxShadow(
+    offset: Offset(0, 8),
+    blurRadius: 24,
+    spreadRadius: -4,
+    color: Color(0x66000000),
+  );
+
+  // Light theme shadows.
+  static const restLight = BoxShadow(
+    offset: Offset(0, 1),
+    blurRadius: 3,
+    color: Color(0x10000000),
+  );
+  static const hoverLight = BoxShadow(
+    offset: Offset(0, 4),
+    blurRadius: 12,
+    color: Color(0x14000000),
+  );
+  static const pressedLight = BoxShadow(
+    offset: Offset(0, 0),
+    blurRadius: 1,
+    color: Color(0x08000000),
+  );
+  static const floatLight = BoxShadow(
+    offset: Offset(0, 8),
+    blurRadius: 24,
+    spreadRadius: -4,
+    color: Color(0x18000000),
+  );
+
+  static BoxShadow rest(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? restDark : restLight;
+  static BoxShadow hover(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? hoverDark : hoverLight;
+  static BoxShadow pressed(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? pressedDark
+          : pressedLight;
+  static BoxShadow float(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? floatDark : floatLight;
+}
+
+/// Shimmer gradient colors for skeleton loading placeholders.
+abstract final class ProxShimmer {
+  // Dark theme shimmer.
+  static const baseDark = Color(0xFF1A1D24);
+  static const highlightDark = Color(0xFF2A2E38);
+
+  // Light theme shimmer.
+  static const baseLight = Color(0xFFE8E9ED);
+  static const highlightLight = Color(0xFFF5F6FA);
+
+  static Color base(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? baseDark : baseLight;
+  static Color highlight(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? highlightDark
+          : highlightLight;
+}
+
+/// Icon size scale: consistent icon sizing across the app.
+abstract final class ProxIconSizes {
+  static const double sm = 16;
+  static const double md = 20;
+  static const double lg = 24;
+  static const double xl = 32;
+  static const double hero = 48;
 }

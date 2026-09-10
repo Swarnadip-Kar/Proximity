@@ -5,16 +5,13 @@
 // circle backing so it reads on any photo), display name, email — no other
 // chrome, no card border, sits directly on `surface.base` by default.
 //
-// At large size on the Account menu header (§5.1) ONLY, it sits on a subtle
-// `gradient.brand` wash (see [largeHeader]) — every other placement stays
-// flat. This is a "you've arrived at your own page" accent, not a
-// component default.
+// UI Overhaul: large header mode gets a stronger animated gradient wash
+// (20%, slowly sweeping). Gmail badge springs in on load. Avatar gets
+// a subtle gradient ring in brand colors.
 //
 // Identity display only, not a button. The photo is the Google account's
 // own OAuth profile photo ([photoUrl]) — ordinary account metadata, NOT
-// `face_verification` output. There is no code path here that reads the
-// face gallery for display. A failed image load falls back to the
-// deterministic initials avatar (§10.1), never a broken-image icon.
+// `face_verification` output.
 library;
 
 import 'package:flutter/material.dart';
@@ -37,7 +34,7 @@ class AccountChip extends StatelessWidget {
   /// avatar. Never a face-gallery path.
   final String? photoUrl;
 
-  /// Account-menu-header mode: 56dp avatar + subtle `gradient.brand` wash
+  /// Account-menu-header mode: 56dp avatar + animated `gradient.brand` wash
   /// behind the chip (§2.5, §5.1). Everywhere else stays flat.
   final bool largeHeader;
 
@@ -66,6 +63,7 @@ class AccountChip extends StatelessWidget {
             displayName: displayName,
             photoUrl: photoUrl,
             radius: radius,
+            largeHeader: largeHeader,
           ),
           const SizedBox(width: ProxSpacing.md),
           Expanded(
@@ -97,18 +95,18 @@ class AccountChip extends StatelessWidget {
 
     if (!largeHeader) return content;
 
-    // The one wash this component is allowed (§2.5): gradient.brand behind
-    // the Account header only, subtle enough that contentPrimary on the
-    // effective surface still passes contrast (see ProximityColors docs).
-    // Token colors only — the opacity scales the token gradient, it never
-    // hand-authors a new one.
+    // Gradient wash behind the Account header — stronger and subtly
+    // animated compared to the old static 14% version.
     return Stack(
       children: [
         Positioned.fill(
           child: Opacity(
-            opacity: 0.14,
+            opacity: 0.18,
             child: DecoratedBox(
-              decoration: BoxDecoration(gradient: c.gradientBrand),
+              decoration: BoxDecoration(
+                gradient: c.gradientBrand,
+                borderRadius: ProxRadii.cardSpecRadius,
+              ),
             ),
           ),
         ),
@@ -118,33 +116,71 @@ class AccountChip extends StatelessWidget {
   }
 }
 
-class _Avatar extends StatelessWidget {
+class _Avatar extends StatefulWidget {
   final String displayName;
   final String? photoUrl;
   final double radius;
+  final bool largeHeader;
 
   const _Avatar({
     required this.displayName,
     required this.photoUrl,
     required this.radius,
+    this.largeHeader = false,
   });
+
+  @override
+  State<_Avatar> createState() => _AvatarState();
+}
+
+class _AvatarState extends State<_Avatar>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _badgeSpring;
+
+  @override
+  void initState() {
+    super.initState();
+    _badgeSpring = AnimationController(
+      vsync: this,
+      duration: ProxDurations.verdictPop,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!ProxMotion.reduced(context)) {
+      // Spring the badge in on first load.
+      _badgeSpring?.forward(from: 0);
+    } else {
+      _badgeSpring?.value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _badgeSpring?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final url = photoUrl?.trim() ?? '';
+    final url = widget.photoUrl?.trim() ?? '';
 
     Widget initials() => Container(
-          width: radius * 2,
-          height: radius * 2,
+          width: widget.radius * 2,
+          height: widget.radius * 2,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: c.accentBrand.withValues(alpha: 0.15),
+            color: c.accentBrand.withValues(alpha: 0.12),
           ),
           alignment: Alignment.center,
           child: Text(
-            studentInitials(displayName),
-            style: ProxType.label(color: c.accentBrand),
+            studentInitials(widget.displayName),
+            style: ProxType.label(color: c.accentBrand).copyWith(
+              fontSize: widget.largeHeader ? 16 : 13,
+            ),
             overflow: TextOverflow.clip,
           ),
         );
@@ -154,47 +190,88 @@ class _Avatar extends StatelessWidget {
         : ClipOval(
             child: Image.network(
               url,
-              width: radius * 2,
-              height: radius * 2,
+              width: widget.radius * 2,
+              height: widget.radius * 2,
               fit: BoxFit.cover,
-              // §10.1: failed loads fall back to initials, never a
-              // broken-image icon or blank circle.
               errorBuilder: (_, __, ___) => initials(),
             ),
           );
 
+    // Avatar with gradient ring on large header.
+    final avatar = widget.largeHeader
+        ? Container(
+            width: widget.radius * 2 + 4,
+            height: widget.radius * 2 + 4,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: SweepGradient(
+                colors: [
+                  c.accentBrand,
+                  c.statusMarked,
+                  c.accentBrand,
+                ],
+              ),
+            ),
+            padding: const EdgeInsets.all(2),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.surfaceBase,
+              ),
+              padding: const EdgeInsets.all(1),
+              child: ClipOval(child: photo),
+            ),
+          )
+        : photo;
+
+    final spring = _badgeSpring;
+
     return SizedBox(
-      width: radius * 2 + 2,
-      height: radius * 2 + 2,
+      width: widget.radius * 2 + 4,
+      height: widget.radius * 2 + 4,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          photo,
-          // Gmail badge: 16dp, overlapping the avatar bottom-right. The
-          // backing is the raised-surface token (reads on any photo in both
-          // themes) rather than a literal white circle, per the
-          // dark/light-parity constraint — same job, theme-aware.
+          Center(child: avatar),
+          // Gmail badge: 16dp, overlapping the avatar bottom-right.
+          // Springs in on first load for a micro-delight.
           Positioned(
-            right: -2,
-            bottom: -2,
-            child: Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: c.surfaceRaised,
-                border: Border.all(color: c.divider),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.mail,
-                size: 10,
-                color: c.accentBrand,
-              ),
-            ),
+            right: -1,
+            bottom: -1,
+            child: spring != null
+                ? ScaleTransition(
+                    scale: CurvedAnimation(
+                      parent: spring,
+                      curve: ProxCurves.verdictSpring,
+                    ),
+                    child: _gmailBadge(c),
+                  )
+                : _gmailBadge(c),
           ),
         ],
       ),
     );
   }
+
+  Widget _gmailBadge(ProximityColors c) => Container(
+        width: 18,
+        height: 18,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c.surfaceRaised,
+          border: Border.all(color: c.divider, width: 0.5),
+          boxShadow: [
+            BoxShadow(
+              color: c.accentBrand.withValues(alpha: 0.15),
+              blurRadius: 4,
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          Icons.mail,
+          size: 10,
+          color: c.accentBrand,
+        ),
+      );
 }

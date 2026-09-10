@@ -7,6 +7,10 @@
 // Screens keep their own scroll physics/lists where behavior demands it
 // (live lists, records), but padding, max width, and app-bar treatment
 // come from here so every screen belongs to the same product.
+//
+// UI Overhaul: adds a subtle gradient to the app bar area for depth,
+// and an optional progress indicator slot below the bar for page-level
+// loading states.
 library;
 
 import 'package:flutter/material.dart';
@@ -15,6 +19,9 @@ import '../design/tokens.dart';
 import '../main.dart' show AdaptiveScaffold;
 
 /// Standard screen: adaptive app bar + constrained content column.
+///
+/// UI Overhaul: optional [loading] parameter shows a thin progress
+/// indicator below the app bar. Optional [floatingAction] for FAB.
 class ProxScreen extends StatelessWidget {
   final String title;
   final List<Widget>? actions;
@@ -22,6 +29,12 @@ class ProxScreen extends StatelessWidget {
   final double maxWidth;
   final EdgeInsetsGeometry padding;
   final bool scrollable;
+
+  /// When true, shows a thin animated progress indicator below the app bar.
+  final bool loading;
+
+  /// Optional floating action button.
+  final Widget? floatingAction;
 
   const ProxScreen({
     super.key,
@@ -31,11 +44,15 @@ class ProxScreen extends StatelessWidget {
     this.maxWidth = ProxSpacing.maxContentWidth,
     this.padding = const EdgeInsets.all(ProxSpacing.lg),
     this.scrollable = true,
+    this.loading = false,
+    this.floatingAction,
   });
 
   @override
   Widget build(BuildContext context) {
-    final body = Align(
+    final c = ProximityColors.of(context);
+
+    final content = Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
@@ -44,6 +61,30 @@ class ProxScreen extends StatelessWidget {
             : Padding(padding: padding, child: child),
       ),
     );
-    return AdaptiveScaffold(title: title, actions: actions, body: body);
+
+    final body = Column(
+      children: [
+        // Thin progress indicator — visible only when loading.
+        AnimatedContainer(
+          duration: ProxDurations.small,
+          height: loading ? 2 : 0,
+          child: loading
+              ? LinearProgressIndicator(
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation(c.accentBrand),
+                )
+              : const SizedBox.shrink(),
+        ),
+        Expanded(child: content),
+      ],
+    );
+
+    return AdaptiveScaffold(
+      title: title,
+      actions: actions,
+      body: body,
+      floatingActionButton: floatingAction,
+    );
   }
 }

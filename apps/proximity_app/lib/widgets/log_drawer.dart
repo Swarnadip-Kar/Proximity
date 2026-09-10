@@ -31,18 +31,22 @@ import 'log_category.dart';
 
 /// Opens the log drawer (peek ~30%, draggable full). Tag selection made
 /// here carries into `Expand`.
+///
+/// UI Overhaul: uses a darker glass terminal treatment for a system
+/// overlay feel rather than a standard sheet.
 Future<void> showLogDrawer(
   BuildContext context, {
   Set<String>? initialTags,
 }) {
   final c = ProximityColors.of(context);
+  final glass = ProxGlass.terminalOf(context);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     // Scrim token end-stop (barrier takes a color, not a gradient).
     barrierColor: c.gradientScrim.colors.last,
-    backgroundColor: c.gradientScrim.colors.first,
+    backgroundColor: glass.tintColor.withValues(alpha: glass.tintOpacity),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(
         top: Radius.circular(ProxRadii.sheet),

@@ -3,23 +3,34 @@
 //
 // Every duration routes through [ProxMotion.effective] so the platform
 // reduce-motion setting degrades to instant-but-correct state changes.
+//
+// UI Overhaul: adds ProxHeroEntrance (scale+fade+rotation for hero
+// elements), ProxPulseGlow (ambient breathing glow), and enhanced
+// ProxFadeSlideIn with optional scale parameter.
 library;
+
+import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
 
-/// Fade + slide entrance. The default "screen belongs to the same product"
-/// transition for sections, cards, and empty states.
+/// Fade + slide + scale entrance. The default "screen belongs to the same
+/// product" transition for sections, cards, and empty states.
 ///
 /// Never delays the child becoming interactive: the child is laid out and
-/// hittable on frame one; only its opacity/offset animates in.
+/// hittable on frame one; only its opacity/offset/scale animates in.
 class ProxFadeSlideIn extends StatefulWidget {
   final Widget child;
   final Duration delay;
   final Duration duration;
   final Curve curve;
   final double slideDy;
+
+  /// Optional scale entrance (0.95→1.0 for premium feel). Set to 1.0 to
+  /// disable scale animation.
+  final double scaleFrom;
 
   const ProxFadeSlideIn({
     super.key,
@@ -28,6 +39,7 @@ class ProxFadeSlideIn extends StatefulWidget {
     this.duration = ProxDurations.small,
     this.curve = ProxCurves.standard,
     this.slideDy = 0.08,
+    this.scaleFrom = 0.97,
   });
 
   @override
@@ -39,16 +51,22 @@ class _ProxFadeSlideInState extends State<ProxFadeSlideIn>
   late final AnimationController _c;
   late final Animation<double> _opacity;
   late final Animation<Offset> _offset;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
     _c = AnimationController(vsync: this, duration: widget.duration);
-    _opacity = CurvedAnimation(parent: _c, curve: widget.curve);
+    final curved = CurvedAnimation(parent: _c, curve: widget.curve);
+    _opacity = curved;
     _offset = Tween<Offset>(
       begin: Offset(0, widget.slideDy),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _c, curve: widget.curve));
+    ).animate(curved);
+    _scale = Tween<double>(
+      begin: widget.scaleFrom,
+      end: 1.0,
+    ).animate(curved);
     if (widget.delay == Duration.zero) {
       _c.forward();
     } else {
@@ -77,7 +95,13 @@ class _ProxFadeSlideInState extends State<ProxFadeSlideIn>
     if (ProxMotion.reduced(context)) return widget.child;
     return FadeTransition(
       opacity: _opacity,
-      child: SlideTransition(position: _offset, child: widget.child),
+      child: SlideTransition(
+        position: _offset,
+        child: ScaleTransition(
+          scale: _scale,
+          child: widget.child,
+        ),
+      ),
     );
   }
 }
@@ -148,13 +172,162 @@ class ProxSwitcher extends StatelessWidget {
         opacity: anim,
         child: SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(0, 0.25),
+            begin: const Offset(0, 0.15),
             end: Offset.zero,
           ).animate(anim),
           child: c,
         ),
       ),
       child: child,
+    );
+  }
+}
+
+/// Hero entrance: scale from 0.8 + fade + subtle rotation (2° → 0°).
+/// Used for welcome hero, verdict badges, and course page headers.
+/// 600ms with emphasized curve for a premium reveal.
+class ProxHeroEntrance extends StatefulWidget {
+  final Widget child;
+  final Duration delay;
+
+  const ProxHeroEntrance({
+    super.key,
+    required this.child,
+    this.delay = Duration.zero,
+  });
+
+  @override
+  State<ProxHeroEntrance> createState() => _ProxHeroEntranceState();
+}
+
+class _ProxHeroEntranceState extends State<ProxHeroEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final Animation<double> _opacity;
+  late final Animation<double> _scale;
+  late final Animation<double> _rotation;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: ProxDurations.heroEntrance,
+    );
+    final curved = CurvedAnimation(
+      parent: _c,
+      curve: ProxCurves.emphasized,
+    );
+    _opacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _c,
+        curve: const Interval(0, 0.6, curve: Curves.easeOut),
+      ),
+    );
+    _scale = Tween<double>(begin: 0.8, end: 1.0).animate(curved);
+    _rotation = Tween<double>(
+      begin: -2 * math.pi / 180,
+      end: 0,
+    ).animate(curved);
+
+    if (widget.delay == Duration.zero) {
+      _c.forward();
+    } else {
+      Future.delayed(widget.delay, () {
+        if (mounted) _c.forward();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ProxMotion.reduced(context)) return widget.child;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) => Opacity(
+        opacity: _opacity.value,
+        child: Transform.scale(
+          scale: _scale.value,
+          child: Transform.rotate(
+            angle: _rotation.value,
+            child: child,
+          ),
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// Ambient breathing glow: opacity pulses 0.15→0.35 over 2s.
+/// Used for live/active state indicators (radar ring, presence dot halo).
+/// Timer-driven, reduce-motion safe — degrades to static mid-opacity.
+class ProxPulseGlow extends StatefulWidget {
+  final Color color;
+  final double blurRadius;
+  final Widget child;
+
+  const ProxPulseGlow({
+    super.key,
+    required this.color,
+    this.blurRadius = 24,
+    required this.child,
+  });
+
+  @override
+  State<ProxPulseGlow> createState() => _ProxPulseGlowState();
+}
+
+class _ProxPulseGlowState extends State<ProxPulseGlow> {
+  Timer? _timer;
+  var _bright = false;
+  var _armed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed) return;
+    _armed = true;
+    if (!ProxMotion.reduced(context)) {
+      _timer = Timer.periodic(ProxDurations.glow, (_) {
+        if (!mounted) return;
+        setState(() => _bright = !_bright);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final opacity = ProxMotion.reduced(context)
+        ? 0.25
+        : (_bright ? 0.35 : 0.15);
+
+    return AnimatedContainer(
+      duration: ProxDurations.glow,
+      curve: ProxCurves.standard,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: widget.color.withValues(alpha: opacity),
+            blurRadius: widget.blurRadius,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: widget.child,
     );
   }
 }

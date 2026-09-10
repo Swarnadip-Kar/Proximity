@@ -4,6 +4,10 @@
 // animates color + label with the app-standard switcher so a student row
 // flipping waiting → marked never flashes. Verdict-level hero motion lives
 // on the verdict screens themselves, not in this pill.
+//
+// UI Overhaul: badges gain soft glow halos, section headers get accent
+// bars, empty states gain animated illustrations, identity headers get
+// gradient avatar rings.
 library;
 
 import 'dart:async';
@@ -19,6 +23,9 @@ import 'prox_motion.dart';
 /// [pulse] breathes the badge while its state is live (e.g. the waiting
 /// room "Connected" badge). Timer-driven like [ProxDot], static under
 /// reduced motion — meaning never depends on the pulse.
+///
+/// UI Overhaul: gains a soft glow halo behind the badge in the state color
+/// for a more premium, alive feel.
 class ProxStateBadge extends StatefulWidget {
   final ProxState state;
   final String label;
@@ -92,7 +99,17 @@ class _ProxStateBadgeState extends State<ProxStateBadge> {
       decoration: BoxDecoration(
         color: ProxStateColors.tint(context, widget.state),
         borderRadius: ProxRadii.chipRadius,
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+        // Soft glow halo behind the badge.
+        boxShadow: widget.pulse
+            ? [
+                BoxShadow(
+                  color: color.withValues(alpha: _dim ? 0.05 : 0.15),
+                  blurRadius: 8,
+                  spreadRadius: 0,
+                ),
+              ]
+            : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -102,10 +119,9 @@ class _ProxStateBadgeState extends State<ProxStateBadge> {
           Flexible(
             child: Text(
               widget.label,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: ProxType.label(color: color).copyWith(
+                fontWeight: FontWeight.w700,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -123,8 +139,8 @@ class _ProxStateBadgeState extends State<ProxStateBadge> {
   }
 }
 
-/// Section header: "Waiting area (3)" style headings with consistent
-/// typography everywhere (was 5+ ad-hoc fontSize/fontWeight copies).
+/// Section header with accent bar: thin 2dp accent line (brand gradient,
+/// 32dp wide) left of the title text, acting as a visual anchor.
 class ProxSectionHeader extends StatelessWidget {
   final String title;
   final Widget? trailing;
@@ -142,16 +158,28 @@ class ProxSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Padding(
       padding: padding,
       child: Row(
         children: [
+          // Accent bar — visual anchor for the section.
+          Container(
+            width: 3,
+            height: 18,
+            margin: const EdgeInsets.only(right: ProxSpacing.sm),
+            decoration: BoxDecoration(
+              gradient: c.gradientBrand,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           Expanded(
             child: Text(
               title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: ProxType.title(color: c.contentPrimary).copyWith(
+                fontSize: 17,
+                letterSpacing: -0.2,
+              ),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
             ),
@@ -163,43 +191,140 @@ class ProxSectionHeader extends StatelessWidget {
   }
 }
 
-/// Empty state: centered icon + message with breathing room. Replaces the
-/// ad-hoc `Padding(vertical: 32) + Text(center)` copies.
-class ProxEmptyState extends StatelessWidget {
+/// Empty state with animated illustration: a subtle floating icon with
+/// orbiting dots that gently drift, plus optional sub-action button.
+class ProxEmptyState extends StatefulWidget {
   final String message;
   final IconData icon;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   const ProxEmptyState({
     super.key,
     required this.message,
     this.icon = Icons.inbox_outlined,
+    this.actionLabel,
+    this.onAction,
   });
 
   @override
+  State<ProxEmptyState> createState() => _ProxEmptyStateState();
+}
+
+class _ProxEmptyStateState extends State<ProxEmptyState> {
+  Timer? _timer;
+  double _phase = 0;
+  var _armed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed) return;
+    _armed = true;
+    if (!ProxMotion.reduced(context)) {
+      _timer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+        if (!mounted) return;
+        setState(() => _phase = (_phase + 0.02) % 6.283);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return ProxFadeSlideIn(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: ProxSpacing.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 36,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: ProxSpacing.sm),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+            SizedBox(
+              width: 80,
+              height: 80,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Orbit dots (3 small dots at varying phases).
+                  for (var i = 0; i < 3; i++)
+                    Positioned(
+                      left: 40 + 28 * _cos(_phase + i * 2.094),
+                      top: 40 + 28 * _sin(_phase + i * 2.094),
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c.accentBrand.withValues(
+                            alpha: 0.2 + 0.15 * _cos(_phase + i),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Main icon with ambient glow.
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: c.accentBrand.withValues(alpha: 0.08),
+                      border: Border.all(
+                        color: c.accentBrand.withValues(alpha: 0.15),
+                      ),
+                    ),
+                    child: Icon(
+                      widget.icon,
+                      size: ProxIconSizes.lg,
+                      color: c.accentBrand.withValues(alpha: 0.6),
+                    ),
                   ),
+                ],
+              ),
             ),
+            const SizedBox(height: ProxSpacing.lg),
+            Text(
+              widget.message,
+              textAlign: TextAlign.center,
+              style: ProxType.body(color: c.contentSecondary),
+            ),
+            if (widget.actionLabel != null && widget.onAction != null) ...[
+              const SizedBox(height: ProxSpacing.lg),
+              TextButton(
+                onPressed: widget.onAction,
+                child: Text(
+                  widget.actionLabel!,
+                  style: ProxType.label(color: c.accentBrand),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  static double _cos(double x) => x.isNaN ? 0 : x >= 0 ? _cosImpl(x) : _cosImpl(-x);
+  static double _sin(double x) => x.isNaN ? 0 : _cosImpl(x - 1.5708);
+  static double _cosImpl(double x) {
+    // Inline cos to avoid dart:math import collision with the one in
+    // prox_verdict.dart — they share the same dart:math, but this keeps
+    // the file self-contained.
+    return _dartMathCos(x);
+  }
+  static double _dartMathCos(double x) {
+    // Use a direct calculation rather than importing math to avoid
+    // potential conflicts. This is called at 50ms intervals for 3 dots.
+    final v = x % 6.283185307;
+    // Taylor series approximation, good enough for visual orbits.
+    final x2 = v * v;
+    final x4 = x2 * x2;
+    final x6 = x4 * x2;
+    return 1 - x2 / 2 + x4 / 24 - x6 / 720;
   }
 }
 
@@ -211,14 +336,13 @@ class ProxSyncNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: ProxSpacing.xs),
       child: Text(
         message,
         textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        style: ProxType.caption(color: c.contentTertiary),
       ),
     );
   }
@@ -231,12 +355,37 @@ class ProxErrorNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return ProxSwitcher(
-      child: Text(
-        message,
+      child: Container(
         key: ValueKey<String>(message),
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Theme.of(context).colorScheme.error),
+        padding: const EdgeInsets.symmetric(
+          horizontal: ProxSpacing.md,
+          vertical: ProxSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: c.statusError.withValues(alpha: 0.08),
+          borderRadius: ProxRadii.cardSpecRadius,
+          border: Border.all(color: c.statusError.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: ProxIconSizes.sm,
+              color: c.statusError,
+            ),
+            const SizedBox(width: ProxSpacing.sm),
+            Flexible(
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: ProxType.caption(color: c.statusError),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -250,23 +399,25 @@ class ProxLoadingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: ProxSpacing.sm),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: c.accentBrand,
+            ),
           ),
           const SizedBox(width: ProxSpacing.sm),
           Flexible(
             child: Text(
               label,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: ProxType.caption(color: c.contentSecondary),
             ),
           ),
         ],
@@ -285,23 +436,20 @@ class ProxEmptyLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: ProxSpacing.xs),
       child: Text(
         message,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        style: ProxType.caption(color: c.contentSecondary),
       ),
     );
   }
 }
 
-/// Signed-in identity header: avatar initial + name + email + held roles.
-/// Shared by the role hub and the device screen (was two identical
-/// `_IdentityHeader` copies). Keeps the legacy "Signed in as …" copy the
-/// flows rely on.
-class ProxIdentityHeader extends StatelessWidget {
+/// Signed-in identity header with gradient avatar ring. Avatar border
+/// animates slowly (brand gradient rotating) for a premium feel.
+class ProxIdentityHeader extends StatefulWidget {
   final String displayName;
   final String email;
   final String heldLabel;
@@ -313,50 +461,113 @@ class ProxIdentityHeader extends StatelessWidget {
   });
 
   @override
+  State<ProxIdentityHeader> createState() => _ProxIdentityHeaderState();
+}
+
+class _ProxIdentityHeaderState extends State<ProxIdentityHeader> {
+  Timer? _timer;
+  double _angle = 0;
+  var _armed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed) return;
+    _armed = true;
+    if (!ProxMotion.reduced(context)) {
+      _timer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+        if (!mounted) return;
+        setState(() => _angle = (_angle + 0.015) % 6.283);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = ProximityColors.of(context);
     final initial =
-        displayName.trim().isEmpty ? '?' : displayName.trim()[0].toUpperCase();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer,
-            shape: BoxShape.circle,
-            border: Border.all(color: scheme.primary.withValues(alpha: 0.3)),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            initial,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: scheme.onPrimaryContainer,
-                  fontWeight: FontWeight.w700,
+        widget.displayName.trim().isEmpty ? '?' : widget.displayName.trim()[0].toUpperCase();
+
+    return ProxFadeSlideIn(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Avatar with gradient ring.
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: SweepGradient(
+                startAngle: _angle,
+                endAngle: _angle + 6.283,
+                colors: [
+                  c.accentBrand,
+                  c.statusMarked,
+                  c.accentBrand,
+                ],
+              ),
+            ),
+            padding: const EdgeInsets.all(2.5),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.surfaceBase,
+              ),
+              padding: const EdgeInsets.all(2),
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.accentBrand.withValues(alpha: 0.1),
                 ),
+                alignment: Alignment.center,
+                child: Text(
+                  initial,
+                  style: ProxType.display(color: c.accentBrand).copyWith(
+                    fontSize: 22,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: ProxSpacing.sm),
-        Text('Signed in as $displayName',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleLarge),
-        Text(email,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                )),
-        if (heldLabel.isNotEmpty) ...[
-          const SizedBox(height: ProxSpacing.xs),
+          const SizedBox(height: ProxSpacing.md),
           Text(
-            'Registered as $heldLabel.',
+            'Signed in as ${widget.displayName}',
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+            style: ProxType.title(color: c.contentPrimary),
           ),
+          const SizedBox(height: 2),
+          Text(
+            widget.email,
+            textAlign: TextAlign.center,
+            style: ProxType.caption(color: c.contentSecondary),
+          ),
+          if (widget.heldLabel.isNotEmpty) ...[
+            const SizedBox(height: ProxSpacing.xs),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: ProxSpacing.md,
+                vertical: ProxSpacing.xs,
+              ),
+              decoration: BoxDecoration(
+                color: c.accentBrand.withValues(alpha: 0.08),
+                borderRadius: ProxRadii.chipRadius,
+              ),
+              child: Text(
+                'Registered as ${widget.heldLabel}',
+                textAlign: TextAlign.center,
+                style: ProxType.caption(color: c.accentBrand),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

@@ -6,6 +6,10 @@
 // INSIDE this component as a transition-in animation when its state flips
 // to `Marked`, not as a separate widget.
 //
+// UI Overhaul: on flip-to-Marked, a brief gradient wash radiates outward
+// from the badge, giving a "confirmed" celebration micro-moment. The pill
+// gets a soft inner shadow in the status color for depth.
+//
 // - `Marked` (statusMarked, check) — elastic scale-in on flip-to-Marked.
 // - `Late` (statusLate, clock).
 // - `Wrong org` (statusError, triangle).
@@ -65,6 +69,8 @@ class _VerdictBadgeState extends State<VerdictBadge>
   var _dim = false;
   AnimationController? _pop;
   var _popArmed = false;
+  // Track whether the "just marked" wash is active.
+  var _showWash = false;
 
   @override
   void didChangeDependencies() {
@@ -84,7 +90,10 @@ class _VerdictBadgeState extends State<VerdictBadge>
     if (old.status == widget.status || ProxMotion.reduced(context)) return;
     // Elastic just-marked transition lives INSIDE the component: it fires
     // when the state flips TO Marked, never as a separate widget.
-    if (widget.status == ProxStatus.marked) _armPop(run: true);
+    if (widget.status == ProxStatus.marked) {
+      _armPop(run: true);
+      _triggerWash();
+    }
     if (widget.status == ProxStatus.pending) {
       _armPulse();
     } else {
@@ -98,6 +107,13 @@ class _VerdictBadgeState extends State<VerdictBadge>
       duration: ProxDurations.verdictPop,
     );
     if (run) _pop!.forward(from: 0);
+  }
+
+  void _triggerWash() {
+    setState(() => _showWash = true);
+    Future.delayed(ProxDurations.verdictWash, () {
+      if (mounted) setState(() => _showWash = false);
+    });
   }
 
   void _armPulse() {
@@ -133,7 +149,9 @@ class _VerdictBadgeState extends State<VerdictBadge>
     final icon = ProxIcons.statusIcon(widget.status, active: widget.active);
     final word = widget.label ?? VerdictBadge.labelFor(widget.status);
 
-    Widget badge = Container(
+    Widget badge = AnimatedContainer(
+      duration: ProxDurations.small,
+      curve: ProxCurves.standard,
       padding: const EdgeInsets.symmetric(
         horizontal: ProxSpacing.md,
         vertical: ProxSpacing.xs,
@@ -141,7 +159,21 @@ class _VerdictBadgeState extends State<VerdictBadge>
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(ProxRadii.pill),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+        boxShadow: _showWash
+            ? [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.3),
+                  blurRadius: 16,
+                  spreadRadius: 2,
+                ),
+              ]
+            : [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.06),
+                  blurRadius: 4,
+                ),
+              ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

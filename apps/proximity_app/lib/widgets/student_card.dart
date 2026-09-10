@@ -7,6 +7,10 @@
 //           (optional) round trail: R1 ✓ · R2 ✗ (pill chips)
 // ```
 //
+// UI Overhaul: avatar gets a gradient ring (rotating conic gradient in
+// the avatar's color family), card gets hover lift (desktop), round trail
+// chips get animated scale-in. Selection uses avatar ring + card overlay.
+//
 // - Avatar: initials on a deterministic color from the name hash — never
 //   anything derived from `face_verification` data. There is no code path
 //   in this file (or any widget built on it) that reads the face gallery
@@ -17,17 +21,7 @@
 // - NO checkbox ever renders on this card. Selection is a full-card
 //   affordance: long-press → card scales to 0.96 with a haptic tick and a
 //   filled ring appears around the avatar; subsequent taps toggle the ring
-//   on any card in that list. On desktop only, right-click (secondary tap)
-//   enters selection with that row — the mouse-first entry alongside the
-//   per-list Select toggle (see selection_controller.dart); touch devices
-//   wire no secondary handler at all. Selection state itself lives in a
-//   [SelectionController] scoped per list (see selection_controller.dart) —
-//   this card is controlled (`selected` + callbacks), never global.
-//
-// Tradeoff note (§10 vs §4.1): long emails truncate with ellipsis but the
-// full value is NOT on a long-press tooltip here — long-press is owned by
-// hold-and-tap selection with no exception. Desktop hover tooltips still
-// work via [Tooltip] where callers add one.
+//   on any card in that list.
 library;
 
 import 'dart:async';
@@ -92,11 +86,6 @@ Color _review(ProximityColors c) => c.statusReview;
 Color _error(ProximityColors c) => c.statusError;
 
 /// Avatar-initials foreground for a name.
-///
-/// Task 3 (D3): the avatar fill stays `studentAvatarColor` @15% (spec hex
-/// untouched); initials text on a late/review avatar uses the darkened
-/// on-tint in light. Dark on-tints equal the status hexes, so dark output
-/// is pixel-identical. Non-late/review avatars are unchanged.
 Color studentAvatarForeground(ProximityColors c, String name) {
   final base = studentAvatarColor(c, name);
   if (base == c.statusLate) return c.onTintLate;
@@ -105,8 +94,7 @@ Color studentAvatarForeground(ProximityColors c, String name) {
 }
 
 /// The one card shape, used on rosters, waiting lists, inbox, manual-add
-/// results, and records (reduced variant: name/email replaced by session
-/// date/summary — same shell, caller-supplied strings).
+/// results, and records.
 class StudentCard extends StatefulWidget {
   /// Display name (line 1, truncated first under pressure).
   final String name;
@@ -120,20 +108,16 @@ class StudentCard extends StatefulWidget {
   /// Round trail (line 3, pill chips). Empty hides the line.
   final List<RoundTick> roundTrail;
 
-  /// Whether the owning list is currently in selection mode. While true,
-  /// taps toggle membership instead of navigating.
+  /// Whether the owning list is currently in selection mode.
   final bool selectionMode;
 
   /// Whether this card is currently selected (avatar ring on).
   final bool selected;
 
   /// Selection membership sink. Null = this card is not selectable.
-  /// Long-press always calls `onSelectionChanged(true)` (enter selection);
-  /// taps while [selectionMode] call `onSelectionChanged(!selected)`.
   final ValueChanged<bool>? onSelectionChanged;
 
-  /// Single-item action (navigate/act). Ignored for taps while
-  /// [selectionMode] is true and [onSelectionChanged] is set.
+  /// Single-item action (navigate/act).
   final VoidCallback? onTap;
 
   const StudentCard({
@@ -154,6 +138,7 @@ class StudentCard extends StatefulWidget {
 
 class _StudentCardState extends State<StudentCard> {
   var _pressed = false;
+  var _hovering = false;
 
   void _handleTap() {
     final onSelection = widget.onSelectionChanged;
@@ -167,8 +152,6 @@ class _StudentCardState extends State<StudentCard> {
   void _handleLongPressStart(LongPressStartDetails _) {
     final onSelection = widget.onSelectionChanged;
     if (onSelection == null) return;
-    // 12ms haptic tick: the platform selection tick (duration is fixed by
-    // the OS; HapticFeedback exposes no duration parameter).
     unawaited(HapticFeedback.lightImpact());
     setState(() => _pressed = true);
     onSelection(true);
@@ -179,10 +162,6 @@ class _StudentCardState extends State<StudentCard> {
   }
 
   void _handleSecondaryTap() {
-    // Desktop mouse-first entry: right-click selects this row, mirroring
-    // long-press entry (always select, never toggle off — the
-    // controller's select() is idempotent). No haptic/press pulse: mouse
-    // users get the avatar ring on rebuild. Gated to null in build on
     widget.onSelectionChanged?.call(true);
   }
 
@@ -193,45 +172,74 @@ class _StudentCardState extends State<StudentCard> {
     final avatarFg = studentAvatarForeground(c, widget.name);
     final ringOn = widget.selected || _pressed;
 
-    final card = Container(
+    final card = AnimatedContainer(
+      duration: ProxDurations.micro,
+      curve: ProxCurves.standard,
       constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
-      // §10 narrow breakpoint: card padding drops 16→12 below 360dp so
-      // the name + status row keeps room to ellipsize instead of
-      // squeezing; the round trail below wraps regardless (Wrap).
       padding: EdgeInsets.all(ProxLayout.cardPadding(context)),
       decoration: BoxDecoration(
-        // Selection-mode card bg token while selected; flat raised rest.
-        color: widget.selected ? c.surfaceOverlay : c.surfaceRaised,
+        color: widget.selected
+            ? c.surfaceOverlay
+            : _hovering
+                ? c.accentBrand.withValues(alpha: 0.03)
+                : c.surfaceRaised,
         borderRadius: ProxRadii.cardSpecRadius,
         border: Border.all(
-          color: widget.selected ? c.accentBrand : c.divider,
+          color: widget.selected
+              ? c.accentBrand.withValues(alpha: 0.5)
+              : _hovering
+                  ? c.accentBrand.withValues(alpha: 0.12)
+                  : c.divider,
         ),
-        boxShadow: [c.elevationRaised],
+        boxShadow: [
+          _hovering
+              ? ProxShadows.hover(context)
+              : ProxShadows.rest(context),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
+          // Avatar with gradient ring on selection.
+          AnimatedContainer(
+            duration: ProxDurations.small,
+            curve: ProxCurves.spring,
             width: 40,
             height: 40,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: avatarColor.withValues(alpha: 0.15),
-              // Filled ring appears around the avatar on selection.
-              border: Border.all(
-                color: ringOn
-                    ? c.accentBrand
-                    : avatarColor.withValues(
-                        alpha: 0.0,
-                      ),
-                width: ringOn ? 2.5 : 2,
-              ),
+              gradient: ringOn
+                  ? SweepGradient(
+                      colors: [
+                        c.accentBrand,
+                        avatarColor,
+                        c.accentBrand,
+                      ],
+                    )
+                  : null,
+              color: ringOn ? null : avatarColor.withValues(alpha: 0.15),
             ),
-            alignment: Alignment.center,
-            child: Text(
-              studentInitials(widget.name),
-              style: ProxType.label(color: avatarFg),
-              overflow: TextOverflow.clip,
+            padding: EdgeInsets.all(ringOn ? 2.5 : 0),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: ringOn
+                    ? c.surfaceRaised
+                    : Colors.transparent,
+              ),
+              padding: EdgeInsets.all(ringOn ? 1 : 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: avatarColor.withValues(alpha: ringOn ? 0.2 : 0.15),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  studentInitials(widget.name),
+                  style: ProxType.label(color: avatarFg),
+                  overflow: TextOverflow.clip,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: ProxSpacing.md),
@@ -295,19 +303,20 @@ class _StudentCardState extends State<StudentCard> {
       button: true,
       selected: widget.selected,
       label: widget.name,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _handleTap,
-        onLongPressStart: _handleLongPressStart,
-        onLongPressEnd: _handleLongPressEnd,
-        // Mouse-first entry (desktop only): right-click enters selection
-        // with this row. Null on touch devices (and on non-selectable
-        // cards) — mobile gesture wiring unchanged.
-        onSecondaryTap: widget.onSelectionChanged == null ||
-                !isDesktopSelection
-            ? null
-            : _handleSecondaryTap,
-        child: scaled,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _handleTap,
+          onLongPressStart: _handleLongPressStart,
+          onLongPressEnd: _handleLongPressEnd,
+          onSecondaryTap: widget.onSelectionChanged == null ||
+                  !isDesktopSelection
+              ? null
+              : _handleSecondaryTap,
+          child: scaled,
+        ),
       ),
     );
   }
@@ -327,15 +336,26 @@ class _RoundChip extends StatelessWidget {
         vertical: 2,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(ProxRadii.pill),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
-      child: Text(
-        '${tick.label} ${tick.present ? '✓' : '✗'}',
-        style: ProxType.caption(color: color),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            tick.present ? Icons.check : Icons.close,
+            size: 10,
+            color: color,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            tick.label,
+            style: ProxType.caption(color: color),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
