@@ -47,8 +47,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     try {
       await fn();
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() => _status = '$e'.replaceFirst('StateError: ', ''));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
