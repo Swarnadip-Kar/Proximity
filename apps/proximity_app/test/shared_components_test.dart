@@ -181,8 +181,12 @@ void main() {
     expect(
         find.text('10000001 · student@example.com'), findsOneWidget);
     expect(find.text('Marked'), findsOneWidget);
-    expect(find.text('R1 ✓'), findsOneWidget);
-    expect(find.text('R2 ✗'), findsOneWidget);
+    // Round trail renders as pill chips: label text + check/close icon
+    // (UI overhaul: icon + color + text, never raw "R1 ✓" text).
+    expect(find.text('R1'), findsOneWidget);
+    expect(find.text('R2'), findsOneWidget);
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
     // No checkbox anywhere — selection is hold-and-tap.
     expect(find.byType(Checkbox), findsNothing);
     expect(find.byType(CheckboxListTile), findsNothing);

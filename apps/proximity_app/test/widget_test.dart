@@ -23,6 +23,7 @@ import 'package:proximity_app/main.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/student_home.dart';
+import 'package:proximity_app/widgets/prox_buttons.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
@@ -524,7 +525,7 @@ void main() {
     expect(find.textContaining('Which account'), findsOneWidget);
     // device → account & key (Continue sits below the device facts:
     // scroll into view inside the shell-hosted flow viewport first).
-    await t.scrollUntilVisible(find.widgetWithText(FilledButton, 'Continue'),
+    await t.scrollUntilVisible(find.widgetWithText(ProxPrimaryButton, 'Continue'),
         300,
         scrollable: find
             .descendant(
@@ -532,7 +533,7 @@ void main() {
                 matching: find.byType(Scrollable))
             .first);
     await t.pumpAndSettle();
-    await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
     await t.pumpAndSettle();
     // 2. account & key: ID entry + device key + Continue to face scan.
     // Account picked up silently (already signed in on the landing): no
@@ -579,7 +580,7 @@ void main() {
     // 4. result: save → linked banner after Done (back on student home).
     expect(find.text('Save enrollment'), findsWidgets);
     final saveBtn =
-        find.widgetWithText(FilledButton, 'Save enrollment');
+        find.widgetWithText(ProxPrimaryButton, 'Save enrollment');
     // Result step's own scroll (the flow PageView viewport is an
     // ancestor Scrollable — target the innermost scroll here).
     await t.scrollUntilVisible(saveBtn, 300,

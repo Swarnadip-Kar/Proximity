@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
 
 void main() {
@@ -7,6 +8,7 @@ void main() {
     testWidgets('renders neutral copy and resolves on tap', (tester) async {
       var resolved = '';
       await tester.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
         home: Scaffold(
           body: DupFlagSection(
             groups: {
@@ -34,6 +36,7 @@ void main() {
 
     testWidgets('triple renders once; empty renders nothing', (tester) async {
       await tester.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
         home: Scaffold(
           body: DupFlagSection(
             groups: {
@@ -48,6 +51,7 @@ void main() {
       ));
       expect(find.textContaining('Duplicate face detected between'), findsOneWidget);
       await tester.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
         home: Scaffold(
           body: DupFlagSection(groups: {}, names: {}, onResolve: (_) async {}),
         ),

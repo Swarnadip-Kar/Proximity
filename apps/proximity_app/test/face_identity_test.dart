@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/platformx.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_blocked.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -174,8 +175,9 @@ void main() {
       // are unset right after the body — addTearDown runs too late).
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(body: FaceBlockedCard(flow: 'Face enrollment')),
+        MaterialApp(
+          theme: proxLightTheme(),
+          home: const Scaffold(body: FaceBlockedCard(flow: 'Face enrollment')),
         ),
       );
       debugDefaultTargetPlatformOverride = null;
@@ -189,6 +191,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       await tester.pumpWidget(
         MaterialApp(
+          theme: proxLightTheme(),
           home: const MobileOnlyGuidanceScreen(route: 'mark/face'),
           routes: {ProxRoutes.myAttendance: (_) => const Placeholder()},
         ),

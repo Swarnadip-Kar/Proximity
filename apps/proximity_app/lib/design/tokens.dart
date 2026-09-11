@@ -729,10 +729,15 @@ class ProximityColors extends ThemeExtension<ProximityColors> {
           color: Color(0x1A000000), // black 10%
         );
 
-  /// Reads the extension. Both app themes register it (see app_theme.dart);
-  /// the `!` fails fast if a test/sheet builds outside the app themes.
+  /// Reads the extension. Both app themes register it (see app_theme.dart).
+  /// Falls back to the brightness-matched const instance when a subtree
+  /// (test harness, dialog/sheet built outside the app theme) has no
+  /// extension — never crashes, visuals stay identical under the app themes.
   static ProximityColors of(BuildContext context) =>
-      Theme.of(context).extension<ProximityColors>()!;
+      Theme.of(context).extension<ProximityColors>() ??
+      (Theme.of(context).brightness == Brightness.dark
+          ? const ProximityColors.dark()
+          : const ProximityColors.light());
 
   @override
   ProximityColors copyWith({

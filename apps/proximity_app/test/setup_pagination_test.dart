@@ -31,6 +31,7 @@ import 'package:proximity_app/features/setup/welcome_screen.dart';
 import 'package:proximity_app/features/setup/welcome_sections.dart';
 import 'package:proximity_app/screens/setup_flow_screen.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
+import 'package:proximity_app/widgets/prox_buttons.dart';
 
 const _acct = SignedAccount(
     email: 'student@example.com', displayName: 'Test User', uid: 'test-uid');
@@ -153,7 +154,9 @@ void main() {
       expect(find.byType(DeviceAccountSection), findsOneWidget);
       expect(find.byType(DeviceKeySection), findsOneWidget);
       expect(find.byType(DeviceMoveSection), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Continue'), findsOneWidget);
+      // UI overhaul: CTA is a gradient ProxPrimaryButton, not FilledButton.
+      // Assert the user-visible label, not the button implementation.
+      expect(find.widgetWithText(ProxPrimaryButton, 'Continue'), findsOneWidget);
       // Intro purposes live on later pages, never here.
       expect(find.byType(IntroOverviewSection), findsNothing);
       expect(find.byType(IntroAccountSection), findsNothing);
@@ -343,7 +346,7 @@ void main() {
       await _settleStepped(t);
       // Start lands on the first incomplete page (device).
       expect(find.text('Confirm device'), findsOneWidget);
-      await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
       await _settleStepped(t);
       // Exactly one page forward — account&key, not capture (the about
       // page is removed from the flow).
@@ -382,7 +385,7 @@ void main() {
       ));
       await _settleStepped(t);
       expect(find.text('Confirm device'), findsOneWidget);
-      await t.tap(find.widgetWithText(FilledButton, 'Continue'));
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
       await _settleStepped(t);
       expect(find.text('Account & key'), findsOneWidget);
       // System back: one page back to device (never welcome/role).

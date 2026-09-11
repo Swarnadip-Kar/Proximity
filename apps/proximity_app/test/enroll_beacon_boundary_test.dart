@@ -31,6 +31,7 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
+import 'package:proximity_app/widgets/prox_buttons.dart';
 
 /// Fail-closed gallery write that always throws (save-error variant).
 class _EnrollBoom extends FakeFaceVerifier {
@@ -322,7 +323,7 @@ void main() {
       await t.pageBack();
       await t.pumpAndSettle();
       expect(find.byType(EnrollCaptureScreen), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Continue'), findsOneWidget);
+      expect(find.widgetWithText(ProxPrimaryButton, 'Continue'), findsOneWidget);
       // Overlay-owned prompt persists in the terminal state (the overlay
       // is always mounted over the preview); the bare frame self-sizes
       // through the bottom-bar change, so no size pin here.
@@ -344,7 +345,7 @@ void main() {
       expect(_previewStackFinder(), findsOneWidget);
       // All 5 stills accepted, gallery write throws → fail-closed error bar
       // (loop + sweep stopped — settle-safe), progress kept.
-      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
       await t.pumpAndSettle();
       // Fail-closed chrome kept: error shown, retry offered, no advance.
       expect(find.textContaining('No face detected'), findsOneWidget);

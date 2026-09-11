@@ -122,28 +122,37 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton> {
                 horizontal: ProxSpacing.xl,
                 vertical: ProxSpacing.md,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (widget.icon != null) ...[
-                    IconTheme(
-                      data: const IconThemeData(
-                        color: Colors.white,
-                        size: ProxIconSizes.md,
+              // FittedBox scales down only when the label+icon exceed the
+              // available width (e.g. long "Continue as Professor offline"
+              // at large text scale) — short labels measure identically
+              // to a plain Row, so existing layouts/hit-tests are untouched.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (widget.icon != null) ...[
+                      IconTheme(
+                        data: const IconThemeData(
+                          color: Colors.white,
+                          size: ProxIconSizes.md,
+                        ),
+                        child: widget.icon!,
                       ),
-                      child: widget.icon!,
+                      const SizedBox(width: ProxSpacing.sm),
+                    ],
+                    DefaultTextStyle(
+                      style: ProxType.label(color: Colors.white).copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                      softWrap: false,
+                      child: widget.label,
                     ),
-                    const SizedBox(width: ProxSpacing.sm),
                   ],
-                  DefaultTextStyle(
-                    style: ProxType.label(color: Colors.white).copyWith(
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
-                    ),
-                    child: widget.label,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -216,30 +225,35 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton> {
                 horizontal: ProxSpacing.xl,
                 vertical: ProxSpacing.md,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (widget.icon != null) ...[
-                    IconTheme(
-                      data: IconThemeData(
-                        color: enabled ? c.accentBrand : c.contentTertiary,
-                        size: ProxIconSizes.md,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (widget.icon != null) ...[
+                      IconTheme(
+                        data: IconThemeData(
+                          color: enabled ? c.accentBrand : c.contentTertiary,
+                          size: ProxIconSizes.md,
+                        ),
+                        child: widget.icon!,
                       ),
-                      child: widget.icon!,
+                      const SizedBox(width: ProxSpacing.sm),
+                    ],
+                    DefaultTextStyle(
+                      style: ProxType.label(
+                        color: enabled ? c.accentBrand : c.contentTertiary,
+                      ).copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                      softWrap: false,
+                      child: widget.label,
                     ),
-                    const SizedBox(width: ProxSpacing.sm),
                   ],
-                  DefaultTextStyle(
-                    style: ProxType.label(
-                      color: enabled ? c.accentBrand : c.contentTertiary,
-                    ).copyWith(
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                    child: widget.label,
-                  ),
-                ],
+                ),
               ),
             ),
           ),

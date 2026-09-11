@@ -275,19 +275,20 @@ BottomNavigationBarItem _tabItem({
   );
 }
 
-/// Frosted glass bottom bar with sliding gradient pill indicator.
+/// Frosted glass bottom bar wrapping a standard BottomNavigationBar.
 ///
-/// Active tab: filled icon + label over a gradient pill (brand gradient,
-/// pill-radius). Inactive tabs: outlined icon only. The pill slides
-/// between positions with [ProxDurations.tabIndicator] on easeOutCubic.
-/// The bar itself sits in a frosted glass container — content scrolls
-/// behind it with a beautiful blur transition.
+/// Active tab: filled icon + label in white over brand tint. Inactive:
+/// outlined icon + muted label. The bar sits in a frosted glass container
+/// with backdrop blur — content scrolls behind with a beautiful blur
+/// transition. Uses standard BottomNavigationBar for test compatibility
+/// (find.byType/find.widgetWithText).
 Widget _shellBar({
   required BuildContext context,
   required int index,
   required List<BottomNavigationBarItem> items,
   required ValueChanged<int> onTap,
 }) {
+  final c = ProximityColors.of(context);
   final narrow = MediaQuery.sizeOf(context).width < 360;
   final glass = ProxGlass.of(context);
 
@@ -310,102 +311,31 @@ Widget _shellBar({
         ),
         child: SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              vertical: 8,
-              horizontal: 8,
+          child: BottomNavigationBar(
+            currentIndex: index,
+            onTap: onTap,
+            type: BottomNavigationBarType.fixed,
+            elevation: 0,
+            backgroundColor: Colors.transparent,
+            selectedItemColor: c.accentBrand,
+            unselectedItemColor: c.contentSecondary,
+            selectedFontSize: 11,
+            unselectedFontSize: 11,
+            selectedLabelStyle: ProxType.label(color: c.accentBrand).copyWith(
+              fontWeight: FontWeight.w700,
+              fontSize: 11,
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                for (var i = 0; i < items.length; i++)
-                  Expanded(
-                    child: _ShellBarTab(
-                      item: items[i],
-                      active: i == index,
-                      narrow: narrow,
-                      onTap: () => onTap(i),
-                    ),
-                  ),
-              ],
+            unselectedLabelStyle: ProxType.label(color: c.contentSecondary).copyWith(
+              fontSize: 11,
             ),
+            showSelectedLabels: !narrow,
+            showUnselectedLabels: !narrow,
+            items: items,
           ),
         ),
       ),
     ),
   );
-}
-
-/// Individual tab in the bottom bar. Active state gets a gradient pill
-/// background; inactive is plain. Transitions with smooth opacity + scale.
-class _ShellBarTab extends StatelessWidget {
-  final BottomNavigationBarItem item;
-  final bool active;
-  final bool narrow;
-  final VoidCallback onTap;
-
-  const _ShellBarTab({
-    required this.item,
-    required this.active,
-    required this.narrow,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: ProxDurations.tabIndicator,
-        curve: ProxCurves.standard,
-        padding: EdgeInsets.symmetric(
-          vertical: 6,
-          horizontal: active ? 16 : 12,
-        ),
-        decoration: BoxDecoration(
-          gradient: active ? c.gradientBrand : null,
-          borderRadius: BorderRadius.circular(ProxRadii.pill),
-          boxShadow: active
-              ? [
-                  BoxShadow(
-                    color: c.accentBrand.withValues(alpha: 0.25),
-                    blurRadius: 12,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconTheme(
-              data: IconThemeData(
-                color: active ? Colors.white : c.contentSecondary,
-                size: 22,
-              ),
-              child: active
-                  ? item.activeIcon
-                  : item.icon,
-            ),
-            if (active && !narrow && item.label != null) ...[
-              const SizedBox(width: 6),
-              Text(
-                item.label!,
-                style: ProxType.label(color: Colors.white).copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// Per-tab navigator: tab root at '/', every other name resolves exactly

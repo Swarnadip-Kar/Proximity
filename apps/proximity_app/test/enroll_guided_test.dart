@@ -31,6 +31,7 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
+import 'package:proximity_app/widgets/prox_buttons.dart';
 import 'package:proximity_app/widgets/prox_cards.dart';
 
 class _EnrollBoom extends FakeFaceVerifier {
@@ -674,13 +675,13 @@ void main() {
       final ctl = await _keyReady(verifier: _EnrollBoom());
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
       expect(find.textContaining('No face detected'), findsOneWidget);
       // Still on capture (no auto-advance), all 5 accepted stills kept.
       expect(find.text('Save enrollment'), findsNothing);
       // Retrying a poisoned gallery fails closed again — never a save.
-      await t.tap(find.widgetWithText(FilledButton, 'Try again'));
-      await _pumpUntil(t, find.widgetWithText(FilledButton, 'Try again'));
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
       expect(find.text('Save enrollment'), findsNothing);
       await _drain(t);
       expect(t.takeException(), isNull);

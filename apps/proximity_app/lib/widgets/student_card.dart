@@ -201,9 +201,12 @@ class _StudentCardState extends State<StudentCard> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Avatar with gradient ring on selection.
+          // NOTE: padding animates 0 ↔ 2.5, so the curve must NOT overshoot
+          // (easeOutBack dips below 0 → AnimatedContainer asserts
+          // padding.isNonNegative). Keep the spring for scale only.
           AnimatedContainer(
             duration: ProxDurations.small,
-            curve: ProxCurves.spring,
+            curve: ProxCurves.standard,
             width: 40,
             height: 40,
             decoration: BoxDecoration(

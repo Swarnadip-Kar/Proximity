@@ -39,10 +39,9 @@ void main() {
       'STALE': 'Device trust STALE',
       'NONE': 'Device NONE',
     }.entries) {
-      await t.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: DeviceTrustBadge(level: entry.key, pkDHex: 'abcdef1234567890'),
-        ),
+      // DeviceTrustBadge reads ProximityColors — pump under the app theme.
+      await t.pumpWidget(_themed(
+        DeviceTrustBadge(level: entry.key, pkDHex: 'abcdef1234567890'),
       ));
       expect(find.textContaining(entry.value), findsOneWidget);
     }

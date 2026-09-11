@@ -235,7 +235,10 @@ void main() {
       await _settleStepped(t);
       expect(find.byType(WelcomeHeroSection), findsOneWidget);
       expect(find.byType(WelcomeSignInSection), findsOneWidget);
-      expect(find.text('Be there. Be marked.'), findsOneWidget);
+      // Hero headline uses a display line-break ("Be there.\nBe marked.")
+      // — same words, premium two-line typography.
+      expect(find.textContaining('Be there.'), findsOneWidget);
+      expect(find.textContaining('Be marked.'), findsOneWidget);
       expect(find.text('Sign in with Google'), findsOneWidget);
     });
   });
@@ -272,9 +275,13 @@ void main() {
         _baseOverrides(auth, store, cloud),
       ));
       await _settleStepped(t);
-      expect(find.text('Be there. Be marked.'), findsOneWidget);
+      expect(find.textContaining('Be there.'), findsOneWidget);
+      expect(find.textContaining('Be marked.'), findsOneWidget);
       expect(find.text('Sign in with Google'), findsOneWidget);
       expectCollapsed(t, 'For professors');
+      // Taller radar hero may push the expander below the fold —
+      // scroll into view before tapping (screen is scrollable by design).
+      await t.scrollUntilVisible(find.text('For professors'), 200);
       await t.tap(find.text('For professors'));
       await _settleStepped(t);
       expectExpanded(t, 'For professors');
