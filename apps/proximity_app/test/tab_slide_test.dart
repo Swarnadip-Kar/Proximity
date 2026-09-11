@@ -1,11 +1,11 @@
-// Tab-switch contracts (§3.1 slide + swipe rebuild): bottom-nav taps AND
-// content flings switch tabs with one directional motion (direction follows
-// tab order, [ProxDurations.tabSlide] on easeOutCubic — never
-// double-animated), bar and content sync both ways. Per-tab Navigator
-// stacks + scroll positions survive, reduce-motion falls back to instant
-// opacity, the Mark gate binds swipes exactly like taps (unenrolled
-// swipe-to-Mark snaps back + routes setup, never lands), and swipes only
-// ever leave a tab root (a pushed sub-page keeps its own gestures/back).
+// Tab-switch contracts (§3.1 pager): bottom-nav taps animate the pager and
+// finger drags track 1:1 with snap on release (WhatsApp pattern —
+// PageView, so every tab including the centre pages identically). Bar and
+// content sync both ways. Per-tab Navigator stacks + scroll positions
+// survive (keep-alive pages), reduce-motion parks the pager (swipes off,
+// taps jump), the Mark gate binds swipes exactly like taps (unenrolled
+// swipe-to-Mark snaps back + routes setup, never lands), and swipes never
+// leave a pushed sub-page (page lock).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -144,15 +144,24 @@ Future<void> _openTab(WidgetTester t, String label) async {
 
 /// Bottom-bar selected index (bar/content sync both ways): the active
 /// pill is the one whose AnimatedContainer carries the brand gradient.
+/// Searches offstage too: the auto-pushed flow covers (offstages) the bar
+/// while open, and sync assertions must still read it.
 int _barIndex(WidgetTester t) {
-  final isStudent =
-      find.byKey(const ValueKey('shell-tab-Mark')).evaluate().isNotEmpty;
+  final isStudent = find
+      .byKey(const ValueKey('shell-tab-Mark'), skipOffstage: false)
+      .evaluate()
+      .isNotEmpty;
   final labels =
       isStudent ? ['Mark', 'Courses', 'Account'] : ['Live', 'Courses', 'Account'];
   for (var i = 0; i < labels.length; i++) {
+    // NOTE: every nested finder needs skipOffstage:false here — the
+    // outer flag alone cannot resurrect widgets the inner matchers
+    // already excluded.
     final containers = t.widgetList<AnimatedContainer>(find.descendant(
-      of: find.byKey(ValueKey('shell-tab-${labels[i]}')),
-      matching: find.byType(AnimatedContainer),
+      of: find.byKey(ValueKey('shell-tab-${labels[i]}'),
+          skipOffstage: false),
+      matching: find.byType(AnimatedContainer, skipOffstage: false),
+      skipOffstage: false,
     ));
     for (final ac in containers) {
       final d = ac.decoration;
@@ -169,51 +178,37 @@ Future<void> _swipe(WidgetTester t, Finder content, Offset offset) async {
   await steppedSettle(t);
 }
 
-/// True when [opacity] sits directly above a tab [Navigator] (through the
-/// swipe [GestureDetector]); nested screen fades are excluded.
-bool _isTabOpacity(AnimatedOpacity opacity) {
-  final inner = opacity.child;
-  if (inner is Navigator) return true;
-  return inner is GestureDetector && inner.child is Navigator;
+/// Shell pager position (fractional mid-flight, integer at rest).
+/// While the auto-pushed setup flow covers the shell, TWO PageViews coexist
+/// (shell 3-tab pager + flow 6-step stepper) and the covered shell is
+/// offstage — so search offstage too and always read the shell pager
+/// (exactly 3 tab pages); enrolled shells still host just the one pager.
+double? _page(WidgetTester t) {
+  final pagers = t
+      .widgetList<PageView>(find.byType(PageView, skipOffstage: false));
+  for (final p in pagers) {
+    final d = p.childrenDelegate;
+    if (d is SliverChildListDelegate && d.children.length == 3) {
+      return p.controller?.page;
+    }
+  }
+  return pagers.isEmpty ? null : pagers.first.controller?.page;
 }
 
-/// Our per-tab slide widgets: [SlideTransition] is used by other widgets
-/// too, so we match the exact child chain (slide > tab opacity > tab
-/// [Navigator]) instead of the type alone.
-List<SlideTransition> _ourSlides(WidgetTester t) {
-  final all = t.widgetList<SlideTransition>(find.descendant(
-    of: find.byType(IndexedStack),
-    // skipOffstage on the INNER matcher: inactive tabs are kept alive but
-    // unpainted, and the outer flag alone does not reach them.
-    matching: find.byType(SlideTransition, skipOffstage: false),
-    skipOffstage: false,
-  ));
-  return all.where((w) {
-    final c = w.child;
-    return c is AnimatedOpacity && _isTabOpacity(c);
-  }).toList();
+/// Backs out of the auto-pushed flow (one system back per flow step, then
+/// the first-step pop) until it is gone. Bounded by the step count + 1.
+Future<void> _dismissFlow(WidgetTester t) async {
+  for (var i = 0;
+      i < 7 && find.byType(SetupFlowScreen).evaluate().isNotEmpty;
+      i++) {
+    await t.binding.handlePopRoute();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 300));
+  }
 }
 
-/// Paint offsets of the currently-moving tab slides (at rest every slide
-/// sits at [Offset.zero], so only a mid-flight switch shows up here).
-List<double> _movingDx(WidgetTester t) => <double>[
-      for (final w in _ourSlides(t))
-        if (w.position.value != Offset.zero) w.position.value.dx,
-    ];
-
-/// Our per-tab opacity wrappers (same chain match as [_ourSlides]).
-List<AnimatedOpacity> _tabOpacities(WidgetTester t) {
-  return t
-      .widgetList<AnimatedOpacity>(find.descendant(
-        of: find.byType(IndexedStack),
-        // Inactive tabs sit unpainted under the IndexedStack (keep-alive);
-        // the flag belongs on the inner matcher (see above).
-        matching: find.byType(AnimatedOpacity, skipOffstage: false),
-        skipOffstage: false,
-      ))
-      .where(_isTabOpacity)
-      .toList();
-}
+/// Rounded pager index for settled assertions.
+int _pageIndex(WidgetTester t) => (_page(t) ?? -1).round();
 
 /// The Courses-tab list scroll offset (direct [ScrollPosition] read —
 /// card finders are unreliable across drags since off-viewport rows
@@ -238,56 +233,72 @@ void main() {
   });
 
   group('student shell slide', () {
-    testWidgets('rightward tap slides in from right; leftward mirrors',
-        (t) async {
+    testWidgets('rightward tap pages forward; leftward mirrors', (t) async {
       await t.pumpWidget(_studentApp(linked: _linked));
       await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
+      expect(_pageIndex(t), 0);
 
-      // Mark(0) → Courses(1): incoming starts fully right, eases to rest.
+      // Mark(0) → Courses(1): pager eases 0 → 1 mid-flight, then rests.
+      // (First pump delivers the tap through the gesture arena; the
+      // second advances the pager animation.)
       await t.tap(_tabInBar('Courses'));
       await t.pump();
-      expect(_movingDx(t), [1.0]);
       await t.pump(const Duration(milliseconds: 110));
-      final mid = _movingDx(t);
-      expect(mid.length, 1);
-      expect(mid.single, greaterThan(0.0));
-      expect(mid.single, lessThan(1.0));
+      final mid = _page(t);
+      expect(mid, isNotNull);
+      expect(mid!, greaterThan(0.0));
+      expect(mid, lessThan(1.0));
       await t.pump(ProxDurations.tabSlide);
-      expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
+      expect(_pageIndex(t), 1);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
 
       // Same-tab tap restarts nothing (settled at rest).
       await t.tap(_tabInBar('Courses'));
       await t.pump();
-      expect(_movingDx(t), isEmpty);
+      expect(_pageIndex(t), 1);
       await steppedSettle(t);
 
-      // Courses(1) → Mark(0): incoming starts fully left.
+      // Courses(1) → Mark(0): pager eases back.
       await t.tap(_tabInBar('Mark'));
       await t.pump();
-      expect(_movingDx(t), [-1.0]);
+      await t.pump(const Duration(milliseconds: 110));
+      final back = _page(t);
+      expect(back, isNotNull);
+      expect(back!, greaterThan(0.0));
+      expect(back, lessThan(1.0));
       await t.pump(ProxDurations.tabSlide);
-      expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
+      expect(_pageIndex(t), 0);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('Mark gate still fires through the slide path', (t) async {
+    testWidgets('Locked tabs intercept through the slide path', (t) async {
       await t.pumpWidget(_studentApp());
       await steppedSettle(t);
-      // Unenrolled → gate flow, never bare mark.
+      // Unenrolled mounts on Accounts with the auto-pushed flow (one).
       expect(find.byType(SetupFlowScreen), findsOneWidget);
-
-      await _openTab(t, 'Courses');
+      // Back out to drive the pager itself: parked on Accounts.
+      await _dismissFlow(t);
       expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(_pageIndex(t), 2);
 
-      // Returning to Mark re-arms the gate (slide path preserves _selectTab
-      // gate behavior byte-identically).
-      await _openTab(t, 'Mark');
+      // Courses tap parks on Accounts and re-pushes the flow (no dead
+      // end — the flow push is the only way forward).
+      await t.tap(_tabInBar('Courses'));
+      await steppedSettle(t);
       expect(find.byType(SetupFlowScreen), findsOneWidget);
+      await _dismissFlow(t);
+      expect(_pageIndex(t), 2);
+
+      // Mark tap likewise: still Accounts underneath, still one flow.
+      await t.tap(_tabInBar('Mark'));
+      await steppedSettle(t);
+      expect(find.byType(SetupFlowScreen), findsOneWidget);
+      // Drain the re-pushed flow entrance timers before teardown.
+      await steppedSettle(t);
       expect(t.takeException(), isNull);
     });
   });
@@ -299,32 +310,58 @@ void main() {
       await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
-      // Finger left pages forward: Mark → Courses with the same rightward
-      // slide as taps (single motion — tap and swipe never double up).
+      // Finger left pages forward: Mark → Courses (pager ballistic).
       await t.fling(
           find.byType(StudentHomeScreen), const Offset(-400, 0), 800);
-      await t.pump();
-      expect(_movingDx(t), [1.0]);
       await steppedSettle(t);
+      expect(_pageIndex(t), 1);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
       expect(_barIndex(t), 1);
 
-      // Finger right pages back: Courses → Mark, mirrored slide.
+      // Finger right pages back: Courses → Mark.
       await t.fling(
           find.byType(MyAttendanceScreen), const Offset(400, 0), 800);
-      await t.pump();
-      expect(_movingDx(t), [-1.0]);
       await steppedSettle(t);
+      expect(_pageIndex(t), 0);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(_barIndex(t), 0);
 
-      // Past the first edge: stays put, no animation.
+      // Past the first edge: stays put.
       await t.fling(
           find.byType(StudentHomeScreen), const Offset(400, 0), 800);
-      await t.pump();
-      expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
+      expect(_pageIndex(t), 0);
       expect(_barIndex(t), 0);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('page tracks the finger mid-drag, snaps on release',
+        (t) async {
+      await t.pumpWidget(_studentApp(linked: _linked));
+      await steppedSettle(t);
+      final size = t.getSize(find.byType(PageView));
+
+      // Slow finger drag left, held mid-flight: the page sits partway
+      // (locked to the finger — the WhatsApp contract). Moved in steps
+      // with pumps, like a real finger. Past halfway so release snaps
+      // forward (zero-velocity release snaps to nearest).
+      final gesture = await t.startGesture(
+          t.getCenter(find.byType(StudentHomeScreen)));
+      for (var k = 0; k < 6; k++) {
+        await gesture.moveBy(Offset(-size.width * 0.1, 0));
+        await t.pump();
+      }
+      final mid = _page(t);
+      expect(mid, isNotNull);
+      expect(mid!, greaterThan(0.35));
+      expect(mid, lessThan(0.85));
+
+      // Release: snaps forward to Courses.
+      await gesture.up();
+      await steppedSettle(t);
+      expect(_pageIndex(t), 1);
+      expect(find.byType(MyAttendanceScreen), findsOneWidget);
+      expect(_barIndex(t), 1);
       expect(t.takeException(), isNull);
     });
 
@@ -332,53 +369,61 @@ void main() {
       await t.pumpWidget(_studentApp(linked: _linked));
       await steppedSettle(t);
 
-      // ~100px/s: well under the swipe floor — vertical-list jitter and
-      // hesitant drags never page.
+      // ~100px/s short drag: snaps back to Mark on release.
       await t.timedDrag(find.byType(StudentHomeScreen),
           const Offset(-100, 0), const Duration(seconds: 1));
       await steppedSettle(t);
+      expect(_pageIndex(t), 0);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
       expect(_barIndex(t), 0);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('unenrolled swipe-to-Mark snaps back + routes setup',
+    testWidgets('unenrolled swipe toward locked tabs snaps back + flow',
         (t) async {
       await t.pumpWidget(_studentApp());
       await steppedSettle(t);
+      // Mounts on Accounts (page 2) with the auto-pushed flow (one).
       expect(find.byType(SetupFlowScreen), findsOneWidget);
-
-      // Leave Mark by tap (swipe is locked while the gate flow is pushed —
-      // a pushed route is not a tab root).
-      await _openTab(t, 'Courses');
-      expect(find.byType(MyAttendanceScreen), findsOneWidget);
-
-      // Swipe back toward Mark: routes setup, travels, snaps back —
-      // never lands.
-      await t.fling(
-          find.byType(MyAttendanceScreen), const Offset(400, 0), 800);
-      await steppedSettle(t);
-      expect(find.byType(MyAttendanceScreen), findsOneWidget);
-      expect(_barIndex(t), 1);
-      // No visible flow (never lands) …
+      // Back out to drive the pager itself.
+      await _dismissFlow(t);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      // … but the setup route was pushed on the Mark stack.
-      expect(find.byType(SetupFlowScreen, skipOffstage: false),
-          findsOneWidget);
+      expect(_pageIndex(t), 2);
+      expect(_barIndex(t), 2);
+
+      // Swipe back toward Courses (page 1, locked): travels, snaps back —
+      // never lands — and re-triggers the flow (no dead ends).
+      await t.fling(
+          find.byType(StudentAccountScreen), const Offset(400, 0), 800);
+      await steppedSettle(t);
+      expect(_pageIndex(t), 2);
+      expect(_barIndex(t), 2);
+      expect(find.byType(SetupFlowScreen), findsOneWidget);
+      // Drain the re-pushed flow entrance timers before teardown.
+      await steppedSettle(t);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('reduce-motion swipe switches instantly', (t) async {
+    testWidgets('reduce-motion parks the pager: swipes off, taps jump',
+        (t) async {
       await t.pumpWidget(_studentApp(linked: _linked, reduced: true));
       await steppedSettle(t);
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
-      // Slides stay parked: lands with no motion in flight.
+      // Swipe does nothing while parked (motion-sensitive users page by
+      // explicit tap only).
       await t.fling(
           find.byType(StudentHomeScreen), const Offset(-400, 0), 800);
+      await steppedSettle(t);
+      expect(_pageIndex(t), 0);
+      expect(find.byType(StudentHomeScreen), findsOneWidget);
+      expect(_barIndex(t), 0);
+
+      // Taps jump with no motion in flight.
+      await t.tap(_tabInBar('Courses'));
       await t.pump();
+      expect(_pageIndex(t), 1);
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
-      expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
       expect(_barIndex(t), 1);
       expect(t.takeException(), isNull);
@@ -386,23 +431,27 @@ void main() {
   });
 
   group('professor shell slide', () {
-    testWidgets('Live → Account slides from right; Account → Live from left',
+    testWidgets('Live → Account pages forward; Account → Live mirrors',
         (t) async {
       await t.pumpWidget(_profApp(InMemoryDeviceStore()));
       await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
+      expect(_pageIndex(t), 0);
 
       await t.tap(_tabInBar('Account'));
       await t.pump();
-      expect(_movingDx(t), [1.0]);
+      await t.pump(const Duration(milliseconds: 110));
+      final mid = _page(t);
+      expect(mid, isNotNull);
+      expect(mid!, greaterThan(0.0));
       await t.pump(ProxDurations.tabSlide);
-      expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
+      expect(_pageIndex(t), 2);
 
       await t.tap(_tabInBar('Live'));
-      await t.pump();
-      expect(_movingDx(t), [-1.0]);
+      await t.pump(ProxDurations.tabSlide);
       await steppedSettle(t);
+      expect(_pageIndex(t), 0);
       expect(find.text('Go to Courses'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
@@ -454,31 +503,23 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('reduce-motion falls back to instant opacity (no slide)',
+    testWidgets('reduce-motion parks the pager: taps jump, no flight',
         (t) async {
       await t.pumpWidget(_profApp(InMemoryDeviceStore(), reduced: true));
       await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
+      expect(_pageIndex(t), 0);
 
-      // Slides stay parked at rest, and every tab opacity is instant.
-      expect(_ourSlides(t).length, 3);
-      expect(_movingDx(t), isEmpty);
-      final opacities = _tabOpacities(t);
-      expect(opacities.length, 3);
-      for (final e in opacities) {
-        expect(e.duration, Duration.zero);
-      }
-
-      // Switches still land instantly with no slide mid-flight.
+      // Taps jump with no motion mid-flight.
       await t.tap(_tabInBar('Courses'));
       await t.pump();
-      expect(_movingDx(t), isEmpty);
+      expect(_pageIndex(t), 1);
       expect(find.text('Register new course'), findsOneWidget);
       await steppedSettle(t);
 
       await t.tap(_tabInBar('Live'));
       await t.pump();
-      expect(_movingDx(t), isEmpty);
+      expect(_pageIndex(t), 0);
       await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
       expect(t.takeException(), isNull);

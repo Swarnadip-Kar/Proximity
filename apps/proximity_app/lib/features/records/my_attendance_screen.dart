@@ -25,11 +25,21 @@ import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/student_card.dart' show AttendanceRingAvatar;
 import '../../widgets/web_banner.dart';
 import 'course_attendance_detail_screen.dart';
 
 class MyAttendanceScreen extends ConsumerStatefulWidget {
   const MyAttendanceScreen({super.key});
+
+  /// Canonical tab-root route name: `records/mine`.
+  /// Matches the IA node (`ProxRoutes.myAttendance` in `routes.dart`; the
+  /// value is duplicated here as a literal — importing the table would
+  /// cycle back into this screen). This root itself is built by the shell
+  /// tab navigator at `/`; the name documents the ONE IA identity so NAV
+  /// logs, `popUntil` by name/prefix, and deep-links agree with the
+  /// in-tab push below (no duplicate unnamed push).
+  static const String routeName = 'records/mine';
 
   @override
   ConsumerState<MyAttendanceScreen> createState() => _MyAttendanceScreenState();
@@ -42,6 +52,38 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
   String _offlineNote = '';
   List<ClassRecord> _sessions = [];
   Set<String> _hidden = {};
+
+  /// Cached professor Gmail photos per course (student-side device cache,
+  /// saved on gated /window convergence). ''/absent = no photo seen yet
+  /// → no badge. The waiting room always prefers the live poll value.
+  Map<String, String> _profPhotos = {};
+
+  /// Loads cached prof photos for the visible courses (best-effort, after
+  /// the list is already up — never blocks the refresh itself).
+  Future<void> _loadProfPhotos() async {
+    final courses = {
+      for (final s in _sessions) courseOfRecord(s),
+    }.toList();
+    if (courses.isEmpty) return;
+    late final DeviceStore store;
+    try {
+      store = ref.read(deviceStoreProvider);
+    } catch (_) {
+      return;
+    }
+    final map = Map<String, String>.from(_profPhotos);
+    var changed = false;
+    for (final c in courses) {
+      try {
+        final url = (await store.readCourseProfPhoto(c)).trim();
+        if (url.isNotEmpty && map[c] != url) {
+          map[c] = url;
+          changed = true;
+        }
+      } catch (_) {}
+    }
+    if (changed && mounted) setState(() => _profPhotos = map);
+  }
 
   /// Last-started load wins: a stale init finishing AFTER a deliberate
   /// refresh (e.g. its 8s probe timing out late) must not clobber the
@@ -186,6 +228,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
       _offlineNote = '';
       _sessions = visible;
     });
+    unawaited(_loadProfPhotos());
   }
 
   /// Device-copy write, best-effort AFTER the visible update (it used to be
@@ -224,6 +267,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
           ? ''
           : 'Offline — showing last synced records.';
     });
+    unawaited(_loadProfPhotos());
   }
 
   Future<void> _openCourse(String course, List<ClassRecord> sessions,
@@ -231,14 +275,72 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
     BleLog.log('NAV', 'my-attendance → $course');
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
+          settings: RouteSettings(
+              name: CourseAttendanceDetailScreen.routeName(course)),
           builder: (_) => CourseAttendanceDetailScreen(
-              course: course, sessions: sessions, email: email)),
+              course: course,
+              sessions: sessions,
+              email: email,
+              // Cached prof photo seen live ('' = never seen → the
+              // letter-disc fallback inside the detail header).
+              profPhotoUrl: _profPhotos[course] ?? '')),
     );
     // Back yields no value (no PopScope anywhere in this tab): always
     // refresh so a hide inside the detail is reflected here on return.
     // Mechanical orchestration note for the final summary: previously
     // reloaded only when the detail returned true.
     if (mounted) _load();
+  }
+
+  /// Device-only course removal: hides every session of [course] on THIS
+  /// device (the same [hideSession] filter as the per-session hide in the
+  /// detail screen). No history delete, no tombstone, no cloud push —
+  /// professor/cloud data untouched; the next pull re-fetches but the
+  /// hidden filter keeps the course hidden.
+  Future<void> _deleteCourse(String course) async {
+    final ids = _sessions
+        .where((s) => courseOfRecord(s) == course)
+        .map((s) => s.id)
+        .toList();
+    if (ids.isEmpty || !mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove $course from this device?'),
+        content: Text(
+            'This removes ${ids.length} session${ids.length == 1 ? '' : 's'} from this list only. Class data stays unchanged.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      final store = ref.read(deviceStoreProvider);
+      for (final id in ids) {
+        try {
+          await store.hideSession(id);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    _hidden.addAll(ids);
+    if (!mounted) return;
+    setState(() {
+      _sessions = _sessions.where((s) => !ids.contains(s.id)).toList();
+      _profPhotos = Map.of(_profPhotos)..remove(course);
+    });
+    BleLog.log('NAV', 'my-attendance: removed $course (device only)');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'Removed $course from this device only — class data unchanged.')));
   }
 
   void _openLog() {
@@ -329,15 +431,22 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
                   // visual, the x/y fraction line as the caption beneath.
                   for (final course in courses)
                     Padding(
+                      // Stable per-course key: deleting a course must drop
+                      // ITS element (in-flight photo load, progress state),
+                      // never shift a neighbour's element up by position.
+                      key: ValueKey('course-$course'),
                       padding:
                           const EdgeInsets.only(bottom: ProxSpacing.sm),
                       child: _CourseCard(
                         title: course,
                         summary: summaries[course]!,
+                        // Cached prof photo ('' = never seen → no badge).
+                        profPhotoUrl: _profPhotos[course] ?? '',
                         onTap: acct == null
                             ? null
                             : () => _openCourse(
                                 course, groups[course]!, email),
+                        onDelete: () => _deleteCourse(course),
                       ),
                     ),
                 ],
@@ -362,12 +471,23 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
 }
 
 /// Course card: progress ring (primary) + fraction line caption.
+/// [profPhotoUrl] fills the ring center with the professor's cached Gmail
+/// photo ('' = never seen live on this device → the course-letter disc;
+/// see [AttendanceRingAvatar] for the data limit).
+/// [onDelete] removes the whole course on THIS device only (confirm +
+/// device-only snackbar in the owner); null hides the affordance.
 class _CourseCard extends StatelessWidget {
   final String title;
   final CourseAttendanceSummary summary;
+  final String profPhotoUrl;
   final VoidCallback? onTap;
+  final VoidCallback? onDelete;
   const _CourseCard(
-      {required this.title, required this.summary, this.onTap});
+      {required this.title,
+      required this.summary,
+      this.profPhotoUrl = '',
+      this.onTap,
+      this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -393,17 +513,12 @@ class _CourseCard extends StatelessWidget {
             children: [
               Semantics(
                 label: summary.line,
-                child: SizedBox(
-                  width: ProxSpacing.minTap,
-                  height: ProxSpacing.minTap,
-                  child: CircularProgressIndicator(
-                    value: value,
-                    strokeWidth: 5,
-                    strokeCap: StrokeCap.round,
-                    backgroundColor: c.divider,
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(c.accentBrand),
-                  ),
+                // Shared ring + face assembly (see AttendanceRingAvatar):
+                // the detail header renders this same widget.
+                child: AttendanceRingAvatar(
+                  photoUrl: profPhotoUrl,
+                  course: title,
+                  value: value,
                 ),
               ),
               const SizedBox(width: ProxSpacing.md),
@@ -430,6 +545,12 @@ class _CourseCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: ProxSpacing.sm),
+              if (onDelete != null)
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Remove course from this device',
+                  onPressed: onDelete,
+                ),
               Icon(Icons.chevron_right, color: c.contentTertiary),
             ],
           ),

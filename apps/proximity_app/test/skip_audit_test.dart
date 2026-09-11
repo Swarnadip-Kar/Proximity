@@ -5,7 +5,9 @@
 //
 // Layers (defense in depth):
 //   RVil  route guards (ProxRoutes.isMobileOnly/mobileGuardRedirect —
-//         mobile-only set; desktop/web land on guidance, never a camera)
+//         enroll-only set; desktop/web land on guidance, never a camera;
+//         mark/* is dead — no named routes, no guard branches, unknown
+//         placeholder only)
 //   L1    domain gate (requireMobileFace/canUseFace — plugin + sign paths)
 //   D     driver pre-sign gates (enrollment present + email match + fresh
 //         pipeline + FaceGate freshness before any signature)
@@ -15,8 +17,10 @@
 //
 // Pure unit file (no widget binding): audit 12 proves against a real local
 // ProxServer, which needs real HTTP — any testWidgets in this file would
-// force the fake-400 HTTP binding and break it. Widget-level audit (the
-// capture screen's own blocked card) lives in enroll_guided_test.dart.
+// force the fake-400 HTTP binding and break it. Routing-level widget proof
+// (MaterialApp.routes exact-table guards render MobileOnlyGuidanceScreen,
+// mark/* renders unknown, guidance CTA replaces) lives in
+// setup_bundle_rebuild_test.dart + enroll_guided_test.dart.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,11 +56,40 @@ RealStudentDriver _driver(
 
 void main() {
   group('SKIP-AUDIT route guards (mobile-only set)', () {
-    test('1: every mark/* + enroll/* deep-link redirects off-mobile', () {
+    // MaterialApp resolution order (main.dart): exact table
+    // (buildProxRoutes) wins over onGenerateRoute, onUnknownRoute last.
+    // The in-tab router (shells _tabRoute) resolves the SAME way: exact
+    // table lookup first, then proxOnGenerateRoute, then unknown
+    // placeholder — so these pure tests resolve through that same
+    // table + router shape (no pumping; widget rendering proof lives in
+    // setup_bundle_rebuild_test + enroll_guided_test).
+    RouteSettings settingsFor(String name, {Object? arguments}) =>
+        RouteSettings(name: name, arguments: arguments);
+
+    test('1: enroll/* deep-links redirect off-mobile (exact table guarded)',
+        () {
+      final table = buildProxRoutes();
+      for (final r in ['enroll/capture', 'enroll/result']) {
+        expect(ProxRoutes.isMobileOnly(r), isTrue, reason: r);
+        expect(ProxRoutes.isNativeOnly(r), isTrue, reason: r);
+        expect(
+            ProxRoutes.mobileGuardRedirect(r, mobile: false),
+            ProxRoutes.myAttendance,
+            reason: '$r must land on records guidance off-mobile');
+        expect(ProxRoutes.mobileGuardRedirect(r, mobile: true), isNull,
+            reason: '$r stays put on mobile');
+        // Exact-table hit exists — without the _guardedRoute wrapper this
+        // would bypass onGenerateRoute guards (MaterialApp.routes wins).
+        // The wrapper runs web/mobile guards BEFORE the inner builder.
+        expect(table.containsKey(r), isTrue,
+            reason: '$r exact-table entry must exist (guard-wrapped)');
+      }
+    });
+
+    test('1b: mark/* guards are gone (dead flow — unknown, never guidance)',
+        () {
+      final table = buildProxRoutes();
       for (final r in [
-        'enroll/intro',
-        'enroll/capture',
-        'enroll/result',
         'mark/browse',
         'mark/join',
         'mark/waiting',
@@ -65,35 +98,104 @@ void main() {
         'mark/verdict',
         'mark/manual',
       ]) {
-        expect(ProxRoutes.isMobileOnly(r), isTrue, reason: r);
-        expect(
-            ProxRoutes.mobileGuardRedirect(r, mobile: false),
-            ProxRoutes.myAttendance,
-            reason: '$r must land on records guidance off-mobile');
+        expect(ProxRoutes.isMobileOnly(r), isFalse, reason: r);
+        expect(ProxRoutes.isNativeOnly(r), isFalse, reason: r);
+        expect(ProxRoutes.mobileGuardRedirect(r, mobile: false), isNull,
+            reason: '$r must not redirect (guards gone)');
         expect(ProxRoutes.mobileGuardRedirect(r, mobile: true), isNull,
-            reason: '$r stays put on mobile');
+            reason: r);
+        // No exact-table entry (no named mark routes — in-tab only).
+        expect(table.containsKey(r), isFalse, reason: r);
+        // In-tab / MaterialApp onGenerate has no mark branch → null,
+        // so both routers fall to onUnknownRoute (placeholder, never
+        // MobileOnlyGuidanceScreen).
+        expect(
+            proxOnGenerateRoute(settingsFor(r)), isNull,
+            reason: '$r must miss onGenerate (unknown fallback)');
+        final unknown = proxOnUnknownRoute(settingsFor(r));
+        expect(unknown, isNotNull, reason: r);
       }
     });
 
-    test('2: router serves guidance for mark/* on records-only devices', () {
+    test('2: router serves guidance for enroll/* on records-only devices',
+        () {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       try {
+        // onGenerate guard path (parameterized + exact names both hit
+        // guards first in proxOnGenerateRoute).
         final route = proxOnGenerateRoute(
-            const RouteSettings(name: 'mark/face'));
-        expect(route, isNotNull);
+            const RouteSettings(name: 'enroll/capture'));
+        expect(route, isNotNull,
+            reason: 'enroll/capture must resolve to guidance on desktop');
+        final resultRoute = proxOnGenerateRoute(
+            const RouteSettings(name: 'enroll/result'));
+        expect(resultRoute, isNotNull,
+            reason: 'enroll/result must resolve to guidance on desktop');
+        // In-tab router shape: exact table hit exists for enroll/*, and
+        // the guard fires — so the in-tab exact builder (wrapped) and the
+        // onGenerate path agree (guidance, never the capture screen).
+        final table = buildProxRoutes();
+        expect(table.containsKey('enroll/capture'), isTrue);
+        expect(
+            ProxRoutes.mobileGuardRedirect('enroll/capture'), isNotNull);
         // Hosting + records stay available on desktop (professors host).
         expect(ProxRoutes.mobileGuardRedirect('live/CS101', mobile: false),
             isNull);
         expect(
             ProxRoutes.mobileGuardRedirect('records/mine', mobile: false),
             isNull);
+        // Same via live platform read (no explicit mobile pin).
+        expect(proxOnGenerateRoute(settingsFor('live/CS101')), isNotNull,
+            reason: 'live host stays available on desktop');
       } finally {
         debugDefaultTargetPlatformOverride = null;
       }
     });
 
-    // Widget-level proof (the capture screen's own blocked card) is
-    // enroll_guided_test.dart 'records-only device sees the blocked card'.
+    test('2b: live/ + prof/courses/ edge shapes resolve explicitly', () {
+      // live/ empty never falls back to args — unknown fallback.
+      expect(
+          proxOnGenerateRoute(const RouteSettings(name: 'live/')), isNull);
+      expect(
+          proxOnGenerateRoute(RouteSettings(
+              name: 'live/',
+              arguments: const ProxRouteArgs(course: 'CS101'))),
+          isNull,
+          reason: 'live/ empty must not resolve via args');
+      // live/<course> prefers the path segment on args conflict.
+      final conflict = proxOnGenerateRoute(RouteSettings(
+          name: 'live/CS101',
+          arguments: const ProxRouteArgs(course: 'CS999')));
+      expect(conflict, isNotNull);
+      expect(conflict!.settings.name, 'live/CS101');
+      // prof/courses/ trailing slash is explicit: bare prefix → unknown,
+      // `CS101/` == `CS101`, `CS101/export/` == `CS101/export`.
+      expect(
+          proxOnGenerateRoute(
+              const RouteSettings(name: 'prof/courses/')),
+          isNull);
+      expect(
+          proxOnGenerateRoute(
+              const RouteSettings(name: 'prof/courses/CS101/')),
+          isNotNull);
+      expect(
+          proxOnGenerateRoute(
+              const RouteSettings(name: 'prof/courses/CS101/export/')),
+          isNotNull);
+      // prof/courses prefers the path segment too.
+      final courseConflict = proxOnGenerateRoute(RouteSettings(
+          name: 'prof/courses/CS101',
+          arguments: const ProxRouteArgs(course: 'CS999')));
+      expect(courseConflict, isNotNull);
+      expect(courseConflict!.settings.name, 'prof/courses/CS101');
+    });
+
+    // Widget-level proof (MobileOnlyGuidanceScreen actually renders via
+    // MaterialApp.routes exact-table + in-tab router, mark/* renders
+    // unknown, guidance CTA replaces so back never loops) lives in
+    // setup_bundle_rebuild_test.dart + enroll_guided_test.dart.
+    // Direct-screen blocked cards (L1) stay in enroll_guided_test.dart
+    // 'records-only device sees the blocked card'.
   });
 
   group('SKIP-AUDIT L1 domain gates (records-only devices)', () {

@@ -7,9 +7,10 @@
 //           (optional) round trail: R1 ✓ · R2 ✗ (pill chips)
 // ```
 //
-// UI Overhaul: avatar gets a gradient ring (rotating conic gradient in
-// the avatar's color family), card gets hover lift (desktop), round trail
-// chips get animated scale-in. Selection uses avatar ring + card overlay.
+// UI Overhaul: avatar gets a gradient ring (ring sweep rotates, logo/
+// photo inside never rotates), card gets hover lift (desktop), round
+// trail chips get animated scale-in. Selection uses avatar ring + card
+// overlay.
 //
 // - Avatar: initials on a deterministic color from the name hash — never
 //   anything derived from `face_verification` data. There is no code path
@@ -30,6 +31,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../design/tokens.dart';
+import 'prox_cards.dart' show HoverGrace;
 import 'selection_controller.dart' show isDesktopSelection;
 import 'verdict_badge.dart';
 
@@ -93,6 +95,146 @@ Color studentAvatarForeground(ProximityColors c, String name) {
   return base;
 }
 
+/// Course logo initials (first 2 alphanumerics, upper): `CS201` → `CS`,
+/// `Maths` → `MA`. Pure for unit tests.
+String courseInitials(String course) {
+  final alnum =
+      course.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  if (alnum.isEmpty) return '?';
+  return alnum.length >= 2 ? alnum.substring(0, 2) : alnum;
+}
+
+/// Course logo color: same deterministic palette + token discipline as
+/// student avatars, so course discs read as family. Never face data.
+Color courseAvatarColor(ProximityColors c, String course) =>
+    studentAvatarColor(c, 'course:$course');
+
+/// Course logo disc: same disc language as student avatars (tinted disc +
+/// initials), used everywhere a course needs a mark — pickers, headers,
+/// previews. Replaces one-off folder/book icons.
+class CourseLogo extends StatelessWidget {
+  final String course;
+  final double size;
+
+  const CourseLogo({super.key, required this.course, this.size = 40});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final base = courseAvatarColor(c, course);
+    final fg = base == c.statusLate
+        ? c.onTintLate
+        : base == c.statusReview
+            ? c.onTintReview
+            : base;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: base.withValues(alpha: 0.15),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        courseInitials(course),
+        style: ProxType.label(color: fg).copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: size * 0.34,
+        ),
+        overflow: TextOverflow.clip,
+        maxLines: 1,
+      ),
+    );
+  }
+}
+
+/// Attendance ring avatar: the ONE ring + face assembly shared by the
+/// course list cards and the course detail header (same box, same avatar,
+/// same ring ratio — never drift apart again).
+///
+/// Prof photo first ([photoUrl], ordinary account metadata, never face
+/// data), course-letter disc fallback (letters beneath while
+/// loading/offline/error — never blank). A solid [surfaceBase] separator
+/// hugs the face so the translucent initials disc and the hard-edged
+/// photo share one boundary before the ring. The attendance [value]
+/// (0..1) rides the accentBrand arc over the divider track.
+class AttendanceRingAvatar extends StatelessWidget {
+  final String photoUrl;
+  final String course;
+  final double value;
+
+  /// Ring-box edge. Defaults to [ProxSpacing.minTap] (the list size).
+  final double boxSize;
+
+  /// Face diameter inside the separator.
+  final double avatarSize;
+
+  /// Ring stroke as a fraction of [avatarSize] (one ratio everywhere).
+  final double ringRatio;
+
+  const AttendanceRingAvatar({
+    super.key,
+    required this.photoUrl,
+    required this.course,
+    required this.value,
+    this.boxSize = ProxSpacing.minTap,
+    this.avatarSize = 36,
+    this.ringRatio = 3 / 36,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final url = photoUrl.trim();
+    final face = url.isEmpty
+        ? CourseLogo(course: course, size: avatarSize)
+        : ClipOval(
+            child: Image.network(
+              url,
+              width: avatarSize,
+              height: avatarSize,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  CourseLogo(course: course, size: avatarSize),
+              frameBuilder: (context, child, frame, _) {
+                if (frame == null) {
+                  return CourseLogo(course: course, size: avatarSize);
+                }
+                return child;
+              },
+            ),
+          );
+    return SizedBox(
+      width: boxSize,
+      height: boxSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: CircularProgressIndicator(
+              value: value.clamp(0.0, 1.0),
+              strokeWidth: avatarSize * ringRatio,
+              strokeCap: StrokeCap.round,
+              backgroundColor: c.divider,
+              valueColor: AlwaysStoppedAnimation<Color>(c.accentBrand),
+            ),
+          ),
+          Center(
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.surfaceBase,
+              ),
+              padding: const EdgeInsets.all(2),
+              child: face,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The one card shape, used on rosters, waiting lists, inbox, manual-add
 /// results, and records.
 class StudentCard extends StatefulWidget {
@@ -101,6 +243,11 @@ class StudentCard extends StatefulWidget {
 
   /// `ID · Email` line (line 2, truncated first). Null hides the line.
   final String? subtitle;
+
+  /// Optional second detail line (line 3, same caption style, truncated).
+  /// Mark class tiles put the email here so it sits below the rest.
+  /// Null hides the line — every other card is unchanged.
+  final String? subtitle2;
 
   /// Status slot (§4.2), right-aligned on line 1. Null hides the slot.
   final VerdictBadge? status;
@@ -120,29 +267,42 @@ class StudentCard extends StatefulWidget {
   /// Single-item action (navigate/act).
   final VoidCallback? onTap;
 
+  /// Volunteered Gmail profile photo URL (ordinary account metadata, NOT
+  /// face-verification output). ''/null = deterministic initials avatar.
+  /// Rendered via [Image.network] with initials fallback on error/offline.
+  final String? photoUrl;
+
+  /// Avatar disc diameter (default 40 — rosters, waiting lists, records).
+  /// Mark browse class tiles pass 56.
+  final double avatarSize;
+
   const StudentCard({
     super.key,
     required this.name,
     this.subtitle,
+    this.subtitle2,
     this.status,
     this.roundTrail = const [],
     this.selectionMode = false,
     this.selected = false,
     this.onSelectionChanged,
     this.onTap,
+    this.photoUrl,
+    this.avatarSize = 40,
   });
 
   @override
   State<StudentCard> createState() => _StudentCardState();
 }
 
-class _StudentCardState extends State<StudentCard> {
+class _StudentCardState extends State<StudentCard> with HoverGrace {
   var _pressed = false;
   var _hovering = false;
 
-  /// Rotating selection-ring driver: timer-stepped angle (timers never
-  /// block pumpAndSettle), armed only while the ring is on and motion
-  /// is allowed.
+  /// Ring-sweep driver: timer-stepped gradient angle (timers never block
+  /// pumpAndSettle), armed only while the ring is on and motion is
+  /// allowed. Only the SweepGradient angles animate — the logo/photo
+  /// child is never wrapped in Transform.rotate, so it stays still.
   Timer? _ringTimer;
   var _ringAngle = 0.0;
 
@@ -175,6 +335,7 @@ class _StudentCardState extends State<StudentCard> {
 
   @override
   void dispose() {
+    cancelHoverGrace();
     _ringTimer?.cancel();
     super.dispose();
   }
@@ -211,7 +372,16 @@ class _StudentCardState extends State<StudentCard> {
     final avatarFg = studentAvatarForeground(c, widget.name);
     final ringOn = widget.selected || _pressed;
 
-    final card = AnimatedContainer(
+    // No-shadow-geometry hover rule (see ProxCard): hover never touches
+    // the shadow (stays at `rest` always) — only the tint/border color
+    // animates. Swapping blur/offset on enter AND exit re-rasterizes a
+    // different blur kernel each way, which pops on macOS both directions.
+    final card = Container(
+      decoration: BoxDecoration(
+        borderRadius: ProxRadii.cardSpecRadius,
+        boxShadow: [ProxShadows.rest(context)],
+      ),
+      child: AnimatedContainer(
       duration: ProxDurations.micro,
       curve: ProxCurves.standard,
       constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
@@ -230,63 +400,71 @@ class _StudentCardState extends State<StudentCard> {
                   ? c.accentBrand.withValues(alpha: 0.12)
                   : c.divider,
         ),
-        boxShadow: [
-          _hovering
-              ? ProxShadows.hover(context)
-              : ProxShadows.rest(context),
-        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Avatar with gradient ring on selection. The ring slowly
-          // rotates while armed (timer-stepped, reduce-motion safe).
+          // Avatar with gradient ring on selection. Only the ring sweep
+          // rotates (SweepGradient angles in the plain inner Container);
+          // the logo/photo child is never Transform.rotated, so it stays
+          // still. The angles MUST NOT live in AnimatedContainer's
+          // decoration: every 120ms tick would restart its implicit
+          // BoxDecoration animation and pumpAndSettle would never settle.
           // NOTE: padding animates 0 ↔ 2.5, so the curve must NOT overshoot
           // (easeOutBack dips below 0 → AnimatedContainer asserts
           // padding.isNonNegative). Keep the spring for scale only.
-          Transform.rotate(
-            angle: ringOn ? _ringAngle : 0,
-            child: AnimatedContainer(
-              duration: ProxDurations.small,
-              curve: ProxCurves.standard,
-            width: 40,
-            height: 40,
+          AnimatedContainer(
+            duration: ProxDurations.small,
+            curve: ProxCurves.standard,
+            width: widget.avatarSize,
+            height: widget.avatarSize,
+            padding: EdgeInsets.all(ringOn ? 2.5 : 0),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: ringOn
-                  ? SweepGradient(
-                      colors: [
-                        c.accentBrand,
-                        avatarColor,
-                        c.accentBrand,
-                      ],
-                    )
-                  : null,
-              color: ringOn ? null : avatarColor.withValues(alpha: 0.15),
+              color: ringOn
+                  ? Colors.transparent
+                  : avatarColor.withValues(alpha: 0.15),
             ),
-              padding: EdgeInsets.all(ringOn ? 2.5 : 0),
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: ringOn
-                      ? c.surfaceRaised
-                      : Colors.transparent,
-                ),
-                padding: EdgeInsets.all(ringOn ? 1 : 0),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: avatarColor.withValues(alpha: ringOn ? 0.2 : 0.15),
+            child: ringOn
+                ? Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: SweepGradient(
+                        startAngle: _ringAngle,
+                        endAngle: _ringAngle + 6.283,
+                        colors: [
+                          c.accentBrand,
+                          avatarColor,
+                          c.accentBrand,
+                        ],
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(1),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: c.surfaceRaised,
+                      ),
+                      child: _CardAvatar(
+                        name: widget.name,
+                        photoUrl: widget.photoUrl,
+                        ringOn: ringOn,
+                        avatarColor: avatarColor,
+                        avatarFg: avatarFg,
+                        c: c,
+                        size: widget.avatarSize,
+                      ),
+                    ),
+                  )
+                : _CardAvatar(
+                    name: widget.name,
+                    photoUrl: widget.photoUrl,
+                    ringOn: ringOn,
+                    avatarColor: avatarColor,
+                    avatarFg: avatarFg,
+                    c: c,
+                    size: widget.avatarSize,
                   ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    studentInitials(widget.name),
-                    style: ProxType.label(color: avatarFg),
-                    overflow: TextOverflow.clip,
-                  ),
-                ),
-              ),
-            ),
           ),
           const SizedBox(width: ProxSpacing.md),
           Expanded(
@@ -320,6 +498,16 @@ class _StudentCardState extends State<StudentCard> {
                     maxLines: 1,
                   ),
                 ],
+                if (widget.subtitle2 != null &&
+                    widget.subtitle2!.isNotEmpty) ...[
+                  const SizedBox(width: 0, height: 2),
+                  Text(
+                    widget.subtitle2!,
+                    style: ProxType.caption(color: c.contentSecondary),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ],
                 if (widget.roundTrail.isNotEmpty) ...[
                   const SizedBox(height: ProxSpacing.xs),
                   Wrap(
@@ -335,6 +523,7 @@ class _StudentCardState extends State<StudentCard> {
             ),
           ),
         ],
+        ),
       ),
     );
 
@@ -350,8 +539,8 @@ class _StudentCardState extends State<StudentCard> {
       selected: widget.selected,
       label: widget.name,
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
+        onEnter: (_) => hoverEnter(() => setState(() => _hovering = true)),
+        onExit: (_) => hoverExit(() => setState(() => _hovering = false)),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _handleTap,
@@ -363,6 +552,62 @@ class _StudentCardState extends State<StudentCard> {
               : _handleSecondaryTap,
           child: scaled,
         ),
+      ),
+    );
+  }
+}
+
+/// Avatar face: volunteered Gmail photo when present (network image with
+/// initials fallback on error/offline/empty), else the deterministic
+/// initials disc. Photo is ordinary account metadata, never face data.
+class _CardAvatar extends StatelessWidget {
+  final String name;
+  final String? photoUrl;
+  final bool ringOn;
+  final Color avatarColor;
+  final Color avatarFg;
+  final ProximityColors c;
+  final double size;
+
+  const _CardAvatar({
+    required this.name,
+    required this.photoUrl,
+    required this.ringOn,
+    required this.avatarColor,
+    required this.avatarFg,
+    required this.c,
+    this.size = 40,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final url = photoUrl?.trim() ?? '';
+    Widget initials() => Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: avatarColor.withValues(alpha: ringOn ? 0.2 : 0.15),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            studentInitials(name),
+            // Same disc-initials proportion as CourseLogo (size * 0.34).
+            style: ProxType.label(color: avatarFg)
+                .copyWith(fontSize: size * 0.34),
+            overflow: TextOverflow.clip,
+          ),
+        );
+    if (url.isEmpty) return initials();
+    return ClipOval(
+      child: Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => initials(),
+        // While loading (or offline-starved), show initials beneath:
+        // the frameBuilder fades the photo in over them.
+        frameBuilder: (context, child, frame, _) {
+          if (frame == null) return initials();
+          return child;
+        },
       ),
     );
   }

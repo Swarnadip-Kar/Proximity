@@ -69,6 +69,12 @@ class LiveSetupSection extends StatelessWidget {
   final VoidCallback onPickIp;
   final String? serverError;
 
+  /// Per-course opt-in: show my Gmail photo to joining students. False
+  /// (default) hides the toggle's effect — students see initials. Null
+  /// sink hides the toggle row (legacy call sites render as before).
+  final bool showProfPhoto;
+  final ValueChanged<bool>? onShowProfPhotoChanged;
+
   const LiveSetupSection({
     super.key,
     required this.hosting,
@@ -80,6 +86,8 @@ class LiveSetupSection extends StatelessWidget {
     required this.currentIp,
     required this.onPickIp,
     required this.serverError,
+    this.showProfPhoto = false,
+    this.onShowProfPhotoChanged,
   });
 
   @override
@@ -132,6 +140,30 @@ class LiveSetupSection extends StatelessWidget {
             ),
             onChanged: onNameChanged,
           ),
+          if (onShowProfPhotoChanged != null) ...[
+            const SizedBox(height: ProxSpacing.xs),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(
+                'Show my profile photo to students',
+                style: ProxType.label(color: c.contentPrimary),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              subtitle: Text(
+                showProfPhoto
+                    ? 'On — joining students see your Gmail photo.'
+                    : 'Off — students see your initial instead.',
+                style: ProxType.caption(color: c.contentSecondary),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              value: showProfPhoto,
+              activeThumbColor: c.accentBrand,
+              onChanged: onShowProfPhotoChanged,
+            ),
+          ],
         ],
         if (serverLine != null) ...[
           const SizedBox(height: ProxSpacing.xs),

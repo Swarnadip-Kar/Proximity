@@ -193,6 +193,17 @@ class RoleResumeSection extends StatelessWidget {
             ),
           const SizedBox(height: ProxSpacing.sm),
         ],
+        // Busy feedback: disabled buttons alone read as "no response" on a
+        // stalled network (the Continue gate can burn ~25s of timeouts
+        // before its honest message lands). Narrate the wait instead.
+        if (busy)
+          const Padding(
+            padding: EdgeInsets.only(top: ProxSpacing.xs),
+            child: Text(
+              'Contacting server…',
+              textAlign: TextAlign.center,
+            ),
+          ),
       ],
     );
   }

@@ -87,6 +87,23 @@ class WindowProbe {
   /// or legacy org only; '' = unknown/legacy or gated silence). NEVER from
   /// beacons/BLE — fed only by the org-checked unicast.
   final String profEmail;
+
+  /// Hosting professor's Gmail profile photo URL from the same GATED
+  /// /window unicast ('' = unknown). Rendered with initials fallback;
+  /// converges on the next room poll when the host publishes late.
+  final String profPhoto;
+
+  /// Hosting professor's display name from the same GATED LAN /window
+  /// unicast ('' = unknown). Never BLE — air packets stay IP:port hints.
+  final String profName;
+
+  /// True when the professor answered HTTP 429 (rate-limited) instead of
+  /// the window payload. The host is demonstrably ALIVE (it answered over
+  /// TLS) — connection-state consumers must hold their Connected state
+  /// and must NOT count a miss toward any hosting-ended exit. The 2s room
+  /// poll sits exactly at the server's 5-hits/10s/IP cap, so the 6th
+  /// overlapping/backfill GET is 429'd on a perfectly healthy link.
+  final bool rateLimited;
   const WindowProbe(
       {required this.reachable,
       required this.windowOpen,
@@ -94,7 +111,24 @@ class WindowProbe {
       this.waiting = 0,
       this.display = '',
       this.org = '',
-      this.profEmail = ''});
+      this.profEmail = '',
+      this.profPhoto = '',
+      this.profName = '',
+      this.rateLimited = false});
+}
+
+/// Presence POST result with the piggybacked window sample (SYNC-owned).
+/// The professor's POST /waiting reply carries the live window flag +
+/// display code on the same round trip, so waiting-room entry reuses it
+/// instead of spending a second (rate-capped) GET /window. [sent] false
+/// means the host was not reached — the caller falls back to its immediate
+/// probe. The 2s room poll remains the authoritative window flip.
+class PresenceSample {
+  final bool sent;
+  final bool windowOpen;
+  final String display;
+  const PresenceSample(
+      {required this.sent, this.windowOpen = false, this.display = ''});
 }
 
 abstract class StudentDriver {
@@ -129,8 +163,17 @@ abstract class StudentDriver {
   Future<WindowProbe> probeWindow(ClassBeacon target, {String myOrg = ''});
 
   /// Registers presence in the professor's waiting room (heartbeat).
-  Future<void> sendPresence(
-      {required ClassBeacon target, required LinkedIdentity identity});
+  /// [photoUrl] is the student's own Gmail profile photo (volunteered;
+  /// '' = absent). The professor renders it with initials fallback.
+  /// Returns the piggybacked window sample from the in-flight POST reply
+  /// so room entry fast-paths without a second (rate-capped) GET /window;
+  /// [PresenceSample.sent] false means the host was not reached (presence
+  /// stays best-effort and never throws — the caller falls back to its
+  /// immediate probe).
+  Future<PresenceSample> sendPresence(
+      {required ClassBeacon target,
+      required LinkedIdentity identity,
+      String photoUrl = ''});
 
   /// Clock-drift tracker (one sample per verdict; median > 5s banners).
   /// The UI reads [ClockDriftTracker.banner] for the honest drift note.
@@ -142,8 +185,11 @@ abstract class StudentDriver {
       {required ClassBeacon target, required String email});
 
   /// Requests manual attendance over LAN; prof approves selectively.
+  /// Same volunteered photo as [sendPresence].
   Future<void> requestManual(
-      {required ClassBeacon target, required LinkedIdentity identity});
+      {required ClassBeacon target,
+      required LinkedIdentity identity,
+      String photoUrl = ''});
 
   /// Polls manual decision: pending|approved|rejected|none.
   Future<String> pollManualStatus(
@@ -296,8 +342,20 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       {String myOrg = ''}) async {
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      final r = await client.probeWindow(org: myOrg);
-      if (!r.reachable) {
+      // 429 discrimination: the transport reports non-200 (incl. 429) as
+      // unreachable, but a 429 was answered by a LIVE host — surface it so
+      // the waiting room holds Connected instead of flapping (the 2s poll
+      // sits exactly at the server's 5-hits/10s/IP cap).
+      var limited = false;
+      final r = await client.probeWindow(
+          org: myOrg,
+          onError: (e) {
+            final m = '$e';
+            if (m.contains('429') || m.contains('rate-limited')) {
+              limited = true;
+            }
+          });
+      if (!r.reachable && !limited) {
         BleLog.log('LAN', 'probe ${target.host}:${target.port} unreachable');
       }
       return WindowProbe(
@@ -307,16 +365,20 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           waiting: r.waiting,
           display: r.display,
           org: r.org,
-          profEmail: r.profEmail);
+          profEmail: r.profEmail,
+          profPhoto: r.profPhoto,
+          profName: r.profName,
+          rateLimited: limited);
     } finally {
       client.close();
     }
   }
 
   @override
-  Future<void> sendPresence(
+  Future<PresenceSample> sendPresence(
       {required ClassBeacon target,
-      required LinkedIdentity identity}) async {
+      required LinkedIdentity identity,
+      String photoUrl = ''}) async {
     final myOrg = studentOrgOf(identity);
     if (target.org.isEmpty) {
       BleLog.log('LAN',
@@ -327,15 +389,19 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     }
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      await client.postWaiting(
+      final res = await client.postWaiting(
           email: identity.gmail,
           name: identity.name,
           roll: identity.roll,
-          org: myOrg);
+          org: myOrg,
+          photoUrl: photoUrl);
       BleLog.log('LAN', 'presence sent → waiting room (${target.host})');
+      return PresenceSample(
+          sent: true, windowOpen: res.windowOpen, display: res.display);
     } catch (e) {
       BleLog.log('LAN', 'presence FAILED (${target.host}): $e');
       // Presence is best-effort; window-open polling still drives the flow.
+      return const PresenceSample(sent: false);
     } finally {
       client.close();
     }
@@ -344,7 +410,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   @override
   Future<void> requestManual(
       {required ClassBeacon target,
-      required LinkedIdentity identity}) async {
+      required LinkedIdentity identity,
+      String photoUrl = ''}) async {
     BleLog.log('LAN', 'manual request sending → ${target.host}');
     final client = ProxClient(host: target.host, port: target.port);
     try {
@@ -352,7 +419,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           email: identity.gmail,
           name: identity.name,
           roll: identity.roll,
-          org: studentOrgOf(identity));
+          org: studentOrgOf(identity),
+          photoUrl: photoUrl);
       BleLog.log('LAN', 'manual request sent, waiting for prof decision');
     } finally {
       client.close();
@@ -935,10 +1003,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
 class FakeStudentDriver implements StudentDriver {
   final String ackDetail;
   bool windowOpenProbe;
+  bool rateLimitedProbe;
   String manualStatus;
   FakeStudentDriver(
       {this.ackDetail = 'KQ7 · 10:04:12',
       this.windowOpenProbe = false,
+      this.rateLimitedProbe = false,
       this.manualStatus = 'pending'});
 
   @override
@@ -952,14 +1022,17 @@ class FakeStudentDriver implements StudentDriver {
   Future<WindowProbe> probeWindow(ClassBeacon target,
           {String myOrg = ''}) async =>
       WindowProbe(
-          reachable: true,
+          reachable: !rateLimitedProbe,
           windowOpen: windowOpenProbe,
-          classLabel: target.classLabel);
+          classLabel: target.classLabel,
+          rateLimited: rateLimitedProbe);
 
   @override
-  Future<void> sendPresence(
+  Future<PresenceSample> sendPresence(
           {required ClassBeacon target,
-          required LinkedIdentity identity}) async {}
+          required LinkedIdentity identity,
+          String photoUrl = ''}) async =>
+      PresenceSample(sent: true, windowOpen: windowOpenProbe);
 
   @override
   Future<void> leaveWaiting(
@@ -968,7 +1041,8 @@ class FakeStudentDriver implements StudentDriver {
   @override
   Future<void> requestManual(
           {required ClassBeacon target,
-          required LinkedIdentity identity}) async {}
+          required LinkedIdentity identity,
+          String photoUrl = ''}) async {}
 
   @override
   Future<String> pollManualStatus(

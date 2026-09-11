@@ -6,12 +6,12 @@
 // approve/reject UI inline in either. Routes unchanged; module boundary
 // only.
 //
-// Selection is hold-and-tap (§4.1, no checkboxes anywhere): long-press
-// enters selection for this list, taps toggle, the [SelectionToolbar]
-// offers `Approve N · Reject N · Select all · Cancel`. On desktop only,
-// a Select/Done toggle arms selection mode and right-click enters with
-// that row (same controller, same toolbar — see
-// `widgets/selection_controller.dart`). Selection state
+// Selection is tap-to-select (§4.1, no checkboxes anywhere): plain taps
+// toggle for this list (rows have no navigation target, so no hold is
+// needed — same contract as the review/export picker), right-click
+// selects on desktop, and the [SelectionToolbar] offers
+// `Approve N · Reject N · Select all · Cancel` (same controller, same
+// toolbar — see `widgets/selection_controller.dart`). Selection state
 // lives in this list's OWN [SelectionScope] instance (per-list rule —
 // never shared with the roster or any other list).
 //
@@ -22,6 +22,7 @@
 //  - several selected → [onDecide] (the bulk path, incl. its bulk log).
 library;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -33,6 +34,74 @@ import '../../widgets/selection_controller.dart';
 import '../../widgets/selection_toolbar.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/verdict_badge.dart';
+
+/// Swipe-to-decide row: mirrors [RemovableRosterRow] (live_roster.dart)
+/// exactly — same [Dismissible] defaults (threshold/motion), same wash
+/// language (12% status tint + [ProxRadii.cardSpecRadius] + edge padding
+/// + status-color icon), same async confirmDismiss-returns-bool contract
+/// (success dismisses, failure snaps back, never throws).
+/// Direction only differs by intent: swipe RIGHT (startToEnd) approves
+/// through the single-item approve path; swipe LEFT (endToStart) rejects
+/// through the single-item reject path. Both act immediately (same
+/// immediacy as the toolbar single-item Approve/Reject — no confirm
+/// dialog); decided rows leave via the existing decide + prune paths.
+/// Tap-to-select coexists: the [child] keeps its own tap handling;
+/// only the swiped row's selection is cleared, others are preserved.
+class _InboxSwipeRow extends StatelessWidget {
+  final String email;
+  final Future<void> Function(String email) onApprove;
+  final Future<void> Function(String email) onReject;
+  final Widget child;
+
+  const _InboxSwipeRow({
+    required this.email,
+    required this.onApprove,
+    required this.onReject,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Dismissible(
+      key: ValueKey<String>('inbox-swipe-$email'),
+      direction: DismissDirection.horizontal,
+      confirmDismiss: (direction) async {
+        try {
+          if (direction == DismissDirection.startToEnd) {
+            await onApprove(email);
+            return true;
+          } else if (direction == DismissDirection.endToStart) {
+            await onReject(email);
+            return true;
+          }
+          return false;
+        } catch (_) {
+          return false;
+        }
+      },
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: ProxSpacing.lg),
+        decoration: BoxDecoration(
+          color: c.statusMarked.withValues(alpha: 0.12),
+          borderRadius: ProxRadii.cardSpecRadius,
+        ),
+        child: Icon(Icons.check, color: c.statusMarked),
+      ),
+      secondaryBackground: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: ProxSpacing.lg),
+        decoration: BoxDecoration(
+          color: c.statusError.withValues(alpha: 0.12),
+          borderRadius: ProxRadii.cardSpecRadius,
+        ),
+        child: Icon(Icons.delete_outline, color: c.statusError),
+      ),
+      child: child,
+    );
+  }
+}
 
 /// Approve/reject list for pending manual-attendance requests. Owns a
 /// fresh [SelectionScope] for exactly this list.
@@ -70,6 +139,9 @@ class _ManualInboxViewState extends State<ManualInboxView> {
   }
 }
 
+/// Tap-to-select inbox rows (same contract as the review/export picker:
+/// plain taps toggle on native, no hold, no mode toggle — rows have no
+/// navigation target to conflict with; web renders without multi-select).
 class _ManualInboxBody extends ConsumerStatefulWidget {
   final List<ManualRow> pending;
   final Future<void> Function(String email) onApproveOne;
@@ -89,17 +161,6 @@ class _ManualInboxBody extends ConsumerStatefulWidget {
 
 class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
   static String _id(String email) => email.toLowerCase();
-
-  /// Desktop Select-toggle arm (mouse-first entry): while true, plain
-  /// left-clicks toggle even with an empty selection. Presentation state
-  /// only — the controller + toolbar contracts are untouched, and the arm
-  /// is never set off-desktop (no toggle renders there), so the mobile
-  /// path observes `controller.selecting` exactly as before.
-  var _armed = false;
-
-  void _disarm() {
-    if (_armed && mounted) setState(() => _armed = false);
-  }
 
   /// Drops selection for rows that left the pending list (approved /
   /// rejected elsewhere) without touching live membership mid-build.
@@ -142,13 +203,6 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
       await widget.onDecide(emails, approve);
       if (mounted) ctl.clear();
     }
-    // A decide that empties the list also drops the desktop arm (Done
-    // would otherwise linger over an empty selection).
-    if (mounted &&
-        _armed &&
-        !ref.read(selectionControllerProvider).selecting) {
-      setState(() => _armed = false);
-    }
   }
 
   @override
@@ -156,73 +210,63 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
     final pending = _forPending();
     final ctl = ref.watch(selectionControllerProvider);
     _pruneStale(ctl);
-    final selecting = ctl.selecting;
-    // Effective mode: the desktop Select-toggle arm widens selectionMode
-    // so plain left-clicks toggle while armed. Off-desktop the arm is
-    // never set, so this equals controller.selecting exactly.
-    final effective = selecting || (_armed && isDesktopSelection);
+    // Tap-to-select is native-only; web renders the same rows without
+    // multi-select (same contract as the review/export picker).
+    final tapSelect = !kIsWeb;
+    final selecting = ctl.selecting && !kIsWeb;
     final n = ctl.count;
     final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: EdgeInsets.zero,
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Manual requests (${pending.length})',
-                  style: ProxType.title(color: c.contentPrimary),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-              // Mouse-first entry (desktop only): arms selection mode so
-              // left-clicks toggle; Done disarms + clears. Renders nothing
-              // on touch devices.
-              SelectionModeToggle(
-                selecting: effective,
-                onSelect: () => setState(() => _armed = true),
-                onDone: () {
-                  ref.read(selectionControllerProvider).clear();
-                  _disarm();
-                },
-              ),
-            ],
-          ),
+        Text(
+          'Manual requests (${pending.length})',
+          style: ProxType.title(color: c.contentPrimary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
         ),
         const SizedBox(height: ProxSpacing.sm),
         if (pending.isEmpty)
           const ProxEmptyLine('No manual requests.')
         else ...[
-          // One-time hold-to-select hint (§9): once per install, hidden
-          // while selecting (the toolbar owns that moment).
-          SelectionCoachMark(
-            listType: SelectionCoachMarks.inbox,
-            selecting: effective,
-          ),
+          // Tap-to-select hint (same caption as the review/export
+          // picker — no per-page copy).
+          if (tapSelect) ...[
+            Text(
+              'Tap to select',
+              style: ProxType.caption(color: c.contentTertiary),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+            const SizedBox(height: ProxSpacing.xs),
+          ],
           for (final m in pending)
             Padding(
               padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-              child: StudentCard(
-                key: ValueKey<String>('manual-${m.email}'),
-                name: m.name.isNotEmpty ? m.name : m.email,
-                subtitle: rosterSubtitle(m.roll, m.email),
-                // Static (never pulsing) badge: a periodic pulse would
-                // keep widget tests from settling; meaning rides on
-                // icon + word, not motion.
-                status: const VerdictBadge(status: ProxStatus.review),
-                selectionMode: effective,
-                selected: ctl.isSelected(_id(m.email)),
-                onSelectionChanged: (v) {
-                  if (v) {
-                    ctl.select(_id(m.email));
-                  } else {
-                    ctl.deselect(_id(m.email));
-                  }
-                },
+              child: _InboxSwipeRow(
+                email: m.email,
+                onApprove: _approveOne,
+                onReject: _rejectOne,
+                child: StudentCard(
+                  key: ValueKey<String>('manual-${m.email}'),
+                  name: m.name.isNotEmpty ? m.name : m.email,
+                  subtitle: rosterSubtitle(m.roll, m.email),
+                  photoUrl: m.photoUrl,
+                  // Static (never pulsing) badge: a periodic pulse would
+                  // keep widget tests from settling; meaning rides on
+                  // icon + word, not motion.
+                  status: const VerdictBadge(status: ProxStatus.review),
+                  selectionMode: tapSelect,
+                  selected: ctl.isSelected(_id(m.email)),
+                  onSelectionChanged: (v) {
+                    if (v) {
+                      ctl.select(_id(m.email));
+                    } else {
+                      ctl.deselect(_id(m.email));
+                    }
+                  },
+                ),
               ),
             ),
         ],
@@ -241,12 +285,9 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
             ),
           ],
           onSelectAll: () => ctl.selectAll(pending.map((m) => _id(m.email))),
-          // Toolbar Cancel exits selection mode entirely (clears the
-          // desktop arm too); the toolbar contract itself is unchanged.
-          onCancel: () {
-            ctl.clear();
-            _disarm();
-          },
+          // Toolbar Cancel exits selection mode entirely; the toolbar
+          // contract itself is unchanged.
+          onCancel: ctl.clear,
         ),
       ],
     );

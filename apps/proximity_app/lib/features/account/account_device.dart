@@ -16,13 +16,12 @@ import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../design/tokens.dart';
-import '../../mode.dart';
 import '../../widgets/details_expander.dart';
-import '../../widgets/fallback_button.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/trust_cards.dart';
 import '../entry/entry_flow.dart';
 import 'account_common.dart';
+import 'device_rules.dart';
 
 /// Device section: local key facts + move status + collapsed
 /// offline/hosting note. Refusal copy comes from `studentClaimMessage`
@@ -43,7 +42,6 @@ class AccountDeviceSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final linked = ref.watch(linkedIdentityProvider);
     return FutureBuilder<StoredEnrollment?>(
       future: readAccountEnrollment(ref),
       builder: (context, enrollSnap) {
@@ -51,8 +49,6 @@ class AccountDeviceSection extends ConsumerWidget {
         // account's stored enrollment renders as "no key for this
         // account", never as this account's facts.
         final e = storedForAccount(acct, enrollSnap.data);
-        // Every enroll entry on this page gates on this (re-enroll fix).
-        final enrolled = enrolledForAccount(acct, linked, enrollSnap.data);
         return FutureBuilder<StudentGate?>(
           future: moveGateForAccount(ref, acct.email),
           builder: (context, gateSnap) {
@@ -160,7 +156,7 @@ class AccountDeviceSection extends ConsumerWidget {
                       key: Key('account-trust-note'),
                     ),
                     const SizedBox(height: ProxSpacing.lg),
-                    _moveStatus(context, ref, gate, enrolled),
+                    _moveStatus(gate),
                     const SizedBox(height: ProxSpacing.md),
                     DetailsExpander(
                       title: 'Offline & hosting',
@@ -180,11 +176,8 @@ class AccountDeviceSection extends ConsumerWidget {
   }
 
   /// Move-status body for a known gate verdict. Trust tier rides below
-  /// every verdict when a binding exists (never silent). The move entry
-  /// gates on [enrolled]: while enrolled for this account the page shows
-  /// the verdict state only, never an enroll CTA (re-enroll fix).
-  Widget _moveStatus(
-      BuildContext context, WidgetRef ref, StudentGate? gate, bool enrolled) {
+  /// every verdict when a binding exists (never silent).
+  Widget _moveStatus(StudentGate? gate) {
     if (gate == null) {
       return const ProxSyncNote(
         'Connect to check move status — one enrolled device per Gmail is checked online.',
@@ -234,22 +227,7 @@ class AccountDeviceSection extends ConsumerWidget {
           children: [
             const ProxStateBadge(
                 state: ProxState.waiting, label: 'Eligible to move here'),
-            const ProxSyncNote(
-                'The 30 days since the last move have passed — enrolling here moves it (at most once a month).'),
-            // Gated: no enroll CTA while enrolled for this account.
-            if (!enrolled)
-              FallbackButton(
-                label: 'Move to this device',
-                sheetTitle: 'Move to this device',
-                icon: Icons.smartphone_outlined,
-                buttonKey: const Key('account-move-entry'),
-                sheetBuilder: (sheetContext) => accountEnrollSheetBody(
-                  context,
-                  ref,
-                  body:
-                      'Enrolling here moves this Gmail\u2019s single student-device slot to this phone (moves are unlimited, at most one per 30 days). Until it saves, nothing changes.',
-                ),
-              ),
+            ProxSyncNote(deviceAllowedMoveNote()),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,
@@ -267,7 +245,8 @@ class AccountDeviceSection extends ConsumerWidget {
                 retry != null)
               ProxStateBadge(
                 state: ProxState.waiting,
-                label: 'Move cooldown until ${dateIsoOf(retry.toUtc())}',
+                // Global date rule, display only: DD-MM-YYYY.
+                label: 'Move cooldown until ${displayDateOf(retry.toUtc())}',
               ),
             ProxErrorNote(studentClaimMessage(gate.verdict, gate.binding)),
             if (trust != null) ...[

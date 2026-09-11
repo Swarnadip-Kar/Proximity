@@ -10,6 +10,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
+import 'prox_cards.dart' show HoverGrace;
 
 /// Press-scale wrapper: subtle 0.97 squeeze on tap-down, spring back on
 /// release. Visual only — [onPressed] fires immediately on tap-up.
@@ -68,8 +69,15 @@ class ProxPrimaryButton extends StatefulWidget {
   State<ProxPrimaryButton> createState() => _ProxPrimaryButtonState();
 }
 
-class _ProxPrimaryButtonState extends State<ProxPrimaryButton> {
+class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
+    with HoverGrace {
   var _hovering = false;
+
+  @override
+  void dispose() {
+    cancelHoverGrace();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,12 +94,18 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton> {
             end: c.gradientBrand.end,
           );
 
+    // ROOT CAUSE of the desktop flicker (hover + exit): hover changed
+    // BoxShadow GEOMETRY (blur 12→20, spread −2→0) on enter AND exit.
+    // Each direction re-rasterized a different blur kernel — on macOS
+    // that pops both ways; animating it re-rasterized every frame.
+    // FIX: hover never changes shadow geometry. Blur/spread/offset stay
+    // identical; only the glow alpha (0.18→0.35) shifts in a static
+    // Container (one repaint, same blur kernel, no layout/hit-test
+    // change, so no enter/exit loop either).
     final button = MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: AnimatedContainer(
-        duration: ProxDurations.small,
-        curve: ProxCurves.standard,
+      onEnter: (_) => hoverEnter(() => setState(() => _hovering = true)),
+      onExit: (_) => hoverExit(() => setState(() => _hovering = false)),
+      child: Container(
         constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
         decoration: BoxDecoration(
           gradient: gradient,
@@ -102,9 +116,9 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton> {
                     color: c.accentBrand.withValues(
                       alpha: _hovering ? 0.35 : 0.18,
                     ),
-                    blurRadius: _hovering ? 20 : 12,
+                    blurRadius: 12,
                     offset: const Offset(0, 4),
-                    spreadRadius: _hovering ? 0 : -2,
+                    spreadRadius: -2,
                   ),
                 ]
               : null,
@@ -187,17 +201,26 @@ class ProxSecondaryButton extends StatefulWidget {
   State<ProxSecondaryButton> createState() => _ProxSecondaryButtonState();
 }
 
-class _ProxSecondaryButtonState extends State<ProxSecondaryButton> {
+class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
+    with HoverGrace {
   var _hovering = false;
+
+  @override
+  void dispose() {
+    cancelHoverGrace();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final enabled = widget.onPressed != null;
 
+    // Ghost hover animates solid tint/border fills only (no blur), so it
+    // is flicker-free by construction; grace exit matches the cards.
     final button = MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
+      onEnter: (_) => hoverEnter(() => setState(() => _hovering = true)),
+      onExit: (_) => hoverExit(() => setState(() => _hovering = false)),
       child: AnimatedContainer(
         duration: ProxDurations.micro,
         curve: ProxCurves.standard,

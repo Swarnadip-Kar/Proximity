@@ -13,6 +13,8 @@
 //    here. Refusal/gate/enrollment semantics unchanged (enforced
 //    downstream at the hub as today).
 // 3. Split sections render standalone (thin-composer breakup pin).
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +23,7 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/screens/landing.dart';
 import 'package:proximity_app/features/account/account_device.dart';
 import 'package:proximity_app/features/account/account_enrollment.dart';
 import 'package:proximity_app/features/account/account_header.dart';
@@ -324,9 +327,9 @@ void main() {
       expect(find.byKey(const Key('account-header-card')), findsOneWidget);
     });
 
-    testWidgets('enrollment unenrolled shows entry + org', (t) async {
+    testWidgets('enrollment unenrolled shows org, no entry', (t) async {
       await pumpSection(t, const AccountEnrollmentSection(acct: _acct));
-      expect(find.byKey(const Key('account-enroll-entry')), findsOneWidget);
+      expect(find.byKey(const Key('account-enroll-entry')), findsNothing);
       expect(find.text('example.com'), findsOneWidget);
     });
 
@@ -396,4 +399,272 @@ void main() {
       expect(find.text('Switch mode'), findsOneWidget);
     });
   });
+
+  group('transition reset (stale-stack F06/F07)', () {
+    Future<ProviderContainer> pumpProbe(WidgetTester t) async {
+      final container = ProviderContainer(
+          overrides: _overrides(
+              store: await _store(role: _bothRoles()),
+              cloud: FakeCloudSync()));
+      addTearDown(container.dispose);
+      container.read(appModeProvider.notifier).state = AppMode.student;
+      await t.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const _TransitionProbe()),
+      ));
+      await _drain(t);
+      return container;
+    }
+
+    /// Invokes the (possibly covered) switch button's handler directly: a
+    /// pushed `setup-flow` route covers everything beneath it, so a driver
+    /// tap cannot reach the button — but the handler is what the reset
+    /// contract pins (dismiss first, then switch).
+    void pressSwitch(WidgetTester t) {
+      final sw = t.widget<TextButton>(
+        find.byKey(const Key('account-mode-switch'), skipOffstage: false),
+      );
+      expect(sw.onPressed, isNotNull);
+      sw.onPressed!();
+    }
+
+    testWidgets('switch pops pushed account sub-page before exiting',
+        (t) async {
+      final container = await pumpProbe(t);
+
+      await t.tap(find.byKey(const Key('probe-open-sub')));
+      await _drain(t);
+      expect(find.text('SUB'), findsOneWidget);
+
+      pressSwitch(t);
+      await _drain(t);
+
+      // Pushed screen for the previous identity is gone; mode exited.
+      expect(find.text('SUB'), findsNothing);
+      expect(find.byKey(const Key('probe-open-sub')), findsOneWidget);
+      expect(container.read(appModeProvider), AppMode.unset);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('switch with setup-flow open dismisses flow first, then exits',
+        (t) async {
+      final container = await pumpProbe(t);
+
+      await t.tap(find.byKey(const Key('probe-open-sub')));
+      await _drain(t);
+      await t.tap(find.byKey(const Key('probe-open-flow')));
+      await _drain(t);
+      expect(find.text('FLOW'), findsOneWidget);
+
+      pressSwitch(t);
+      await _drain(t);
+
+      // Root setup-flow dismissed (product decision) before the switch;
+      // nothing of the previous identity survives underneath.
+      expect(find.text('FLOW'), findsNothing);
+      expect(find.text('SUB'), findsNothing);
+      expect(find.byKey(const Key('probe-open-sub')), findsOneWidget);
+      expect(container.read(appModeProvider), AppMode.unset);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('double-tap switch mode exits once without crashing',
+        (t) async {
+      final container = ProviderContainer(
+          overrides: _overrides(
+              store: await _store(role: _bothRoles()),
+              cloud: FakeCloudSync()));
+      addTearDown(container.dispose);
+      container.read(appModeProvider.notifier).state = AppMode.student;
+      await t.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const StudentAccountScreen()),
+      ));
+      await _drain(t);
+
+      await t.ensureVisible(find.text('Switch mode'));
+      await t.tap(find.text('Switch mode'));
+      await t.pump();
+      // Second tap races the first: the busy guard drops it (disabled
+      // button), the idempotent mode write cannot double-navigate.
+      await t.tap(find.text('Switch mode'));
+      await _drain(t);
+
+      expect(container.read(appModeProvider), AppMode.unset);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('double-tap sign-out signs out once without crashing',
+        (t) async {
+      final container = ProviderContainer(
+          overrides: _overrides(
+              store: await _store(role: _bothRoles()),
+              cloud: FakeCloudSync()));
+      addTearDown(container.dispose);
+      await t.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const StudentAccountScreen()),
+      ));
+      await _drain(t);
+
+      await t.ensureVisible(find.byKey(const Key('account-sign-out')));
+      await t.tap(find.byKey(const Key('account-sign-out')));
+      await t.pump();
+      await t.tap(find.byKey(const Key('account-sign-out')));
+      await _drain(t);
+
+      expect(container.read(linkedIdentityProvider), isNull);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('landing hub remounts per account (no stale register state)',
+        (t) async {
+      const acctA = SignedAccount(
+          email: 'aaa@example.com',
+          displayName: 'User Aaa',
+          uid: 'uid-a',
+          org: 'example.com');
+      const acctB = SignedAccount(
+          email: 'bbb@example.com',
+          displayName: 'User Bbb',
+          uid: 'uid-b',
+          org: 'example.com');
+      final auth = _LandingSwitchAuth(acctA);
+      final store = InMemoryDeviceStore();
+      await store.writeRole({
+        'roles': 'prof',
+        'role': 'prof',
+        'lastMode': 'prof',
+        'email': 'aaa@example.com',
+        'uid': 'uid-a',
+        'displayName': 'User Aaa',
+        'org': 'example.com',
+      });
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(auth),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync(available: false)),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const LandingScreen()),
+      ));
+      await _drain(t);
+      expect(find.text('Continue as Professor'), findsOneWidget);
+
+      // Switch to role-less B: the hub remounts (per-Gmail key) instead of
+      // reusing A's seeded name field / cached role future.
+      auth.switchTo(acctB);
+      await _drain(t);
+
+      expect(find.text('Register as Student'), findsOneWidget);
+      final field = t.widget<TextField>(find.byType(TextField).first);
+      expect(field.controller!.text, 'User Bbb');
+      expect(t.takeException(), isNull);
+    });
+  });
+}
+
+/// Push-probe mirroring the shell shape (tab stack + root setup-flow)
+/// without the shell: home opens a sub-page hosting a real
+/// [AccountModeSwitch]; the sub-page can push a root-level `setup-flow`
+/// route above itself.
+class _TransitionProbe extends StatelessWidget {
+  const _TransitionProbe();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: TextButton(
+          key: const Key('probe-open-sub'),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              settings: const RouteSettings(name: 'account/enrollment'),
+              builder: (_) => const _ProbeSubPage(),
+            ),
+          ),
+          child: const Text('open sub'),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProbeSubPage extends StatelessWidget {
+  const _ProbeSubPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('SUB'),
+          const AccountModeSwitch(acct: _acct),
+          TextButton(
+            key: const Key('probe-open-flow'),
+            onPressed: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(
+                settings: const RouteSettings(name: 'setup-flow'),
+                builder: (_) => const Scaffold(
+                  body: Center(child: Text('FLOW')),
+                ),
+              ),
+            ),
+            child: const Text('open flow'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Stream-backed auth fake: emits on every switch like Firebase
+/// `authStateChanges`, so landing/shell tests exercise the live account
+/// stream (the single-shot `FakeAuthService` stream cannot emit twice).
+class _LandingSwitchAuth implements AuthService {
+  SignedAccount? _current;
+  final _ctrl = StreamController<SignedAccount?>.broadcast();
+  _LandingSwitchAuth(this._current);
+
+  void switchTo(SignedAccount? a) {
+    _current = a;
+    _ctrl.add(a);
+  }
+
+  @override
+  Stream<SignedAccount?> watchAccount() async* {
+    yield _current;
+    yield* _ctrl.stream;
+  }
+
+  @override
+  SignedAccount? get current => _current;
+
+  @override
+  Future<SignedAccount?> signInWithGoogle() async => _current;
+
+  @override
+  Future<String?> getIdToken() async =>
+      _current == null ? null : 'fake-id-token';
+
+  @override
+  Future<void> signOut() async {
+    _current = null;
+    _ctrl.add(null);
+  }
 }

@@ -116,6 +116,20 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Directory hits FIRST (above the fields): inline cards below
+            // the form land under the keyboard while typing; on top they
+            // stay visible. Same shared StudentCard rows, same tap-to-fill.
+            for (final h in _dir.hits)
+              Padding(
+                padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                child: StudentCard(
+                  name: h.name.isEmpty ? h.email : h.name,
+                  subtitle:
+                      [if (h.roll.isNotEmpty) h.roll, h.email].join(' · '),
+                  onTap: () =>
+                      _dir.pickHit(h, widget.isPresent, _fill),
+                ),
+              ),
             Text(
               'Type to search the online directory — tap a card to fill:',
               style: ProxType.caption(color: c.contentSecondary),
@@ -190,17 +204,8 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
                 style: ProxType.caption(color: c.contentSecondary),
               ),
             ],
-            for (final h in _dir.hits)
-              Padding(
-                padding: const EdgeInsets.only(top: ProxSpacing.sm),
-                child: StudentCard(
-                  name: h.name.isEmpty ? h.email : h.name,
-                  subtitle:
-                      [if (h.roll.isNotEmpty) h.roll, h.email].join(' · '),
-                  onTap: () =>
-                      _dir.pickHit(h, widget.isPresent, _fill),
-                ),
-              ),
+            // Hits render in the floating panel above/below ([_HitsPanel]),
+            // never inline — inline cards land under the keyboard.
             if (_dir.error.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: ProxSpacing.xs),
@@ -236,3 +241,5 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
     );
   }
 }
+
+

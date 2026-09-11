@@ -72,6 +72,18 @@ abstract class HostDriver {
   Future<void> addManualEntry(
       {required String email, required String name, String roll = ''});
 
+  /// Professor eject: drops [email] from the waiting list, manual queue,
+  /// live tally and dup flags (session-local; saved history is untouched
+  /// until the next upsert/snapshot). Returns true when anything was
+  /// removed. The student can rejoin/re-mark afterwards (presence is
+  /// re-volunteered per join/proof).
+  Future<bool> removeStudent(String email);
+
+  /// Publishes the hosting professor's Gmail photo URL to joining
+  /// students (gated /window unicast; '' clears). Best-effort: students
+  /// converge on the next room poll; absent photo renders as initials.
+  Future<void> setHostPhoto(String photoUrl);
+
   /// Local same-face dup groups (email → matched peer emails, symmetric).
   /// Session-scoped RAM (survives retakes; cleared on endHosting). The
   /// roster renders these as "Duplicate face detected between [A] and
@@ -120,7 +132,15 @@ class WaitingRow {
   final String email;
   final String name;
   final String roll;
-  const WaitingRow({required this.email, required this.name, this.roll = ''});
+
+  /// Student's volunteered Gmail photo URL ('' = absent → initials).
+  /// Session RAM only, never persisted to records.
+  final String photoUrl;
+  const WaitingRow(
+      {required this.email,
+      required this.name,
+      this.roll = '',
+      this.photoUrl = ''});
 }
 
 class ManualRow {
@@ -128,11 +148,15 @@ class ManualRow {
   final String name;
   final String roll;
   final String status;
+
+  /// Same volunteered photo as [WaitingRow.photoUrl].
+  final String photoUrl;
   const ManualRow(
       {required this.email,
       required this.name,
       this.roll = '',
-      this.status = 'pending'});
+      this.status = 'pending',
+      this.photoUrl = ''});
 }
 
 class RealHostDriver implements HostDriver {
@@ -202,22 +226,64 @@ class RealHostDriver implements HostDriver {
   @override
   List<WaitingRow> get waitingRows => [
         for (final w in (_server?.waitingRows ?? const []))
-          WaitingRow(email: w.email, name: w.name, roll: w.roll),
+          WaitingRow(
+              email: w.email,
+              name: w.name,
+              roll: w.roll,
+              photoUrl: w.photoUrl),
       ];
 
   @override
   List<ManualRow> get manualRows => [
         for (final m in (_server?.manualRows ?? const []))
           ManualRow(
-              email: m.email, name: m.name, roll: m.roll, status: m.status),
+              email: m.email,
+              name: m.name,
+              roll: m.roll,
+              status: m.status,
+              photoUrl: m.photoUrl),
       ];
 
   @override
   List<ManualRow> get manualPending => [
         for (final m in (_server?.manualPending ?? const []))
           ManualRow(
-              email: m.email, name: m.name, roll: m.roll, status: m.status),
+              email: m.email,
+              name: m.name,
+              roll: m.roll,
+              status: m.status,
+              photoUrl: m.photoUrl),
       ];
+
+  @override
+  Future<bool> removeStudent(String email) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    var removed = false;
+    try {
+      if ((_server?.removeStudent(key) ?? false)) removed = true;
+    } catch (_) {}
+    // Dup-flag cleanup mirrors resolveDupFlag (presence already dropped
+    // with the tally row inside the room).
+    final peers = Set<String>.from(_dupGroups[key] ?? const {});
+    for (final p in peers) {
+      _dupGroups[p]?.remove(key);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    if (_dupGroups.remove(key) != null) removed = true;
+    if (removed) {
+      BleLog.log('STATE', 'roster eject $key');
+    }
+    return removed;
+  }
+
+  @override
+  Future<void> setHostPhoto(String photoUrl) async {
+    try {
+      final s = _server;
+      if (s != null) s.sessionProfPhoto = photoUrl.trim();
+    } catch (_) {}
+  }
 
   /// Matches a recomputed response token against live air sightings.
   /// [expectedAirKey]/[expectedUuid] cover both formats (v2 `type:hex`,
@@ -377,6 +443,8 @@ class RealHostDriver implements HostDriver {
       tally: _tally,
       sessionOrg: sessionOrg,
       sessionProfEmail: sessionProfEmail,
+      // Gated LAN /window name (same channel as the email — never BLE).
+      sessionProfName: _profName,
     );
     await _bindWithRetry(_server!, port);
     // Readiness BEFORE any hint/beacon: the port must answer TLS locally.
@@ -778,6 +846,12 @@ class RealHostDriver implements HostDriver {
   @override
   Future<void> setDisplayName(String name) async {
     _profName = name.trim();
+    // Live-update the gated /window name mid-hosting (beacons already read
+    // _profName live via the announcer closure).
+    try {
+      final s = _server;
+      if (s != null) s.sessionProfName = _profName;
+    } catch (_) {}
     try {
       await _store.writeHostName(_profName);
     } catch (_) {}
@@ -934,23 +1008,30 @@ class FakeHostDriver implements HostDriver {
         email: m.email,
         name: m.name,
         roll: m.roll,
-        status: approve ? 'approved' : 'rejected');
+        status: approve ? 'approved' : 'rejected',
+        photoUrl: m.photoUrl);
     if (approve) {
-      _tally.mark(key, m.name, _windowNo == 0 ? 1 : _windowNo, roll: m.roll);
+      _tally.mark(key, m.name, _windowNo == 0 ? 1 : _windowNo,
+          roll: m.roll, photoUrl: m.photoUrl);
     }
   }
 
   @override
   Future<void> addManualEntry(
-      {required String email, required String name, String roll = ''}) async {
+      {required String email,
+      required String name,
+      String roll = '',
+      String photoUrl = ''}) async {
     final key = email.trim().toLowerCase();
     if (key.isEmpty) return;
     // Immediate mark into the current (or first — windows always number
     // from 1) round: visible at once, captured by drafts, intersected
     // honestly by later rounds.
-    _tally.mark(key, name, _windowNo == 0 ? 1 : _windowNo, roll: roll);
+    _tally.mark(key, name, _windowNo == 0 ? 1 : _windowNo,
+        roll: roll, photoUrl: photoUrl);
     if (_waiting.every((w) => w.email != key)) {
-      _waiting.add(WaitingRow(email: key, name: name, roll: roll));
+      _waiting.add(
+          WaitingRow(email: key, name: name, roll: roll, photoUrl: photoUrl));
     }
   }
 
@@ -971,6 +1052,30 @@ class FakeHostDriver implements HostDriver {
     _tally.clearFaceFlag(me);
     _dupGroups.remove(me);
   }
+
+  @override
+  Future<bool> removeStudent(String email) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    var removed = false;
+    final w0 = _waiting.length;
+    _waiting.removeWhere((w) => w.email == key);
+    if (_waiting.length != w0) removed = true;
+    final m0 = _manual.length;
+    _manual.removeWhere((m) => m.email == key);
+    if (_manual.length != m0) removed = true;
+    if (_tally.remove(key)) removed = true;
+    final peers = Set<String>.from(_dupGroups[key] ?? const {});
+    for (final p in peers) {
+      _dupGroups[p]?.remove(key);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    if (_dupGroups.remove(key) != null) removed = true;
+    return removed;
+  }
+
+  @override
+  Future<void> setHostPhoto(String photoUrl) async {}
 
   /// Test helper: seed a dup group (mirrors the onProve token path).
   void seedDupGroup(String email, List<String> peers) {

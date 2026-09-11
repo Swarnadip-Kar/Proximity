@@ -15,7 +15,6 @@ import '../../core/device_store.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
-import '../../routes.dart';
 import '../entry/entry_flow.dart';
 
 /// Label + value row. Values truncate (never wrap a card open); full IDs
@@ -80,50 +79,6 @@ Future<StudentGate?> moveGateForAccount(WidgetRef ref, String? email) async {
   }
 }
 
-/// Pushes the standalone enrollment entry (preserved `enroll/intro` chain:
-/// intro → capture → result). Same screens the setup flow composes.
-void openAccountEnrollEntry(BuildContext context) {
-  ProxNav.pushNamed(context, ProxRoutes.enrollIntro);
-}
-
-/// Fallback-weight sheet body for enroll / re-enroll / move entries: one
-/// explanation + one outlined continue into the preserved enroll chain.
-Widget accountEnrollSheetBody(
-  BuildContext pageContext,
-  WidgetRef ref, {
-  required String body,
-}) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Text(body, style: ProxType.body()),
-      const SizedBox(height: ProxSpacing.md),
-      // Outlined (secondary weight): entries stay fallback rows, never a
-      // full-width primary button on the page itself.
-      Builder(
-        builder: (sheetContext) {
-          final c = ProximityColors.of(sheetContext);
-          return OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(64, ProxSpacing.minTap),
-              foregroundColor: c.accentBrand,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(ProxRadii.button),
-              ),
-            ),
-            onPressed: () {
-              Navigator.of(sheetContext).pop();
-              openAccountEnrollEntry(pageContext);
-            },
-            child: const Text('Continue to enrollment'),
-          );
-        },
-      ),
-    ],
-  );
-}
-
 /// True when the device counts as enrolled for [acct]: the linked-identity
 /// Gmail or the stored-enrollment email matches the signed-in account
 /// the bare presence of any stored enrollment — drives every enroll entry
@@ -165,6 +120,41 @@ String linkedOrgForAccount(SignedAccount acct, LinkedIdentity? linked) {
           acct.email.trim().toLowerCase()
       ? linked.org
       : '';
+}
+
+/// Dismisses the root setup-flow FIRST (product decision): when the
+/// shell auto-pushed `SetupFlowScreen` (route name `setup-flow`) on the
+/// root navigator is open during an account/mode switch, it is popped
+/// before the switch proceeds — the switch must never land underneath an
+/// open flow holding the previous identity. No-op when no flow is open
+/// (plain tab roots, landing, widget tests). Never throws.
+void dismissSetupFlowFirst(BuildContext context) {
+  try {
+    Navigator.of(context, rootNavigator: true).popUntil(
+        (route) => route.isFirst || route.settings.name != 'setup-flow');
+  } catch (_) {}
+}
+
+/// Pops the current per-tab Navigator to its root, so stale-account
+/// screens pushed above it (other identity's enrollment/device/face-id
+/// pages) can never survive an account/mode transition underneath.
+/// Call BEFORE `entrySignOut`/`setMode`: after the sign-out the account
+/// stream nulls and the tab root rebuilds, but pushed routes above would
+/// still show the previous identity. No-op at a tab root. Never throws.
+void popTabToRoot(BuildContext context) {
+  try {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  } catch (_) {}
+}
+
+/// Full account/mode-transition reset: dismiss the root setup-flow first
+/// (product decision), then pop the current tab stack to root. Every
+/// switch/sign-out call site with a `BuildContext` runs this BEFORE
+/// `entrySignOut`/`setMode(unset)` — synchronous, so no mounted guard is
+/// needed here; callers still guard their own post-await provider reads.
+void prepareAccountTransition(BuildContext context) {
+  dismissSetupFlowFirst(context);
+  popTabToRoot(context);
 }
 
 /// page, the device page, and the setup device section).

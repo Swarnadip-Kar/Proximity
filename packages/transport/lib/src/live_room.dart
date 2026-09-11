@@ -17,20 +17,34 @@ class WaitingEntry {
   final String email;
   final String name;
   final String roll;
+
+  /// Student's own Gmail profile photo URL (ordinary account metadata the
+  /// student volunteers in the join payload; '' = absent). Rendered on the
+  /// professor phone with initials fallback; never persisted to records.
+  final String photoUrl;
   final DateTime ts;
   const WaitingEntry(
       {required this.email,
       required this.name,
       required this.roll,
-      required this.ts});
-  Map<String, dynamic> toJson() =>
-      {'email': email, 'name': name, 'roll': roll, 'ts': ts.toIso8601String()};
+      required this.ts,
+      this.photoUrl = ''});
+  Map<String, dynamic> toJson() => {
+        'email': email,
+        'name': name,
+        'roll': roll,
+        'ts': ts.toIso8601String(),
+        if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
+      };
 }
 
 class ManualEntry {
   final String email;
   final String name;
   final String roll;
+
+  /// Same volunteered photo as [WaitingEntry.photoUrl].
+  final String photoUrl;
   final DateTime ts;
   String status; // pending|approved|rejected
   ManualEntry(
@@ -38,13 +52,15 @@ class ManualEntry {
       required this.name,
       required this.roll,
       required this.ts,
-      this.status = 'pending'});
+      this.status = 'pending',
+      this.photoUrl = ''});
   Map<String, dynamic> toJson() => {
         'email': email,
         'name': name,
         'roll': roll,
         'ts': ts.toIso8601String(),
         'status': status,
+        if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
       };
 }
 
@@ -62,12 +78,29 @@ class LiveRoom {
   final Map<String, ManualEntry> _manual = {};
 
   // ---- Waiting room (students join before the window opens) ----
-  void registerWaiting(String email, String name, [String roll = '']) {
+  void registerWaiting(String email, String name,
+      [String roll = '', String photoUrl = '']) {
     final key = email.trim().toLowerCase();
     if (key.isEmpty || !key.contains('@')) return;
     _waiting[key] = WaitingEntry(
-        email: key, name: name, roll: roll, ts: DateTime.now().toUtc());
-    tally.ensure(key, name, roll);
+        email: key,
+        name: name,
+        roll: roll,
+        ts: DateTime.now().toUtc(),
+        photoUrl: photoUrl.trim());
+    tally.ensure(key, name, roll, photoUrl.trim());
+  }
+
+  /// Latest volunteered photo for [email] (waiting first, then manual,
+  /// else ''). Lets the prove-mark path stamp the tally row so the
+  /// present/partial roster cards render the same photo as the waiting
+  /// list — same StudentCard, same fallback contract.
+  String photoFor(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return '';
+    final w = _waiting[key]?.photoUrl.trim() ?? '';
+    if (w.isNotEmpty) return w;
+    return _manual[key]?.photoUrl.trim() ?? '';
   }
 
   /// Explicit leave: the student backed out of the waiting room (Cancel /
@@ -89,7 +122,8 @@ class LiveRoom {
   int get waitingCount => _waiting.length;
 
   // ---- Manual attendance over LAN ----
-  void requestManual(String email, String name, [String roll = '']) {
+  void requestManual(String email, String name,
+      [String roll = '', String photoUrl = '']) {
     final key = email.trim().toLowerCase();
     if (key.isEmpty || !key.contains('@')) return;
     final prev = _manual[key];
@@ -98,8 +132,25 @@ class LiveRoom {
         name: name,
         roll: roll,
         ts: DateTime.now().toUtc(),
-        status: prev?.status == 'approved' ? 'approved' : 'pending');
-    tally.ensure(key, name, roll);
+        status: prev?.status == 'approved' ? 'approved' : 'pending',
+        photoUrl: photoUrl.trim().isNotEmpty
+            ? photoUrl.trim()
+            : (prev?.photoUrl ?? ''));
+    tally.ensure(key, name, roll, photoUrl.trim());
+  }
+
+  /// Professor eject: drops one email from waiting + manual queue + tally.
+  /// Opened windows are kept; saved history is untouched until the next
+  /// upsert/snapshot. Returns true when anything was removed. Rejoin or
+  /// re-mark re-adds (presence is re-volunteered per join).
+  bool removeStudent(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    var removed = false;
+    if (_waiting.remove(key) != null) removed = true;
+    if (_manual.remove(key) != null) removed = true;
+    if (tally.remove(key)) removed = true;
+    return removed;
   }
 
   List<ManualEntry> get manualRows {
@@ -123,7 +174,8 @@ class LiveRoom {
     e.status = approve ? 'approved' : 'rejected';
     if (approve) {
       final windowNo = windowNoOf();
-      tally.mark(key, e.name, windowNo == 0 ? 1 : windowNo, roll: e.roll);
+      tally.mark(key, e.name, windowNo == 0 ? 1 : windowNo,
+          roll: e.roll, photoUrl: e.photoUrl);
     }
     return true;
   }

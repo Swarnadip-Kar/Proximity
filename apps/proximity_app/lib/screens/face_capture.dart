@@ -64,89 +64,47 @@ final stillCapturerProvider =
     Provider<StillCapturer>((ref) => const RealStillCapturer());
 
 /// Positioning oval drawn OVER the live camera preview (Android-face-
-/// unlock-style framing guide). Pure presentation: a dimmed surround +
-/// crisp oval border centred on the preview, pointer-transparent so it
-/// never intercepts capture taps. Extracted (not inline) so widget tests
-/// pump it standalone — the camera plugin has no test double, so the live
-/// Stack composition itself is verified on-device; CI asserts this widget
-/// renders + repaints on progress.
+/// unlock-style framing guide) on the marking still-capture sheet. Pure
+/// presentation: a dimmed surround + crisp oval border centred on the
+/// preview, pointer-transparent so it never intercepts capture taps.
+/// Marking-only: the guided-enrollment beacon/progress-oval branches were
+/// dead here (no caller ever passed a sweep angle — enrollment uses
+/// [CaptureOverlay]) and are removed. Extracted (not inline) so widget
+/// tests pump it standalone — the camera plugin has no test double, so the
+/// live Stack composition itself is verified on-device; CI asserts this
+/// widget renders + repaints on progress.
 class FaceCaptureOvalOverlay extends StatelessWidget {
-  final double progress; // 0..1 (angle progress inside this capture)
+  /// Shots taken / shots requested (0..1). Paints a theme-primary arc over
+  /// the framing ring. Pure display — capture never gates on it.
+  final double progress;
 
-  /// Slow rotating beacon on the rim (radians, east = 0, positive sweeps
-  /// clockwise on screen). Null draws NO beacon — the marking-time
-  /// default, so the check screen's pixels are unchanged. Guided
-  /// enrollment advances it (~one revolution per several seconds, calm);
-  /// under reduced motion the session passes a fixed angle with
-  /// [sweepSpan] = full circle for a steady soft full-rim glow instead.
-  final double? sweepAngle;
+  const FaceCaptureOvalOverlay({super.key, this.progress = 0});
 
-  /// Beacon tail length. Defaults to a short rim segment (well before a
-  /// full revolution — no remnant survives); full circle renders the
-  /// steady reduced-motion glow.
-  final double sweepSpan;
-  const FaceCaptureOvalOverlay(
-      {super.key, this.progress = 0, this.sweepAngle, this.sweepSpan = 1.047});
+  /// Framing oval fractions of the preview size.
+  static const beaconWidthFraction = 0.96;
+  static const beaconHeightFraction = 0.92;
 
-  /// Beacon (guidance) oval fractions of the preview size — the framing rect.
-  static const beaconWidthFraction = 0.72;
-  static const beaconHeightFraction = 0.58;
+  /// Face width/height for the portrait clamp below (human-face
+  /// proportion — width < height). Phone portrait previews already satisfy
+  /// w < h so their pixels are byte-identical; wide/desktop boxes would
+  /// otherwise compute w >= h and are narrowed to h * this ratio.
+  static const faceWidthToHeight = 0.75;
 
-  /// Progress (completion) oval fractions — slightly LARGER radius so the
-  /// green completion ring reads as its own element outside the blue
-  /// guidance oval, never one muddy ring. Different radii, different
-  /// colors, different jobs (progress = how much done, beacon = where to
-  /// move). Paint-only, zero layout effect.
-  static const progressWidthFraction = 0.78;
-  static const progressHeightFraction = 0.64;
-
-  /// Progress green: token markedDark (green-400) — reads on live camera
-  /// imagery in both themes (same rationale the old guide dot used). The
-  /// beacon stays theme-primary (the app blue), so the two ovals are
-  /// always different hues in both brightnesses.
-  static const progressGreen = ProxStateColors.markedDark;
-
-  /// Framing rect for the beacon oval (and the legacy single-oval path).
-  static Rect beaconRectFor(Size size) => Rect.fromCenter(
-        center: size.center(Offset.zero),
-        width: size.width * beaconWidthFraction,
-        height: size.height * beaconHeightFraction,
-      );
-
-  /// Progress rect: the larger outer oval in guided enrollment (beacon
-  /// present); the legacy framing rect at marking time (beacon absent) so
-  /// marking pixels are unchanged. Pure for unit tests.
-  static Rect progressRectFor(Size size, {required bool enrollment}) =>
-      enrollment
-          ? Rect.fromCenter(
-              center: size.center(Offset.zero),
-              width: size.width * progressWidthFraction,
-              height: size.height * progressHeightFraction,
-            )
-          : beaconRectFor(size);
-
-  /// Progress paint: green outer ring in guided enrollment, legacy theme
-  /// color at marking time (pixels unchanged there). Pure for unit tests.
-  static Color progressColorFor(
-          {required bool enrollment, required Color fallback}) =>
-      enrollment ? progressGreen : fallback;
-
-  /// Beacon tail slices (paint-only, zero layout effect).
-  static const beaconSlices = 16;
-
-  /// Beacon alpha profile: quadratic 0 (tail, fully transparent) → 1
-  /// (head, bright). Pure for unit tests (trail-fully-faded invariant).
-  static double beaconAlpha(int index) {
-    final t = index.clamp(0, beaconSlices - 1) / (beaconSlices - 1);
-    return t * t;
+  /// Framing rect. True oval via `drawOval` (never a rounded rect),
+  /// taller than wide on every viewport (portrait clamp — see
+  /// [faceWidthToHeight]). Paint-only geometry: preview sizing, capture
+  /// logic, and thresholds below are untouched; static shape, no new
+  /// animation (settle-safe).
+  static Rect beaconRectFor(Size size) {
+    var w = size.width * beaconWidthFraction;
+    final h = size.height * beaconHeightFraction;
+    if (w >= h) w = h * faceWidthToHeight;
+    return Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: w,
+      height: h,
+    );
   }
-
-  /// Full-circle span means reduced-motion steady glow (no animation).
-  static bool isSteadyGlow(double span) =>
-      span >= 2 * 3.141592653589793 - 0.01;
-
-  /// Steady soft glow alpha (reduced motion — visible but not harsh).
-  static const steadyGlowAlpha = 0.45;
 
   @override
   Widget build(BuildContext context) {
@@ -155,8 +113,6 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
         painter: _OvalOverlayPainter(
           progress: progress,
           color: Theme.of(context).colorScheme.primary,
-          sweepAngle: sweepAngle,
-          sweepSpan: sweepSpan,
         ),
         child: const SizedBox.expand(),
       ),
@@ -167,13 +123,7 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
 class _OvalOverlayPainter extends CustomPainter {
   final double progress;
   final Color color;
-  final double? sweepAngle;
-  final double sweepSpan;
-  _OvalOverlayPainter(
-      {required this.progress,
-      required this.color,
-      this.sweepAngle,
-      this.sweepSpan = 1.047});
+  _OvalOverlayPainter({required this.progress, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -182,15 +132,7 @@ class _OvalOverlayPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..color = const Color(0x73000000),
     );
-    // Two ovals, separated by role and color (guided enrollment): the GREEN
-    // outer ring is completion state per bucket (static fill, no motion);
-    // the BLUE inner ring carries the rotating guidance head (motion only
-    // here). At marking time (beacon absent) there is one legacy oval, as
-    // before — that path is pixel-identical.
-    final enrollment = sweepAngle != null;
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
-    final progressRect =
-        FaceCaptureOvalOverlay.progressRectFor(size, enrollment: enrollment);
     // Soft glow behind the crisp ring (framing rect, neutral — unchanged).
     canvas.drawOval(
         beaconRect,
@@ -207,12 +149,11 @@ class _OvalOverlayPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3
           ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.85));
-    // Progress arc: green outer completion ring in guided enrollment,
-    // legacy color-and-rect at marking time (unchanged pixels there).
+    // Progress arc over the framing ring (theme-primary, same rect).
     final p = progress.clamp(0.0, 1.0);
     if (p > 0) {
       canvas.drawArc(
-          progressRect,
+          beaconRect,
           -3.141592653589793 / 2,
           2 * 3.141592653589793 * p,
           false,
@@ -220,70 +161,13 @@ class _OvalOverlayPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = 5
             ..strokeCap = StrokeCap.round
-            ..color = FaceCaptureOvalOverlay.progressColorFor(
-                enrollment: enrollment, fallback: color));
-    }
-    // Rotating beacon (guided enrollment only; null at marking time): ONE
-    // bright head + SHORT fading tail decaying to fully transparent well
-    // before a full revolution (tail << 2pi, alpha 0 at tail — no remnant
-    // survives to the next pass). Paint-only, zero layout, no blur (60fps
-    // note holds). Reduced motion passes a full-circle span: steady soft
-    // full-rim glow on the beacon rect (plus the static green progress and
-    // the ambient blur glow — steady glows, no animation).
-    final sweep = sweepAngle;
-    if (sweep != null) {
-      if (FaceCaptureOvalOverlay.isSteadyGlow(sweepSpan)) {
-        canvas.drawArc(
-            beaconRect,
-            0,
-            2 * 3.141592653589793,
-            false,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 7
-              ..strokeCap = StrokeCap.butt
-              ..color = color.withValues(
-                  alpha: FaceCaptureOvalOverlay.steadyGlowAlpha));
-      } else {
-        final sliceSpan =
-            sweepSpan / FaceCaptureOvalOverlay.beaconSlices;
-        for (var i = 0;
-            i < FaceCaptureOvalOverlay.beaconSlices;
-            i++) {
-          final alpha = FaceCaptureOvalOverlay.beaconAlpha(i);
-          if (alpha <= 0) continue; // tail tip fully transparent — no remnant.
-          canvas.drawArc(
-              beaconRect,
-              sweep + i * sliceSpan,
-              sliceSpan,
-              false,
-              Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = 7
-                ..strokeCap = StrokeCap.butt
-                ..color = color.withValues(alpha: alpha));
-        }
-        // Head tip: bright round-cap for a distinct head.
-        canvas.drawArc(
-            beaconRect,
-            sweep + sweepSpan - 0.06,
-            0.06,
-            false,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 7
-              ..strokeCap = StrokeCap.round
-              ..color = color);
-      }
+            ..color = color);
     }
   }
 
   @override
   bool shouldRepaint(_OvalOverlayPainter old) =>
-      old.progress != progress ||
-      old.color != color ||
-      old.sweepAngle != sweepAngle ||
-      old.sweepSpan != sweepSpan;
+      old.progress != progress || old.color != color;
 }
 
 /// Still-capture sheet. Pops `List<String>` (captured image paths, oldest
@@ -310,6 +194,11 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
   int _taken = 0;
   bool _denied = false;
   bool _failed = false;
+  // Single-flight for the auto-fire scan: the 500ms delayed auto-fire in
+  // [_start] fires at most once per mount, so a manual tap racing the delay
+  // can never stack a second capture sequence on top of it ([_busy] in
+  // [_captureAll] owns the manual/auto mutual exclusion once firing).
+  bool _autoFired = false;
   /// Dispose latch: set synchronously in dispose; every await in
   /// [_start]/[_captureAll] re-checks it alongside [mounted] so no async
   /// work (takePicture, pop, setState) runs after dispose.
@@ -350,7 +239,9 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cams.first,
       );
-      final ctl = CameraController(front, ResolutionPreset.medium,
+      // Max sensor resolution (same contract as enrollment: preset
+      // drives preview + stills; layout/overlays untouched).
+      final ctl = CameraController(front, ResolutionPreset.max,
           enableAudio: false);
       await ctl.initialize();
       if (_done) {
@@ -361,7 +252,8 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
         _ctl = ctl;
         _status = 'Ready';
       });
-      if (widget.autoFire) {
+      if (widget.autoFire && !_autoFired) {
+        _autoFired = true;
         await Future.delayed(const Duration(milliseconds: 500));
         if (_done) return;
         await _captureAll();
@@ -436,6 +328,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
     final ctl = _ctl;
     final prompt = widget.prompt ?? 'Position your face in the oval';
     return Scaffold(
+      // Mobile edge-to-edge: background bleeds behind the transparent
+      // system bars (in-tab route — the shell's _ShellEdgeBody already
+      // seats this Scaffold above the nav bar, so no inner SafeArea here
+      // which would double-pad). Preview math (AspectRatio + Stack + oval)
+      // untouched.
+      extendBody: isMobile,
       appBar: AppBar(
         title: const Text('Face check'),
         actions: [
@@ -486,8 +384,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
                           ),
                         ),
                       ),
+              ),
             ),
-          ),
+          // In-tab route: the shell's _ShellEdgeBody already seats this
+          // whole Scaffold above the system nav bar (live viewPadding);
+          // no inner SafeArea here — it would double-pad. Preview
+          // AspectRatio geometry untouched.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(

@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/records/course_attendance_detail_screen.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
 import 'package:proximity_app/features/records/export_center_screen.dart';
+import 'package:proximity_app/features/records/my_attendance_screen.dart';
 import 'package:proximity_app/features/records/prof_courses_screen.dart';
+import 'package:proximity_app/features/records/session_detail_screen.dart';
+import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/take_attendance.dart';
 import 'package:proximity_app/widgets/clock.dart';
 import 'package:proximity_storage/storage.dart';
@@ -59,10 +63,26 @@ void main() {
     expect(find.text('CS301'), findsOneWidget);
   });
 
+  test('records route identities match the IA (one name per screen)', () {
+    // Navigation identity (records packet): every in-tab push carries one
+    // of these names — named logs, popUntil by name/prefix, deep-link parity.
+    expect(ProfCoursesScreen.routeName, 'prof/courses');
+    expect(CourseOverviewScreen.routeName('CS201'), 'prof/courses/CS201');
+    expect(
+        ExportCenterScreen.routeName('CS201'), 'prof/courses/CS201/export');
+    expect(SessionDetailScreen.routeName('CS201', 'sess-1'),
+        'prof/courses/CS201/sessions/sess-1');
+    expect(SessionEditScreen.routeName('CS201', 'sess-1'),
+        'prof/courses/CS201/sessions/sess-1/edit');
+    expect(MyAttendanceScreen.routeName, 'records/mine');
+    expect(CourseAttendanceDetailScreen.routeName('CS201'),
+        'records/mine/CS201');
+  });
+
   test('date labels: short day/month + full weekday/date/year', () {
-    expect(shortDayDateOf('2026-09-03'), 'Thu, 3 Sep');
-    expect(shortDateOf('2026-09-03'), '3 Sep');
-    expect(fullDateOf('2026-09-03'), 'Thursday, 3 September 2026');
+    expect(shortDayDateOf('2026-09-03'), 'Thu, 03-09-2026');
+    expect(shortDateOf('2026-09-03'), '03-09-2026');
+    expect(fullDateOf('2026-09-03'), 'Thursday, 03-09-2026');
     expect(shortTimeOf('2026-09-03T12:34:56.000Z'), isNotEmpty);
     expect(shortTimeOf('2026-09-03T00:00:00.000'), isEmpty);
     expect(shortDayDateOf('garbage'), 'garbage');
@@ -81,14 +101,20 @@ void main() {
     expect(find.byTooltip('Retake attendance'), findsNothing);
     expect(find.byType(Checkbox), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
-    // Tight title: short weekday + day/month; roomy subtitle: full date.
-    expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
+    // Tight title: short weekday + DD-MM-YYYY; roomy subtitle: full date.
+    expect(find.textContaining('Thu, 03-09-2026'), findsOneWidget);
     expect(
-        find.textContaining('Thursday, 3 September 2026'), findsOneWidget);
+        find.textContaining('Thursday, 03-09-2026'), findsOneWidget);
     expect(find.textContaining('2026-09-03'), findsNothing);
     // Review & export opens the export center (per-session CSV + matrix).
     await t.tap(find.text('Review & export'));
     await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.byType(ExportCenterScreen)))
+            ?.settings
+            .name,
+        'prof/courses/CS201/export');
     expect(find.text('Export date range'), findsOneWidget);
     await t.tap(find.byTooltip('Export CSV'));
     await t.pumpAndSettle();
@@ -107,7 +133,7 @@ void main() {
             home: const ExportCenterScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     expect(find.text('Export date range'), findsOneWidget);
-    expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
+    expect(find.textContaining('Thu, 03-09-2026'), findsOneWidget);
     await t.tap(find.text('Export date range'));
     await t.pumpAndSettle();
     // Date-range picker opens as a dialog; dismiss back to the center.
@@ -127,7 +153,7 @@ void main() {
             home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     // Hold-and-tap enters selection mode (no checkboxes in this tab).
-    await t.longPress(find.textContaining('Thu, 3 Sep'));
+    await t.longPress(find.textContaining('Thu, 03-09-2026'));
     await t.pumpAndSettle();
     expect(find.text('Delete 1'), findsOneWidget);
     expect(find.text('Select all'), findsOneWidget);
@@ -175,6 +201,12 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.byType(CourseOverviewScreen)))
+            ?.settings
+            .name,
+        'prof/courses/CS201');
     await t.tap(find.byTooltip('Edit course'));
     await t.pumpAndSettle();
     await t.enterText(

@@ -14,6 +14,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../design/tokens.dart';
+import '../../widgets/host_preview_card.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/verdict_badge.dart';
 
@@ -69,11 +70,19 @@ class WaitingRoomView extends StatelessWidget {
 
   /// Hosting professor's Gmail from the GATED /window unicast ('' =
   /// unknown/legacy or typed-IP join before the gated fetch lands). Fed
-  /// only by the org-checked unicast — never beacons/BLE.
+  /// only by the org-checked unicast — never beacons/BLE. Retained as
+  /// fetched state but never rendered (privacy: the shared host card
+  /// shows display name + org only).
   final String roomProfEmail;
+
+  /// Hosting professor's Gmail profile photo from the same GATED /window
+  /// unicast ('' = unknown). Rendered with initials fallback; converges
+  /// on the next room poll when the host publishes late.
+  final String roomProfPhoto;
 
   /// Institute org from the announcement / beacon target ('' = legacy).
   final String roomOrg;
+
   final List<String> roundMarks;
   final VoidCallback onRequestManual;
   final VoidCallback onCancel;
@@ -84,6 +93,7 @@ class WaitingRoomView extends StatelessWidget {
     required this.roomClass,
     this.roomProf = '',
     this.roomProfEmail = '',
+    this.roomProfPhoto = '',
     this.roomOrg = '',
     required this.roundMarks,
     required this.onRequestManual,
@@ -108,7 +118,13 @@ class WaitingRoomView extends StatelessWidget {
                 ProxSwitcher(
                   child: VerdictBadge(
                     key: ValueKey<bool>(connected),
-                    status: ProxStatus.waiting,
+                    // Present idiom: Connected reads the global present
+                    // (marked/green) status language; Not connected stays
+                    // the waiting/grey treatment. Visual props only — the
+                    // `connected` drive + verbatim copy are untouched.
+                    status: connected
+                        ? ProxStatus.marked
+                        : ProxStatus.waiting,
                     label: connected ? 'Connected' : 'Not connected',
                   ),
                 ),
@@ -129,20 +145,25 @@ class WaitingRoomView extends StatelessWidget {
                   style: ProxType.body(color: c.contentSecondary),
                   textAlign: TextAlign.center,
                 ),
-                if (roomProf.isNotEmpty ||
-                    roomProfEmail.isNotEmpty ||
-                    roomOrg.isNotEmpty) ...[
-                  const SizedBox(height: ProxSpacing.xs),
-                  Text(
-                    [
-                      if (roomProf.isNotEmpty) 'Hosted by $roomProf',
-                      if (roomProfEmail.isNotEmpty) roomProfEmail,
-                      if (roomOrg.isNotEmpty) roomOrg,
-                    ].join(' · '),
-                    textAlign: TextAlign.center,
-                    style: ProxType.caption(color: c.contentSecondary),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
+                // Trimmed to match the shared card's own trim semantics:
+                // blank-but-non-empty strings must not force a stray empty
+                // card (the card shrinks to nothing when title and lines
+                // are both blank after trimming).
+                if (roomProf.trim().isNotEmpty ||
+                    roomProfEmail.trim().isNotEmpty ||
+                    roomOrg.trim().isNotEmpty) ...[
+                  const SizedBox(height: ProxSpacing.sm),
+                  // Host identity: the SAME shared card the professor
+                  // previews in setup — photo (initials fallback) +
+                  // display name, falling back to the gated Gmail when
+                  // unconfigured (plus org). The shared widget dedupes,
+                  // so the address never renders twice — and the preview
+                  // can never drift from this view.
+                  HostPreviewCard(
+                    displayName: roomProf,
+                    email: roomProfEmail,
+                    org: roomOrg,
+                    photoUrl: roomProfPhoto,
                   ),
                 ],
                 if (!connected) ...[

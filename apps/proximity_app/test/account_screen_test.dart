@@ -18,6 +18,7 @@ import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/account/account_device_page.dart';
 import 'package:proximity_app/features/account/account_enrollment_page.dart';
+import 'package:proximity_app/features/account/account_header.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/account/face_id_screen.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -164,7 +165,7 @@ void main() {
       expect(find.text('Appearance'), findsOneWidget);
       expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
       // Compactness: no embedded fact bodies on the root.
-      expect(find.text('2026-09-01'), findsNothing);
+      expect(find.text('01-09-2026'), findsNothing);
       expect(find.text('Active'), findsNothing);
       expect(find.text('android'), findsNothing);
       expect(find.textContaining('Device NONE'), findsNothing);
@@ -183,7 +184,7 @@ void main() {
       ]);
 
       expect(find.textContaining('Enrolled as $_email'), findsWidgets);
-      expect(find.text('2026-09-01'), findsOneWidget);
+      expect(find.text('01-09-2026'), findsOneWidget);
       expect(find.text('example.com'), findsWidgets);
       expect(find.byKey(const Key('account-id-row')), findsOneWidget);
       expect(find.text('R1001'), findsWidgets);
@@ -233,7 +234,7 @@ void main() {
       expect(find.text('Move to this device'), findsNothing);
     });
 
-    testWidgets('eligible move shows the Move-to-this-device fallback',
+    testWidgets('eligible move shows badge, no Move fallback',
         (t) async {
       final store = InMemoryDeviceStore();
       await store.writeInstallId(_installId);
@@ -267,7 +268,7 @@ void main() {
       await _drain(t);
 
       expect(find.text('Eligible to move here'), findsOneWidget);
-      expect(find.text('Move to this device'), findsOneWidget);
+      expect(find.text('Move to this device'), findsNothing);
       expect(find.textContaining('Enrolled as other@example.edu'),
           findsNothing);
       expect(find.text('R9999'), findsNothing);
@@ -447,6 +448,102 @@ void main() {
       expect(find.text('Prof Name'), findsOneWidget);
       expect(find.textContaining('aaaaaaaaaaaa'), findsWidgets);
       expect(find.byKey(const Key('account-device-id-full')), findsOneWidget);
+    });
+  });
+
+  group('professor account offline (local-only)', () {
+    Future<void> pumpOffline(WidgetTester t, {List<Override>? extra}) async {
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          ..._accountOverrides(email: null, linked: null),
+          ...?extra,
+        ],
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const ProfAccountScreen()),
+      ));
+      await _drain(t);
+    }
+
+    testWidgets('offline prof gets the local page, not a dead end',
+        (t) async {
+      await pumpOffline(t);
+
+      // Local-safe rows render; the sign-in dead end does not.
+      expect(find.textContaining('Offline professor mode'), findsOneWidget);
+      expect(find.byKey(const Key('account-row-device')), findsOneWidget);
+      expect(find.text('Exports'), findsOneWidget);
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('System log'), findsOneWidget);
+      expect(find.text('Switch account (sign out)'), findsOneWidget);
+      expect(find.text('Sign in with Google'), findsNothing);
+      expect(find.byType(AccountHeaderCard), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('offline device sub-page is honest, never another identity',
+        (t) async {
+      await pumpOffline(t);
+
+      await t.tap(find.byKey(const Key('account-row-device')));
+      await _drain(t);
+      expect(find.byType(AccountProfDevicePage), findsOneWidget);
+      expect(find.text('Not signed in'), findsOneWidget);
+      expect(find.text('Test User'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('previous account enrollment never leaks offline',
+        (t) async {
+      // Another Gmail's enrollment + linked identity linger in state
+      // while signed out: the offline page must show none of it.
+      final store = InMemoryDeviceStore();
+      await store.writeInstallId(_installId);
+      await store.writeEnrollment(StoredEnrollment(
+        email: 'other@example.com',
+        name: 'Other User',
+        roll: 'R9',
+        seedHex: 'ab' * 32,
+        pkHex: 'cd' * 32,
+        faceId: 'face-other',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          ..._accountOverrides(email: null, linked: null),
+          deviceStoreProvider.overrideWithValue(store),
+          linkedIdentityProvider.overrideWith((ref) =>
+              const LinkedIdentity(name: 'Other User', gmail: 'other@example.com', roll: 'R9')),
+        ],
+        child: MaterialApp(
+            theme: proxLightTheme(), home: const ProfAccountScreen()),
+      ));
+      await _drain(t);
+
+      expect(find.textContaining('Offline professor mode'), findsOneWidget);
+      expect(find.text('Other User'), findsNothing);
+      expect(find.text('other@example.com'), findsNothing);
+      expect(find.textContaining('Enrolled as'), findsNothing);
+      expect(find.byType(AccountHeaderCard), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('offline sign-out is safe', (t) async {
+      await pumpOffline(t);
+
+      await t.ensureVisible(find.byKey(const Key('account-sign-out')));
+      await _drain(t);
+      await t.tap(find.byKey(const Key('account-sign-out')));
+      await _drain(t);
+
+      expect(t.takeException(), isNull);
+      // Still the offline local page (no crash, no redirect into auth).
+      expect(find.textContaining('Offline professor mode'), findsOneWidget);
     });
   });
 

@@ -489,7 +489,7 @@ void main() {
       expect(box.center, const Size(400, 800).center(Offset.zero));
     });
 
-    test('guide oval is centered in the preview box with 0.70 x 0.52 fractions',
+    test('guide oval is portrait, centered, 0.80 x 0.60 with wide clamp',
         () {
       const aspects = [3 / 4, 4 / 3, 20 / 9, 1.0];
       const sizes = [Size(800, 400), Size(400, 800), Size(600, 600)];
@@ -497,27 +497,50 @@ void main() {
         for (final aspect in aspects) {
           final preview = CaptureOverlay.previewRectFor(size, aspect);
           final oval = CaptureOverlay.guideRectForAspect(size, aspect);
-          expect(oval.center, preview.center);
-          expect(oval.width,
-              moreOrLessEquals(preview.width * 0.70, epsilon: 0.01));
-          expect(oval.height,
-              moreOrLessEquals(preview.height * 0.52, epsilon: 0.01));
+          // Fuzzy: Rect.fromCenter round-trips the center through
+          // opposite edges, so exact Offset == is flaky.
+          expect(oval.center.dx,
+              moreOrLessEquals(preview.center.dx, epsilon: 0.01));
+          expect(oval.center.dy,
+              moreOrLessEquals(preview.center.dy, epsilon: 0.01));
+          // Height always the 0.60 fraction; width is 0.80 except on
+          // wide/desktop boxes where the portrait clamp narrows it to
+          // h * faceWidthToHeight so the guide stays taller than wide.
+          final rawW = preview.width * 0.80;
+          final h = preview.height * 0.60;
+          final expectedW =
+              rawW >= h ? h * CaptureOverlay.faceWidthToHeight : rawW;
+          expect(oval.width, moreOrLessEquals(expectedW, epsilon: 0.01));
+          expect(oval.height, moreOrLessEquals(h, epsilon: 0.01));
+          expect(oval.height, greaterThan(oval.width),
+              reason: 'face oval must stay taller than wide: $size @$aspect');
           expect(oval.left, greaterThanOrEqualTo(preview.left - 0.01));
           expect(oval.right, lessThanOrEqualTo(preview.right + 0.01));
           expect(oval.top, greaterThanOrEqualTo(preview.top - 0.01));
           expect(oval.bottom, lessThanOrEqualTo(preview.bottom + 0.01));
         }
       }
+      // Phone portrait path follows the current fractions.
+      final phonePreview =
+          CaptureOverlay.previewRectFor(const Size(400, 800), 9 / 16);
+      final phoneOval =
+          CaptureOverlay.guideRectForAspect(const Size(400, 800), 9 / 16);
+      expect(phoneOval.width,
+          moreOrLessEquals(phonePreview.width * 0.80, epsilon: 0.01));
     });
 
     test('different aspects give different ovals (proves derivation)', () {
       const size = Size(600, 600);
       final portrait = CaptureOverlay.guideRectForAspect(size, 3 / 4);
       final wide = CaptureOverlay.guideRectForAspect(size, 20 / 9);
-      final legacy = CaptureOverlay.guideRectFor(size);
       expect(portrait, isNot(equals(wide)));
-      expect(portrait, isNot(equals(legacy)));
-      expect(wide, isNot(equals(legacy)));
+      // Legacy full-size fallback still derives distinctly from a letter-
+      // boxed wide feed on a phone portrait viewport. (On the square 600x
+      // 600 box the 3/4-portrait clamp coincides with legacy by design —
+      // same center/height, width narrowed to the face ratio in both.)
+      const phone = Size(400, 800);
+      expect(CaptureOverlay.guideRectForAspect(phone, 20 / 9),
+          isNot(equals(CaptureOverlay.guideRectFor(phone))));
     });
 
     test('invalid aspects fall back to full size (no crash, no drift)', () {

@@ -115,10 +115,12 @@ void _narrow(WidgetTester t) {
 
 /// Expected derived line, computed the same local-wall-clock way the
 /// composition does (TZ-agnostic: never hard-codes the UTC calendar day).
+/// Global rule: `[Day], DD-MM-YYYY · HH:MM`.
 String _expectedDerived(String stamp) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   final dt = DateTime.parse(stamp).toLocal();
   String p(int v, [int w = 2]) => '$v'.padLeft(w, '0');
-  return '${p(dt.year, 4)}-${p(dt.month)}-${p(dt.day)} · ${p(dt.hour)}:${p(dt.minute)}';
+  return '${days[dt.weekday - 1]}, ${p(dt.day)}-${p(dt.month)}-${p(dt.year, 4)} · ${p(dt.hour)}:${p(dt.minute)}';
 }
 
 void main() {
@@ -134,9 +136,9 @@ void main() {
   test('studentSessionDateLine is verbatim when dateIso is present', () {
     final s = _rec('s1', 'CS201', '2026-09-06', '2026-09-06T14:30:00.000Z');
     expect(studentSessionDateLine(s), sessionDateTimeLine(s));
-    // Day + time both present (date part is the verbatim dateIso, so this
-    // holds in every timezone; the clock part is local wall-clock).
-    expect(studentSessionDateLine(s).contains('2026-09-06'), isTrue);
+    // Day + time both present (global `[Day], DD-MM-YYYY` date; the clock
+    // part is local wall-clock).
+    expect(studentSessionDateLine(s).contains('06-09-2026'), isTrue);
     expect(studentSessionDateLine(s).contains(' · '), isTrue);
   });
 

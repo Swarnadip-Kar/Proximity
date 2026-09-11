@@ -34,46 +34,62 @@ class ProxCard extends StatefulWidget {
   State<ProxCard> createState() => _ProxCardState();
 }
 
-class _ProxCardState extends State<ProxCard> {
+class _ProxCardState extends State<ProxCard> with HoverGrace {
   var _hovering = false;
+
+  @override
+  void dispose() {
+    cancelHoverGrace();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final shadow = _hovering
-        ? ProxShadows.hover(context)
-        : ProxShadows.rest(context);
-
-    final card = AnimatedContainer(
-      duration: ProxDurations.small,
-      curve: ProxCurves.standard,
-      padding: const EdgeInsets.all(ProxSpacing.cardPadding),
+    // ROOT CAUSE of the desktop hover/exit flicker: hover used to swap
+    // BoxShadow geometry (rest blur 2 / offset 0,1 ⇄ hover blur 12 /
+    // offset 0,4). Every enter AND exit re-rasterized a different blur
+    // kernel — on macOS that pops on both directions, and animated
+    // versions re-rasterized every frame. Instant swaps still pop.
+    // FIX: hover never touches the shadow. The shadow stays at `rest`
+    // geometry always; hover only re-tints the cheap solid-fill border
+    // (no blur re-raster, no layout/hit-test change, so no enter/exit
+    // loop either). Border width stays 1.0 (width lerps re-tessellate).
+    final shadow = ProxShadows.rest(context);
+    final card = Container(
       decoration: BoxDecoration(
-        // Subtle vertical gradient: raised → overlay-blend. Adds depth
-        // over flat fills while staying quiet on both themes.
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            c.surfaceRaised,
-            Color.lerp(c.surfaceRaised, c.surfaceOverlay, 0.55)!,
-          ],
-        ),
         borderRadius: ProxRadii.cardSpecRadius,
-        border: Border.all(
-          color: _hovering ? c.accentBrand : c.divider,
-          width: _hovering ? 1.2 : 1.0,
-        ),
         boxShadow: [shadow],
       ),
-      child: widget.child,
+      child: AnimatedContainer(
+        duration: ProxDurations.small,
+        curve: ProxCurves.standard,
+        padding: const EdgeInsets.all(ProxSpacing.cardPadding),
+        decoration: BoxDecoration(
+          // Subtle vertical gradient: raised → overlay-blend. Adds depth
+          // over flat fills while staying quiet on both themes.
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              c.surfaceRaised,
+              Color.lerp(c.surfaceRaised, c.surfaceOverlay, 0.55)!,
+            ],
+          ),
+          borderRadius: ProxRadii.cardSpecRadius,
+          border: Border.all(
+            color: _hovering ? c.accentBrand : c.divider,
+          ),
+        ),
+        child: widget.child,
+      ),
     );
 
     if (widget.onTap == null) return card;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
+      onEnter: (_) => hoverEnter(() => setState(() => _hovering = true)),
+      onExit: (_) => hoverExit(() => setState(() => _hovering = false)),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -81,6 +97,39 @@ class _ProxCardState extends State<ProxCard> {
         child: card,
       ),
     );
+  }
+}
+
+/// Hover exit-grace shared by the hoverable cards/tiles below (and
+/// [StudentCard]): clearing the highlight waits 80ms so a spurious exit
+/// — trackpad jitter at an edge, transient unmount noise on desktop —
+/// that re-enters inside the window never drops the highlight. 80ms is
+/// deliberately sub-perceptual: a genuine exit (e.g. off the last card,
+/// where no neighbour takes over) still reads as instant, while jitter
+/// gaps (1–2 frames) are covered. Enter is always instant. Dispose must
+/// call [cancelHoverGrace].
+mixin HoverGrace<T extends StatefulWidget> on State<T> {
+  Timer? _hoverGraceTimer;
+
+  void cancelHoverGrace() {
+    _hoverGraceTimer?.cancel();
+    _hoverGraceTimer = null;
+  }
+
+  /// Enter path: cancel any pending clear, then run [apply] now.
+  void hoverEnter(VoidCallback apply) {
+    _hoverGraceTimer?.cancel();
+    apply();
+  }
+
+  /// Exit path: run [clear] after the grace window unless [hoverEnter]
+  /// cancels first.
+  void hoverExit(VoidCallback clear) {
+    _hoverGraceTimer?.cancel();
+    _hoverGraceTimer = Timer(const Duration(milliseconds: 80), () {
+      if (!mounted) return;
+      clear();
+    });
   }
 }
 
@@ -118,34 +167,43 @@ class ProxListTile extends StatefulWidget {
   State<ProxListTile> createState() => _ProxListTileState();
 }
 
-class _ProxListTileState extends State<ProxListTile> {
+class _ProxListTileState extends State<ProxListTile> with HoverGrace {
   var _hovering = false;
+
+  @override
+  void dispose() {
+    cancelHoverGrace();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
 
     final tile = MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: AnimatedContainer(
-        duration: ProxDurations.micro,
-        curve: ProxCurves.standard,
+      onEnter: (_) => hoverEnter(() => setState(() => _hovering = true)),
+      onExit: (_) => hoverExit(() => setState(() => _hovering = false)),
+      // Same no-shadow-geometry rule as ProxCard above: shadow stays at
+      // `rest` always, only the cheap tint animates — no blur re-raster,
+      // no enter/exit loop, no macOS edge-crossing flicker.
+      child: Container(
         decoration: BoxDecoration(
-          color: _hovering
-              ? c.accentBrand.withValues(alpha: 0.04)
-              : c.surfaceRaised,
           borderRadius: ProxRadii.cardSpecRadius,
-          border: Border.all(color: c.divider),
-          boxShadow: [
-            _hovering
-                ? ProxShadows.hover(context)
-                : ProxShadows.rest(context),
-          ],
+          boxShadow: [ProxShadows.rest(context)],
         ),
-        child: Material(
-          color: Colors.transparent,
-          child: ListTile(
+        child: AnimatedContainer(
+          duration: ProxDurations.micro,
+          curve: ProxCurves.standard,
+          decoration: BoxDecoration(
+            color: _hovering
+                ? c.accentBrand.withValues(alpha: 0.04)
+                : c.surfaceRaised,
+            borderRadius: ProxRadii.cardSpecRadius,
+            border: Border.all(color: c.divider),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: ListTile(
             key: widget.tileKey,
             dense: widget.dense,
             leading: widget.leading,
@@ -175,6 +233,7 @@ class _ProxListTileState extends State<ProxListTile> {
             shape: RoundedRectangleBorder(
               borderRadius: ProxRadii.cardSpecRadius,
             ),
+          ),
           ),
         ),
       ),

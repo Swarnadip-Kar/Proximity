@@ -1,12 +1,14 @@
 // Live-tab rebuild (2026-09-10): manual-attendance module proofs.
 //
-// - The M3 shim (`widgets/manual_add.dart`) re-exports the module form
-//   (identical class object — existing imports keep working).
-// - Inbox hold-and-tap: long-press selects, toolbar Approve/Reject routes
-//   single → onApproveOne/onRejectOne and bulk → onDecide; Cancel exits.
-// - Module form submit paths through the NEW import path: ID-required,
+// - The M3 shim (`widgets/manual_add.dart`) has been removed; the module
+//   (`features/manual_attendance/`) is the single source — existing imports
+//   resolve directly (no barrel indirection).
+// - Inbox tap-to-select: plain taps toggle (same contract as the
+//   review/export picker), toolbar Approve/Reject routes single →
+//   onApproveOne/onRejectOne and bulk → onDecide; Cancel exits.
+// - Module form submit paths through the module import path: ID-required,
 //   offline queue, exact-ID online resolve (mirrors manual_add_test,
-//   which covers the same class through the shim).
+//   which covers the same class through the module).
 // - Draft/recovery semantics live on the host untouched (see
 //   recover_policy_test.dart + the take-screen draft widget tests).
 import 'package:flutter/material.dart';
@@ -19,7 +21,6 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/manual_inbox.dart';
 import 'package:proximity_app/features/manual_attendance/manual_attendance.dart'
     as ma;
-import 'package:proximity_app/widgets/manual_add.dart' as shim;
 
 Future<FakeCloudSync> _seededCloud() async {
   final cloud = FakeCloudSync();
@@ -36,11 +37,7 @@ Future<FakeCloudSync> _seededCloud() async {
 }
 
 void main() {
-  test('M3 shim re-exports the module form (identical class)', () {
-    expect(identical(shim.ManualAddForm, ma.ManualAddForm), isTrue);
-  });
-
-  testWidgets('inbox hold-and-tap: single approve routes to onApproveOne',
+  testWidgets('inbox tap-to-select: single approve routes to onApproveOne',
       (t) async {
     final approved = <String>[];
     await t.pumpWidget(MaterialApp(
@@ -60,8 +57,9 @@ void main() {
     ));
     await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
+    expect(find.text('Tap to select'), findsOneWidget);
     expect(find.text('Approve 1'), findsNothing);
-    await t.longPress(find.text('A One'));
+    await t.tap(find.text('A One'));
     await t.pumpAndSettle();
     expect(find.text('Approve 1'), findsOneWidget);
     await t.tap(find.text('Approve 1'));
@@ -71,7 +69,7 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('inbox hold-and-tap: bulk reject routes to onDecide',
+  testWidgets('inbox tap-to-select: bulk reject routes to onDecide',
       (t) async {
     var decided = (emails: <String>[], approve: true);
     await t.pumpWidget(MaterialApp(
@@ -92,7 +90,7 @@ void main() {
       ),
     ));
     await t.pumpAndSettle();
-    await t.longPress(find.text('A One'));
+    await t.tap(find.text('A One'));
     await t.pumpAndSettle();
     await t.tap(find.text('Select all'));
     await t.pumpAndSettle();
@@ -105,7 +103,7 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('inbox hold-and-tap: Cancel exits selection mode',
+  testWidgets('inbox tap-to-select: Cancel exits selection mode',
       (t) async {
     await t.pumpWidget(MaterialApp(
       // App theme: module widgets read the ProximityColors extension.
@@ -122,7 +120,7 @@ void main() {
       ),
     ));
     await t.pumpAndSettle();
-    await t.longPress(find.text('A One'));
+    await t.tap(find.text('A One'));
     await t.pumpAndSettle();
     expect(find.text('Approve 1'), findsOneWidget);
     await t.tap(find.byTooltip('Cancel'));

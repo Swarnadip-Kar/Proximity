@@ -11,8 +11,9 @@
 // - Tag chips colored by category (see [logCategoryColor], drawn from the
 //   `status.*`/`accent.brand` family); log lines keep the frozen
 //   [ProxLogColors] terminal vocabulary.
-// - `Expand` pushes the filterable full-screen `debug/log` view
-//   (carrying the drawer's tag selection); the Account menu's `System log`
+// - `Expand` replaces the sheet with the ONE named `debug/log` route
+//   (carrying the drawer's tag selection, single back step tab-ward —
+//   never sheet-below-debug double-back); the Account menu's `System log`
 //   row remains the permanent entry point.
 //
 // The drawer is an overlay, never a route push of its own — proving/face
@@ -38,6 +39,7 @@ Future<void> showLogDrawer(
   BuildContext context, {
   Set<String>? initialTags,
 }) {
+  if (!context.mounted) return Future.value();
   final c = ProximityColors.of(context);
   final glass = ProxGlass.terminalOf(context);
   return showModalBottomSheet<void>(
@@ -167,9 +169,18 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
   }
 
   void _expand() {
+    // ONE named `debug/log` identity: replaces the sheet so back goes
+    // tab-ward in a single step (push-on-top left sheet-below-debug
+    // double-back). Named via settings (same `debug/log` as the route
+    // table) while carrying the drawer's tag selection via constructor —
+    // no table change needed.
     final tags = Set<String>.of(_only);
-    Navigator.of(context).push(
+    Navigator.of(context).pushReplacement(
       MaterialPageRoute(
+        settings: RouteSettings(
+          name: 'debug/log',
+          arguments: {'initialTags': tags.toList()},
+        ),
         builder: (_) => DebugLogScreen(initialTags: tags),
       ),
     );

@@ -65,16 +65,20 @@ class _WelcomeHeroSectionState extends State<WelcomeHeroSection> {
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(height: ProxSpacing.lg),
-        // Eyebrow: product category, letterspaced, live-accent color.
+        // Top header: category descriptor where the brand eyebrow was.
+        // Color: c.statusMarked — the exact global "present" green from
+        // the design tokens (same green as the present badges/status
+        // language). Same typeface/weight as the eyebrow, scaled to a
+        // readable secondary size (not the main text, but legible).
         ProxFadeSlideIn(
           delay: const Duration(milliseconds: 100),
           child: Text(
-            'PROXIMITY',
+            'Campus Attendance System',
             textAlign: TextAlign.center,
-            style: ProxType.label(color: c.accentBrand).copyWith(
+            style: ProxType.label(color: c.statusMarked).copyWith(
               fontWeight: FontWeight.w700,
-              letterSpacing: 4.0,
-              fontSize: 12,
+              letterSpacing: 2.0,
+              fontSize: 15,
             ),
           ),
         ),
@@ -126,16 +130,19 @@ class _WelcomeHeroSectionState extends State<WelcomeHeroSection> {
           ),
         ),
         const SizedBox(height: ProxSpacing.xl),
-        // Display headline — the zero-tap story.
+        // Center brand: "PROXIMITY" as the screen's central text. Same
+        // typeface, weight, purple (c.accentBrand) and letterspaced
+        // treatment — only the size is scaled up (anchored to the
+        // display-size token, not a new style).
         ProxFadeSlideIn(
           delay: const Duration(milliseconds: 300),
           child: Text(
-            'Be there.\nBe marked.',
+            'PROXIMITY',
             textAlign: TextAlign.center,
-            style: ProxType.display(color: c.contentPrimary).copyWith(
-              fontSize: 32,
-              height: 1.15,
-              letterSpacing: -0.5,
+            style: ProxType.label(color: c.accentBrand).copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 4.0,
+              fontSize: ProxType.displaySize,
             ),
           ),
         ),

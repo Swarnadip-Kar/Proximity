@@ -32,10 +32,12 @@ import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
+import '../entry/entry_flow.dart';
 import '../setup/welcome_screen.dart';
 import 'account_common.dart';
 import 'account_device_page.dart';
 import 'account_enrollment_page.dart';
+import 'account_export_location.dart';
 import 'account_header.dart';
 import 'account_mode_switch.dart';
 import 'account_system.dart';
@@ -173,15 +175,22 @@ class _StudentFaceIdEntry extends ConsumerWidget {
 // NO Face-ID row, NO enrollment row.
 // ---------------------------------------------------------------------------
 
-/// Professor Account tab root. Signed out renders Welcome, same as the
-/// student page and the hub route before it.
+/// Professor Account tab root.
+///
+/// Offline local-only professor (no sign-in — the Continue-offline path):
+/// renders the local-safe page below instead of the Welcome dead end
+/// (sign-in needs internet, so Welcome would strand them). Only
+/// device-local rows render here — Exports, Appearance, Device facts,
+/// system log, sign-out — and NO identity surface at all (no header, no
+/// cached names), so a previous account can never leak through. Cloud
+/// actions (register/sync) keep their own online gates elsewhere.
 class ProfAccountScreen extends ConsumerWidget {
   const ProfAccountScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final acct = ref.watch(accountProvider).valueOrNull;
-    if (acct == null) return const WelcomeScreen();
+    if (acct == null) return const _OfflineProfAccount();
     final header = AccountHeaderCard(acct: acct);
     return ProxScreen(
       title: 'Account',
@@ -211,6 +220,10 @@ class ProfAccountScreen extends ConsumerWidget {
           const SizedBox(height: ProxSpacing.sm),
           const AccountSystemLogRow(),
           const SizedBox(height: ProxSpacing.xl),
+          const ProxSectionHeader(title: 'Exports'),
+          const SizedBox(height: ProxSpacing.sm),
+          const AccountExportLocationRow(),
+          const SizedBox(height: ProxSpacing.xl),
           const ProxSectionHeader(title: 'Appearance'),
           const SizedBox(height: ProxSpacing.sm),
           const Padding(
@@ -221,6 +234,109 @@ class ProfAccountScreen extends ConsumerWidget {
           const Divider(),
           const SizedBox(height: ProxSpacing.md),
           const AccountSignOutButton(),
+          const SizedBox(height: ProxSpacing.lg),
+        ],
+      ),
+    );
+  }
+}
+
+/// Offline local-only professor Account page (no sign-in): the same
+/// device-local rows as above, minus every identity surface (no header
+/// card, no mode switch — exit is the switch-account button below, which
+/// is null-safe offline). Cloud registration/sync stay gated at their own
+/// call sites with honest offline notes; nothing here touches the network.
+///
+/// Switch-account exit unsets the mode via [entrySignOut] (offline path
+/// only) so the landing router shows Welcome with a working sign-in
+/// button. Same key/label/icon as the shared sign-out footer (signed-in
+/// pages keep that widget byte-identical); this local button only adds a
+/// mounted + busy guard so rapid taps cannot double-navigate (the mode
+/// write itself is idempotent — a home switch, never a push).
+class _OfflineProfAccount extends ConsumerStatefulWidget {
+  const _OfflineProfAccount();
+
+  @override
+  ConsumerState<_OfflineProfAccount> createState() =>
+      _OfflineProfAccountState();
+}
+
+class _OfflineProfAccountState extends ConsumerState<_OfflineProfAccount> {
+  bool _busy = false;
+
+  Future<void> _switchAccount() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      // Stale-stack reset first (root setup-flow dismissed before the
+      // switch per the product decision, then this tab popped to root),
+      // so the previous identity's pushed screens never survive underneath.
+      prepareAccountTransition(context);
+      if (!mounted) return;
+      await entrySignOut(ref, () => mounted);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ProxScreen(
+      title: 'Account',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const WebRecordsBanner(),
+          const SizedBox(height: ProxSpacing.sm),
+          const ProxSyncNote(
+            'Offline professor mode — classes stay on this device until '
+            'sign-in + sync.',
+          ),
+          const SizedBox(height: ProxSpacing.lg),
+          ProxListTile(
+            key: const Key('account-row-device'),
+            title: 'Device',
+            leading: const Icon(Icons.smartphone_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  settings: const RouteSettings(name: 'account/device'),
+                  builder: (_) => const AccountProfDevicePage(),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+          const AccountSystemLogRow(),
+          const SizedBox(height: ProxSpacing.xl),
+          const ProxSectionHeader(title: 'Exports'),
+          const SizedBox(height: ProxSpacing.sm),
+          const AccountExportLocationRow(),
+          const SizedBox(height: ProxSpacing.xl),
+          const ProxSectionHeader(title: 'Appearance'),
+          const SizedBox(height: ProxSpacing.sm),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: ProxSpacing.sm),
+            child: AccountThemeRow(),
+          ),
+          const SizedBox(height: ProxSpacing.xl),
+          const Divider(),
+          const SizedBox(height: ProxSpacing.md),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: ProxSpacing.sm),
+            child: Center(
+              child: TextButton.icon(
+                key: const Key('account-sign-out'),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(64, ProxSpacing.minTap),
+                ),
+                icon: const Icon(Icons.switch_account),
+                label: const Text('Switch account (sign out)'),
+                onPressed: _busy ? null : _switchAccount,
+              ),
+            ),
+          ),
           const SizedBox(height: ProxSpacing.lg),
         ],
       ),

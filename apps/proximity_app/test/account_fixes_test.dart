@@ -187,7 +187,7 @@ void main() {
       // Compact menu: rows only, no fact bodies, no enroll CTA.
       expect(find.byKey(const Key('account-row-enrollment')), findsOneWidget);
       expect(find.textContaining('Enrolled as $_emailA'), findsNothing);
-      expect(find.text('2026-09-01'), findsNothing);
+      expect(find.text('01-09-2026'), findsNothing);
       expect(find.text('Enroll this device'), findsNothing);
       expect(find.text('Re-enroll this device'), findsNothing);
       expect(find.text('Move to this device'), findsNothing);
@@ -195,7 +195,7 @@ void main() {
       await t.tap(find.byKey(const Key('account-row-enrollment')));
       await _drain(t);
       expect(find.textContaining('Enrolled as $_emailA'), findsWidgets);
-      expect(find.text('2026-09-01'), findsOneWidget);
+      expect(find.text('01-09-2026'), findsOneWidget);
       expect(find.text('Enroll this device'), findsNothing);
       expect(find.text('Move to this device'), findsNothing);
     });
@@ -233,7 +233,7 @@ void main() {
       expect(find.byKey(const Key('face-id-rescan')), findsOneWidget);
     });
 
-    testWidgets('unenrolled account still gets the enroll entry', (t) async {
+    testWidgets('unenrolled account shows org, no enroll entry', (t) async {
       final auth = SwitchableAuth();
       addTearDown(auth.dispose);
       await t.pumpWidget(ProviderScope(
@@ -245,12 +245,12 @@ void main() {
           email: _emailB, displayName: 'Bob B', uid: 'uid-b'));
       await _drain(t);
 
-      // Menu rows exist; the enroll entry lives in the Enrollment sub-page
-      // with the current account's org beside it.
+      // Menu rows exist; the Enrollment sub-page shows the current
+      // account's org with no enroll entry (enrollment lives in SetupFlow).
       expect(find.byKey(const Key('account-row-enrollment')), findsOneWidget);
       await t.tap(find.byKey(const Key('account-row-enrollment')));
       await _drain(t);
-      expect(find.byKey(const Key('account-enroll-entry')), findsOneWidget);
+      expect(find.byKey(const Key('account-enroll-entry')), findsNothing);
       expect(find.text('school-b.edu'), findsWidgets);
     });
   });
@@ -316,8 +316,8 @@ void main() {
       expect(find.textContaining('Enrolled as $_emailA'), findsNothing);
       expect(find.text('RA1001'), findsNothing);
       expect(find.text('school-a.edu'), findsNothing);
-      // B holds no key here: the enroll entry is back for the new account.
-      expect(find.byKey(const Key('account-enroll-entry')), findsOneWidget);
+      // B holds no key here: no enroll entry (enrollment lives in SetupFlow).
+      expect(find.byKey(const Key('account-enroll-entry')), findsNothing);
     });
   });
 

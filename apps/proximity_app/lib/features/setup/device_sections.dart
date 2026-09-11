@@ -17,6 +17,7 @@ import 'setup_details.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/trust_cards.dart';
 import '../account/account_common.dart';
+import '../account/device_rules.dart';
 import '../entry/entry_flow.dart';
 
 /// Signed-in account block (with the wrong-account warning when the
@@ -118,6 +119,8 @@ class DeviceKeySection extends StatelessWidget {
 /// Move-status block: the signed-in Gmail against the one-device rule.
 /// The verdict body is shared with the enroll claim (same reasons the
 /// server refuses); the binding's trust tier rides below every verdict.
+/// The eligible-move sentence is the shared [deviceAllowedMoveNote] (one
+/// definition for the 30-day copy — same words as the account move status).
 class DeviceMoveSection extends StatelessWidget {
   final String? email;
   final Future<StudentGate?> Function(String? email) loadGate;
@@ -206,8 +209,7 @@ class DeviceMoveSection extends StatelessWidget {
           children: [
             const ProxStateBadge(
                 state: ProxState.waiting, label: 'Eligible to move here'),
-            const ProxSyncNote(
-                'The 30 days since the last move have passed — enrolling here moves it (at most once a month).'),
+            ProxSyncNote(deviceAllowedMoveNote()),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,

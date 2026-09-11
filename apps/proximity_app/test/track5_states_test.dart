@@ -63,7 +63,7 @@ void main() {
 
   test('trust helpers format honestly', () {
     expect(trustDateLabel(0), '');
-    expect(trustDateLabel(1756684800000), '2025-09-01');
+    expect(trustDateLabel(1756684800000), '01-09-2025');
     expect(trustPkDFingerprint(''), 'no key');
     expect(trustPkDFingerprint('abcdef1234567890'), contains('…'));
   });

@@ -24,6 +24,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
+import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
@@ -31,6 +32,7 @@ import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/clock.dart';
+import '../../widgets/csv_preview.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/partial_list.dart';
@@ -51,6 +53,12 @@ class CourseOverviewScreen extends ConsumerStatefulWidget {
   final String courseName;
   const CourseOverviewScreen({super.key, required this.courseName});
 
+  /// Canonical in-tab route name: `prof/courses/<course>`.
+  /// Matches the IA node in `proxOnGenerateRoute` so NAV logs, `popUntil`
+  /// by name/prefix, and deep-links share ONE identity with the named
+  /// route (no duplicate unnamed push).
+  static String routeName(String course) => 'prof/courses/$course';
+
   @override
   ConsumerState<CourseOverviewScreen> createState() =>
       _CourseOverviewScreenState();
@@ -61,6 +69,13 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   String? _notice;
   String? _syncMsg;
   bool _syncing = false;
+
+  /// Setup photo opt-in for this course (off by default): the header
+  /// shows my Gmail photo when on, the course logo disc otherwise.
+  /// Re-read on every refresh (init, history tick, return from export/
+  /// session/live-setup) so a toggle flipped in the live setup tab
+  /// reflects here without an app restart.
+  bool _sharePhoto = false;
 
   /// History-refresh trigger (post-End freshness, presentation/navigation
   /// only). Root cause: this state lives inside the shell IndexedStack +
@@ -77,10 +92,31 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   void initState() {
     super.initState();
     Future.microtask(_syncFromCloud);
+    Future.microtask(_reloadSharePhoto);
     _historyTickListener = () {
+      // History tick also means the live setup may have flipped the
+      // per-course photo opt-in — re-read it so the header stays true.
+      _reloadSharePhoto();
       if (mounted) setState(() {});
     };
     liveHistoryTick.addListener(_historyTickListener!);
+  }
+
+  /// Re-reads the per-course photo opt-in (setup toggle) and repaints the
+  /// header. Never throws; a stale `false` keeps the logo disc (safe).
+  Future<void> _reloadSharePhoto() async {
+    try {
+      final share = await ref
+          .read(deviceStoreProvider)
+          .readShowProfPhoto(widget.courseName);
+      if (mounted && share != _sharePhoto) {
+        setState(() => _sharePhoto = share);
+      } else if (mounted) {
+        // Still rebuild once so a freshly-arrived account photoUrl pairs
+        // with an already-true flag on first load.
+        setState(() => _sharePhoto = share);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -135,13 +171,21 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     if (picked == null || picked.isEmpty || picked == widget.courseName) {
       return;
     }
+    final store = ref.read(deviceStoreProvider);
     final ok = await syncEngine.renameCourseLocal(
-        ref.read(deviceStoreProvider), widget.courseName, picked);
+        store, widget.courseName, picked);
     if (!mounted) return;
     if (ok) {
       // Renaming migrates local history AND re-queues every touched record:
       // the same doc ids push with the new courseId on flush (no separate
       // cloud rename batch — union merge converges other devices).
+      // Carry the per-course photo opt-in to the new name so the header
+      // keeps showing the Gmail photo when it was on.
+      try {
+        final share = await store.readShowProfPhoto(widget.courseName);
+        await store.writeShowProfPhoto(picked, share);
+      } catch (_) {}
+      if (!mounted) return;
       BleLog.log('SYNC', 'overview: renamed ${widget.courseName} → $picked');
       unawaited(flushNow(ref));
       Navigator.of(context).pop(); // back to the refreshed course list
@@ -163,8 +207,14 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   Future<void> _openExport() async {
     BleLog.log('NAV', 'overview ${widget.courseName} → export');
     await Navigator.of(context).push(MaterialPageRoute(
+        settings: RouteSettings(
+            name: ExportCenterScreen.routeName(widget.courseName)),
         builder: (_) => ExportCenterScreen(courseName: widget.courseName)));
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // The live setup toggle may have flipped while away — re-read it so
+    // the Gmail-photo header is current on return.
+    await _reloadSharePhoto();
   }
 
   void _openLog() {
@@ -207,6 +257,36 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     // Tombstones propagate on flush (other devices drop them on next sync).
     unawaited(flushNow(ref));
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// Exports the hold-and-tap selected sessions as one combined matrix
+  /// (same builder as the date-range export) in the shared CSV preview
+  /// dialog (Close + Save + Share). Selection stays armed afterwards so
+  /// the professor can delete or re-export without re-holding.
+  Future<void> _exportSessions(
+      List<ClassRecord> sessions, Set<String> ids) async {
+    final sel = sessions.where((s) => ids.contains(s.id)).toList()
+      ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
+    if (sel.isEmpty || !mounted) return;
+    final acct = ref.read(accountProvider).valueOrNull;
+    final csv = exportHeader(
+      buildDateRangeMatrix(sel),
+      profName: (acct?.displayName ?? '').trim(),
+      className: widget.courseName,
+      profEmail: (acct?.email ?? '').trim(),
+    );
+    final label =
+        sel.length == 1 ? _sessionLabel(sel.first) : '${sel.length} sessions';
+    BleLog.log('NAV', 'overview ${widget.courseName} → export $label');
+    await showCsvPreviewDialog(
+      context,
+      title: '${widget.courseName} · $label',
+      csv: csv,
+      onSave: () => saveCsvToDevice(
+          context, csv, 'attendance_${widget.courseName}_selected.csv'),
+      onShare: () =>
+          shareCsvText(csv, 'Attendance ${widget.courseName} ($label)'),
+    );
   }
 
   /// Deletes the hold-and-tap selected sessions with the X/Y warning.
@@ -280,10 +360,15 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     BleLog.log('NAV', 'overview → session ${target.dateIso}');
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
+          settings: RouteSettings(
+              name: SessionDetailScreen.routeName(
+                  widget.courseName, target.id)),
           builder: (_) =>
               SessionDetailScreen(record: target!, courseSessions: sessions)),
     );
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    await _reloadSharePhoto();
   }
 
   @override
@@ -316,18 +401,30 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
               // Newcomers from later classes read as absent in earlier ones,
               // matching the matrix exports.
               final rosterCount = courseRoster(sessions).length;
+              // Total Students: unique attendees present in ≥1 session.
+              // Present = confirmed (intersection of all windows, trailing
+              // empties trimmed — same as presentCount / export-matrix P);
+              // unioned across sessions (union, not sum) so repeat
+              // attendees count once. Empty course → 0, still rendered.
+              final totalStudents = <String>{
+                for (final s in sessions) ...s.confirmedEmails,
+              }.length;
               return SelectionScope(
                 child: _OverviewBody(
+                  courseName: widget.courseName,
+                  sharePhoto: _sharePhoto,
                   sessions: sessions,
                   loading: snap.connectionState == ConnectionState.waiting,
                   hasData: snap.hasData,
                   rosterCount: rosterCount,
+                  totalStudents: totalStudents,
                   syncing: _syncing,
                   syncMsg: _syncMsg,
                   notice: _notice,
                   onOpenExport: _openExport,
                   onOpenSession: (id) => _openSession(sessions, id),
                   onDeleteSessions: (ids) => _deleteSessions(sessions, ids),
+                  onExportSessions: (ids) => _exportSessions(sessions, ids),
                   onDeleteCourse:
                       sessions.isEmpty ? null : () => _deleteCourse(sessions),
                   sessionLabel: _sessionLabel,
@@ -343,6 +440,73 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   }
 }
 
+/// Course identity header: the professor's Gmail photo when the setup
+/// photo toggle is on for this course AND an account photo exists —
+/// otherwise the course logo disc. Same disc/photo language as pickers,
+/// roster avatars, and the student-view preview card.
+class _CourseIdentityHeader extends StatelessWidget {
+  final String courseName;
+  final bool sharePhoto;
+  final String photoUrl;
+
+  const _CourseIdentityHeader({
+    required this.courseName,
+    required this.sharePhoto,
+    required this.photoUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final url = photoUrl.trim();
+    final Widget avatar;
+    if (sharePhoto && url.isNotEmpty) {
+      Widget initials() => Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.accentBrand.withValues(alpha: 0.12),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              courseInitials(courseName),
+              style: ProxType.title(color: c.accentBrand),
+            ),
+          );
+      avatar = ClipOval(
+        child: Image.network(
+          url,
+          width: 44,
+          height: 44,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => initials(),
+          frameBuilder: (context, child, frame, _) {
+            if (frame == null) return initials();
+            return child;
+          },
+        ),
+      );
+    } else {
+      avatar = CourseLogo(course: courseName, size: 44);
+    }
+    return Row(
+      children: [
+        avatar,
+        const SizedBox(width: ProxSpacing.md),
+        Expanded(
+          child: Text(
+            courseName,
+            style: ProxType.title(color: c.contentPrimary),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Overview content inside one [SelectionScope]: session rows use
 /// hold-and-tap selection with a bottom toolbar
 /// (Delete N · Select all · Cancel). No checkbox appears here; the
@@ -351,32 +515,40 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
 /// manual inbox) and right-click enters with that row — same controller,
 /// same toolbar.
 class _OverviewBody extends ConsumerStatefulWidget {
+  final String courseName;
+  final bool sharePhoto;
   final List<ClassRecord> sessions;
   final bool loading;
   final bool hasData;
   final int rosterCount;
+  final int totalStudents;
   final bool syncing;
   final String? syncMsg;
   final String? notice;
   final VoidCallback onOpenExport;
   final ValueChanged<String> onOpenSession;
   final Future<bool> Function(Set<String>) onDeleteSessions;
+  final Future<void> Function(Set<String>) onExportSessions;
   final VoidCallback? onDeleteCourse;
   final String Function(ClassRecord) sessionLabel;
   final String Function(ClassRecord) sessionDateLine;
   final String Function(ClassRecord) partialMarker;
 
   const _OverviewBody({
+    required this.courseName,
+    required this.sharePhoto,
     required this.sessions,
     required this.loading,
     required this.hasData,
     required this.rosterCount,
+    required this.totalStudents,
     required this.syncing,
     required this.syncMsg,
     required this.notice,
     required this.onOpenExport,
     required this.onOpenSession,
     required this.onDeleteSessions,
+    required this.onExportSessions,
     required this.onDeleteCourse,
     required this.sessionLabel,
     required this.sessionDateLine,
@@ -412,12 +584,14 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
     final loading = widget.loading;
     final hasData = widget.hasData;
     final rosterCount = widget.rosterCount;
+    final totalStudents = widget.totalStudents;
     final syncing = widget.syncing;
     final syncMsg = widget.syncMsg;
     final notice = widget.notice;
     final onOpenExport = widget.onOpenExport;
     final onOpenSession = widget.onOpenSession;
     final onDeleteSessions = widget.onDeleteSessions;
+    final onExportSessions = widget.onExportSessions;
     final onDeleteCourse = widget.onDeleteCourse;
     final sessionLabel = widget.sessionLabel;
     final sessionDateLine = widget.sessionDateLine;
@@ -440,6 +614,19 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
               const Align(
                 alignment: Alignment.centerLeft,
                 child: UnsyncedBadge(),
+              ),
+              const SizedBox(height: ProxSpacing.sm),
+              // Course identity: my Gmail photo when the setup toggle is
+              // on for this course, else the course logo disc — same
+              // avatar language as pickers and roster cards.
+              _CourseIdentityHeader(
+                courseName: widget.courseName,
+                sharePhoto: widget.sharePhoto,
+                photoUrl: ref
+                        .watch(accountProvider)
+                        .valueOrNull
+                        ?.photoUrl ??
+                    '',
               ),
               const SizedBox(height: ProxSpacing.sm),
               ProxSecondaryButton(
@@ -472,6 +659,18 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
                     },
                   ),
                 ],
+              ),
+              // Unique-attendee total (union of confirmed-present emails
+              // across sessions, not a sum), highlighted in the status
+              // badge idiom — same component as the per-session present
+              // badges below. Renders even when empty (0) so the count
+              // stays honest.
+              Align(
+                alignment: Alignment.centerLeft,
+                child: VerdictBadge(
+                  status: ProxStatus.marked,
+                  label: 'Total Students: $totalStudents',
+                ),
               ),
               DetailsExpander(
                 title: 'Details',
@@ -521,12 +720,19 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
                             name: sessionLabel(r),
                             subtitle:
                                 '${sessionDateLine(r)} · ${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}',
-                            status: partialMarker(r).isEmpty
-                                ? null
-                                : VerdictBadge(
-                                    status: ProxStatus.review,
-                                    label: partialMarker(r),
-                                  ),
+                            // Highlighted present total via the badge idiom:
+                            // marked = Present with a custom "$n present"
+                            // label (same VerdictBadge component, no new
+                            // pills). Static one-shot pop only — never the
+                            // periodic pending pulse — so rows stay
+                            // settle-safe. Partial text rides the same badge
+                            // when present so no info is lost.
+                            status: VerdictBadge(
+                              status: ProxStatus.marked,
+                              label: partialMarker(r).isEmpty
+                                  ? '${r.presentCount} present'
+                                  : '${r.presentCount} present · ${partialMarker(r)}',
+                            ),
                             selectionMode: effective,
                             selected: controller.isSelected(r.id),
                             // No multi-delete selection on web records builds.
@@ -568,6 +774,17 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
           selectedCount: count,
           totalCount: sessions.length,
           actions: [
+            // Same hold-and-tap selection as Delete: export the held
+            // dates as one combined matrix (Close + Save + Share).
+            // Selection stays armed for delete/re-export.
+            SelectionToolbarAction(
+              label: 'Export $count',
+              onPressed: count == 0
+                  ? null
+                  : () async {
+                      await onExportSessions(controller.selectedIds);
+                    },
+            ),
             SelectionToolbarAction(
               label: 'Delete $count',
               onPressed: count == 0

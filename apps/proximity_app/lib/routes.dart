@@ -6,75 +6,54 @@
 //
 //   Entry:          welcome · roles · device
 //   Prof setup:     prof/courses · prof/courses/<course> (overview)
-//                   prof/sessions/<id> (detail, read)
-//                   prof/sessions/<id>/edit · prof/courses/<course>/export
-//   Prof live:      live/<course> (counter + Stop)
-//                   live/<course>/roster · live/<course>/inbox
-//                   live/<course>/add · live/<course>/setup
-//                   live/<course>/recover
-//   Student mark:   mark/browse · mark/join · mark/waiting · mark/face
-//                   mark/proving · mark/verdict · mark/manual
-//                   (one continuation — phases, not pages; unenrolled
-//                   entries resolve through the _MarkGate into the setup
-//                   flow, never bare mark/browse)
-//   Enroll:         enroll/intro · enroll/capture · enroll/result
-//                   (adoption: identical strings to `EnrollFlow`, so bundle
-//                   pushes and this table name the same routes; the
-//                   serialized SetupFlowScreen composes the same screens)
-//   Records:        records/mine · records/course/<course>
-//                   (Courses-tab aliases: courses/mine ·
-//                   courses/course/<course> — same screens/guards)
+//                   prof/courses/<course>/export (in-tab drill-down only;
+//                   named session/course deep-links are unsupported)
+//   Prof live:      live/<course> (Take host; any section suffix lands
+//                   on the host — no standalone section screens)
+//   Student mark:   (in-tab only — no named routes; the shell lock +
+//                   root-navigator SetupFlowScreen auto-push is the gate)
+//   Enroll:         enroll/capture · enroll/result (the standalone intro
+//                   route is deleted with the legacy bundle entry; the
+//                   serialized SetupFlowScreen is the only enrollment flow
+//                   and embeds the capture/result screens as steps)
+//   Records:        records/mine (in-tab drill-down only; named
+//                   course deep-links are unsupported)
 //   Account:         account/face-id (isolated status page; the
 //                   consolidated account page is the tab root in shells)
 //   Shared:         debug/log (filterable full-screen terminal)
 //
-// Status: wired. Entry/enroll/debug/records/review + prof setup builders
-// point at the feature bundle screens; live sections build focused screens
-// (roster/inbox/add/setup — one purpose each, same host driver; recover
-// stays on the host which owns the draft); mark phases build the host
-// shell (one continuation — phases, not pages; take_attendance +
+// Status: wired. Entry/enroll/debug/records + prof setup builders
+// point at the feature bundle screens; live paths build the Take host
+// (it owns hosting/window/draft orchestration); mark lives in-tab in the
+// shell (phases, not pages; take_attendance +
 // `MaterialApp.home` + `PROX_MODE` previews + web records-only behavior
 // are preserved (see `main.dart` wiring).
 //
-// Loaders: routes that need a record object resolve it from the store
-// (session detail/edit, course attendance detail) and render guidance +
-// STATE log on a miss — never a silent dead end, never a crash. Section
-// hops log NAV with the section arg; cold live sections (no host below)
-// render guidance, never a crash.
+// In-tab drill-down is the only supported entry: named deep-links are
+// unsupported (no intent-filters/URL handlers). In-tab pushes resolve
+// their record objects from the store directly; unknown names render
+// guidance + NAV log, never a crash.
 library;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_storage/storage.dart';
 
-import 'core/auth.dart';
-import 'core/device_store.dart';
 import 'core/platformx.dart';
 import 'features/face_identity/face_blocked.dart';
 import 'design/tokens.dart';
 import 'features/account/face_id_screen.dart';
 import 'features/debug/debug_log_screen.dart';
 import 'features/setup/enroll_capture.dart';
-import 'features/setup/enroll_intro.dart';
 import 'features/setup/enroll_result.dart';
 import 'features/setup/device_identity_screen.dart';
-import 'features/setup/role_hub_screen.dart';
 import 'features/setup/welcome_screen.dart';
-import 'features/records/course_attendance_detail_screen.dart';
 import 'features/records/course_overview_screen.dart';
 import 'features/records/export_center_screen.dart';
 import 'features/records/my_attendance_screen.dart';
 import 'features/records/prof_courses_screen.dart';
-import 'features/live/live_sections.dart';
-import 'features/records/session_detail_screen.dart';
-import 'features/records/session_edit_screen.dart';
-import 'mode.dart';
-import 'screens/student_home.dart';
-import 'screens/setup_flow_screen.dart';
+import 'screens/landing.dart';
 import 'screens/take_attendance.dart';
-import 'widgets/course_attendance.dart';
 import 'widgets/prox_buttons.dart';
 import 'widgets/prox_scaffold.dart';
 import 'widgets/prox_states.dart';
@@ -121,34 +100,15 @@ abstract final class ProxRoutes {
   // Prof setup.
   static const profCourses = 'prof/courses';
 
-  // Prof live (one host screen; sections ride the path).
+  // Prof live (Take tab is the single host).
   static String live(String course) => 'live/$course';
-  static String liveRoster(String course) => 'live/$course/roster';
-  static String liveInbox(String course) => 'live/$course/inbox';
-  static String liveAdd(String course) => 'live/$course/add';
-  static String liveSetup(String course) => 'live/$course/setup';
-  static String liveRecover(String course) => 'live/$course/recover';
-
-  // Student mark (one continuation; phases ride the path).
-  static const browse = 'mark/browse';
-  static const join = 'mark/join';
-  static const waiting = 'mark/waiting';
-  static const face = 'mark/face';
-  static const proving = 'mark/proving';
-  static const verdict = 'mark/verdict';
-  static const manualStatus = 'mark/manual';
 
   // Enroll (identical strings to EnrollFlow — one convention, not two).
-  static const enrollIntro = 'enroll/intro';
   static const enrollCapture = 'enroll/capture';
   static const enrollResult = 'enroll/result';
 
   // Records.
   static const myAttendance = 'records/mine';
-
-  // Courses-tab aliases for the records routes (shell rename; the
-  // records/* names keep working — no dead routes, no redirects).
-  static const coursesMine = 'courses/mine';
 
   // Account (one consolidated page is the tab root; face-id stays its own
   // pushed page per §5.2 so the never-preview rule can't inherit stray
@@ -166,16 +126,16 @@ abstract final class ProxRoutes {
   /// Kept alongside [isMobileOnly] deliberately: this gate is about the
   /// *web* records build (which cannot host BLE/HTTPS either), while
   /// isMobileOnly is about the *face/device trust stack* (desktop can
-  /// host live/* fine, but can never enroll/mark). Different sets,
+  /// host live/* fine, but can never enroll). Different sets,
   /// different reasons — collapsing them would wrongly block desktop
   /// hosting or wrongly allow desktop enrollment.
   /// Pure — unit-testable without widgets.
+  // enroll/intro + mark/* intentionally absent from both guard sets
+  // (deleted routes — no named routes; mark lives in-tab only).
   static bool isNativeOnly(String name) =>
-      name == enrollIntro ||
       name == enrollCapture ||
       name == enrollResult ||
-      name.startsWith('live/') ||
-      name.startsWith('mark/');
+      name.startsWith('live/');
 
   /// Web records-only guard: the fallback deep-link for native-only paths
   /// on web, null when the path may render. Screens ALSO carry their own
@@ -184,13 +144,12 @@ abstract final class ProxRoutes {
   static String? webGuardRedirect(String name) =>
       (kIsWeb && isNativeOnly(name)) ? myAttendance : null;
 
-  /// Mobile-only set (Tracks 2+3 L2): enrollment + marking need the
+  /// Mobile-only set (Tracks 2+3 L2): enrollment needs the
   /// on-device face/device trust stack (plugin + HW key), which exists
   /// only on Android/iOS. Professors hosting live/* stay available on
-  /// desktop (no face needed there) — only enroll/* + mark/* redirect.
+  /// desktop (no face needed there) — only enroll/* redirects.
   /// Pure — unit-testable without widgets.
-  static bool isMobileOnly(String name) =>
-      name.startsWith('enroll/') || name.startsWith('mark/');
+  static bool isMobileOnly(String name) => name.startsWith('enroll/');
 
   /// Records-only-device guard: mobile-only deep-links on desktop/web land
   /// on records/mine with a guidance card instead of a dead end. Takes an
@@ -258,8 +217,10 @@ class MobileOnlyGuidanceScreen extends StatelessWidget {
           const SizedBox(height: 12),
           ProxSecondaryButton(
             label: const Text('Open my records'),
+            // Replace (never push): back from records must not loop
+            // back onto guidance.
             onPressed: () =>
-                ProxNav.pushNamed(context, ProxRoutes.myAttendance),
+                ProxNav.replaceNamed(context, ProxRoutes.myAttendance),
           ),
         ],
       ),
@@ -290,191 +251,62 @@ class ProxRoutePlaceholder extends StatelessWidget {
   }
 }
 
-/// Role hub route: the signed-in account picks its continuation. Watches
-/// the account stream (signed-out deep-links fall back to Welcome —
-/// same rule the landing router uses).
-class RoleHubRoute extends ConsumerWidget {
-  const RoleHubRoute({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final accountAsync = ref.watch(accountProvider);
-    return accountAsync.when(
-      data: (acct) =>
-          acct == null ? const WelcomeScreen() : RoleHubScreen(account: acct),
-      loading: () => const ProxScreen(
-        title: 'Roles',
-        child: ProxLoadingRow(label: 'Loading…'),
-      ),
-      error: (e, _) => ProxRoutePlaceholder(
-        title: 'Sign-in unreadable',
-        detail: 'Role hub could not read the account: $e',
-      ),
-    );
-  }
+/// Guard wrapper for exact-table builders: web + mobile guards run BEFORE
+/// the table so exact names cannot bypass them (`MaterialApp.routes` wins
+/// over `onGenerateRoute`, and the in-tab router does an exact lookup
+/// first too). Guarded names render records/guidance, never the inner
+/// screen. Pure at lookup time except the live platform reads inside the
+/// guard predicates (tests pin the matrix via platform overrides).
+WidgetBuilder _guardedRoute(String name, WidgetBuilder inner) {
+  return (BuildContext context) {
+    final web = ProxRoutes.webGuardRedirect(name);
+    if (web != null) {
+      BleLog.log(ProxLogTags.nav, 'web guard (table): $name ⇒ $web');
+      return const MyAttendanceScreen();
+    }
+    final mobile = ProxRoutes.mobileGuardRedirect(name);
+    if (mobile != null) {
+      BleLog.log(ProxLogTags.nav, 'mobile guard (table): $name ⇒ guidance');
+      return MobileOnlyGuidanceScreen(route: name);
+    }
+    return inner(context);
+  };
 }
 
 /// Exact-name table for `MaterialApp.routes`. Parameterized IA nodes live
 /// in [proxOnGenerateRoute]; unknown names fall to [proxOnUnknownRoute].
 Map<String, WidgetBuilder> buildProxRoutes() => {
       // Entry (feature screens; landing is a thin Welcome-vs-RoleHub router).
-      ProxRoutes.welcome: (_) => const WelcomeScreen(),
-      ProxRoutes.roles: (_) => const RoleHubRoute(),
-      ProxRoutes.device: (_) => const DeviceIdentityScreen(),
+      ProxRoutes.welcome:
+          _guardedRoute(ProxRoutes.welcome, (_) => const WelcomeScreen()),
+      ProxRoutes.roles:
+          _guardedRoute(ProxRoutes.roles, (_) => const LandingScreen()),
+      ProxRoutes.device: _guardedRoute(
+          ProxRoutes.device, (_) => const DeviceIdentityScreen()),
       // Prof setup (records bundle — self-sufficient, absorbs the old
       // course page split: picker + overview + export + detail/edit).
-      ProxRoutes.profCourses: (_) => const ProfCoursesScreen(),
-      // Student mark (one continuation inside StudentHomeScreen phases;
-      // the shell retains discovery/waiting/proving orchestration, the
-      ProxRoutes.browse: (_) => const _MarkGate(),
-      ProxRoutes.join: (_) => const _MarkGate(),
-      ProxRoutes.waiting: (_) => const _MarkGate(),
-      ProxRoutes.face: (_) => const _MarkGate(),
-      ProxRoutes.proving: (_) => const _MarkGate(),
-      ProxRoutes.verdict: (_) => const _MarkGate(),
-      ProxRoutes.manualStatus: (_) => const _MarkGate(),
+      ProxRoutes.profCourses: _guardedRoute(
+          ProxRoutes.profCourses, (_) => const ProfCoursesScreen()),
       // Enroll (feature bundle; same names EnrollFlow pushes).
-      ProxRoutes.enrollIntro: (_) => const EnrollIntroScreen(),
-      ProxRoutes.enrollCapture: (_) => const EnrollCaptureScreen(),
-      ProxRoutes.enrollResult: (_) => const EnrollResultScreen(),
+      ProxRoutes.enrollCapture: _guardedRoute(
+          ProxRoutes.enrollCapture, (_) => const EnrollCaptureScreen()),
+      ProxRoutes.enrollResult: _guardedRoute(
+          ProxRoutes.enrollResult, (_) => const EnrollResultScreen()),
       // Records (bundle — absorbs the old my-attendance + student-course).
-      ProxRoutes.myAttendance: (_) => const MyAttendanceScreen(),
-      ProxRoutes.coursesMine: (_) => const MyAttendanceScreen(),
+      ProxRoutes.myAttendance: _guardedRoute(
+          ProxRoutes.myAttendance, (_) => const MyAttendanceScreen()),
       // Account: face-id stays its own route (see ProxRoutes.faceId) —
       // the consolidated account page itself is the tab root in shells.
-      ProxRoutes.faceId: (_) => const FaceIdScreen(),
+      ProxRoutes.faceId:
+          _guardedRoute(ProxRoutes.faceId, (_) => const FaceIdScreen()),
       // Shared.
-      ProxRoutes.debugLog: (_) => const DebugLogScreen(),
+      ProxRoutes.debugLog:
+          _guardedRoute(ProxRoutes.debugLog, (_) => const DebugLogScreen()),
     };
 
-/// Deep-link loader for one saved prof session (read or edit). Resolves
-/// the record object from on-device history — the router never ferries
-/// record objects, screens resolve them from the store. Missing ids render
-/// guidance (logged STATE), never a crash.
-class SessionRouteLoader extends ConsumerWidget {
-  final String sessionId;
-  final bool editing;
-  const SessionRouteLoader(
-      {super.key, required this.sessionId, this.editing = false});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(deviceStoreProvider);
-    return FutureBuilder<List<ClassRecord>>(
-      future: store.readHistory(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const ProxScreen(
-            title: 'Session',
-            child: ProxLoadingRow(label: 'Loading…'),
-          );
-        }
-        final history = snap.data ?? const <ClassRecord>[];
-        ClassRecord? found;
-        for (final r in history) {
-          if (r.id == sessionId) {
-            found = r;
-            break;
-          }
-        }
-        final f = found;
-        if (f == null) {
-          BleLog.log(ProxLogTags.state,
-              'route session $sessionId not on device — guidance');
-          return ProxRoutePlaceholder(
-            title: 'Not linked yet',
-            detail:
-                'Session $sessionId is not on this device yet — open it from its course for now.',
-          );
-        }
-        if (editing) {
-          return SessionEditScreen(
-              record: f, courseSessions: history, readOnly: kIsWeb);
-        }
-        return SessionDetailScreen(record: f, courseSessions: history);
-      },
-    );
-  }
-}
-
-/// Deep-link loader for one student's course (records/mine drill-down).
-/// Resolves cached student sessions + viewer email from the store.
-class CourseAttendanceRouteLoader extends ConsumerWidget {
-  final String course;
-  const CourseAttendanceRouteLoader({super.key, required this.course});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(deviceStoreProvider);
-    final acct = ref.watch(accountProvider).valueOrNull;
-    final email = acct?.email.toLowerCase() ?? '';
-    return FutureBuilder<List<ClassRecord>>(
-      future: store.readStudentSessions(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const ProxScreen(
-            title: 'Course',
-            child: ProxLoadingRow(label: 'Loading…'),
-          );
-        }
-        final all = snap.data ?? const <ClassRecord>[];
-        final sessions = all.where((s) => courseOfRecord(s) == course).toList();
-        if (sessions.isEmpty) {
-          BleLog.log(ProxLogTags.state,
-              'route records/course/$course has no cached sessions — guidance');
-          return ProxRoutePlaceholder(
-            title: 'Not linked yet',
-            detail:
-                'No synced sessions for $course on this device yet — pull to refresh on records/mine first.',
-          );
-        }
-        return CourseAttendanceDetailScreen(
-            course: course, sessions: sessions, email: email);
-      },
-    );
-  }
-}
-
-/// Mark-tab enrollment gate for named/deep-link entries (§3.4): a student
-/// who has not completed enrollment never lands on bare mark/browse —
-///
-/// they route into the SetupFlowScreen at its computed start step (the
-/// same flow the shell pushes, the same flow the fresh-install path
-/// hosts). Gate signal is [linkedIdentityProvider]: the same enrollment
-/// signal the Mark browse card and join gate already use (see the
-/// integration log for the candidates audit).
-class _MarkGate extends ConsumerWidget {
-  const _MarkGate();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (ref.watch(linkedIdentityProvider) != null) {
-      return const StudentHomeScreen();
-    }
-    return SetupFlowScreen(
-      onFirstBack: () async {
-        // Back from the first step → Account/RoleHub, never bare mark:
-        // replace this entry with the roles hub (the shell stays beneath,
-        // so back from there returns to it).
-        if (context.mounted) {
-          Navigator.of(context).pushReplacementNamed(ProxRoutes.roles);
-        }
-      },
-      onComplete: () async {
-        // Done → reveal the opener (linked by now; the shell gate and any
-        // re-entry through this gate stay shut).
-        if (context.mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
-      },
-    );
-  }
-}
-
-/// Parameterized IA nodes (`live/<course>[/section]`,
-/// `prof/courses/<course>[/export]`, `prof/sessions/<id>[/edit]`,
-/// `records/course/<course]`). Returns null when [settings.name] is not
-/// an IA path so `onUnknownRoute` handles it.
+/// Parameterized IA nodes (`live/<course>[/section]` and
+/// `prof/courses/<course>[/export]`). Returns null when [settings.name]
+/// is not an IA path so `onUnknownRoute` handles it.
 Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
   final name = settings.name ?? '';
   final args = ProxRouteArgs.fromSettings(settings);
@@ -490,7 +322,7 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
     );
   }
 
-  // Tracks 2+3 L2 mobile guard: enroll/* + mark/* need the on-device
+  // Tracks 2+3 L2 mobile guard: enroll/* needs the on-device
   // face/device stack (Android/iOS only). Records-only devices land on
   // guidance, never a dead camera screen.
   final mobileRedirect = ProxRoutes.mobileGuardRedirect(name);
@@ -502,42 +334,31 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
     );
   }
 
-  // Prof live: the host owns hosting/window/draft orchestration; each
-  // the same host driver. Recover stays on the host (it owns the draft).
+  // Prof live: the Take tab hosts the single live screen (it owns
+  // hosting/window/draft orchestration). Any section suffix lands on the
+  // host — there are no standalone section screens.
   if (name.startsWith('live/')) {
     final rest = name.substring('live/'.length);
-    final course = args.course.isNotEmpty ? args.course : rest.split('/').first;
-    if (course.isEmpty) return null;
-    final section = args.section.isNotEmpty
-        ? args.section
-        : rest.split('/').skip(1).join('/');
-    BleLog.log(ProxLogTags.nav,
-        'live deep-link course=$course${section.isEmpty ? '' : ' section=$section'}');
-    final s = section.trim().toLowerCase();
-    if (s == 'roster') {
-      return MaterialPageRoute(
-        settings: settings,
-        builder: (_) => LiveRosterScreen(course: course),
-      );
+    // Explicit empty handling: `live/` with no course is malformed —
+    // never fall back to args, let onUnknownRoute render guidance.
+    if (rest.isEmpty) {
+      BleLog.log(ProxLogTags.nav, 'live deep-link missing course — unknown');
+      return null;
     }
-    if (s == 'inbox') {
-      return MaterialPageRoute(
-        settings: settings,
-        builder: (_) => LiveInboxScreen(course: course),
-      );
+    final pathCourse = rest.split('/').first;
+    if (pathCourse.isEmpty) {
+      BleLog.log(ProxLogTags.nav, 'live deep-link missing course — unknown');
+      return null;
     }
-    if (s == 'add') {
-      return MaterialPageRoute(
-        settings: settings,
-        builder: (_) => LiveAddScreen(course: course),
-      );
+    // Path segment wins on args conflict (the path is the address);
+    // a mismatch is logged, never silent.
+    final argCourse = args.course;
+    if (argCourse.isNotEmpty && argCourse != pathCourse) {
+      BleLog.log(ProxLogTags.nav,
+          'live deep-link mismatch args=$argCourse path=$pathCourse — prefer path');
     }
-    if (s == 'setup') {
-      return MaterialPageRoute(
-        settings: settings,
-        builder: (_) => LiveSetupScreen(course: course),
-      );
-    }
+    final course = pathCourse;
+    BleLog.log(ProxLogTags.nav, 'live deep-link course=$course');
     return MaterialPageRoute(
       settings: settings,
       builder: (_) => TakeAttendanceScreen(courseName: course),
@@ -545,13 +366,25 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
   }
 
   // Prof setup: overview owns managing the course; the export center owns
-  // review/export of the past; session detail/edit resolve their record
-  // from history via loaders (missing ids render guidance, never a crash).
+  // review/export of the past (in-tab drill-down only).
   if (name.startsWith('prof/courses/')) {
     final rest = name.substring('prof/courses/'.length);
-    final segs = rest.split('/');
-    final course = args.course.isNotEmpty ? args.course : segs.first;
-    if (course.isEmpty) return null;
+    // Explicit trailing-slash handling: ignore empty segments so
+    // `CS101/` == `CS101` and `CS101/export/` == `CS101/export`.
+    final segs = rest.split('/').where((s) => s.isNotEmpty).toList();
+    if (segs.isEmpty) {
+      BleLog.log(
+          ProxLogTags.nav, 'course deep-link missing course — unknown');
+      return null;
+    }
+    // Same prefer-path rule as live/: the path is the address.
+    final pathCourse = segs.first;
+    final argCourse = args.course;
+    if (argCourse.isNotEmpty && argCourse != pathCourse) {
+      BleLog.log(ProxLogTags.nav,
+          'course deep-link mismatch args=$argCourse path=$pathCourse — prefer path');
+    }
+    final course = pathCourse;
     if (segs.length > 1 && segs.last == 'export') {
       BleLog.log(ProxLogTags.nav, 'export deep-link course=$course');
       return MaterialPageRoute(
@@ -565,38 +398,6 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
       builder: (_) => CourseOverviewScreen(courseName: course),
     );
   }
-  if (name.startsWith('prof/sessions/')) {
-    final rest = name.substring('prof/sessions/'.length);
-    final id =
-        args.sessionId.isNotEmpty ? args.sessionId : rest.split('/').first;
-    if (id.isEmpty) return null;
-    final editing = name.endsWith('/edit');
-    BleLog.log(ProxLogTags.nav,
-        'session deep-link session=$id (${editing ? 'edit' : 'read'})');
-    return MaterialPageRoute(
-      settings: settings,
-      builder: (_) => SessionRouteLoader(sessionId: id, editing: editing),
-    );
-  }
-
-  // Records: per-course drill-down resolves cached student sessions +
-  // viewer email via its loader. courses/course/* is the Courses-tab
-  // alias of records/course/* (same loader, same guards).
-  if (name.startsWith('records/course/') ||
-      name.startsWith('courses/course/')) {
-    final prefix = name.startsWith('records/course/')
-        ? 'records/course/'
-        : 'courses/course/';
-    final rest = name.substring(prefix.length);
-    final course = args.course.isNotEmpty ? args.course : rest.split('/').first;
-    if (course.isEmpty) return null;
-    BleLog.log(ProxLogTags.nav, 'records deep-link course=$course');
-    return MaterialPageRoute(
-      settings: settings,
-      builder: (_) => CourseAttendanceRouteLoader(course: course),
-    );
-  }
-
   return null;
 }
 
@@ -625,6 +426,19 @@ abstract final class ProxNav {
     BleLog.log(
         ProxLogTags.nav, 'push $name${summary.isEmpty ? '' : ' ($summary)'}');
     return Navigator.of(context).pushNamed<T>(name, arguments: args);
+  }
+
+  /// Replace helper for guidance exits (back must never loop guidance).
+  static Future<T?> replaceNamed<T extends Object?, TO extends Object?>(
+    BuildContext context,
+    String name, {
+    ProxRouteArgs args = const ProxRouteArgs(),
+  }) {
+    final summary = args.summary;
+    BleLog.log(ProxLogTags.nav,
+        'replace $name${summary.isEmpty ? '' : ' ($summary)'}');
+    return Navigator.of(context)
+        .pushReplacementNamed<T, TO>(name, arguments: args);
   }
 
   static Future<void> openDebugLog(BuildContext context) =>

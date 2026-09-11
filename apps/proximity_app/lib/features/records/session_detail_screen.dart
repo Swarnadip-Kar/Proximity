@@ -23,6 +23,7 @@ import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/student_card.dart';
+import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
 import 'export_center_screen.dart';
 import 'session_edit_screen.dart';
@@ -33,6 +34,16 @@ class SessionDetailScreen extends ConsumerStatefulWidget {
   final List<ClassRecord> courseSessions;
   const SessionDetailScreen(
       {super.key, required this.record, this.courseSessions = const []});
+
+  /// Canonical in-tab route name:
+  /// `prof/courses/<course>/sessions/<sessionId>`.
+  /// Documented equivalent (no `proxOnGenerateRoute` entry — the table only
+  /// handles `prof/courses/<course>[/export]`; in-tab pushes resolve record
+  /// objects directly, so this stays in-tab-only). Shares the
+  /// `prof/courses/<course>` prefix so `popUntil` by course still works and
+  /// NAV logs show a name (no duplicate unnamed push).
+  static String routeName(String course, String sessionId) =>
+      'prof/courses/$course/sessions/$sessionId';
 
   @override
   ConsumerState<SessionDetailScreen> createState() =>
@@ -89,8 +100,13 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 
   Future<void> _openEdit() async {
     BleLog.log('NAV', 'session ${_record.dateIso} → edit');
+    final course = _record.courseId.isNotEmpty
+        ? _record.courseId
+        : _record.classLabel;
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
+          settings: RouteSettings(
+              name: SessionEditScreen.routeName(course, _record.id)),
           builder: (_) => SessionEditScreen(
               record: _record, courseSessions: widget.courseSessions)),
     );
@@ -104,6 +120,8 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
         : _record.classLabel;
     BleLog.log('NAV', 'session ${_record.dateIso} → export');
     Navigator.of(context).push(MaterialPageRoute(
+        settings:
+            RouteSettings(name: ExportCenterScreen.routeName(course)),
         builder: (_) => ExportCenterScreen(courseName: course)));
   }
 
@@ -146,8 +164,19 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 maxLines: 2,
               ),
               const SizedBox(height: ProxSpacing.xs),
+              // Present total highlighted in the status badge idiom (same
+              // component as the session rows); the caption below keeps
+              // the listed/partial detail.
+              Align(
+                alignment: Alignment.centerLeft,
+                child: VerdictBadge(
+                  status: ProxStatus.marked,
+                  label: '$present present',
+                ),
+              ),
+              const SizedBox(height: ProxSpacing.xs),
               Text(
-                '$present present · ${persons.length} listed'
+                '${persons.length} listed'
                 '${partials > 0 ? ' · Partial ($partials)' : ''}',
                 style: proxTabular(
                     context, ProxType.label(color: c.contentSecondary)),

@@ -1,16 +1,16 @@
 // SetupFlowScreen — the ONE serialized enrollment flow (§3.3).
 //
-// One flow, two triggers: the fresh-install path (AppMode.enroll home) and
-// the Mark-tab enrollment gate (shell pushes this when linkedIdentity is
-// null). Pages, one purpose per page (## Setup pagination; container change,
-// no route removal — standalone enroll/* routes stay for deep-links):
+// One flow, auto-triggered: the shell pushes this on its root navigator
+// whenever a resolve concludes unenrolled (fresh registration, returning
+// login, account switch), and the mark deep-link gate hosts its own
+// instance. Pages, one purpose per page (## Setup pagination):
 //   0 Sign in (welcome) → 1 Pick role (roles hub) → 2 Confirm device →
 //   3 Account & key (ID + key) → 4 Capture face (5-angle session, camera
 //   logic untouched) → 5 Done (save + claim outcome).
 //
-// (## About-page removal 2026-09-10: the About-to-enroll explainer page is
-// gone from the flow; its sections stay live on the standalone
-// deep-linkable EnrollIntroScreen.)
+// (Legacy standalone bundle intro — overview card + retry brief — deleted;
+// SetupFlow is the only enrollment flow. Its capture/result screens stay
+// as embedded steps.)
 //
 // Stepper chrome owned here: thin progress line (SetupProgressLine — no
 // numbered circles, no step labels; the current title lives in each step's
@@ -92,6 +92,21 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
   var _index = SetupStep.welcome;
   var _settled = false;
 
+  /// Generation guard for [_resolveStart]: every resolve bumps this; a
+  /// user-driven [_goTo]/[_back] pre-settle bumps it too, so a stale
+  /// resolve marks settled without yanking the pager after the user
+  /// already advanced.
+  var _resolveGen = 0;
+
+  /// Single-flight for stepper moves: while one [_goTo]/first-back is in
+  /// flight, overlapping calls (e.g. double system back) are dropped, so
+  /// `animateToPage` never overlaps and [onFirstBack] fires at most once
+  /// per settle.
+  var _navBusy = false;
+
+  /// Single-flight for flow completion (Done double-tap fires once).
+  var _completeBusy = false;
+
   /// The capture step mounts its camera session lazily: building all pages
   /// upfront would open the camera on the sign-in step.
   var _seenCapture = false;
@@ -120,13 +135,19 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
 
   /// First incomplete step from existing state (account → role cache →
   /// device key → controller phase). Jump, never animate: this is initial
-  /// placement, not a step transition.
+  /// placement, not a step transition. Generation-guarded: a resolve that
+  /// went stale (user advanced pre-settle, or a newer resolve started)
+  /// marks settled without touching the pager.
   Future<void> _resolveStart() async {
+    final gen = ++_resolveGen;
     Map<String, String>? role;
     try {
       role = await ref.read(deviceStoreProvider).readRole();
     } catch (_) {}
-    if (!mounted) return;
+    if (!mounted || gen != _resolveGen) {
+      if (mounted && !_settled) setState(() => _settled = true);
+      return;
+    }
     final acct = ref.read(accountProvider).valueOrNull;
     final ctl = ref.read(enrollmentControllerProvider);
     final at = setupStartIndex(
@@ -146,32 +167,64 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
   }
 
   Future<void> _goTo(int step) async {
-    final at = step.clamp(SetupStep.welcome, SetupStep.count - 1);
-    if (at >= SetupStep.capture && !_seenCapture) {
-      setState(() => _seenCapture = true);
+    if (_navBusy) return;
+    // User advanced pre-settle: invalidate the pending resolve so it
+    // cannot yank the pager back.
+    if (!_settled) _resolveGen++;
+    _navBusy = true;
+    try {
+      final at = step.clamp(SetupStep.welcome, SetupStep.count - 1);
+      if (at >= SetupStep.capture && !_seenCapture) {
+        setState(() => _seenCapture = true);
+      }
+      setState(() => _index = at);
+      if (!mounted) return;
+      // Reduced motion: jump with no slide (presentation only — the step
+      // graph itself is unchanged).
+      if (ProxMotion.reduced(context)) {
+        _pages.jumpToPage(at);
+        return;
+      }
+      await _pages.animateToPage(
+        at,
+        duration: ProxDurations.step,
+        curve: ProxCurves.emphasized,
+      );
+    } finally {
+      _navBusy = false;
     }
-    setState(() => _index = at);
-    if (!mounted) return;
-    // Reduced motion: jump with no slide (presentation only — the step
-    // graph itself is unchanged).
-    if (ProxMotion.reduced(context)) {
-      _pages.jumpToPage(at);
-      return;
-    }
-    await _pages.animateToPage(
-      at,
-      duration: ProxDurations.step,
-      curve: ProxCurves.emphasized,
-    );
   }
 
   Future<void> _next() =>
       _index >= SetupStep.count - 1 ? Future.value() : _goTo(_index + 1);
 
   /// Back moves one step back; back from the first step leaves to the
-  /// parent (Account/RoleHub — never bare mark/browse).
-  Future<void> _back() =>
-      _index <= SetupStep.welcome ? widget.onFirstBack() : _goTo(_index - 1);
+  /// parent (Account/RoleHub — never bare mark/browse). Single-flight
+  /// with [_goTo]: overlapping backs are dropped.
+  Future<void> _back() async {
+    if (_navBusy) return;
+    if (_index <= SetupStep.welcome) {
+      if (!_settled) _resolveGen++;
+      _navBusy = true;
+      try {
+        await widget.onFirstBack();
+      } finally {
+        _navBusy = false;
+      }
+      return;
+    }
+    await _goTo(_index - 1);
+  }
+
+  Future<void> _complete() async {
+    if (_completeBusy) return;
+    _completeBusy = true;
+    try {
+      await widget.onComplete();
+    } finally {
+      _completeBusy = false;
+    }
+  }
 
   void _armListeners() {
     ref.listen<AsyncValue<SignedAccount?>>(accountProvider, (prev, next) {
@@ -237,13 +290,10 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
       onPopInvokedWithResult: (didPop, _) {
         // System/tab-root back inside the flow: one step back, or the
         // parent route (Account/RoleHub) from the first step. Never pops
-        // the shell, never tears down a live window.
+        // the shell, never tears down a live window. Single-flight via
+        // [_back] (overlapping system backs are dropped).
         if (didPop) return;
-        if (_index > SetupStep.welcome) {
-          _back();
-        } else {
-          widget.onFirstBack();
-        }
+        unawaited(_back());
       },
       child: Scaffold(
         // Single persistent progress overlay below the steps' own app bars
@@ -256,7 +306,7 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
           next: _next,
           back: _back,
           goTo: _goTo,
-          complete: () => widget.onComplete(),
+          complete: _complete,
           child: Stack(
             children: [
               PageView(

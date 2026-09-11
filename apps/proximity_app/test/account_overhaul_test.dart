@@ -154,7 +154,7 @@ void main() {
       expect(find.text('Appearance'), findsOneWidget);
       expect(find.byKey(const Key('account-theme-control')), findsOneWidget);
       // No fact bodies, no explainers, no embedded sections on the root.
-      expect(find.text('2026-09-01'), findsNothing);
+      expect(find.text('01-09-2026'), findsNothing);
       expect(find.text('Active'), findsNothing);
       expect(find.byKey(const Key('account-id-row')), findsNothing);
       expect(find.byKey(const Key('account-device-id-row')), findsNothing);

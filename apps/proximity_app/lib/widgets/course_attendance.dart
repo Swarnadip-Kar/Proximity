@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../design/tokens.dart';
+import 'clock.dart';
 import 'student_card.dart';
 import 'verdict_badge.dart';
 
@@ -16,43 +17,43 @@ import 'verdict_badge.dart';
 String courseOfRecord(ClassRecord s) =>
     s.courseId.isNotEmpty ? s.courseId : s.classLabel;
 
-/// "2026-09-06 · 14:30" from the class-start time (snapshot time for old
-/// records that predate startIso), local wall-clock, date fallback.
+/// Global date rule, display only: "Thu, 04-09-2026 · 14:30" — the
+/// with-day `[Day], DD-MM-YYYY` date ([shortDayDateOf] of `dateIso`) plus
+/// the class-start time (snapshot time for old records that predate
+/// startIso), local wall-clock. Storage/CSV/filenames stay yyyy-MM-dd.
 String sessionDateTimeLine(ClassRecord s) {
   final raw = s.startIso.isNotEmpty ? s.startIso : s.timestampIso;
   try {
     final dt = DateTime.parse(raw).toLocal();
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
-    return '${s.dateIso} · $hh:$mm';
+    return '${shortDayDateOf(s.dateIso)} · $hh:$mm';
   } catch (_) {
-    return s.dateIso;
+    return shortDayDateOf(s.dateIso);
   }
 }
 
-/// First-line date for a student session tile: the frozen
-/// [sessionDateTimeLine] string, with the DAY/date restored when the synced
-/// record carries none.
+/// First-line date for a student session tile: the [sessionDateTimeLine]
+/// string (global rule `[Day], DD-MM-YYYY · HH:MM`), with the DAY/date
+/// restored when the synced record carries none.
 ///
-/// `dateIso` to `''`, in which case the frozen helper yields `' · HH:MM'`
+/// `dateIso` to `''`, in which case the helper yields `' · HH:MM'`
 /// (TIME with no DAY) or `''` (empty line) — the reported day-missing shape.
 /// This restores the day from the same start/timestamp the helper itself
-/// uses for the time, in the identical `'yyyy-MM-dd · HH:MM'` shape; when
-/// nothing parses, the session's own `classLabel` (then `id`, which the
-/// constructor always generates) keeps the prominent line non-empty. No
-/// invented copy — every fallback is a field already on the record.
+/// uses for the time, in the identical with-day `DD-MM-YYYY · HH:MM` shape
+/// ([formatDate] of the parsed local time); when nothing parses, the
+/// session's own `classLabel` (then `id`, which the constructor always
+/// generates) keeps the prominent line non-empty. No invented copy — every
+/// fallback is a field already on the record.
 String studentSessionDateLine(ClassRecord session) {
   if (session.dateIso.isNotEmpty) return sessionDateTimeLine(session);
   final raw =
       session.startIso.isNotEmpty ? session.startIso : session.timestampIso;
   try {
     final dt = DateTime.parse(raw).toLocal();
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
-    return '$y-$m-$d · $hh:$mm';
+    return '${formatDate(dt)} · $hh:$mm';
   } catch (_) {}
   if (session.classLabel.isNotEmpty) return session.classLabel;
   return session.id;

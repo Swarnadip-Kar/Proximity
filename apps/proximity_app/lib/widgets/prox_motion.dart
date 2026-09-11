@@ -4,13 +4,12 @@
 // Every duration routes through [ProxMotion.effective] so the platform
 // reduce-motion setting degrades to instant-but-correct state changes.
 //
-// UI Overhaul: adds ProxHeroEntrance (scale+fade+rotation for hero
-// elements), ProxPulseGlow (ambient breathing glow), and enhanced
-// ProxFadeSlideIn with optional scale parameter.
+// UI Overhaul: adds ProxHeroEntrance (scale+fade for hero elements —
+// logos never rotate; ring sweeps may), ProxPulseGlow (ambient breathing
+// glow), and enhanced ProxFadeSlideIn with optional scale parameter.
 library;
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -183,7 +182,7 @@ class ProxSwitcher extends StatelessWidget {
   }
 }
 
-/// Hero entrance: scale from 0.8 + fade + subtle rotation (2° → 0°).
+/// Hero entrance: scale from 0.8 + fade (no rotation anywhere).
 /// Used for welcome hero, verdict badges, and course page headers.
 /// 600ms with emphasized curve for a premium reveal.
 class ProxHeroEntrance extends StatefulWidget {
@@ -205,7 +204,6 @@ class _ProxHeroEntranceState extends State<ProxHeroEntrance>
   late final AnimationController _c;
   late final Animation<double> _opacity;
   late final Animation<double> _scale;
-  late final Animation<double> _rotation;
 
   @override
   void initState() {
@@ -225,10 +223,6 @@ class _ProxHeroEntranceState extends State<ProxHeroEntrance>
       ),
     );
     _scale = Tween<double>(begin: 0.8, end: 1.0).animate(curved);
-    _rotation = Tween<double>(
-      begin: -2 * math.pi / 180,
-      end: 0,
-    ).animate(curved);
 
     if (widget.delay == Duration.zero) {
       _c.forward();
@@ -254,10 +248,7 @@ class _ProxHeroEntranceState extends State<ProxHeroEntrance>
         opacity: _opacity.value,
         child: Transform.scale(
           scale: _scale.value,
-          child: Transform.rotate(
-            angle: _rotation.value,
-            child: child,
-          ),
+          child: child,
         ),
       ),
       child: widget.child,

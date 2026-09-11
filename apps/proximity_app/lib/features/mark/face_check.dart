@@ -61,6 +61,13 @@ class FaceCheckView extends StatelessWidget {
   final bool canScan;
   final VoidCallback onScan;
 
+  /// Manual-attendance escape hatch. Shown (as a quiet secondary action
+  /// under Scan) only when a failure notice is on screen — unreadable
+  /// scan after retries, stale template, or records-only device — so a
+  /// failed check never dead-ends. Null hides it (callers without a
+  /// manual path render exactly as before).
+  final VoidCallback? onRequestManual;
+
   /// Retained for API compat (older call sites + tests still pass/omit
   /// them). No visual effect in single-shot mode: the overlay hides the
   /// progress bar + beacon here, keeping the static framing oval only.
@@ -92,6 +99,7 @@ class FaceCheckView extends StatelessWidget {
     required this.faceNotice,
     required this.canScan,
     required this.onScan,
+    this.onRequestManual,
     this.totalAngles = 5,
     this.currentAngle = 0,
     this.progress = 0.0,
@@ -167,12 +175,34 @@ class FaceCheckView extends StatelessWidget {
             ),
           ],
         );
-    Widget scanButton() => ProxPrimaryButton(
-          icon: const Icon(Icons.face),
-          label: const Text('Scan face'),
-          onPressed: !canScan ? null : onScan,
-          expanded: false,
-        );
+    // Failure escape hatch: Scan stays primary; manual rides quiet
+    // underneath (same ghost treatment as other fallback entries).
+    // NOTE: vertical Wrap, not Column — the edge-to-edge source pin
+    // forbids Column(/Padding( literals in this file's portrait path.
+    Widget actions() {
+      final manual = onRequestManual;
+      final showManual = manual != null && faceNotice.isNotEmpty;
+      return Wrap(
+        direction: Axis.vertical,
+        spacing: ProxSpacing.sm,
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ProxPrimaryButton(
+            icon: const Icon(Icons.face),
+            label: const Text('Scan face'),
+            onPressed: !canScan ? null : onScan,
+            expanded: false,
+          ),
+          if (showManual)
+            ProxSecondaryButton(
+              label: const Text('Request manual attendance'),
+              onPressed: manual,
+            ),
+        ],
+      );
+    }
+
     if (shortLandscape) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -184,7 +214,7 @@ class FaceCheckView extends StatelessWidget {
               child: Center(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(ProxSpacing.screenMargin),
-                  child: scanButton(),
+                  child: actions(),
                 ),
               ),
             ),
@@ -208,7 +238,7 @@ class FaceCheckView extends StatelessWidget {
           bottom: ProxSpacing.screenMargin,
           child: SafeArea(
             top: false,
-            child: scanButton(),
+            child: actions(),
           ),
         ),
       ],

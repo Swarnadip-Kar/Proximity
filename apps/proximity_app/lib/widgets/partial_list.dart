@@ -10,6 +10,8 @@ library;
 
 import 'package:proximity_storage/storage.dart';
 
+import 'clock.dart';
+
 /// One course-mate: newest-seen name/roll wins.
 class RosterEntry {
   final String email;
@@ -104,7 +106,9 @@ List<PartialEntry> partialsOfCourse(List<ClassRecord> sessions) {
   final rolls = <String, String>{};
   for (final r in sessions) {
     if (r.windows.length <= 1) continue;
-    final label = r.dateIso.isNotEmpty ? r.dateIso : r.classLabel;
+    // Global date rule, display only: with-day DD-MM-YYYY.
+    final label =
+        r.dateIso.isNotEmpty ? shortDayDateOf(r.dateIso) : r.classLabel;
     for (final email in r.allEmails) {
       var some = false;
       var all = true;

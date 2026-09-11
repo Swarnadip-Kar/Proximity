@@ -8,7 +8,10 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/records/course_attendance_detail_screen.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
+import 'package:proximity_app/features/records/session_detail_screen.dart';
+import 'package:proximity_app/widgets/selection_toolbar.dart';
 import 'package:proximity_app/features/records/my_attendance_screen.dart';
 import 'package:proximity_storage/storage.dart';
 
@@ -60,6 +63,12 @@ void main() {
     // Drill into the course, hide one session on this device only.
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.byType(CourseAttendanceDetailScreen)))
+            ?.settings
+            .name,
+        'records/mine/CS201');
     await t.tap(find.byTooltip('Remove from this device').first);
     await t.pumpAndSettle();
     expect(
@@ -71,6 +80,35 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('1/1 days attended'), findsOneWidget);
     expect(find.text('2/2 days attended'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('session detail highlights the present total', (t) async {
+    final record = ClassRecord(
+      id: 'd1',
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-05',
+      timestampIso: '2026-09-05T10:00:00.000Z',
+      windows: [
+        {'a@x.in': true, 'b@x.in': true, 'c@x.in': false},
+      ],
+      names: const {'a@x.in': 'A', 'b@x.in': 'B', 'c@x.in': 'C'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2', 'c@x.in': '3'},
+    );
+    await t.pumpWidget(_wrap(
+        store: InMemoryDeviceStore(),
+        cloud: FakeCloudSync(),
+        home: MaterialApp(
+          theme: proxLightTheme(),
+          home:
+              SessionDetailScreen(record: record, courseSessions: [record]),
+        )));
+    await t.pumpAndSettle();
+    // Highlighted badge carries the present total; the caption keeps the
+    // listed/partial detail alongside it.
+    expect(find.text('2 present'), findsOneWidget);
+    expect(find.text('3 listed'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -134,19 +172,156 @@ void main() {
     expect(find.textContaining('LIVE'), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
     expect(find.textContaining('Partial (1)'), findsOneWidget);
+    // Present total rides the badge idiom (marked status, static):
+    // 0 confirmed present + 1 partial share one badge so no info is lost.
+    expect(find.text('0 present · Partial (1)'), findsOneWidget);
+    expect(find.text('Total Students: 0'), findsOneWidget);
     // Tap still opens the session detail.
-    await t.tap(find.textContaining('Thu, 3 Sep'));
+    await t.tap(find.textContaining('Thu, 03-09-2026'));
     await t.pumpAndSettle();
     expect(find.text('Session'), findsOneWidget);
+    // Navigation identity (records packet): the auto-id session shares the
+    // `prof/courses/<course>` prefix, so popUntil by course still works.
+    final detailName =
+        ModalRoute.of(t.element(find.byType(SessionDetailScreen)))
+            ?.settings
+            .name;
+    expect(detailName?.startsWith('prof/courses/CS201/sessions/'), isTrue);
     await t.pageBack();
     await t.pumpAndSettle();
     // Hold-and-tap selects; Cancel exits selection mode.
-    await t.longPress(find.textContaining('Thu, 3 Sep'));
+    await t.longPress(find.textContaining('Thu, 03-09-2026'));
     await t.pumpAndSettle();
     expect(find.text('Delete 1'), findsOneWidget);
     await t.tap(find.byTooltip('Cancel'));
     await t.pumpAndSettle();
     expect(find.text('Delete 1'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('overview hold-and-tap exports selected dates', (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    for (final day in ['2026-09-03', '2026-09-04']) {
+      await store.appendHistory(ClassRecord(
+        courseId: 'CS201',
+        classLabel: 'CS201',
+        dateIso: day,
+        w1: const {'a@x.in': true},
+        names: const {'a@x.in': 'A'},
+        rolls: const {'a@x.in': '1'},
+      ));
+    }
+    await t.pumpWidget(_wrap(
+        store: store,
+        cloud: FakeCloudSync(),
+        home: const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpAndSettle();
+    // Hold selects one date: same toolbar hosts Export + Delete.
+    await t.longPress(find.textContaining('Thu, 03-09-2026'));
+    await t.pumpAndSettle();
+    expect(find.text('Export 1'), findsOneWidget);
+    expect(find.text('Delete 1'), findsOneWidget);
+    // Export opens the shared preview (Close + Save + Share); Close
+    // dismisses cleanly and selection stays armed. (The preview title
+    // reuses the session label, so assert the dialog-only actions.
+    // Toolbar actions scroll horizontally — bring Export into view.)
+    await t.scrollUntilVisible(
+      find.text('Export 1'),
+      200,
+      scrollable: find.descendant(
+        of: find.byType(SelectionToolbar),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.tap(find.text('Export 1'));
+    await t.pumpAndSettle();
+    expect(find.text('Close'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
+    expect(find.text('Share'), findsOneWidget);
+    await t.tap(find.text('Close'));
+    await t.pumpAndSettle();
+    expect(find.text('Close'), findsNothing);
+    expect(find.text('Delete 1'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('overview badges show per-session present totals', (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    // Single-window: confirmed == window, so 2 present, no partial.
+    await store.appendHistory(ClassRecord(
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-03',
+      w1: const {'a@x.in': true, 'b@x.in': true},
+      names: const {'a@x.in': 'A', 'b@x.in': 'B'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2'},
+    ));
+    await store.appendHistory(ClassRecord(
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-04',
+      w1: const {'c@x.in': true},
+      names: const {'c@x.in': 'C'},
+      rolls: const {'c@x.in': '3'},
+    ));
+    await t.pumpWidget(_wrap(
+        store: store,
+        cloud: FakeCloudSync(),
+        home: const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpAndSettle();
+    // Exact badge text (distinct from the longer subtitle line) proves
+    // the count rides the VerdictBadge idiom, not a new pill widget.
+    expect(find.text('2 present'), findsOneWidget);
+    expect(find.text('1 present'), findsOneWidget);
+    // Union of confirmed-present across sessions: {a,b,c} = 3.
+    expect(find.text('Total Students: 3'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('overview Total Students unions repeat attendees, 0 when empty',
+      (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    // Overlap on b: sum would be 4, union is 3 (a,b,c).
+    await store.appendHistory(ClassRecord(
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-03',
+      w1: const {'a@x.in': true, 'b@x.in': true},
+      names: const {'a@x.in': 'A', 'b@x.in': 'B'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2'},
+    ));
+    await store.appendHistory(ClassRecord(
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-04',
+      w1: const {'b@x.in': true, 'c@x.in': true},
+      names: const {'b@x.in': 'B', 'c@x.in': 'C'},
+      rolls: const {'b@x.in': '2', 'c@x.in': '3'},
+    ));
+    await t.pumpWidget(_wrap(
+        store: store,
+        cloud: FakeCloudSync(),
+        home: const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpAndSettle();
+    expect(find.text('Total Students: 3'), findsOneWidget);
+    expect(find.text('Total Students: 4'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('overview Total Students is 0 when empty', (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    await t.pumpWidget(_wrap(
+        store: store,
+        cloud: FakeCloudSync(),
+        home: const CourseOverviewScreen(courseName: 'CS201')));
+    await t.pumpAndSettle();
+    expect(find.text('Total Students: 0'), findsOneWidget);
+    expect(find.text('No sessions yet for this course.'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 }

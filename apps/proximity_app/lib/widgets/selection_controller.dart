@@ -168,14 +168,17 @@ class SelectionModeToggle extends StatelessWidget {
 
 /// List-type vocabulary for the coach-mark flag. One entry per selectable
 /// list in the app (§4.1): the manual-attendance inbox + the course
-/// sessions multi-delete. Roster/waiting rows are not selectable, so they
-/// get no entry and no mark.
+/// sessions multi-delete + the review/export picker. Roster/waiting rows
+/// are not selectable, so they get no entry and no mark.
 abstract final class SelectionCoachMarks {
   /// Manual-attendance inbox (`ManualInboxView`).
   static const String inbox = 'inbox';
 
   /// Saved-session multi-delete (`_OverviewBody`).
   static const String sessions = 'sessions';
+
+  /// Review/export session picker (`_ExportBody` — tap to select).
+  static const String export = 'export';
 
   /// Prefs key for [listType]. Versioned (`v1`) so future copy changes can
   /// re-show once without colliding with old flags.

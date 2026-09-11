@@ -1,10 +1,20 @@
 // SetupFlow step scope: lets step content drive the stepper instead of
 // pushing standalone routes when hosted inside SetupFlowScreen.
 //
-// The scope is present ONLY inside SetupFlowScreen. Every branch that
-// consults it falls back to the legacy push/pop when the scope is absent,
-// so standalone routes (deep-links, previews, widget tests) and the
-// openCapture/openResult chain behave as before.
+// Back contract (canonical — the ONE place this is documented; see
+// enroll_flow.dart for the route-side pointer):
+//   Scope PRESENT (inside SetupFlowScreen): Back/Cancel/Continue/Re-scan/
+//   Done drive the stepper via scope.back/next/goTo/complete and NEVER
+//   push or pop. First-step back routes to SetupFlowScreen.onFirstBack,
+//   Done exits via onComplete. Overlapping navs are single-flight in the
+//   orchestrator (second _goTo/_back while one animates is dropped, so
+//   double system-back cannot double-fire onFirstBack).
+//   Scope ABSENT (standalone enroll/capture, enroll/result, deep-links,
+//   previews, widget tests): legacy Navigator push/pop preserved —
+//   openCapture/openResult push (single-flight per route, so a validated
+//   double-tap never stacks two results), Cancel/Back pop once, Done pops
+//   until past every `enroll/…` route. Every branch that consults the scope
+//   falls back this way, so standalone behavior is unchanged.
 library;
 
 import 'package:flutter/widgets.dart';
@@ -15,8 +25,7 @@ import 'package:flutter/widgets.dart';
 /// Pagination (2026-09-10 `## Setup pagination`, revised by
 /// `## About-page removal` the same day): the flow is six one-purpose
 /// pages — Confirm device (device facts) → Account & key (inputs +
-/// Continue). Welcome, Capture, and Result stay one page each (audit in
-/// standalone deep-linkable EnrollIntroScreen (intro_sections shared).
+/// Continue). Welcome, Capture, and Result stay one page each.
 /// Capture/Result indices are 4/5; order semantics and start-index
 abstract final class SetupStep {
   /// Sign in (welcome).

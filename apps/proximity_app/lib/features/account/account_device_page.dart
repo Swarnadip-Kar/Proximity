@@ -9,13 +9,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth.dart';
-import '../../core/cloud_sync.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../widgets/prox_scaffold.dart';
 import '../../widgets/prox_states.dart';
 import 'account_device.dart';
 import 'account_prof.dart';
+import 'device_rules.dart';
 
 /// Student Device sub-page.
 class AccountDevicePage extends ConsumerWidget {
@@ -53,10 +53,12 @@ class AccountDevicePage extends ConsumerWidget {
 }
 
 /// Professor Device sub-page (device/key facts only, no trust tier —
-// professors hold no enrollment, and none is invented).
+// professors hold no enrollment, and none is invented). Nullable account
+// for the offline local-only professor (facts stay local-only; the
+// display-name row falls back honestly, never to another identity).
 class AccountProfDevicePage extends ConsumerWidget {
-  final SignedAccount acct;
-  const AccountProfDevicePage({required this.acct, super.key});
+  final SignedAccount? acct;
+  const AccountProfDevicePage({this.acct, super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -77,49 +79,21 @@ class AccountProfDevicePage extends ConsumerWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Inline days + why (Device page only — no shared file).
+// Days + why (Device page): thin wrapper over the shared [DeviceRulesCompact]
+// source (see `device_rules.dart` — same days, same whys, same
+// `device-days-line` / `device-why-*` keys; copy owned once there).
 //
 // [kStudentLostPhoneStale] (never invented) with the plain-language fraud
 // reason. Exact per-account dates live where the gate data is already
-// available (enrollment sub-page inline block + the verdict rows above
+// available (enrollment sub-page shared block + the verdict rows above
 // via `studentClaimMessage` verbatim).
 // ---------------------------------------------------------------------------
 
-/// Days + why note, inline in the Device page.
+/// Days + why note, inline in the Device page (thin wrapper over the shared
+/// [DeviceRulesCompact] — same keys, same copy).
 class _DeviceDaysWhy extends StatelessWidget {
   const _DeviceDaysWhy();
 
   @override
-  Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
-    final moveDays = kStudentMoveCooldown.inDays;
-    final lostDays = kStudentLostPhoneStale.inDays;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Why these limits exist',
-          style: ProxType.label(color: c.contentSecondary),
-        ),
-        const SizedBox(height: ProxSpacing.sm),
-        Text(
-          'Moves are limited to once every $moveDays days, and a lost phone frees its slot after $lostDays days offline.',
-          key: const Key('device-days-line'),
-          style: ProxType.body(color: c.contentPrimary),
-        ),
-        const SizedBox(height: ProxSpacing.sm),
-        Text(
-          'Why: this stops one phone marking attendance for many students.',
-          key: const Key('device-why-one'),
-          style: ProxType.body(color: c.contentSecondary),
-        ),
-        Text(
-          'Why: this stops shared-device fraud.',
-          key: const Key('device-why-shared'),
-          style: ProxType.body(color: c.contentSecondary),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const DeviceRulesCompact();
 }

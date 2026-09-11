@@ -41,18 +41,25 @@ class WaitingEntry {
   final String email;
   final String name;
   final String roll;
+
+  /// Mirror of server.dart: volunteered student photo, '' = absent.
+  final String photoUrl;
   final DateTime ts;
   const WaitingEntry(
       {required this.email,
       required this.name,
       required this.roll,
-      required this.ts});
+      required this.ts,
+      this.photoUrl = ''});
 }
 
 class ManualEntry {
   final String email;
   final String name;
   final String roll;
+
+  /// Mirror of server.dart: volunteered student photo, '' = absent.
+  final String photoUrl;
   final DateTime ts;
   String status; // pending|approved|rejected
   ManualEntry(
@@ -60,7 +67,8 @@ class ManualEntry {
       required this.name,
       required this.roll,
       required this.ts,
-      this.status = 'pending'});
+      this.status = 'pending',
+      this.photoUrl = ''});
 }
 
 String hostBearer(Uint8List windowSecret) => _web();
@@ -79,12 +87,23 @@ class ProxServer {
     // Mirror of server.dart: gated unicast /window prof Gmail (web never
     // hosts; never beacons/BLE).
     this.sessionProfEmail = '',
+    // Mirror of server.dart: gated unicast /window prof display name.
+    this.sessionProfName = '',
   });
 
   String sessionOrg;
 
   /// Mirror of server.dart: gated unicast prof Gmail, '' = unknown.
   String sessionProfEmail;
+
+  /// Mirror of server.dart: gated unicast prof photo, '' = unknown.
+  String sessionProfPhoto = '';
+
+  /// Mirror of server.dart: gated unicast prof display name, '' = unknown.
+  String sessionProfName = '';
+
+  /// Mirror of server.dart: professor eject (web never hosts).
+  bool removeStudent(String email) => _web();
 
   Duration sightingGrace = const Duration(seconds: 4);
 
@@ -113,10 +132,15 @@ class ProxServer {
   /// (mirror of server.dart; web never hosts).
   void exemptFacePair(String a, String b) => _web();
 
-  void registerWaiting(String email, String name, [String roll = '']) =>
+  void registerWaiting(String email, String name,
+          [String roll = '', String photoUrl = '']) =>
       _web();
 
-  void requestManual(String email, String name, [String roll = '']) => _web();
+  bool removeWaiting(String email) => _web();
+
+  void requestManual(String email, String name,
+          [String roll = '', String photoUrl = '']) =>
+      _web();
 
   bool decideManual(String email, bool approve) => _web();
 

@@ -151,9 +151,29 @@ abstract class DeviceStore {
   Future<String> readHostName();
   Future<void> writeHostName(String name);
 
+  /// Per-course opt-in: show the hosting professor's Gmail profile photo
+  /// to joining students (gated /window unicast). Absent = false (off by
+  /// default — students see initials until the professor opts in).
+  Future<bool> readShowProfPhoto(String course);
+  Future<void> writeShowProfPhoto(String course, bool show);
+
+  /// Student-side cache: the hosting professor's Gmail photo per course,
+  /// saved when a gated /window poll delivers one. Absent = '' (no photo
+  /// seen yet). Lets the course LIST show the photo offline; the waiting
+  /// room always prefers the live poll value.
+  Future<String> readCourseProfPhoto(String course);
+  Future<void> writeCourseProfPhoto(String course, String photoUrl);
+
   /// Last professor host joined (host:port) for one-tap rejoin.
   Future<String?> readLastHost();
   Future<void> writeLastHost(String hostPort);
+
+  /// Professor export default location (absolute directory path, per
+  /// device). Null/'' = no custom location → system Downloads. Lives
+  /// next to the other per-device prefs (host name, last host).
+  Future<String?> readExportDir();
+  Future<void> writeExportDir(String path);
+  Future<void> clearExportDir();
 
   /// Courses (subjects) with creation dates. Sessions group by course name.
   Future<List<Course>> readCourses();

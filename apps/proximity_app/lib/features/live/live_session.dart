@@ -40,6 +40,251 @@ String liveElapsedLabel(Duration elapsed) {
   return '$mm:$ss';
 }
 
+/// Gated prof photo for the live header (pure, unit-testable): the trimmed
+/// account photoUrl iff the per-course opt-in is on, else '' (initials
+/// disc). Same gating as the student-view preview + host publish path.
+String liveHeaderPhotoUrl(
+    {required bool sharePhoto, required String? accountPhotoUrl}) {
+  if (!sharePhoto) return '';
+  return (accountPhotoUrl ?? '').trim();
+}
+
+/// Leading initial for the live header avatar (pure, unit-testable):
+/// first alphanum of the resolved display name, else '?'. Same
+/// single-letter contract as the HostPreviewCard avatar block.
+String liveHeaderInitial(String displayName) {
+  for (final ch in displayName.trim().characters) {
+    if (RegExp('[A-Za-z0-9]').hasMatch(ch)) return ch.toUpperCase();
+  }
+  return '?';
+}
+
+/// Compact status strip (modular block 1 of the live header): LIVE/IDLE
+/// pill + tabular elapsed clock + present/waiting counters in one row.
+/// Same elements as the old two-column layout, roughly half the height.
+class LiveStatusStrip extends StatelessWidget {
+  final bool live;
+  final Duration elapsed;
+  final int present;
+  final int waiting;
+
+  const LiveStatusStrip({
+    super.key,
+    required this.live,
+    required this.elapsed,
+    required this.present,
+    required this.waiting,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final ink = c.contentPrimary;
+    final denom = waiting > 0 ? waiting : (present > 0 ? present : 0);
+    return Row(
+      children: [
+        // LIVE/IDLE pill: dot + word in one badge.
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: ProxSpacing.sm,
+            vertical: ProxSpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color: live
+                ? ProxStateColors.of(context, ProxState.active)
+                    .withValues(alpha: 0.14)
+                : c.contentTertiary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(ProxRadii.pill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ProxDot(
+                size: 8,
+                color: live
+                    ? ProxStateColors.of(context, ProxState.active)
+                    : ProxStateColors.of(context, ProxState.neutral),
+                pulse: live,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                live ? 'LIVE' : 'IDLE',
+                style: ProxType.label(color: ink).copyWith(
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: ProxSpacing.sm),
+        // Tabular elapsed clock (no jitter as digits roll).
+        Text(
+          liveElapsedLabel(elapsed),
+          style: ProxType.title(color: ink).copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const Spacer(),
+        PresentTicker(present: present, total: denom),
+      ],
+    );
+  }
+}
+
+/// Session meta lines (modular block 2): date row + windows caption +
+/// host line. Unconditional in both states so IDLE and LIVE read alike.
+class LiveSessionMeta extends StatelessWidget {
+  final int windowsTaken;
+  final int windowNo;
+  final int present;
+  final int denom;
+  final String? hostLine;
+
+  const LiveSessionMeta({
+    super.key,
+    required this.windowsTaken,
+    required this.windowNo,
+    required this.present,
+    required this.denom,
+    required this.hostLine,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final ink = c.contentPrimary;
+    final host = hostLine;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.calendar_today_outlined,
+              size: 14,
+              color: ink,
+            ),
+            const SizedBox(width: ProxSpacing.sm),
+            Flexible(
+              child: Text(
+                fullDateOf(todayIso()),
+                style: ProxType.label(color: ink),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        ProxSwitcher(
+          child: Text(
+            windowsTaken <= 1
+                ? 'Window 1 · $present present / $denom waiting'
+                : 'Windows 1–$windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
+            key: ValueKey<String>(
+                '$windowsTaken-$windowNo-$present-$denom'),
+            style: ProxType.caption(color: ink),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+        if (host != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              host,
+              style: ProxType.caption(color: ink),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Start ⇄ Stop control cluster (modular block 3): same verdict
+/// vocabulary and enablement, cross-fading as a continuation.
+class LiveControlCluster extends StatelessWidget {
+  final bool live;
+  final bool hosting;
+  final int windowNo;
+  final VoidCallback onStart;
+  final VoidCallback onRetake;
+  final VoidCallback onTakeAnother;
+  final VoidCallback onStop;
+  final VoidCallback onEnd;
+
+  const LiveControlCluster({
+    super.key,
+    required this.live,
+    required this.hosting,
+    required this.windowNo,
+    required this.onStart,
+    required this.onRetake,
+    required this.onTakeAnother,
+    required this.onStop,
+    required this.onEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // The single most "alive" moment in the app. Actions fire
+    // immediately; only the visuals transition.
+    return ProxSwitcher(
+      child: Wrap(
+        key: ValueKey<bool>(live),
+        spacing: ProxSpacing.sm,
+        runSpacing: ProxSpacing.sm,
+        children: [
+          if (live) ...[
+            ProxPrimaryButton(
+              label: const Text('Stop'),
+              onPressed: onStop,
+              expanded: false,
+            ),
+          ] else ...[
+            if (windowNo == 0)
+              ProxPrimaryButton(
+                label: const Text('Start'),
+                onPressed: (!hosting) ? null : onStart,
+                expanded: false,
+              )
+            else ...[
+              // Retake resumes the stopped round: same round number,
+              // fresh secrets, marks merge into it (no new intersection
+              // hurdle). Take another round opens a new round instead.
+              ProxPrimaryButton(
+                label: Text('Retake round $windowNo'),
+                onPressed: (!hosting) ? null : onRetake,
+                expanded: false,
+              ),
+              ProxPrimaryButton(
+                label: const Text('Take another round'),
+                onPressed: (!hosting) ? null : onTakeAnother,
+                expanded: false,
+              ),
+              ProxSecondaryButton(
+                label: const Text('End attendance'),
+                onPressed: (!hosting) ? null : onEnd,
+              ),
+            ],
+            if (windowNo == 0)
+              ProxSecondaryButton(
+                label: const Text('End attendance'),
+                onPressed: (!hosting) ? null : onEnd,
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class LiveSessionHeader extends StatelessWidget {
   final bool live;
   final Duration elapsed;
@@ -49,6 +294,16 @@ class LiveSessionHeader extends StatelessWidget {
   final int windowNo;
   final bool hosting;
   final String? hostLine;
+
+  /// Gated Gmail photo ('' = opted-out/unknown → initials disc). Already
+  /// gated by the caller (`_sharePhoto` + account photoUrl); this widget
+  /// never reads stores. Same 40dp photo-or-initials contract as the
+  /// HostPreviewCard avatar block, static (no timers/animation) so
+  /// pumpAndSettle-safe.
+  final String photoUrl;
+
+  /// Display name for the initials fallback (prof name as typed).
+  final String avatarName;
 
   final VoidCallback onStart;
   final VoidCallback onRetake;
@@ -66,6 +321,8 @@ class LiveSessionHeader extends StatelessWidget {
     required this.windowNo,
     required this.hosting,
     required this.hostLine,
+    this.photoUrl = '',
+    this.avatarName = '',
     required this.onStart,
     required this.onRetake,
     required this.onTakeAnother,
@@ -80,6 +337,41 @@ class LiveSessionHeader extends StatelessWidget {
     // falls back to present so the counter never reads 0/0 mid-round.
     final denom = waiting > 0 ? waiting : (present > 0 ? present : 0);
     final onWash = live;
+    // Leading prof avatar (HostPreviewCard block, 40dp): gated Gmail photo
+    // iff the per-course opt-in supplied a non-empty URL, else the initials
+    // disc. Static — initials beneath while loading/offline + on error —
+    // so the 1s elapsed tick + LIVE pulse stay the only motion here.
+    final headerPhoto = photoUrl.trim();
+    Widget headerInitials() => Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.accentBrand.withValues(alpha: 0.12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            liveHeaderInitial(avatarName),
+            style: ProxType.title(color: c.accentBrand),
+            overflow: TextOverflow.clip,
+            maxLines: 1,
+          ),
+        );
+    final headerAvatar = headerPhoto.isEmpty
+        ? headerInitials()
+        : ClipOval(
+            child: Image.network(
+              headerPhoto,
+              width: 40,
+              height: 40,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => headerInitials(),
+              frameBuilder: (context, child, frame, _) {
+                if (frame == null) return headerInitials();
+                return child;
+              },
+            ),
+          );
     // Contrast (§9, checked against the DARKEST stop — no exemptions): a
     // full-opacity `gradient.brand` wash under `contentPrimary` body text
     // measures 2.85:1 (dark) / 3.49:1 (light) — both below AA body text —
@@ -91,11 +383,10 @@ class LiveSessionHeader extends StatelessWidget {
     // 13.76, light outlined-label 5.42, light ring 3.95. The gradient =
     // "running" signal (§2.5) is preserved as a brand tint + LIVE word +
     // pulsing dot; IDLE stays flat `surfaceRaised`.
-    final ink = c.contentPrimary;
     return AnimatedContainer(
       duration: ProxDurations.small,
       curve: ProxCurves.standard,
-      padding: const EdgeInsets.all(ProxSpacing.cardPadding),
+      padding: const EdgeInsets.all(ProxSpacing.md),
       decoration: BoxDecoration(
         // The one professor flourish (§2.5): gradient while LIVE, flat
         // raised surface while IDLE. Never a hand-authored gradient: the
@@ -118,147 +409,46 @@ class LiveSessionHeader extends StatelessWidget {
         ),
         boxShadow: [c.elevationRaised],
       ),
-      child: Row(
+      // Compact modular composition: status strip → meta lines →
+      // controls. Same elements, same vocabulary, same enablement —
+      // roughly half the vertical weight of the old two-column card.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
+          LiveStatusStrip(
+            live: live,
+            elapsed: elapsed,
+            present: present,
+            waiting: waiting,
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                liveElapsedLabel(elapsed),
-                style: ProxType.title(color: ink),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ProxDot(
-                    color: live
-                        ? ProxStateColors.of(context, ProxState.active)
-                        : ProxStateColors.of(context, ProxState.neutral),
-                    pulse: live,
-                  ),
-                  const SizedBox(width: ProxSpacing.sm),
-                  Text(
-                    live ? 'LIVE' : 'IDLE',
-                    style:
-                        ProxType.label(color: ink).copyWith(letterSpacing: 3),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ],
+              headerAvatar,
+              const SizedBox(width: ProxSpacing.md),
+              Expanded(
+                child: LiveSessionMeta(
+                  windowsTaken: windowsTaken,
+                  windowNo: windowNo,
+                  present: present,
+                  denom: denom,
+                  hostLine: hostLine,
+                ),
               ),
             ],
           ),
-          const SizedBox(width: ProxSpacing.lg),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                PresentTicker(present: present, total: denom),
-                // records format via `fullDateOf(todayIso())` — same helper
-                // + format as the session detail/roomy lines, so Live
-                // matches Courses. A proper visible header element (not a
-                // caption): label-weight row with a calendar icon, rendered
-                // unconditionally so IDLE and LIVE read identically — the
-                // date never reads as absent in either state.
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: 14,
-                      color: ink,
-                    ),
-                    const SizedBox(width: ProxSpacing.sm),
-                    Flexible(
-                      child: Text(
-                        fullDateOf(todayIso()),
-                        style: ProxType.label(color: ink),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ),
-                  ],
-                ),
-                ProxSwitcher(
-                  child: Text(
-                    windowsTaken <= 1
-                        ? 'Window 1 · $present present / $denom waiting'
-                        : 'Windows 1–$windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
-                    key: ValueKey<String>(
-                        '$windowsTaken-$windowNo-$present-$denom'),
-                    style: ProxType.caption(color: ink),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
-                  ),
-                ),
-                if (hostLine != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: ProxSpacing.xs),
-                    child: Text(
-                      hostLine!,
-                      style: ProxType.caption(color: ink),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                  ),
-                const SizedBox(height: ProxSpacing.sm),
-                // Start ⇄ Stop control cluster cross-fades (continuation,
-                // not a hard swap) — the single most "alive" moment in
-                // the app. Actions fire immediately; only the visuals
-                // transition.
-                ProxSwitcher(
-                  child: Wrap(
-                    key: ValueKey<bool>(live),
-                    spacing: ProxSpacing.sm,
-                    runSpacing: ProxSpacing.sm,
-                    children: [
-                      if (live) ...[
-                        ProxPrimaryButton(
-                          label: const Text('Stop'),
-                          onPressed: onStop,
-                          expanded: false,
-                        ),
-                      ] else ...[
-                        if (windowNo == 0)
-                          ProxPrimaryButton(
-                            label: const Text('Start'),
-                            onPressed: (!hosting) ? null : onStart,
-                            expanded: false,
-                          )
-                        else ...[
-                          // Retake resumes the stopped round: same round
-                          // number, fresh secrets, marks merge into it
-                          // (no new intersection hurdle). Take another
-                          // round opens a new round instead.
-                          ProxPrimaryButton(
-                            label: Text('Retake round $windowNo'),
-                            onPressed: (!hosting) ? null : onRetake,
-                            expanded: false,
-                          ),
-                          ProxPrimaryButton(
-                            label: const Text('Take another round'),
-                            onPressed: (!hosting) ? null : onTakeAnother,
-                            expanded: false,
-                          ),
-                          ProxSecondaryButton(
-                            label: const Text('End attendance'),
-                            onPressed: (!hosting) ? null : onEnd,
-                          ),
-                        ],
-                        if (windowNo == 0)
-                          ProxSecondaryButton(
-                            label: const Text('End attendance'),
-                            onPressed: (!hosting) ? null : onEnd,
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: ProxSpacing.sm),
+          LiveControlCluster(
+            live: live,
+            hosting: hosting,
+            windowNo: windowNo,
+            onStart: onStart,
+            onRetake: onRetake,
+            onTakeAnother: onTakeAnother,
+            onStop: onStop,
+            onEnd: onEnd,
           ),
         ],
       ),

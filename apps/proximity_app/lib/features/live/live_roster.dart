@@ -51,11 +51,99 @@ List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
   ];
 }
 
+/// Swipe-to-remove row: professor eject with a confirm step. Renders the
+/// plain [child] when [onRemove] is null (tests/read-only surfaces).
+/// Delete affordance is a trailing red wash + icon (end-to-start swipe),
+/// confirmed via dialog — never a bare tap target mid-lecture.
+class RemovableRosterRow extends StatelessWidget {
+  final String email;
+  final String displayName;
+  final Future<bool> Function(String email)? onRemove;
+  final Widget child;
+
+  const RemovableRosterRow({
+    super.key,
+    required this.email,
+    required this.displayName,
+    required this.onRemove,
+    required this.child,
+  });
+
+  Future<bool?> _confirm(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return showDialog<bool>(
+      context: context,
+      // Dialog-local context for pops: the row's own context may unmount
+      // while the dialog is open (live list rebuilds every second), which
+      // strands taps on a route that never closes.
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Remove $displayName?',
+          style: ProxType.title(color: c.contentPrimary),
+        ),
+        content: Text(
+          'They leave the waiting list and the marked roster for this '
+          'session. Saved history is untouched, and they can rejoin or '
+          're-mark afterwards.',
+          style: ProxType.body(color: c.contentSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: c.statusError,
+            ),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final remove = onRemove;
+    if (remove == null) return child;
+    final c = ProximityColors.of(context);
+    return Dismissible(
+      key: ValueKey<String>('roster-remove-$email'),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (_) async {
+        final confirmed = await _confirm(context);
+        if (confirmed != true) return false;
+        try {
+          return await remove(email);
+        } catch (_) {
+          return false;
+        }
+      },
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: ProxSpacing.lg),
+        decoration: BoxDecoration(
+          color: c.statusError.withValues(alpha: 0.12),
+          borderRadius: ProxRadii.cardSpecRadius,
+        ),
+        child: Icon(Icons.delete_outline, color: c.statusError),
+      ),
+      child: child,
+    );
+  }
+}
+
 /// Waiting area: who is parked for the next window to open.
 class WaitingListSection extends StatelessWidget {
   final List<WaitingRow> waitingRows;
 
-  const WaitingListSection({super.key, required this.waitingRows});
+  /// Professor eject sink (null = read-only, no swipe affordance).
+  final Future<bool> Function(String email)? onRemove;
+
+  const WaitingListSection(
+      {super.key, required this.waitingRows, this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -100,13 +188,19 @@ class WaitingListSection extends StatelessWidget {
               key: ValueKey<String>('waiting-${w.email}'),
               padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
               child: ProxFadeSlideIn(
-                child: StudentCard(
-                  name: w.name.isNotEmpty ? w.name : w.email,
-                  subtitle: rosterSubtitle(w.roll, w.email),
-                  // Static badge: meaning rides on icon + word, and a
-                  // pulsing badge would keep tests from settling.
-                  status:
-                      const VerdictBadge(status: ProxStatus.waiting),
+                child: RemovableRosterRow(
+                  email: w.email,
+                  displayName: w.name.isNotEmpty ? w.name : w.email,
+                  onRemove: onRemove,
+                  child: StudentCard(
+                    name: w.name.isNotEmpty ? w.name : w.email,
+                    subtitle: rosterSubtitle(w.roll, w.email),
+                    photoUrl: w.photoUrl,
+                    // Static badge: meaning rides on icon + word, and a
+                    // pulsing badge would keep tests from settling.
+                    status:
+                        const VerdictBadge(status: ProxStatus.waiting),
+                  ),
                 ),
               ),
             ),
@@ -133,6 +227,9 @@ class LiveRosterBody extends StatelessWidget {
 
   final TallyStore tally;
 
+  /// Professor eject sink (null = read-only roster, no swipe affordance).
+  final Future<bool> Function(String email)? onRemoveStudent;
+
   const LiveRosterBody({
     super.key,
     required this.waitingRows,
@@ -140,6 +237,7 @@ class LiveRosterBody extends StatelessWidget {
     required this.names,
     required this.onResolve,
     required this.tally,
+    this.onRemoveStudent,
   });
 
   @override
@@ -148,7 +246,8 @@ class LiveRosterBody extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        WaitingListSection(waitingRows: waitingRows),
+        WaitingListSection(
+            waitingRows: waitingRows, onRemove: onRemoveStudent),
         const SizedBox(height: ProxSpacing.sm),
         DupFlagSection(
           groups: groups,
@@ -156,7 +255,7 @@ class LiveRosterBody extends StatelessWidget {
           onResolve: onResolve,
         ),
         const SizedBox(height: ProxSpacing.sm),
-        MarkedRosterSection(tally: tally),
+        MarkedRosterSection(tally: tally, onRemove: onRemoveStudent),
       ],
     );
   }
@@ -191,12 +290,16 @@ class PresentSection extends StatelessWidget {
   final List<AttendanceRecord> confirmedRows;
   final List<int> windowNos;
 
+  /// Professor eject sink (null = read-only, no swipe affordance).
+  final Future<bool> Function(String email)? onRemove;
+
   const PresentSection({
     super.key,
     required this.present,
     required this.windowsTaken,
     required this.confirmedRows,
     required this.windowNos,
+    this.onRemove,
   });
 
   @override
@@ -226,17 +329,25 @@ class PresentSection extends StatelessWidget {
           // settles in widget tests, and replaying transition motion
           // on every mount violates "updates in place"). Presence is
           // already stated by the section header + round-tick pills.
+          // Same StudentCard contract as waiting/inbox (name-or-email
+          // title + volunteered Gmail photo, initials fallback).
           for (final r in confirmedRows)
             Padding(
               padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-              child: StudentCard(
-                name: r.name,
-                subtitle:
-                    '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
-                status: r.late
-                    ? const VerdictBadge(status: ProxStatus.late)
-                    : null,
-                roundTrail: rosterTickPills(r.wins, windowNos),
+              child: RemovableRosterRow(
+                email: r.email,
+                displayName: r.name.isNotEmpty ? r.name : r.email,
+                onRemove: onRemove,
+                child: StudentCard(
+                  name: r.name.isNotEmpty ? r.name : r.email,
+                  subtitle:
+                      '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                  photoUrl: r.photoUrl,
+                  status: r.late
+                      ? const VerdictBadge(status: ProxStatus.late)
+                      : null,
+                  roundTrail: rosterTickPills(r.wins, windowNos),
+                ),
               ),
             ),
       ],
@@ -250,10 +361,14 @@ class PartialSection extends StatelessWidget {
   final List<AttendanceRecord> partialRows;
   final List<int> windowNos;
 
+  /// Professor eject sink (null = read-only, no swipe affordance).
+  final Future<bool> Function(String email)? onRemove;
+
   const PartialSection({
     super.key,
     required this.partialRows,
     required this.windowNos,
+    this.onRemove,
   });
 
   @override
@@ -272,15 +387,23 @@ class PartialSection extends StatelessWidget {
           maxLines: 1,
         ),
         const SizedBox(height: ProxSpacing.sm),
+        // Same StudentCard contract as waiting/inbox (name-or-email
+        // title + volunteered Gmail photo, initials fallback).
         for (final r in partialRows)
           Padding(
             key: ValueKey<String>('partial-${r.email}'),
             padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-            child: StudentCard(
-              name: r.name,
-              subtitle:
-                  '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
-              roundTrail: rosterTickPills(r.wins, windowNos),
+            child: RemovableRosterRow(
+              email: r.email,
+              displayName: r.name.isNotEmpty ? r.name : r.email,
+              onRemove: onRemove,
+              child: StudentCard(
+                name: r.name.isNotEmpty ? r.name : r.email,
+                subtitle:
+                    '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                photoUrl: r.photoUrl,
+                roundTrail: rosterTickPills(r.wins, windowNos),
+              ),
             ),
           ),
       ],
@@ -294,7 +417,11 @@ class PartialSection extends StatelessWidget {
 class MarkedRosterSection extends StatefulWidget {
   final TallyStore tally;
 
-  const MarkedRosterSection({super.key, required this.tally});
+  /// Professor eject sink, threaded to present + partial rows.
+  final Future<bool> Function(String email)? onRemove;
+
+  const MarkedRosterSection(
+      {super.key, required this.tally, this.onRemove});
 
   @override
   State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
@@ -347,10 +474,12 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           windowsTaken: windowsTaken,
           confirmedRows: confirmedRows,
           windowNos: windowNos,
+          onRemove: widget.onRemove,
         ),
         PartialSection(
           partialRows: partialRows,
           windowNos: windowNos,
+          onRemove: widget.onRemove,
         ),
       ],
     );

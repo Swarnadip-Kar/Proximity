@@ -29,7 +29,6 @@ import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/live/direct_add.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
-import 'package:proximity_app/features/live/live_sections.dart';
 import 'package:proximity_app/features/live/live_session.dart';
 import 'package:proximity_app/features/live/live_setup.dart';
 import 'package:proximity_app/features/live/manual_inbox.dart';
@@ -113,7 +112,20 @@ void main() {
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveRosterScreen(course: 'CS201'),
+        home: Scaffold(
+          // Scroll like the Take host's Roster sub-tab (same composer,
+          // same constraints — the body is taller than the test viewport).
+          body: SingleChildScrollView(
+            child: LiveRosterBody(
+              waitingRows: driver.waitingRows,
+              groups: driver.dupGroups,
+              names: driver.tally.nameMap(),
+              onResolve: (email) => driver.resolveDupFlag(email),
+              tally: driver.tally,
+              onRemoveStudent: (email) => driver.removeStudent(email),
+            ),
+          ),
+        ),
       ),
     ));
     await t.pumpAndSettle();
@@ -149,7 +161,18 @@ void main() {
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveInboxScreen(course: 'CS201'),
+        home: Scaffold(
+          body: ManualInboxSection(
+            pending: driver.manualPending,
+            onApproveOne: (e) => driver.decideManual(e, true),
+            onRejectOne: (e) => driver.decideManual(e, false),
+            onDecide: (emails, approve) async {
+              for (final e in emails) {
+                await driver.decideManual(e, approve);
+              }
+            },
+          ),
+        ),
       ),
     ));
     await t.pumpAndSettle();
@@ -184,7 +207,21 @@ void main() {
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveAddScreen(course: 'CS201'),
+        home: Scaffold(
+          body: DirectAddSection(
+            course: 'CS201',
+            sessionId: '',
+            onAdd: (
+                {required String name,
+                required String roll,
+                required String email}) async {
+              await driver.addManualEntry(
+                  email: email, name: name, roll: roll);
+            },
+            isPresent: (email) => driver.tally.confirmed
+                .any((r) => r.email == email.toLowerCase()),
+          ),
+        ),
       ),
     ));
     await t.pumpAndSettle();
@@ -207,7 +244,7 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('setup: name field lives here only; setup screen has no field',
+  testWidgets('setup: name field lives here only (single home)',
       (t) async {
     final nameCtrl = TextEditingController(text: '');
     addTearDown(nameCtrl.dispose);
@@ -234,21 +271,6 @@ void main() {
     expect(find.byType(MarkedRosterSection), findsNothing);
     expect(find.text('Direct manual entry'), findsNothing);
     expect(find.textContaining('Manual requests'), findsNothing);
-
-    // The focused setup deep-link screen names the step but carries no
-    // second name field (single home for the editable prof name).
-    await t.pumpWidget(helpers.testScope(
-        cloud: FakeCloudSync(online: false),
-        home: MaterialApp(
-            theme: proxLightTheme(),
-            home: const LiveSetupScreen(course: 'CS201'))));
-    await t.pumpAndSettle();
-    expect(
-        find.widgetWithText(
-            TextField, 'Your name (optional, shown to students)'),
-        findsNothing);
-    expect(find.byType(ma.ManualAddForm), findsNothing);
-    expect(find.text('Back to live host'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 

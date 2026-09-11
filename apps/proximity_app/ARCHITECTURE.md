@@ -130,8 +130,10 @@ live/<course> (+ /roster /inbox /add            → prof live (one host screen;
 mark/browse · mark/join · mark/waiting          → student mark (one
   mark/face · mark/proving · mark/verdict          continuation; phases split
   mark/manual                                      on migration)
-enroll/intro · enroll/capture · enroll/result   → enroll bundle (same names
-                                                  EnrollFlow pushes)
+enroll/capture · enroll/result                    → SetupFlow steps (same names
+                                                  EnrollFlow pushes; standalone
+                                                  enroll/intro deleted — SetupFlow
+                                                  is the only enrollment flow)
 records/mine · records/course/<course>          → records
 debug/log                                       → filterable system log
 ```

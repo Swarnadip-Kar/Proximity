@@ -12,7 +12,6 @@ import '../../core/enrollment.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
 import '../../widgets/details_expander.dart';
-import '../../widgets/fallback_button.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/trust_cards.dart';
 import 'account_common.dart';
@@ -48,19 +47,6 @@ class AccountEnrollmentSection extends ConsumerWidget {
               const ProxSyncNote(
                 accountNoKeyNote,
               ),
-              const SizedBox(height: ProxSpacing.sm),
-              FallbackButton(
-                label: 'Enroll this device',
-                sheetTitle: 'Enroll this device',
-                icon: Icons.school_outlined,
-                buttonKey: const Key('account-enroll-entry'),
-                sheetBuilder: (sheetContext) => accountEnrollSheetBody(
-                  context,
-                  ref,
-                  body:
-                      'One-time setup — about 2 minutes, online once. Your Gmail claims its single student-device slot; then attendance works fully offline.',
-                ),
-              ),
             ],
           );
         }
@@ -81,7 +67,9 @@ class AccountEnrollmentSection extends ConsumerWidget {
                 state: ProxState.marked, label: 'Enrolled as $badgeEmail'),
             if (mine != null) ...[
               AccountFactRow(
-                  'Date enrolled', dateIsoOf(mine.enrolledAt.toUtc())),
+                  // Global date rule, display only: DD-MM-YYYY.
+                  'Date enrolled',
+                  displayDateOf(mine.enrolledAt.toUtc())),
               AccountFactRow('Organization', org),
               const SizedBox(height: ProxSpacing.md),
               DeviceTrustBadge(

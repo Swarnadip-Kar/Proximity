@@ -22,7 +22,7 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
-import 'package:proximity_app/widgets/manual_add.dart';
+import 'package:proximity_app/features/manual_attendance/manual_attendance.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 

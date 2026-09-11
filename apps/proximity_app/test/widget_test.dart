@@ -22,6 +22,7 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/main.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
+import 'package:proximity_app/screens/setup_flow_screen.dart';
 import 'package:proximity_app/screens/student_home.dart';
 import 'package:proximity_app/widgets/prox_buttons.dart';
 import 'package:proximity_ble/ble.dart';
@@ -39,6 +40,7 @@ ProviderScope testScope(
     BtState btPower = BtState.on,
     AppMode? mode,
     FakeCloudSync? cloud,
+    StillCapturer? stillCapturer,
     // Direct-screen pumps (bypass the app home): the Mark gate owns
     // unenrolled routing, so join-gate contracts pump StudentHomeScreen
     // directly instead of the full shell.
@@ -59,7 +61,8 @@ ProviderScope testScope(
       deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
       // Canned stills (the camera plugin has no test double; verdicts
       // come from the FakeFaceVerifier above).
-      stillCapturerProvider.overrideWithValue(const FakeStillCapturer()),
+      stillCapturerProvider.overrideWithValue(
+          stillCapturer ?? const FakeStillCapturer()),
       // Continuous enrollment session: one fake camera open + an
       // accept-all pose gate (angle math is pinned in enroll_guided_test).
       enrollSessionCameraProvider
@@ -216,13 +219,51 @@ class _EndedHostDriver extends FakeStudentDriver {
   }
 }
 
+/// Still capturer that never returns (capture cancelled): parks the flow
+/// on the face step so back-from-face-check is deterministic (no race
+/// with the auto-scan → proving chain). Note [FakeStillCapturer] cannot
+/// do this — a null result there falls through to canned paths.
+class _NullStillCapturer implements StillCapturer {
+  const _NullStillCapturer();
+  @override
+  Future<List<String>?> capture(BuildContext context,
+          {required int captures, required bool autoFire, String? prompt}) async =>
+      null;
+}
+
+/// Shell-aware scroll (PageView pager era): the pager is itself a
+/// horizontal Scrollable, so bare `scrollUntilVisible(target, …)` throws
+/// "Too many elements" under shells and legacy `.first` grabs the pager
+/// (paging tabs instead of scrolling the list). Scrolls the nearest
+/// VERTICAL scrollable ancestor of the target instead.
+Future<void> shellScroll(
+    WidgetTester t, Finder target, double delta) async {
+  final cands = find
+      .ancestor(of: target, matching: find.byType(Scrollable))
+      .evaluate();
+  Element? best;
+  for (final e in cands) {
+    final w = e.widget;
+    if (w is Scrollable && w.axis == Axis.vertical) {
+      if (best == null || e.depth > best.depth) best = e;
+    }
+  }
+  if (best == null) {
+    // No vertical ancestor (off-shell): legacy single-scrollable lookup.
+    await t.scrollUntilVisible(target, delta);
+    return;
+  }
+  await t.scrollUntilVisible(target, delta,
+      scrollable: find.byWidget(best.widget));
+}
+
 /// Typed-IP shared helper (fallback-weight §6.1/§6.4): the field lives in
 /// the `Enter IP manually` sheet below the browse list — scroll it into
 /// view, then type in the sheet field. Top-level so sibling suites
 /// (e.g. mark_slimdown) import it instead of duplicating.
 Future<void> enterIp(WidgetTester t, String ip) async {
   final fallback = find.text('Enter IP manually');
-  await t.scrollUntilVisible(fallback, 300);
+  await shellScroll(t, fallback, 300);
   await t.pumpAndSettle();
   await t.tap(fallback);
   await t.pumpAndSettle();
@@ -464,7 +505,7 @@ void main() {
     await t.pumpAndSettle();
     // No Rejoin chip anymore — the sheet field opens prefilled with last host.
     expect(find.textContaining('Rejoin'), findsNothing);
-    await t.scrollUntilVisible(find.text('Enter IP manually'), 300);
+    await shellScroll(t, find.text('Enter IP manually'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Enter IP manually'));
     await t.pumpAndSettle();
@@ -510,62 +551,46 @@ void main() {
     expect(find.textContaining('foreground'), findsOneWidget);
   });
 
-  testWidgets('enrollment: account pickup → key → face → upload → linked',
+  testWidgets(
+      'enrollment: Register → auto flow → device → key/ID → capture → Save → Done → Mark',
       (t) async {
-    // Bundle flow: landing → Register as Student → student home → enroll
-    // bundle (intro → capture → result).
+    // Auto-push journey: landing → Register as Student → shell mounts on
+    // Accounts and immediately auto-pushes the ONE setup flow (fresh
+    // registration → flow immediately, no entry surfaces in between) →
+    // device → account&key → capture → result → Done pops to Mark.
     await t.pumpWidget(testScope());
     await t.pumpAndSettle();
     // Landing (FakeAuth signed in, no role): register as student.
     await t.tap(find.text('Register as Student'));
     await t.pumpAndSettle();
-    // Register lands on the shell, whose Mark gate is already pushing the
-    // setup flow at the Confirm-device page (flow: device → account&key →
-    // capture → result; no separate enroll-bundle entry tap anymore).
-    // 1. device: which account / which device / move status (single
-    // purpose; the flow's sign-in page exists offstage).
+    // Register lands straight in the auto-pushed flow (exactly one),
+    // starting at the device step (signed in + student role, no key yet).
+    expect(find.byType(SetupFlowScreen), findsOneWidget);
     expect(find.text('Confirm device'), findsOneWidget);
-    expect(find.textContaining('Which account'), findsOneWidget);
-    // device → account & key (Continue sits below the device facts:
-    // scroll into view inside the shell-hosted flow viewport first).
-    await t.scrollUntilVisible(find.widgetWithText(ProxPrimaryButton, 'Continue'),
-        300,
-        scrollable: find
-            .descendant(
-                of: find.byKey(const ValueKey('setup-device-scroll')),
-                matching: find.byType(Scrollable))
-            .first);
-    await t.pumpAndSettle();
+    // 1. device → account & key.
     await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
     await t.pumpAndSettle();
-    // 2. account & key: ID entry + device key + Continue to face scan.
+    // 2. account & key → capture.
     // Account picked up silently (already signed in on the landing): no
-    // second Google tap.
-    expect(find.text('Account & key'), findsOneWidget);
-    expect(find.textContaining('Signed in as Test User'), findsWidgets);
-    expect(find.textContaining('student@example.com'), findsWidgets);
-    // ID number (compulsory, saved unverified)
+    // second Google tap. ID + device key first (both compulsory).
+    expect(find.text('Continue to face scan'), findsOneWidget);
+    Future<void> reveal(Finder f) => t.scrollUntilVisible(
+          f,
+          300,
+          scrollable: find
+              .ancestor(of: f, matching: find.byType(Scrollable))
+              .first,
+        );
+    await reveal(find.widgetWithText(TextField, 'ID Number'));
     await t.enterText(
         find.widgetWithText(TextField, 'ID Number'), '12342210');
     await t.pump();
-    // device key (scroll into view on the account&key page).
-    await t.scrollUntilVisible(find.text('Generate device key'), 300,
-        scrollable: find
-            .descendant(
-                of: find.byKey(const ValueKey('setup-account-key-scroll')),
-                matching: find.byType(Scrollable))
-            .first);
+    await reveal(find.text('Generate device key'));
     await t.pumpAndSettle();
     await t.tap(find.text('Generate device key'));
     await t.pumpAndSettle();
     expect(find.textContaining('Key: '), findsOneWidget);
-    // Account & key → capture.
-    await t.scrollUntilVisible(find.text('Continue to face scan'), 300,
-        scrollable: find
-            .descendant(
-                of: find.byKey(const ValueKey('setup-account-key-scroll')),
-                matching: find.byType(Scrollable))
-            .first);
+    await reveal(find.text('Continue to face scan'));
     await t.pumpAndSettle();
     await t.tap(find.text('Continue to face scan'));
     await t.pumpAndSettle();
@@ -580,14 +605,14 @@ void main() {
     for (var i = 0; i < 60 && saveFinder.evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 200));
     }
-    // 4. result: save → linked banner after Done (back on student home).
+    // 4. result: save → success (the claim unlocks Mark underneath via
+    // the identity listener) → Done pops the flow straight onto Mark.
     expect(find.text('Save enrollment'), findsWidgets);
     final saveBtn =
         find.widgetWithText(ProxPrimaryButton, 'Save enrollment');
     // Result step's own scroll (the flow PageView viewport is an
     // ancestor Scrollable — target the innermost scroll here).
-    await t.scrollUntilVisible(saveBtn, 300,
-        scrollable: find.byType(Scrollable).last);
+    await shellScroll(t, saveBtn, 300);
     await t.pumpAndSettle();
     await t.tap(saveBtn);
     await t.pumpAndSettle();
@@ -595,7 +620,14 @@ void main() {
     expect(find.textContaining('Identity linked'), findsOneWidget);
     await t.tap(find.text('Done'));
     await t.pumpAndSettle();
-    expect(find.textContaining('Test User · 12342210'), findsOneWidget);
+    // Completion lands on Mark (flow popped, lock lifted underneath):
+    // browse list chrome + the joining-as avatar ring (initials, no
+    // identity text block anymore).
+    expect(find.byType(SetupFlowScreen), findsNothing);
+    expect(find.text('Looking for a class…'), findsOneWidget);
+    expect(find.text('TU'), findsOneWidget);
+    expect(find.byKey(const ValueKey('browse-avatar-ring')), findsOneWidget);
+    expect(t.takeException(), isNull);
   });
 
   testWidgets('prof enlists new course by name', (t) async {
@@ -614,6 +646,10 @@ void main() {
     // registered course opens its records overview (no hosting entry here)
     await t.tap(find.text('CS301'));
     await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.text('Review & export')))?.settings.name,
+        'prof/courses/CS301');
     expect(find.text('Take attendance'), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
   });
@@ -633,8 +669,7 @@ void main() {
     await t.pump();
     await t.pump(const Duration(milliseconds: 500));
     final searchField = find.byKey(const ValueKey('prof-search'));
-    await t.scrollUntilVisible(searchField, 500,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, searchField, 500);
     await t.pump();
     await t.pump(const Duration(milliseconds: 500));
     await t.enterText(searchField, 'student');
@@ -655,7 +690,7 @@ void main() {
               gmail: 'student@example.com',
               roll: '12342210')));
       await t.pumpAndSettle();
-      await t.scrollUntilVisible(find.text('Enter IP manually'), 300);
+      await shellScroll(t, find.text('Enter IP manually'), 300);
       await t.pumpAndSettle();
       await t.tap(find.text('Enter IP manually'));
       await t.pumpAndSettle();
@@ -781,11 +816,15 @@ void main() {
     await t.tap(find.textContaining('Inbox'));
     await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
-    // Hold-and-tap inbox (§4.1 rebuild): long-press enters selection for
-    // the inbox list, the toolbar bulk-approves (no checkboxes).
-    await t.longPress(find.text('M One'));
+    // Tap-to-select inbox: plain taps toggle for the inbox list, the
+    // toolbar bulk-approves (no checkboxes). The inbox tab scrolls, so
+    // bring the toolbar into view first (same shellScroll pattern as the
+    // Add tab submit below).
+    await t.tap(find.text('M One'));
     await t.pumpAndSettle();
     expect(find.text('Approve 1'), findsOneWidget);
+    await shellScroll(t, find.text('Select all'), 200);
+    await t.pumpAndSettle();
     await t.tap(find.text('Select all'));
     await t.pumpAndSettle();
     await t.tap(find.text('Approve 2'));
@@ -802,8 +841,7 @@ void main() {
     await t.enterText(
         find.byKey(const ValueKey('direct-email')), 'direct@example.com');
     // The Add tab scrolls independently: bring the submit into view.
-    await t.scrollUntilVisible(find.text('Add & mark present'), 500,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Add & mark present'), 500);
     await t.pumpAndSettle();
     await t.tap(find.text('Add & mark present'));
     await t.pumpAndSettle();
@@ -914,18 +952,25 @@ void main() {
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
     // Open the saved session (overview → read-only detail → editor).
-    await t.tap(find.textContaining('1 present'));
+    // Date-anchored finder (global `[Day], DD-MM-YYYY` rule): the tight
+    // title is unique to the session row.
+    await t.tap(find.textContaining('Sat, 05-09-2026'));
     await t.pumpAndSettle();
     expect(find.text('Session'), findsOneWidget);
+    // Navigation identity (records packet): one named route per screen.
+    expect(ModalRoute.of(t.element(find.text('Session')))?.settings.name,
+        'prof/courses/CS201/sessions/sess-1');
     await t.tap(find.text('Fix marks'));
     await t.pumpAndSettle();
     expect(find.text('Edit attendance'), findsOneWidget);
+    expect(
+        ModalRoute.of(t.element(find.text('Edit attendance')))?.settings.name,
+        'prof/courses/CS201/sessions/sess-1/edit');
     // Per-window checkboxes: expand A, unmark Round 1, add B, save.
     await t.tap(find.text('A'));
     await t.pumpAndSettle();
     final round1 = find.widgetWithText(CheckboxListTile, 'Round 1');
-    await t.scrollUntilVisible(round1, 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, round1, 300);
     await t.pumpAndSettle();
     await t.tap(find.descendant(
         of: round1, matching: find.byType(Checkbox)));
@@ -937,16 +982,14 @@ void main() {
     await t.enterText(find.byKey(const ValueKey('edit-roll')), '2');
     await t.enterText(
         find.byKey(const ValueKey('edit-email')), 'b@x.in');
-    await t.scrollUntilVisible(find.text('Add & mark present'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Add & mark present'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Add & mark present'));
     await t.pump();
     // Save stays on the Marks tab.
     await t.tap(find.text('Marks'));
     await t.pumpAndSettle();
-    await t.scrollUntilVisible(find.text('Save changes'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Save changes'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Save changes'));
     await t.pumpAndSettle();
@@ -1191,8 +1234,7 @@ void main() {
     // The form fields ARE the search: typing an email prefix lists the
     // enrolled student as a card in the same place.
     final dirField = find.byKey(const ValueKey('edit-email'));
-    await t.scrollUntilVisible(dirField, 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, dirField, 300);
     await t.pumpAndSettle();
     await t.enterText(dirField, 'student1@');
     // Debounce (400ms) + async directory fetch settle on explicit pumps.
@@ -1201,8 +1243,7 @@ void main() {
     // Live online card for the enrolled student.
     expect(find.text('Student One'), findsOneWidget);
     expect(find.textContaining('12342210'), findsOneWidget);
-    await t.scrollUntilVisible(find.text('Student One'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Student One'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Student One'));
     await t.pump();
@@ -1213,15 +1254,13 @@ void main() {
     expect(field('edit-roll'), '12342210');
     // Selecting completes the add; saving persists without errors.
     // Save stays on the Marks tab.
-    await t.scrollUntilVisible(find.text('Add & mark present'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Add & mark present'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Add & mark present'));
     await t.pump();
     await t.tap(find.text('Marks'));
     await t.pumpAndSettle();
-    await t.scrollUntilVisible(find.text('Save changes'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Save changes'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Save changes'));
     await t.pumpAndSettle();
@@ -1284,8 +1323,7 @@ void main() {
     await t.tap(find.text('Mark present').first);
     await t.pumpAndSettle();
     expect(find.text('Absent (1)'), findsNothing);
-    await t.scrollUntilVisible(find.text('Save changes'), 300,
-        scrollable: find.byType(Scrollable).first);
+    await shellScroll(t, find.text('Save changes'), 300);
     await t.pumpAndSettle();
     await t.tap(find.text('Save changes'));
     await t.pumpAndSettle();
@@ -1293,6 +1331,80 @@ void main() {
         (await store.readHistory()).firstWhere((r) => r.id == 's2');
     expect(back.isPresent('student1@example.com'), isTrue);
     expect(back.isPresent('gone@example.com'), isTrue);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('mark back from waiting room lands on the class list',
+      (t) async {
+    // Full shell (the bug lived in the shell handoff): browse → Join a
+    // closed-window class → waiting room → system back must land on the
+    // Mark class list, never the shell hint/exit, never another tab.
+    await t.pumpWidget(testScope(
+        linked: const LinkedIdentity(
+            name: 'Test User',
+            gmail: 'student@example.com',
+            roll: '12342210')));
+    await t.pumpAndSettle();
+    await enterIp(t, '192.168.43.1');
+    await t.tap(find.text('Join'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('not yet started'), findsOneWidget);
+    // In-app back affordance (platform-automatic, driven by the in-flow
+    // back entry): one step back to the class list, same teardown.
+    expect(find.byType(BackButton), findsOneWidget);
+    await t.tap(find.byType(BackButton));
+    await t.pumpAndSettle();
+    expect(find.textContaining('not yet started'), findsNothing);
+    expect(find.text('Enter IP manually'), findsOneWidget);
+    // Join again: system back must land on the class list too — never
+    // the shell hint/exit, never another tab.
+    await enterIp(t, '192.168.43.1');
+    await t.tap(find.text('Join'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('not yet started'), findsOneWidget);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(find.textContaining('not yet started'), findsNothing);
+    expect(find.text('Enter IP manually'), findsOneWidget);
+    expect(find.text('Press back again to leave the app'), findsNothing);
+    // A repeat back at the tab root only hints — still in Mark. Fixed
+    // pumps (never settle): the 2s hint snackbar would auto-dismiss
+    // under a settle and the assertion would miss it.
+    await t.binding.handlePopRoute();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
+    expect(find.text('Enter IP manually'), findsOneWidget);
+    expect(find.text('Press back again to leave the app'), findsOneWidget);
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('mark back from face check lands on the class list',
+      (t) async {
+    // Window already open → fast-path to face check. The parked capture
+    // never returns, so the flow holds on the face step deterministically
+    // (no race with the auto-scan → proving chain).
+    await t.pumpWidget(testScope(
+        probeOpen: true,
+        stillCapturer: const _NullStillCapturer(),
+        linked: const LinkedIdentity(
+            name: 'Test User',
+            gmail: 'student@example.com',
+            roll: '12342210')));
+    await t.pumpAndSettle();
+    await enterIp(t, '192.168.43.1');
+    await t.tap(find.text('Join'));
+    var face = false;
+    for (var i = 0; i < 20 && !face; i++) {
+      await t.pump(const Duration(milliseconds: 200));
+      face = find.text('Scan face').evaluate().isNotEmpty;
+    }
+    expect(face, isTrue);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(find.text('Scan face'), findsNothing);
+    expect(find.text('Enter IP manually'), findsOneWidget);
+    expect(find.text('Press back again to leave the app'), findsNothing);
     expect(t.takeException(), isNull);
   });
 }

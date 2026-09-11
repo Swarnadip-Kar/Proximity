@@ -178,9 +178,14 @@ class EnrollCapturePreview extends StatelessWidget {
     // spacer of the same place in the tree.
     final surface =
         preview ?? (ctl != null ? CameraPreview(ctl) : const SizedBox.expand());
-    return Stack(
-      alignment: Alignment.center,
-      fit: StackFit.loose,
+    // Preview rides low: top offset drops the whole feed + overlay block
+    // (Padding is layout-neutral for the path pins — no SafeArea, aspect,
+    // fit, constraint, or container in the preview chain).
+    return Padding(
+      padding: const EdgeInsets.only(top: ProxSpacing.xxl),
+      child: Stack(
+        alignment: Alignment.center,
+        fit: StackFit.loose,
       children: [
         surface,
         // The overlay ACTUALLY renders above the preview: this
@@ -222,7 +227,8 @@ class EnrollCapturePreview extends StatelessWidget {
               ),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }

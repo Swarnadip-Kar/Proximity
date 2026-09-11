@@ -1,5 +1,4 @@
-// SetupFlow device/intro pagination (§3.3 + ## Setup pagination +
-// ## About-page removal).
+// SetupFlow device/account-key pagination (§3.3 + ## Setup pagination).
 //
 // Two one-purpose pages so each fits one screen without long scrolls:
 //
@@ -8,18 +7,15 @@
 //     Continue to account & key.
 //   AccountKeyStep — Account & key (Google account + ID entry + device key
 //     + Continue to face scan; reuses IntroAccountSection/IntroKeySection
-//     with the same hasKey gating as EnrollIntroContent).
+//     with hasKey gating).
 //
-// (About-page removal: the AboutEnrollStep explainer page — overview +
-// online-once + one-device rule — is deleted from the flow. Its sections
-// stay in intro_sections.dart, owned by the standalone deep-linkable
-// EnrollIntroScreen/EnrollIntroContent.)
+// SetupFlow is the only enrollment flow.
 //
 // Step content only: stepper chrome (progress overlay, step slides, back
 // routing, start index, listeners, lazy camera mount) lives in
-// screens/setup_flow_screen.dart. Standalone routes (DeviceIdentityScreen,
-// EnrollIntroScreen) are untouched for deep-links — these steps are
-// flow-only (scope present; scope-absent Continue is a no-op).
+// screens/setup_flow_screen.dart. The standalone DeviceIdentityScreen
+// route is untouched for deep-links — these steps are flow-only (scope
+// present; scope-absent Continue is a no-op).
 //
 // Frozen: step order semantics, gate/refusal copy, timings, copy trim
 // (DetailsExpanders stay inside sections).
@@ -45,8 +41,7 @@ import 'setup_step_scope.dart';
 /// device, move status, offline note, sign-out) + a flow-only Continue.
 ///
 /// The content's own guards/branches (mobile key/move vs records-only note,
-/// Continue CTA is added (the old combined step advanced via the intro's
-/// Continue; now each page advances one page via scope.next()).
+/// Continue CTA is added (each page advances one page via scope.next()).
 class DeviceConfirmStep extends StatelessWidget {
   const DeviceConfirmStep({super.key});
 
@@ -84,9 +79,8 @@ class DeviceConfirmStep extends StatelessWidget {
 }
 
 /// Account & key page: Google account + ID entry + device key + Continue
-/// to face scan. Same hasKey gating and copy as [EnrollIntroContent]'s
-/// account/key/continue block (presentation only — controller, guards, and
-/// scope branches verbatim).
+/// to face scan (presentation only — controller, guards, and scope
+/// branches verbatim).
 class AccountKeyStep extends ConsumerWidget {
   const AccountKeyStep({super.key});
 

@@ -105,12 +105,15 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
   }
 
   Future<void> _signOut() async {
+    // Re-entry guard (the button disables on rebuild, but a second tap can
+    // race the first frame): a double-tap must never double-sign-out.
+    if (_busy) return;
     setState(() {
       _busy = true;
       _status = '';
     });
     try {
-      await entrySignOut(ref);
+      await entrySignOut(ref, () => mounted);
     } catch (e) {
       if (mounted) {
         setState(() => _status = '$e'.replaceFirst('StateError: ', ''));

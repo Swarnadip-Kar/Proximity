@@ -23,25 +23,39 @@ Future<void> showCsvPreviewDialog(
   required Future<void> Function() onSave,
   required Future<void> Function() onShare,
 }) {
+  // Dead-screen guard: callers awaiting a previous dialog/sheet may resume
+  // after dispose — never open on an unmounted context.
+  if (!context.mounted) return Future.value();
   return showDialog(
     context: context,
-    builder: (_) => AlertDialog(
+    // Dialog-local context for every pop: the caller's context may
+    // unmount while the dialog is open (records lists rebuild under
+    // it), stranding taps on a route that never closes with a
+    // null-check crash. Save/Share close FIRST so their SnackBars and
+    // sheets land on the visible screen, not behind the dialog.
+    builder: (dialogContext) => AlertDialog(
       title: Text(title),
       content: SingleChildScrollView(child: SelectableText(csv)),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(dialogContext).pop(),
           child: const Text('Close'),
         ),
         OutlinedButton.icon(
           icon: const Icon(Icons.save_alt),
           label: const Text('Save'),
-          onPressed: onSave,
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            onSave();
+          },
         ),
         FilledButton.icon(
           icon: const Icon(Icons.ios_share),
           label: const Text('Share'),
-          onPressed: onShare,
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            onShare();
+          },
         ),
       ],
     ),
@@ -49,11 +63,15 @@ Future<void> showCsvPreviewDialog(
 }
 
 /// Writes [csv] to the device (or downloads on web) and reports the path
-/// via SnackBar. Shared save path for the export center.
+/// via SnackBar. Shared save path for the export center. The destination
+/// resolves inside [saveTextFile] (custom export default → Downloads →
+/// documents); [directory] overrides it for one save only.
 Future<void> saveCsvToDevice(
-    BuildContext context, String csv, String filename) async {
+    BuildContext context, String csv, String filename,
+    {String? directory}) async {
   try {
-    final path = await saveTextFile(filename, csv);
+    final path =
+        await saveTextFile(filename, csv, directory: directory);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Saved to device: $path')));

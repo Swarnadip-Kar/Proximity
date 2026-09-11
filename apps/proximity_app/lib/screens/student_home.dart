@@ -18,6 +18,7 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_transport/transport.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../core/auth.dart';
 import '../core/ble_radio.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
@@ -25,6 +26,8 @@ import '../core/student_driver.dart';
 import '../core/sync/org.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
+import '../features/account/account_common.dart';
+import '../features/entry/entry_flow.dart';
 import '../features/mark/browse_classes.dart';
 import '../features/mark/face_check.dart';
 import '../features/mark/manual_status.dart';
@@ -84,11 +87,33 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // broadcasts.
   String _roomProf = '';
   String _roomProfEmail = '';
+
+  /// Hosting professor's Gmail photo from the gated /window poll ('' =
+  /// unknown). Converges when the host publishes; initials fallback.
+  String _roomProfPhoto = '';
+
+  /// Last (course → photo) pair written to the device cache: guards the
+  /// 2s room poll from rewriting prefs on every tick.
+  String _cachedPhotoKey = '';
+
+  /// Own Gmail profile photo for volunteered presence ('' = absent).
+  /// Best-effort read; never blocks join/prove.
+  String _ownPhoto() {
+    try {
+      return ref.read(accountProvider).valueOrNull?.photoUrl?.trim() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
   String _roomOrg = '';
   // Gated prof emails by `host:port` (org-checked /window unicast only).
   // Browse tiles render these (KEEP of the pre-revert surfacing, new
   // gated source); mismatched org never populates (silence).
   final Map<String, String> _gatedEmailByHost = {};
+  // Gated prof photos by `host:port` (same unicast as the emails above).
+  // Browse tiles render these; ''/absent = opted-out/unknown → the
+  // class-letter disc. Never beacons/BLE.
+  final Map<String, String> _gatedPhotoByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
   final Map<String, DateTime> _emailFetchThrottle = {};
@@ -97,6 +122,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   int _roomMisses = 0;
   Timer? _roomPoll;
   Timer? _presenceBeat;
+  // Overlap guard for the 2s room poll: Timer.periodic does not await the
+  // body, and a probe may outlive the cadence (timeout budget is 4s), so a
+  // slow tick would otherwise overlap the next one — two in-flight probes
+  // race on _roomMisses/_connected (out-of-order completion flips the
+  // badge) and double the GET /window rate into the server's 5-hits/10s/IP
+  // cap. Owned by the current _runId generation (see _pollRoomOnce).
+  bool _roomPollBusy = false;
   Timer? _manualPoll;
   String _manualStatus = '';
   // Instant face retries used this join (4 mismatch sessions, then review).
@@ -106,6 +138,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // Samsung-style auto-start guard: the scan fires once per faceCheck
   // entry (post-frame); the manual button stays as fallback/retry.
   bool _autoFaceFired = false;
+  // Single-flight for still-capture auto-fire + manual taps: concurrent
+  // _scanFace calls never overlap captures (double-push would stack two
+  // camera sheets). Second caller no-ops; Scan stays as fallback after
+  // the in-flight scan settles.
+  bool _scanBusy = false;
   // Transient verdict note on the face-check screen (inconclusive scans).
   String faceNotice = '';
 
@@ -410,10 +447,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           myOrg: _myOrg());
       if (!mounted || !probe.reachable) return;
       final email = probe.profEmail.trim().toLowerCase();
-      if (email.isEmpty) return;
-      if (_gatedEmailByHost[key] == email) return;
-      _gatedEmailByHost[key] = email;
-      if (phase == StudentPhase.browsing && mounted) {
+      final photo = probe.profPhoto.trim();
+      var changed = false;
+      if (email.isNotEmpty && _gatedEmailByHost[key] != email) {
+        _gatedEmailByHost[key] = email;
+        changed = true;
+      }
+      // Same gated photo cached per host for the browse tiles (photo shows
+      // iff the host published one — i.e. the per-course opt-in is on).
+      if (photo.isNotEmpty && _gatedPhotoByHost[key] != photo) {
+        _gatedPhotoByHost[key] = photo;
+        changed = true;
+      }
+      if (changed && phase == StudentPhase.browsing && mounted) {
         setState(() => _live = _allLive());
       }
     } catch (_) {}
@@ -430,6 +476,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _pendingHints.remove(key);
     _bleHintThrottle.remove(key);
     _gatedEmailByHost.remove(key);
+    _gatedPhotoByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -438,6 +485,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// room, never a face re-scan on an ended class.
   void _toBrowsing(String notice) {
     if (!mounted) return;
+    _dropInnerBackEntry();
     _stopRoomTimers();
     _waitingTarget = null;
     _roomWindowOpen = false;
@@ -445,6 +493,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _roomMisses = 0;
     _roomProf = '';
     _roomProfEmail = '';
+    _roomProfPhoto = '';
+    _cachedPhotoKey = '';
     _roomOrg = '';
     setState(() {
       phase = StudentPhase.browsing;
@@ -603,6 +653,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Disposal armor first: the route detaches the back entry on the way
+    // out and removal always fires onRemove — it must no-op (ref and
+    // setState are dead past this point; teardown below owns cleanup).
+    _disposed = true;
+    _dropInnerBackEntry();
     _runId++;
     _refreshTimer?.cancel();
     _sessionTimer?.cancel();
@@ -718,30 +773,134 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     await _enterWaitingRoom(target);
   }
 
-  Future<bool> _checkJoinGates() async {
-    final linked = ref.read(linkedIdentityProvider);
-    if (linked == null) {
-      setState(
-          () => joinError = 'Enroll this device first — identity is required.');
-      return false;
+  /// True when [linked] is bound to the CURRENT signed-in account (same
+  /// Gmail, case-insensitive). A stale linked identity from a previous
+  /// account never passes — join/prove must resolve the current account,
+  /// never any cached enrollment.
+  bool _identityMatchesCurrent(SignedAccount? acct, LinkedIdentity? linked) {
+    final want = acct?.email.trim().toLowerCase() ?? '';
+    if (want.isEmpty || linked == null) return false;
+    return linked.gmail.trim().toLowerCase() == want;
+  }
+
+  LinkedIdentity? _readLinked() {
+    try {
+      return ref.read(linkedIdentityProvider);
+    } catch (_) {
+      return null;
     }
-    if (!await ref.read(blePermissionProvider)()) {
+  }
+
+  SignedAccount? _readAccount() {
+    try {
+      final streamed = ref.read(accountProvider).valueOrNull;
+      if (streamed != null) return streamed;
+    } catch (_) {}
+    // Stream loading gap (cold start / switch mid-flight): the synchronous
+    // session is already current while the stream still replays. Fall back
+    // so joins never refuse an enrolled returner as "unenrolled".
+    try {
+      return ref.read(authServiceProvider).current;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _checkJoinGates() async {
+    var acct = _readAccount();
+    var linked = _readLinked();
+    if (!_identityMatchesCurrent(acct, linked)) {
+      // Account-switch race: the stored enrollment already belongs to the
+      // new account but linked has not relinked yet. One fail-soft relink
+      // attempt before refusing (never throws, never touches providers on
+      // a dead screen).
+      if (acct != null) {
+        try {
+          await relinkLinkedIdentity(ref, acct);
+        } catch (_) {}
+        if (!mounted) return false;
+        acct = _readAccount();
+        linked = _readLinked();
+      }
+      if (!_identityMatchesCurrent(acct, linked)) {
+        if (!mounted) return false;
+        setState(
+            () => joinError = 'Enroll this device first — identity is required.');
+        return false;
+      }
+    }
+    bool bleOk = false;
+    try {
+      bleOk = await ref.read(blePermissionProvider)();
+    } catch (_) {
+      bleOk = false;
+    }
+    if (!bleOk) {
+      if (!mounted) return false;
       setState(() => joinError =
           'Bluetooth permission is required for proximity proofs. Enable it in Settings and rejoin.');
       return false;
     }
-    if (await ref.read(btPowerProvider)() == BtState.off) {
+    // Async gap above may have outlived an account switch/sign-out:
+    // re-resolve the CURRENT identity before proceeding.
+    if (!mounted) return false;
+    acct = _readAccount();
+    linked = _readLinked();
+    if (!_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return false;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return false;
+    }
+    BtState power = BtState.on;
+    try {
+      power = await ref.read(btPowerProvider)();
+    } catch (_) {
+      power = BtState.on;
+    }
+    if (power == BtState.off) {
       final enabled = await requestEnableBluetooth();
-      if (!enabled || await ref.read(btPowerProvider)() != BtState.on) {
+      if (!mounted) return false;
+      acct = _readAccount();
+      linked = _readLinked();
+      if (!_identityMatchesCurrent(acct, linked)) {
+        if (!mounted) return false;
+        setState(
+            () => joinError = 'Enroll this device first — identity is required.');
+        return false;
+      }
+      BtState now = BtState.on;
+      try {
+        now = await ref.read(btPowerProvider)();
+      } catch (_) {}
+      if (!enabled || now != BtState.on) {
+        if (!mounted) return false;
         setState(() =>
             joinError = 'Bluetooth is off — turn it on to join the class.');
         return false;
       }
     }
+    if (!mounted) return false;
+    acct = _readAccount();
+    linked = _readLinked();
+    if (!_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return false;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return false;
+    }
     return true;
   }
 
-  Future<void> _joinBeacon(ClassBeacon target) async {
+  /// Open-window join (face check first, no waiting room yet): [profName]
+  /// and [org] are the tapped announcement's already-available identity
+  /// (null = same-room advance from waiting via [_advanceToFace], which
+  /// preserves the waiting room's values; non-null — even '' for a
+  /// hint-only/typed entry with no announcement heard — replaces them so a
+  /// stale previous room's name can never leak into this join's rewait
+  /// waiting room). Stored trimmed; the waiting card trims again.
+  Future<void> _joinBeacon(ClassBeacon target,
+      {String? profName, String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
     // NOTE: unknown/unavailable stacks proceed; real radio errors surface
@@ -753,6 +912,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       await ref.read(studentDriverProvider).prewarmRadio();
     } catch (_) {}
     if (!mounted) return;
+    // The prewarm gap may have outlived an account switch/sign-out: resolve
+    // the CURRENT identity again and refuse rather than entering face check
+    // with a stale/missing identity.
+    final freshAcct = _readAccount();
+    final freshLinked = _readLinked();
+    if (!_identityMatchesCurrent(freshAcct, freshLinked)) {
+      if (!mounted) return;
+      setState(() =>
+          joinError = 'Enroll this device first — identity is required.');
+      return;
+    }
     BleLog.log(ProxLogTags.nav,
         'live window for ${target.host}:${target.port} → face check');
     setState(() {
@@ -761,34 +931,77 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _faceAttempts = 0;
       _autoFaceTries = 0;
       faceNotice = '';
+      if (profName != null) _roomProf = profName.trim();
+      if (org != null) _roomOrg = org.trim();
     });
-    final linked = ref.read(linkedIdentityProvider);
-    if (linked != null) _scheduleAutoScan(target, linked);
+    // First back press from here returns to the class list (entry held
+    // once per join; re-entry from waiting is a null-guarded no-op).
+    _pushInnerBackEntry();
+    final linked = _readLinked();
+    final acct = _readAccount();
+    if (linked != null && _identityMatchesCurrent(acct, linked)) {
+      _scheduleAutoScan(target, linked);
+    }
   }
 
   /// Waiting-room entry (req 1): Join never starts face scan. It registers
   /// presence, pre-warms BLE, and shows Connected / Not connected + waiting
   /// for the professor. When the window opens the room auto-advances.
-  /// [immediateProbe] false skips the fast-path check (UDP idle beacons
-  /// already say closed); timers still start for presence + polling.
+  /// [immediateProbe] true falls back to an immediate GET /window when the
+  /// presence POST itself flaked (no piggybacked sample); false parks and
+  /// lets the 2s poll own the first sample (UDP idle beacons already say
+  /// closed). A sent presence already carries the live window flag, so the
+  /// entry fast-path below spends zero extra GETs either way.
   /// [profName]/[profEmail]/[org] are the tapped announcement's
   /// already-available identity (email from the gated cache when known),
   /// shown on the waiting card (absent = typed-IP join with no announcement
   /// heard: the card shows the class only; round rewaits pass the current
   /// values back to preserve them — the gated poll below refreshes email).
+  /// [profPhoto] is the cached gated photo for this host ('' = unseen):
+  /// paints instantly and survives round rewaits; the room poll below
+  /// converges when the host publishes late.
   Future<void> _enterWaitingRoom(ClassBeacon target,
       {bool immediateProbe = true,
       String? profName,
       String? profEmail,
+      String? profPhoto,
       String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
-    final linked = ref.read(linkedIdentityProvider)!;
+    // Null-safe re-read (never force-unwrap): the join-gate gaps above may
+    // have outlived an account switch/sign-out. Refuse rather than crashing
+    // on a stale `!`.
+    var linked = _readLinked();
+    var acct = _readAccount();
+    if (linked == null || !_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return;
+    }
     try {
       await ref.read(studentDriverProvider).prewarmRadio();
     } catch (_) {}
     if (!mounted) return;
+    // Prewarm gap may have outlived a switch: re-resolve before opening the
+    // room so presence never files as a stale identity.
+    linked = _readLinked();
+    acct = _readAccount();
+    if (linked == null || !_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return;
+    }
     _stopRoomTimers();
+    // New room generation: any probe still in flight from a previous room
+    // (rewaits re-enter here without leaving the flow) carries the old run
+    // and its result is dropped in _pollRoomOnce — stale results must not
+    // clobber the fresh room's Connected state. Also releases the previous
+    // generation's poll guard (its finally is run-checked and won't clear
+    // the new room's flag).
+    final run = ++_runId;
+    _roomPollBusy = false;
     BleLog.log(ProxLogTags.nav, 'waiting room ${target.host}:${target.port}');
     final cachedEmail =
         _gatedEmailByHost['${target.host}:${target.port}'] ?? '';
@@ -797,24 +1010,75 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _waitingTarget = target;
       _connected = false;
       _roomMisses = 0;
+      _roomProfPhoto = '';
       _roomWindowOpen = false;
       _roomClass = target.classLabel;
-      _roomProf = profName ?? '';
-      _roomProfEmail = profEmail ?? cachedEmail;
-      _roomOrg = org ?? target.org;
+      // Empty-vs-null: rewait passes the current (possibly stale '')
+      // values back — a blank must fall through to the live fallbacks
+      // (gated email cache / beacon target org) instead of pinning blank
+      // over them. Fresh typed-IP joins pass null and clear as before.
+      _roomProf = profName?.trim() ?? '';
+      _roomProfEmail = (profEmail == null || profEmail.trim().isEmpty)
+          ? cachedEmail
+          : profEmail;
+      _roomOrg =
+          (org == null || org.trim().isEmpty) ? target.org : org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
       _autoFaceTries = 0;
       faceNotice = '';
     });
-    // Presence heartbeat (prof sees n waiting) + immediate probe.
+    // First back press from here returns to the class list (entry held
+    // once per join; round rewaits re-enter safely via the null guard).
+    _pushInnerBackEntry();
+    // Join identity for stale-switch guards below: timers/probes must never
+    // file presence or flip state as a previous account after a rapid
+    // switch/sign-out. [linked] is the CURRENT account's identity here
+    // (validated above); every continuation re-reads and compares.
+    final joinEmail = linked.gmail.trim().toLowerCase();
+    final joinIdentity = linked;
+    // Presence heartbeat (prof sees n waiting + volunteered photo). The
+    // reply piggybacks the live window flag (SYNC fast-path): a sent
+    // presence already proves the host reachable over TLS, so entry reuses
+    // that sample instead of spending a second (rate-capped) GET /window —
+    // one fewer handshake on join→face and one fewer hit in the server's
+    // 5-hits/10s/IP budget. The 2s poll below stays the authoritative flip
+    // (generation-guarded, serialized, 429-held); [immediateProbe] now only
+    // governs the fallback immediate GET when the POST itself flaked.
+    PresenceSample? sample;
     try {
-      await ref
-          .read(studentDriverProvider)
-          .sendPresence(target: target, identity: linked);
-    } catch (_) {}
-    if (immediateProbe) {
-      await _pollRoomOnce();
+      sample = await ref.read(studentDriverProvider).sendPresence(
+          target: target, identity: joinIdentity, photoUrl: _ownPhoto());
+    } catch (_) {
+      sample = null;
+    }
+    if (!mounted || run != _runId) return;
+    // Account switched/signed out during the presence POST: abandon the
+    // fresh room rather than flipping it with a stale sample.
+    final postAcct = _readAccount();
+    final postLinked = _readLinked();
+    if (postLinked == null ||
+        postLinked.gmail.trim().toLowerCase() != joinEmail ||
+        !_identityMatchesCurrent(postAcct, postLinked)) {
+      return;
+    }
+    final entry = sample;
+    if (entry != null && entry.sent) {
+      // Proof of life stronger than a GET: mark Connected at once (the
+      // poll below still owns window flips + misses, run-guarded as ever).
+      setState(() {
+        _connected = true;
+        _roomMisses = 0;
+        _roomWindowOpen = entry.windowOpen;
+      });
+      // Fast path: window already open (e.g. rejoin mid-window, or a
+      // stale-closed beacon on the tile path) → face check, zero extra GET.
+      if (entry.windowOpen) {
+        _advanceToFace(target);
+        return;
+      }
+    } else if (immediateProbe) {
+      await _pollRoomOnce(run);
       // Fast path: window already open (e.g. rejoin mid-window) → face check.
       if (!mounted) return;
       if (_roomWindowOpen) {
@@ -822,18 +1086,45 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         return;
       }
     }
-    final run = _runId;
     _presenceBeat = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!mounted || run != _runId || phase != StudentPhase.waiting) return;
+      // Stale-identity guard: never heartbeat as a previous account after a
+      // rapid switch. Bail quietly — the account listener/gate owns routing;
+      // this room's generation is already obsolete.
+      final beatLinked = _readLinked();
+      final beatAcct = _readAccount();
+      if (beatLinked == null ||
+          beatLinked.gmail.trim().toLowerCase() != joinEmail ||
+          !_identityMatchesCurrent(beatAcct, beatLinked)) {
+        return;
+      }
       try {
-        await ref
-            .read(studentDriverProvider)
-            .sendPresence(target: target, identity: linked);
+        await ref.read(studentDriverProvider).sendPresence(
+            target: target, identity: beatLinked, photoUrl: _ownPhoto());
       } catch (_) {}
     });
     _roomPoll = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (!mounted || run != _runId || phase != StudentPhase.waiting) return;
-      await _pollRoomOnce();
+      final pollLinked = _readLinked();
+      final pollAcct = _readAccount();
+      if (pollLinked == null ||
+          pollLinked.gmail.trim().toLowerCase() != joinEmail ||
+          !_identityMatchesCurrent(pollAcct, pollLinked)) {
+        return;
+      }
+      // Serialized: a probe may outlive the 2s cadence (timeout budget is
+      // 4s). Overruns skip, never pile up — concurrent probes would race
+      // on _roomMisses/_connected and double the GET /window rate into the
+      // server's 5-hits/10s/IP cap (self-inflicted 429s).
+      if (_roomPollBusy) return;
+      _roomPollBusy = true;
+      try {
+        await _pollRoomOnce(run);
+      } finally {
+        // Only the current generation owns the guard: a stale poll
+        // draining after a rewait must not clear the new room's flag.
+        if (run == _runId) _roomPollBusy = false;
+      }
       if (!mounted || run != _runId) return;
       if (_roomWindowOpen && phase == StudentPhase.waiting) {
         _advanceToFace(target);
@@ -841,9 +1132,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
   }
 
-  Future<void> _pollRoomOnce() async {
+  Future<void> _pollRoomOnce(int run) async {
     final target = _waitingTarget;
-    if (target == null) return;
+    if (target == null || !mounted) return;
     String myOrg = '';
     try {
       myOrg = _myOrg();
@@ -853,6 +1144,34 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           .read(studentDriverProvider)
           .probeWindow(target, myOrg: myOrg);
       if (!mounted) return;
+      // Stale-generation guard: a rewait/Cancel/rejoin started a new room
+      // while this probe was in flight — its result must not clobber the
+      // new room's state (the classic flicker: old Not-connected landing
+      // on a fresh Connected room, or vice versa).
+      if (run != _runId || _waitingTarget != target) return;
+      // Account switched/signed out mid-probe: drop the stale sample rather
+      // than flipping the fresh room's badge with it.
+      final freshLinked = _readLinked();
+      final freshAcct = _readAccount();
+      if (freshLinked == null ||
+          !_identityMatchesCurrent(freshAcct, freshLinked)) {
+        return;
+      }
+      if (probe.rateLimited) {
+        // HTTP 429 is proof of life (the host answered over TLS) — hold
+        // the badge steady: no miss, no _connected flip, no window change.
+        // ROOT CAUSE of the Connected↔Not-connected oscillation: the 2s
+        // poll sits exactly at the professor server's 5-hits/10s/IP cap
+        // (server.dart _windowLimits; 6th GET → 429), and the transport
+        // reports non-200 as unreachable — so a perfectly healthy link
+        // 429'd one tick every ~10s (entry probe + 5 ticks, plus any
+        // overlapping/backfill GET), flipping the badge for exactly one
+        // tick and, under crowded NAT, false-exiting to "Class ended".
+        // Genuine loss still flips on the very next unreachable tick
+        // below — responsiveness is unchanged. Next tick repolls normally.
+        BleLog.log(ProxLogTags.lan, 'room poll rate-limited — holding state');
+        return;
+      }
       if (!probe.reachable) {
         // Gated silence (org-mismatch) reads like hosting-ended here: the
         // class never appears for a foreign org. Single misses just show
@@ -873,13 +1192,45 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (email.isNotEmpty) {
         _gatedEmailByHost['${target.host}:${target.port}'] = email;
       }
+      // Same gated photo cached per host for the browse tiles (photo shows
+      // iff the host published one — i.e. the per-course opt-in is on).
+      final roomPhoto = probe.profPhoto.trim();
+      if (roomPhoto.isNotEmpty) {
+        _gatedPhotoByHost['${target.host}:${target.port}'] = roomPhoto;
+      }
       setState(() {
         _connected = probe.reachable;
         _roomWindowOpen = probe.windowOpen;
         if (probe.classLabel.isNotEmpty) _roomClass = probe.classLabel;
         if (email.isNotEmpty) _roomProfEmail = email;
+        if (probe.profPhoto.trim().isNotEmpty) {
+          _roomProfPhoto = probe.profPhoto.trim();
+        }
+        // Gated LAN name converges like email/photo (latest-non-empty, never
+        // clobbered by ''): hint-only rooms (no UDP beacons) learn the prof
+        // display name here on the next 2s poll.
+        final gatedName = probe.profName.trim();
+        if (gatedName.isNotEmpty && _roomProf != gatedName) {
+          _roomProf = gatedName;
+          BleLog.log(ProxLogTags.lan, 'gated prof name: $gatedName');
+        }
       });
+      // Cache the photo per course for the course LIST (which has no live
+      // connection): once per distinct pair, best-effort, never blocking.
+      final cacheKey = '${_roomClass.trim()}|$_roomProfPhoto'.trim();
+      if (_roomClass.trim().isNotEmpty &&
+          _roomProfPhoto.isNotEmpty &&
+          cacheKey != _cachedPhotoKey) {
+        _cachedPhotoKey = cacheKey;
+        unawaited(ref
+            .read(deviceStoreProvider)
+            .writeCourseProfPhoto(_roomClass.trim(), _roomProfPhoto)
+            .catchError((_) {}));
+      }
     } catch (_) {
+      // Same stale-generation guard as above: a previous room's failed
+      // probe must not flip the new room to Not connected.
+      if (!mounted || run != _runId || _waitingTarget != target) return;
       if (++_roomMisses >= 5) {
         final t = _waitingTarget;
         if (t != null) {
@@ -906,22 +1257,39 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// first all suppress the auto-fire. The Scan button stays as fallback.
   void _scheduleAutoScan(ClassBeacon target, LinkedIdentity linked) {
     _autoFaceFired = false;
+    final scanEmail = linked.gmail.trim().toLowerCase();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || phase != StudentPhase.faceCheck || _autoFaceFired) {
         return;
       }
+      // Account switched while the face step sat idle: never scan as the
+      // previous identity.
+      final fresh = _readLinked();
+      final freshAcct = _readAccount();
+      if (fresh == null ||
+          fresh.gmail.trim().toLowerCase() != scanEmail ||
+          !_identityMatchesCurrent(freshAcct, fresh)) {
+        return;
+      }
       _autoFaceFired = true;
-      _scanFace(target, linked);
+      _scanFace(target, fresh);
     });
   }
 
   Future<void> _scanFace(ClassBeacon target, LinkedIdentity linked) async {
-    // Manual tap before the post-frame callback must not double-push.
-    _autoFaceFired = true;
+    // Single-flight: concurrent auto-fire + manual taps never overlap
+    // captures (double-push would stack two camera sheets).
+    if (_scanBusy) return;
+    _scanBusy = true;
+    try {
+      // Manual tap before the post-frame callback must not double-push.
+      _autoFaceFired = true;
+      final scanEmail = linked.gmail.trim().toLowerCase();
     // L1: records-only devices never scan — guidance, nothing consumed,
     // nothing signed.
     if (!canUseFace()) {
       BleLog.log(ProxLogTags.face, 'face blocked: records-only device');
+      if (!mounted) return;
       setState(() => faceNotice =
           'Marking needs the mobile app (Android/iOS) — this device is records-only.');
       return;
@@ -939,7 +1307,23 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     final paths = await ref
         .read(stillCapturerProvider)
         .capture(context, captures: 1, autoFire: true);
-    if (paths == null || paths.isEmpty || !mounted) return;
+    // Mounted-before-ref + back/teardown guard: Cancel/Back/system-back
+    // leaves faceCheck during the camera UI — never verify or prove after it.
+    if (paths == null ||
+        paths.isEmpty ||
+        !mounted ||
+        phase != StudentPhase.faceCheck) {
+      return;
+    }
+    // Capture gap may have outlived a switch/sign-out: never verify or prove
+    // as a stale identity.
+    var fresh = _readLinked();
+    var freshAcct = _readAccount();
+    if (fresh == null ||
+        fresh.gmail.trim().toLowerCase() != scanEmail ||
+        !_identityMatchesCurrent(freshAcct, fresh)) {
+      return;
+    }
     late final FaceCheckResult res;
     try {
       res = await ref.read(studentDriverProvider).checkFace(paths.first);
@@ -949,18 +1333,28 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           'Marking needs the mobile app (Android/iOS) — this device is records-only.');
       return;
     }
-    if (!mounted) return;
+    // CheckFace gap may have outlived Cancel/Back — same teardown guard.
+    if (!mounted || phase != StudentPhase.faceCheck) return;
+    fresh = _readLinked();
+    freshAcct = _readAccount();
+    if (fresh == null ||
+        fresh.gmail.trim().toLowerCase() != scanEmail ||
+        !_identityMatchesCurrent(freshAcct, fresh)) {
+      return;
+    }
     switch (res.match) {
       case FaceMatch.pass:
         BleLog.log(ProxLogTags.face, 'face pass — continuing to proving');
+        if (!mounted) return;
         setState(() => faceNotice = '');
-        _listen(target, linked, res.score,
+        _listen(target, fresh, res.score,
             faceValidAtMs: res.faceValidAtMs, verifierVer: res.verifierVer);
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
         BleLog.log(
             ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
+        if (!mounted) return;
         _faceAttempts++;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
@@ -971,13 +1365,22 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
             'face inconclusive — auto-retry ($_autoFaceTries of 2)');
         if (_autoFaceTries < 2) {
           _autoFaceTries++;
+          if (!mounted) return;
           setState(() => faceNotice =
               'Scan unclear — retrying automatically… ($_autoFaceTries of 2)');
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted || phase != StudentPhase.faceCheck) return;
-            _scanFace(target, linked);
+            final retryLinked = _readLinked();
+            final retryAcct = _readAccount();
+            if (retryLinked == null ||
+                retryLinked.gmail.trim().toLowerCase() != scanEmail ||
+                !_identityMatchesCurrent(retryAcct, retryLinked)) {
+              return;
+            }
+            _scanFace(target, retryLinked);
           });
         } else {
+          if (!mounted) return;
           setState(() => faceNotice =
               'Could not read that scan — adjust light and try again.');
         }
@@ -986,36 +1389,64 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // be meaningless. Park on the check screen with a re-enroll
         // notice — no attempt consumed, nothing signed.
         BleLog.log(ProxLogTags.face, 'stale face — re-enroll, nothing signed');
+        if (!mounted) return;
         setState(() => faceNotice =
             'Face recognition was updated — re-enroll this device from the home screen, then join again.');
       case FaceMatch.blocked:
         // Records-only device (desktop/web L1 gate): guidance, nothing
         // consumed, nothing signed.
         BleLog.log(ProxLogTags.face, 'face blocked — records-only device');
+        if (!mounted) return;
         setState(() => faceNotice =
             'Marking needs the mobile app (Android/iOS) — this device is records-only.');
+      }
+    } finally {
+      _scanBusy = false;
     }
   }
 
   Future<void> _requestManual() async {
     final target = _waitingTarget ?? _parseTarget();
-    final linked = ref.read(linkedIdentityProvider);
-    if (target == null || linked == null) return;
+    final linked = _readLinked();
+    final acct = _readAccount();
+    if (target == null || linked == null || !_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return;
+    }
+    final manualEmail = linked.gmail;
+    final manualIdentity = linked;
     BleLog.log(
         ProxLogTags.state, 'manual request → ${target.host} (polling prof)');
+    if (!mounted) return;
     setState(() {
       _manualStatus = 'pending';
       phase = StudentPhase.manualPending;
     });
     try {
-      await ref
-          .read(studentDriverProvider)
-          .requestManual(target: target, identity: linked);
+      await ref.read(studentDriverProvider).requestManual(
+          target: target, identity: manualIdentity, photoUrl: _ownPhoto());
     } catch (e) {
       if (!mounted) return;
       setState(() {
         joinError = 'Manual request failed: $e';
         phase = StudentPhase.waiting;
+      });
+      return;
+    }
+    if (!mounted) return;
+    // Switch/sign-out during the request POST: never poll as a stale Gmail.
+    final postLinked = _readLinked();
+    final postAcct = _readAccount();
+    if (postLinked == null ||
+        postLinked.gmail.trim().toLowerCase() !=
+            manualEmail.trim().toLowerCase() ||
+        !_identityMatchesCurrent(postAcct, postLinked)) {
+      if (!mounted) return;
+      setState(() {
+        phase = StudentPhase.browsing;
+        joinError = 'Enroll this device first — identity is required.';
       });
       return;
     }
@@ -1025,11 +1456,28 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (!mounted || run != _runId || phase != StudentPhase.manualPending) {
         return;
       }
+      final pollLinked = _readLinked();
+      final pollAcct = _readAccount();
+      if (pollLinked == null ||
+          pollLinked.gmail.trim().toLowerCase() !=
+              manualEmail.trim().toLowerCase() ||
+          !_identityMatchesCurrent(pollAcct, pollLinked)) {
+        return;
+      }
       try {
         final st = await ref
             .read(studentDriverProvider)
-            .pollManualStatus(target: target, email: linked.gmail);
+            .pollManualStatus(target: target, email: manualEmail);
         if (!mounted || run != _runId) return;
+        final afterLinked = _readLinked();
+        final afterAcct = _readAccount();
+        if (afterLinked == null ||
+            afterLinked.gmail.trim().toLowerCase() !=
+                manualEmail.trim().toLowerCase() ||
+            !_identityMatchesCurrent(afterAcct, afterLinked)) {
+          return;
+        }
+        if (!mounted) return;
         setState(() => _manualStatus = st);
         if (st == 'approved') {
           _manualPoll?.cancel();
@@ -1055,7 +1503,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _rewaitTimer?.cancel();
     _rewaitTimer = null;
     _rewaitMisses = 0;
+    final listenEmail = linked.gmail.trim().toLowerCase();
+    // Never start proving as a stale identity (switch landed between face
+    // pass and listen start).
+    final startLinked = _readLinked();
+    final startAcct = _readAccount();
+    if (startLinked == null ||
+        startLinked.gmail.trim().toLowerCase() != listenEmail ||
+        !_identityMatchesCurrent(startAcct, startLinked)) {
+      return;
+    }
     _setWake(true);
+    if (!mounted) {
+      _setWake(false);
+      return;
+    }
     setState(() {
       phase = StudentPhase.listening;
       listenStatus = 'Waiting for the class signal…';
@@ -1064,12 +1526,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // (marked/late/dead-air/error) — nothing here retries or counts down.
     final receipt = await ref.read(studentDriverProvider).listenAndProve(
           target: target,
-          identity: linked,
+          identity: startLinked,
           faceScore: faceScore,
           faceValidAtMs: faceValidAtMs,
           verifierVer: verifierVer,
           onStatus: (s) {
             if (!mounted || run != _runId) return;
+            final sLinked = _readLinked();
+            final sAcct = _readAccount();
+            if (sLinked == null ||
+                sLinked.gmail.trim().toLowerCase() != listenEmail ||
+                !_identityMatchesCurrent(sAcct, sLinked)) {
+              return;
+            }
             setState(() => listenStatus = switch (s) {
                   ListenStatus.waiting => 'Waiting for the class signal…',
                   ListenStatus.proving => 'Signal heard — proving…',
@@ -1078,6 +1547,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           },
         );
     if (!mounted || run != _runId) return;
+    // Switch/sign-out during the long prove: drop the stale receipt rather
+    // than landing a verdict for the wrong account.
+    final endLinked = _readLinked();
+    final endAcct = _readAccount();
+    if (endLinked == null ||
+        endLinked.gmail.trim().toLowerCase() != listenEmail ||
+        !_identityMatchesCurrent(endAcct, endLinked)) {
+      _setWake(false);
+      return;
+    }
     _setWake(false);
     if (receipt.result == StudentResult.marked ||
         receipt.result == StudentResult.late) {
@@ -1145,6 +1624,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         !(phase == StudentPhase.marked || phase == StudentPhase.late)) {
       return;
     }
+    // Stale-identity guard: never rewait the next round as a previous
+    // account. Bail quietly — the gate owns routing after a switch.
+    final rewaitLinked = _readLinked();
+    final rewaitAcct = _readAccount();
+    if (rewaitLinked == null ||
+        !_identityMatchesCurrent(rewaitAcct, rewaitLinked)) {
+      return;
+    }
     var rewait = false;
     var ended = false;
     var nextDisplay = '';
@@ -1156,7 +1643,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final probe = await ref
           .read(studentDriverProvider)
           .probeWindow(target, myOrg: myOrg);
-      if (!probe.reachable) {
+      if (!mounted) return;
+      final afterLinked = _readLinked();
+      final afterAcct = _readAccount();
+      if (afterLinked == null ||
+          !_identityMatchesCurrent(afterAcct, afterLinked)) {
+        return;
+      }
+      if (probe.rateLimited) {
+        // 429 proves the host is alive — neither "round over" (window
+        // state unknown) nor "hosting ended". Repoll with no miss counted
+        // (same 429-misread-as-unreachable defect as the waiting room).
+      } else if (!probe.reachable) {
         if (++_rewaitMisses >= 2) ended = true;
       } else {
         _rewaitMisses = 0;
@@ -1189,19 +1687,82 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       BleLog.log(ProxLogTags.lan,
           'round over (was $markedDisplay, now ${nextDisplay.isEmpty ? 'closed' : nextDisplay}) → waiting for next');
       await _enterWaitingRoom(target,
-          profName: _roomProf, profEmail: _roomProfEmail, org: _roomOrg);
+          profName: _roomProf,
+          profEmail: _roomProfEmail,
+          profPhoto: _roomProfPhoto,
+          org: _roomOrg);
       return;
     }
     _rewaitAfterRound(target, run, markedDisplay);
   }
 
-  /// Leaves any inner phase for the browse list: timers off, explicit
-  /// /leave so the professor count drops, relay cut. Used by Cancel/Back
-  /// actions and the system-back handler (same teardown everywhere).
+  /// In-flow back entry (system + app-bar back without a pushed route):
+  /// the Mark flow is a view-state machine on ONE tab-root route, so the
+  /// shell would otherwise treat back from any inner phase as tab-root
+  /// back (hint, then app exit — the tab Navigator holds no pushed route
+  /// to pop). While any non-browsing phase is showing, one
+  /// [LocalHistoryEntry] sits on this route: the first back press removes
+  /// it (no pop, no tab change, no shell hint) and its [onRemove] runs the
+  /// same [_cancelToBrowsing] teardown as Cancel/Back — landing on the
+  /// class list with the browse root untouched. Added once per join
+  /// (null-guarded, never stacked); dropped silently whenever we land back
+  /// on browsing through an explicit or programmatic path.
+  ///
+  /// Removal ALWAYS fires [onRemove] (framework contract — there is no
+  /// silent detach), so programmatic drops set [_suppressEntryTeardown]
+  /// around the remove, and [onRemove] itself bails when disposing or
+  /// unmounted (route teardown at test/pump boundaries must never run
+  /// flow teardown: ref/setState are dead there).
+  LocalHistoryEntry? _innerBackEntry;
+  bool _suppressEntryTeardown = false;
+  bool _disposed = false;
+
+  /// Ensures the in-flow back entry exists (no-op when one is already
+  /// held). Call right after the setState that leaves browsing (join
+  /// gates already passed); inner→inner hops re-enter safely via the
+  /// null guard and never stack entries.
+  void _pushInnerBackEntry() {
+    if (!mounted || _disposed || _innerBackEntry != null) return;
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+    _innerBackEntry = LocalHistoryEntry(onRemove: () {
+      _innerBackEntry = null;
+      if (_suppressEntryTeardown || _disposed || !mounted) return;
+      _cancelToBrowsing();
+    });
+    route.addLocalHistoryEntry(_innerBackEntry!);
+  }
+
+  /// Drops the in-flow back entry without running teardown (the landing
+  /// is already browsing through an explicit, programmatic, or dispose
+  /// path): nulls the ref first, then removes under suppression so the
+  /// mandatory [onRemove] becomes a no-op instead of recursing.
+  void _dropInnerBackEntry() {
+    final entry = _innerBackEntry;
+    _innerBackEntry = null;
+    if (entry == null) return;
+    _suppressEntryTeardown = true;
+    try {
+      entry.remove();
+    } finally {
+      _suppressEntryTeardown = false;
+    }
+  }
+
+  /// Leaves any inner phase for the browse list: back entry dropped,
+  /// run-guarded async work invalidated, room timers off, rewait chain
+  /// parked, wakelock released, and explicit /leave so the professor count
+  /// drops. Used by Cancel/Back actions and the back-entry handler (same
+  /// teardown everywhere).
   void _cancelToBrowsing() {
+    _dropInnerBackEntry();
     _runId++;
     _stopRoomTimers();
+    _rewaitTimer?.cancel();
+    _rewaitTimer = null;
+    _setWake(false);
     _leaveWaitingRoom();
+    if (!mounted) return;
     setState(() {
       _waitingTarget = null;
       phase = StudentPhase.browsing;
@@ -1217,13 +1778,25 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
   }
 
-  Widget _browsing(BuildContext context, String identityLine) {
+  Widget _browsing(BuildContext context) {
     // Mark slim-down: no enrollment entry and no records entry on this
     // screen (Setup/Account own enrollment, Courses owns records; the Mark
-    // gate already routes unenrolled users). Only wiring lives here —
-    // callbacks stay host-owned (nav/gate logic untouched).
+    // gate already routes unenrolled users). Header is avatar + the exact
+    // previous identity lines beside it (same strings as the pre-avatar
+    // header) — only wiring lives here, callbacks stay host-owned
+    // (nav/gate untouched).
+    final linked = ref.watch(linkedIdentityProvider);
+    final identityLine = linked == null
+        ? 'Not enrolled — enroll this device to link identity.'
+        : '${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}\n${linked.gmail}';
     return BrowseClassesView(
+      avatarName: linked?.name ?? '',
+      avatarPhotoUrl: _ownPhoto(),
       identityLine: identityLine,
+      // Split lines render as time → name → ID → email in the header.
+      identityName: linked?.name ?? '',
+      identityId: linked?.roll ?? '',
+      identityEmail: linked?.gmail ?? '',
       ipInitial: _fieldInitial,
       onIpChanged: (v) {
         _typedHostPort = v ?? '';
@@ -1239,6 +1812,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       live: _live,
       broadcastBlocked: _broadcastBlocked,
       profEmailByHost: Map.of(_gatedEmailByHost),
+      profPhotoByHost: Map.of(_gatedPhotoByHost),
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final target = ClassBeacon(
@@ -1256,12 +1830,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         });
         _roundMarks.clear();
         if (c.last.windowOpen) {
-          _joinBeacon(target);
+          // Carry the tapped announcement's identity: ClassBeacon drops
+          // `prof`, and the post-round rewait waiting room can only show
+          // what _joinBeacon stored here (the gated poll never carries a
+          // display name).
+          _joinBeacon(target, profName: c.last.prof, org: c.last.org);
         } else {
           _enterWaitingRoom(target,
               immediateProbe: false,
               profName: c.last.prof,
               profEmail: _gatedEmailByHost[hp],
+              profPhoto: _gatedPhotoByHost[hp],
               org: c.last.org);
         }
       },
@@ -1282,29 +1861,25 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   @override
   Widget build(BuildContext context) {
     final linked = ref.watch(linkedIdentityProvider);
-    final identityLine = linked == null
-        ? 'Not enrolled — enroll this device to link identity.'
-        : '${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}\n${linked.gmail}';
-    // No PopScope here (§3.5, navigation-shell rebuild): the shell owns
-    // back — in-tab back pops that tab's stack only, tab-root back hints.
-    // Browsing never exits to the roles hub, and waiting / face / proving
-    // end only via their explicit Cancel/Leave actions (timers, drivers,
-    // relays, and drafts untouched).
-    //
-    // any terminal verdict (marked/late/manual-decided/wrong-org/
-    // needs-review/no-signal) lands DIRECTLY on mark/browse — the phase
-    // resets to browsing in one step, never stepping through
-    // waiting/face/proving. Waiting/face/proving/listening still end only
-    // via their explicit Cancel/Leave actions above (this scope stays
-    // pass-through there); the shell keeps owning those backs.
+    // Back contract (§3.5, navigation-shell rebuild): the shell owns
+    // tab-root back — in-tab back pops that tab's stack only, tab-root
+    // back hints (double-press leaves the app, OS-level). The Mark flow
+    // is a view-state machine, not pushed routes, so the tab Navigator
+    // holds nothing to pop here: the [_innerBackEntry] local-history
+    // entry (added on every join, dropped on every browsing landing)
+    // gives the first back press something in-tab to consume — the shell
+    // pops the entry instead of hinting, and its onRemove runs the same
+    // [_cancelToBrowsing] teardown as Cancel/Back. One step to the class
+    // list from ANY inner phase (waiting / face / proving / manual /
+    // paused / verdicts), never stepping through phases, never exiting
+    // the Mark module on the first press; browsing itself holds no entry
+    // so the shell's tab-root hint/double-exit still applies there.
+    // No PopScope here (a veto would fight the entry: pop() consumes
+    // local history before consulting vetoes, and the shell short-
+    // circuits on canPop before any veto runs). The entry also drives the
+    // platform-automatic app-bar back affordance on inner phases.
     final target = _parseTarget();
-    return PopScope(
-      canPop: !_isVerdictPhase(phase),
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (_isVerdictPhase(phase)) _cancelToBrowsing();
-      },
-      child: AdaptiveScaffold(
+    return AdaptiveScaffold(
       title: 'Student — Join class',
       actions: [
         IconButton(
@@ -1315,7 +1890,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         IconButton(
           icon: const Icon(Icons.switch_account),
           tooltip: 'Switch mode',
-          onPressed: () => setMode(ref, AppMode.unset),
+          onPressed: () {
+            // Stale-stack reset first: the root setup-flow is dismissed
+            // BEFORE the switch per the product decision, then the Mark
+            // tab pops to root — the previous identity's screens can never
+            // survive underneath. `setMode` is idempotent (a home switch,
+            // never a push), so rapid taps cannot double-navigate.
+            prepareAccountTransition(context);
+            if (!mounted) return;
+            unawaited(setMode(ref, AppMode.unset));
+          },
         ),
       ],
       // Waiting → scan → verdict wrapped as ONE continuation: every hop
@@ -1323,7 +1907,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       body: MarkFlowShell(
         phase: phase,
         child: switch (phase) {
-          StudentPhase.browsing => _browsing(context, identityLine),
+          StudentPhase.browsing => _browsing(context),
           StudentPhase.waiting => WaitingRoomView(
               connected: _connected,
               roomClass: _roomClass.isNotEmpty
@@ -1331,6 +1915,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                   : (_waitingTarget?.classLabel ?? 'this class'),
               roomProf: _roomProf,
               roomProfEmail: _roomProfEmail,
+              roomProfPhoto: _roomProfPhoto,
               roomOrg: _roomOrg,
               roundMarks: _roundMarks,
               onRequestManual: _requestManual,
@@ -1348,6 +1933,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 final l = linked;
                 if (t != null && l != null) _scanFace(t, l);
               },
+              // Failed check never dead-ends: manual request is one tap
+              // away (button appears only with a failure notice).
+              onRequestManual: _requestManual,
             ),
           StudentPhase.listening => ProvingView(
               status: listenStatus,
@@ -1381,27 +1969,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
                 }
               },
             ),
+          // Paused keeps the same browsing destination via the shared
+          // teardown (also drops the back entry — a plain setState would
+          // leave a stale entry behind on the class list).
           StudentPhase.paused => PausedView(
-              onBack: () => setState(() => phase = StudentPhase.browsing),
+              onBack: _cancelToBrowsing,
             ),
         },
       ),
-      ),
     );
   }
-
-  /// Terminal verdict phases: back (explicit or system) resets directly to
-  /// browsing in one step. Waiting/face/proving/listening are NOT here —
-  /// they end only via their explicit Cancel/Leave actions, and manual-
-  /// pending keeps its own Back (same browsing teardown, separate arm).
-  /// Paused keeps its own `Back to join` (same browsing destination).
-  static bool _isVerdictPhase(StudentPhase phase) => switch (phase) {
-        StudentPhase.marked ||
-        StudentPhase.late ||
-        StudentPhase.wrongOrg ||
-        StudentPhase.needsReview ||
-        StudentPhase.noSignal =>
-          true,
-        _ => false,
-      };
 }

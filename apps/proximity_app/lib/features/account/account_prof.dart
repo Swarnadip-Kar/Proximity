@@ -12,10 +12,12 @@ import 'account_common.dart';
 /// Professor device/key facts: install ID (read-only, never created by
 /// viewing) + registered display name. Professors hold no SKey/DKey
 /// enrollment, so there is no key/trust tier to show — and none is
-/// invented.
+/// invented. [acct] is nullable for the offline local-only professor
+/// (no sign-in): identity rows then show the honest 'Not signed in'
+/// fallback and nothing cached from any other account is ever rendered.
 class AccountProfDeviceFacts extends ConsumerWidget {
-  final SignedAccount acct;
-  const AccountProfDeviceFacts({required this.acct, super.key});
+  final SignedAccount? acct;
+  const AccountProfDeviceFacts({this.acct, super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -56,7 +58,11 @@ class AccountProfDeviceFacts extends ConsumerWidget {
             ),
             AccountFactRow(
               'Display name',
-              hostName.trim().isNotEmpty ? hostName.trim() : acct.displayName,
+              hostName.trim().isNotEmpty
+                  ? hostName.trim()
+                  : (acct?.displayName.trim().isNotEmpty ?? false
+                      ? acct!.displayName.trim()
+                      : 'Not signed in'),
             ),
           ],
         );

@@ -16,8 +16,9 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/live/direct_add.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
-import 'package:proximity_app/features/live/live_sections.dart';
+import 'package:proximity_app/features/live/manual_inbox.dart';
 import 'package:proximity_app/features/manual_attendance/manual_attendance.dart'
     as ma;
 import 'package:proximity_storage/storage.dart';
@@ -50,7 +51,20 @@ Widget _rosterHarness(FakeHostDriver driver) => ProviderScope(
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveRosterScreen(course: 'CS201'),
+        home: Scaffold(
+          // Scroll like the Take host's Roster sub-tab (same composer,
+          // same constraints — the body is taller than the test viewport).
+          body: SingleChildScrollView(
+            child: LiveRosterBody(
+              waitingRows: driver.waitingRows,
+              groups: driver.dupGroups,
+              names: driver.tally.nameMap(),
+              onResolve: (email) => driver.resolveDupFlag(email),
+              tally: driver.tally,
+              onRemoveStudent: (email) => driver.removeStudent(email),
+            ),
+          ),
+        ),
       ),
     );
 
@@ -88,7 +102,18 @@ void main() {
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveInboxScreen(course: 'CS201'),
+        home: Scaffold(
+          body: ManualInboxSection(
+            pending: driver.manualPending,
+            onApproveOne: (e) => driver.decideManual(e, true),
+            onRejectOne: (e) => driver.decideManual(e, false),
+            onDecide: (emails, approve) async {
+              for (final e in emails) {
+                await driver.decideManual(e, approve);
+              }
+            },
+          ),
+        ),
       ),
     ));
     await t.pumpAndSettle();
@@ -121,7 +146,21 @@ void main() {
       ],
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const LiveAddScreen(course: 'CS201'),
+        home: Scaffold(
+          body: DirectAddSection(
+            course: 'CS201',
+            sessionId: '',
+            onAdd: (
+                {required String name,
+                required String roll,
+                required String email}) async {
+              await driver.addManualEntry(
+                  email: email, name: name, roll: roll);
+            },
+            isPresent: (email) => driver.tally.confirmed
+                .any((r) => r.email == email.toLowerCase()),
+          ),
+        ),
       ),
     ));
     await t.pumpAndSettle();

@@ -4,12 +4,14 @@
 //                          window state, counts; diagnostics only)
 //   GET  /window?org=     gated unicast identity (see _getWindow): matching
 //                          or legacy org → {class, sessionID, windowID,
-//                          j_now, pkP, sigP, tlsFp, display, org, profEmail};
+//                          j_now, pkP, sigP, tlsFp, display, org, profEmail,
+//                          profPhoto?, profName?};
 //                          mismatched org → 403 {decision, reason, org}
 //                          (silence: no class, no email, no window).
 //                          profEmail (lowercased host Gmail, '' = unknown)
 //                          travels ONLY here — never in UDP beacons, never
 //                          in BLE air packets, never in Sig_p/Sig_s.
+//                          profName follows the same gated channel (never BLE).
 //   POST /prove           {ID,windowID,j,C_j,Sig_s,faceScore,peerW,roll,
 //                          tlsFp,sigBind} -> {confirmed|late|invalid,...}
 //   GET  /live?token=     counts + rows           (host bearer)
@@ -107,6 +109,22 @@ class ProxServer {
   /// mutates it.
   String sessionProfEmail;
 
+  /// Hosting professor's Gmail profile photo URL for the GATED unicast
+  /// /window only (same channel rules as [sessionProfEmail]). '' =
+  /// unknown: the key is omitted so legacy payloads stay byte-equal.
+  /// Settable after construction (the host account photo resolves after
+  /// the server binds); students converge on the next 2s room poll. The
+  /// student renders it with initials fallback, offline or absent.
+  String sessionProfPhoto = '';
+
+  /// Hosting professor's display name for the GATED unicast /window only
+  /// (same channel rules as [sessionProfEmail]: LAN HTTPS, org-gated —
+  /// never BLE air packets, which stay IP:port hints only). '' = unknown:
+  /// the key is omitted so legacy payloads stay byte-equal. Set once at
+  /// hosting start alongside the beacon `prof` name; the window/prove
+  /// path never mutates it.
+  String sessionProfName = '';
+
   /// Fired for every processed POST /prove (confirmed/late/invalid) so the
   /// host can log the verdict + reason live. Never throws (guarded).
   /// Also fires for org-mismatched /waiting + /manual-request rejects.
@@ -157,6 +175,7 @@ class ProxServer {
     this.onProve,
     this.sessionOrg = '',
     this.sessionProfEmail = '',
+    this.sessionProfName = '',
   }) : tally = tally ?? TallyStore() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
@@ -253,8 +272,9 @@ class ProxServer {
 
   // ---- Waiting room (students join before the window opens) ----
   // Delegated to LiveRoom (identical semantics; see live_room.dart).
-  void registerWaiting(String email, String name, [String roll = '']) =>
-      room.registerWaiting(email, name, roll);
+  void registerWaiting(String email, String name,
+          [String roll = '', String photoUrl = '']) =>
+      room.registerWaiting(email, name, roll, photoUrl);
 
   /// Explicit leave: the student backed out of the waiting room (Cancel /
   /// back navigation / dispose). Returns true when an entry was removed.
@@ -262,13 +282,19 @@ class ProxServer {
   /// professor's waiting count would stay stale.
   bool removeWaiting(String email) => room.removeWaiting(email);
 
+  /// Professor eject: drops one email from waiting + manual queue + tally
+  /// (session-local; saved history untouched until the next upsert).
+  /// Rejoin/re-mark re-adds. Returns true when anything was removed.
+  bool removeStudent(String email) => room.removeStudent(email);
+
   List<WaitingEntry> get waitingRows => room.waitingRows;
 
   int get waitingCount => room.waitingCount;
 
   // ---- Manual attendance over LAN ----
-  void requestManual(String email, String name, [String roll = '']) =>
-      room.requestManual(email, name, roll);
+  void requestManual(String email, String name,
+          [String roll = '', String photoUrl = '']) =>
+      room.requestManual(email, name, roll, photoUrl);
 
   List<ManualEntry> get manualRows => room.manualRows;
 
@@ -416,6 +442,8 @@ class ProxServer {
       }, 403);
     }
     final email = sessionProfEmail.trim().toLowerCase();
+    final profPhoto = sessionProfPhoto.trim();
+    final profName = sessionProfName.trim();
     final w = _window;
     if (w == null) {
       return _json({
@@ -426,6 +454,8 @@ class ProxServer {
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
         if (email.isNotEmpty) 'profEmail': email,
+        if (profPhoto.isNotEmpty) 'profPhoto': profPhoto,
+        if (profName.isNotEmpty) 'profName': profName,
       });
     }
     // j is unbounded (the window closes only when the professor stops it).
@@ -441,6 +471,8 @@ class ProxServer {
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
         if (email.isNotEmpty) 'profEmail': email,
+        if (profPhoto.isNotEmpty) 'profPhoto': profPhoto,
+        if (profName.isNotEmpty) 'profName': profName,
       });
     }
     final j = jRaw.clamp(0, 1 << 30);
@@ -485,6 +517,8 @@ class ProxServer {
       'display': w.displayCode,
       'org': sessionOrg,
       if (email.isNotEmpty) 'profEmail': email,
+      if (profPhoto.isNotEmpty) 'profPhoto': profPhoto,
+      if (profName.isNotEmpty) 'profName': profName,
       if (prev != null) ...prev,
     });
   }
@@ -733,7 +767,20 @@ class ProxServer {
       if (outcome.decision == ProveDecision.confirmed ||
           outcome.decision == ProveDecision.late) {
         tally.mark(id, name, _windowNo,
-            roll: roll, late: outcome.decision == ProveDecision.late);
+            roll: roll,
+            late: outcome.decision == ProveDecision.late,
+            // Stamp the volunteered presence photo so the present roster
+            // card matches the waiting card (same StudentCard contract).
+            photoUrl: room.photoFor(id));
+        // Marked-complete auto-exit (SYNC-owned): the /prove verdict IS
+        // the waiting-area leave — the student app parks on its marked
+        // badge and re-registers via presence on the next round, so the
+        // waiting count drops at mark time instead of lingering until an
+        // explicit /leave (Cancel/back/dispose only). Piggybacked on this
+        // in-flight response: zero new requests, endpoints, or fields.
+        // Invalid proofs keep their waiting entry (the student is still
+        // unmarked — retry/manual paths own their own leave).
+        removeWaiting(id);
       }
       // Local same-face dup check (RAM-only, window-scoped): exact cosine
       // over dequantized vectors, O(session) per prove. Runs on marked
@@ -853,8 +900,21 @@ class ProxServer {
         return _json(
             {'decision': 'invalid', 'reason': 'org-mismatch'}, 403);
       }
-      registerWaiting(email, name, roll);
-      return _json({'ok': true, 'waiting': waitingCount});
+      registerWaiting(email, name, roll,
+          (body['photo'] as String? ?? '').trim());
+      // Piggybacked window sample for the join fast-path (SYNC-owned):
+      // this POST just proved the host reachable over TLS, so shipping
+      // the live window flag + display code on the in-flight reply lets
+      // room entry skip its immediate GET /window (one fewer capped hit
+      // per entry, one fewer TLS handshake on join→face). The 2s room
+      // poll stays the authoritative flip; clients tolerant-parse these
+      // keys (absent = closed) so mixed-version fleets fall back safely.
+      return _json({
+        'ok': true,
+        'waiting': waitingCount,
+        'windowOpen': windowOpen,
+        'display': _window?.displayCode ?? '',
+      });
     } catch (e) {
       return _json({'error': 'bad-body: $e'}, 400);
     }
@@ -896,7 +956,8 @@ class ProxServer {
         return _json(
             {'decision': 'invalid', 'reason': 'org-mismatch'}, 403);
       }
-      requestManual(email, name, roll);
+      requestManual(email, name, roll,
+          (body['photo'] as String? ?? '').trim());
       return _json({'ok': true, 'status': manualStatus(email)});
     } catch (e) {
       return _json({'error': 'bad-body: $e'}, 400);

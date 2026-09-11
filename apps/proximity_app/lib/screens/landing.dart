@@ -25,8 +25,16 @@ class LandingScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final accountAsync = ref.watch(accountProvider);
     return accountAsync.when(
-      data: (acct) =>
-          acct == null ? const WelcomeScreen() : RoleHubScreen(account: acct),
+      // Keyed per Gmail (same stale-account rule as the shell account tabs
+      // and the setup-flow role step): an account switch remounts the hub
+      // instead of reusing the previous identity's controller/future/field
+      // state underneath.
+      data: (acct) => acct == null
+          ? const WelcomeScreen()
+          : RoleHubScreen(
+              key: ValueKey<String>(acct.email.trim().toLowerCase()),
+              account: acct,
+            ),
       loading: () => const ProxScreen(
         title: 'Proximity',
         child: ProxLoadingRow(label: 'Loading…'),

@@ -48,6 +48,8 @@
 // `FakeEnrollSessionCamera`) keep compiling untouched.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -76,10 +78,26 @@ class EnrollCaptureScreen extends ConsumerStatefulWidget {
 /// other body lives in [EnrollCaptureSessionDriver] verbatim.
 class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
     with EnrollCaptureSessionDriver {
+  /// Single-flight for validated Continue: a double-tap never fires two
+  /// stepper advances or two result pushes (the stepper drops overlaps
+  /// via its own guard and EnrollFlow drops a second push while one
+  /// result is open — this latch covers the gap before either engages).
+  var _continueBusy = false;
   @override
   void initState() {
     super.initState();
     initCaptureSession();
+    // Rescan-after-restart: a fresh controller holds no key (`_keys` null,
+    // `pkHex` empty) even though this device stores one, so Save would
+    // fail-closed with "Generate the device key first". Reconcile the
+    // current session here — same-account is a no-op when keys are already
+    // loaded, and a stored key restores before the user finishes scanning.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(ref
+          .read(enrollmentControllerProvider.notifier)
+          .refreshFromAuth());
+    });
   }
 
   @override
@@ -219,11 +237,25 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
             onContinue: () {
               // STEP-SCOPE: inside SetupFlow, Continue advances the
               // stepper instead of pushing the standalone route.
+              // Single-flight: validated double-tap never pushes two
+              // result routes (see _continueBusy + EnrollFlow guard).
+              if (_continueBusy) return;
+              _continueBusy = true;
               final scope = SetupStepScope.of(context);
               if (scope != null) {
-                scope.next();
+                unawaited(scope
+                    .next()
+                    .whenComplete(() => _continueBusy = false));
               } else {
-                EnrollFlow.openResult(context);
+                try {
+                  final pushed = EnrollFlow.openResult(context);
+                  unawaited(pushed.whenComplete(() {
+                    if (mounted) _continueBusy = false;
+                  }));
+                } catch (_) {
+                  _continueBusy = false;
+                  rethrow;
+                }
               }
             },
             onRetry: retrySave,

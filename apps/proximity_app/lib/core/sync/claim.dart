@@ -222,11 +222,12 @@ String studentClaimMessage(StudentClaimResult r, StudentDeviceDoc? binding) {
           'To switch identity here, clear the app data / reinstall and enroll again. '
           'If you need attendance marked meanwhile, ask your professor for manual attendance.';
     case StudentClaim.cooldownBlocked:
+      // Global date rule, display only: DD-MM-YYYY.
       final retry = r.retryAfter != null
-          ? ' You can re-enroll this device on ${dateIsoOf(r.retryAfter!)} — enrollment moves to a new phone once a month (unlimited moves, at most one per 30 days).'
+          ? ' You can re-enroll this device on ${displayDateOf(r.retryAfter!)} — enrollment moves to a new phone once a month (unlimited moves, at most one per 30 days).'
           : '';
       final seen = binding != null && binding.lastSeenAtMillis > 0
-          ? ' Its last online activity was ${dateIsoOf(DateTime.fromMillisecondsSinceEpoch(binding.lastSeenAtMillis, isUtc: true))}.'
+          ? ' Its last online activity was ${displayDateOf(DateTime.fromMillisecondsSinceEpoch(binding.lastSeenAtMillis, isUtc: true))}.'
           : '';
       return 'This Gmail is enrolled on another device.$seen$retry '
           'Until then, ask your professor to mark your attendance manually (Request manual attendance in class).';
@@ -254,13 +255,14 @@ DateTime faceRescanEligibleAt(int stampMillis) =>
         isUtc: true);
 
 /// Friendly refusal copy for a blocked face re-scan. Names the exact
-/// eligible date via [dateIsoOf] and points at manual attendance for the
-/// gap (same voice as the move-cooldown copy). Single source of truth —
-/// EnrollmentController.upload returns this verbatim. Verbatim — do not
-/// reword without updating the rescan tests.
+/// eligible date via [displayDateOf] (global DD-MM-YYYY rule) and points
+/// at manual attendance for the gap (same voice as the move-cooldown
+/// copy). Single source of truth — EnrollmentController.upload returns
+/// this verbatim. Verbatim — do not reword without updating the rescan
+/// tests.
 String faceRescanCooldownMessage(DateTime eligible) =>
     'You already updated your face scan recently. '
-    'You can scan again on ${dateIsoOf(eligible.toUtc())} — '
+    'You can scan again on ${displayDateOf(eligible.toUtc())} — '
     'face re-scans are allowed once every ${kFaceRescanCooldown.inDays} days. '
     'Until then, ask your professor to mark your attendance manually '
     '(Request manual attendance in class).';

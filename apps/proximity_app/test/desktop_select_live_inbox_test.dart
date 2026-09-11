@@ -1,11 +1,11 @@
 // Desktop Select + live inbox (tester-verified defects, 2026-09-10).
 //
-// FIX 1 — mouse-first selection, checkbox-free (no Checkbox widgets
-// anywhere): desktop shows an explicit Select/Done toggle per selectable
-// list (inbox + sessions multi-delete); plain left-clicks toggle while
-// selecting (existing row behavior); right-click (secondary tap) enters
-// selection with that row. Mobile path unchanged (long-press entry, no
-// toggle, same coach-mark copy). Same controller, same toolbar.
+// FIX 1 — inbox is tap-to-select (same contract as the review/export
+// picker): plain taps toggle with no hold and no Select/Done toggle —
+// inbox rows have no navigation target to conflict with; right-click
+// (secondary tap) also selects on desktop. Sessions multi-delete keeps
+// its hold-and-tap + Select/Done toggle (taps there open the detail).
+// Checkbox-free everywhere, same controller, same toolbar.
 //
 // FIX 2 — inbox live updates: ManualInboxSection self-refreshes on the
 // existing 2s cadence (local driver reads only); arrivals appear without
@@ -74,22 +74,19 @@ Future<void> _asPlatform(
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
 
-  testWidgets('desktop inbox: Select arms, click toggles, Done exits',
+  testWidgets('desktop inbox: tap toggles, Cancel exits, no mode toggle',
       (t) async {
     await _asPlatform(TargetPlatform.macOS, () async {
       SharedPreferences.setMockInitialValues({});
       await t.pumpWidget(_inbox(pending: _rows));
       await t.pumpAndSettle();
-      // Explicit mode toggle on desktop; coach-mark copy unchanged.
-      expect(find.text('Select'), findsOneWidget);
-      expect(find.text('Hold to select'), findsOneWidget);
+      // No mode toggle on the inbox (tap-to-select needs no arming);
+      // same hint caption as the review/export picker.
+      expect(find.text('Select'), findsNothing);
+      expect(find.text('Done'), findsNothing);
+      expect(find.text('Tap to select'), findsOneWidget);
       expect(find.text('Approve 1'), findsNothing);
-      // Arm: Done replaces Select, nothing selected yet.
-      await t.tap(find.text('Select'));
-      await t.pumpAndSettle();
-      expect(find.text('Done'), findsOneWidget);
-      expect(find.text('Approve 1'), findsNothing);
-      // Plain left-click toggles while armed (existing row behavior).
+      // Plain left-click toggles straight away.
       await t.tap(find.text('A One'));
       await t.pumpAndSettle();
       expect(find.text('Approve 1'), findsOneWidget);
@@ -97,10 +94,9 @@ void main() {
       await t.tap(find.text('B Two'));
       await t.pumpAndSettle();
       expect(find.text('Approve 2'), findsOneWidget);
-      // Done exits entirely.
-      await t.tap(find.text('Done'));
+      // Cancel exits entirely.
+      await t.tap(find.byTooltip('Cancel'));
       await t.pumpAndSettle();
-      expect(find.text('Select'), findsOneWidget);
       expect(find.text('Approve 1'), findsNothing);
       // Checkbox-free throughout.
       expect(find.byType(Checkbox), findsNothing);
@@ -122,22 +118,22 @@ void main() {
     });
   });
 
-  testWidgets('mobile inbox: no toggle, secondary no-op, long-press intact',
+  testWidgets('mobile inbox: no toggle, secondary no-op, tap selects',
       (t) async {
     await _asPlatform(TargetPlatform.android, () async {
       SharedPreferences.setMockInitialValues({});
       await t.pumpWidget(_inbox(pending: _rows));
       await t.pumpAndSettle();
-      // No mode toggle on touch devices; same coach-mark copy.
+      // No mode toggle on touch devices; same hint caption as desktop.
       expect(find.text('Select'), findsNothing);
       expect(find.text('Done'), findsNothing);
-      expect(find.text('Hold to select'), findsOneWidget);
+      expect(find.text('Tap to select'), findsOneWidget);
       // Secondary tap is unwired on mobile: selects nothing, acts nothing.
       await t.tap(find.text('A One'), buttons: kSecondaryMouseButton);
       await t.pump();
       expect(find.text('Approve 1'), findsNothing);
-      // Long-press entry unchanged, taps toggle, Cancel exits.
-      await t.longPress(find.text('A One'));
+      // Tap entry, taps toggle, Cancel exits.
+      await t.tap(find.text('A One'));
       await t.pumpAndSettle();
       expect(find.text('Approve 1'), findsOneWidget);
       await t.tap(find.text('B Two'));
@@ -178,7 +174,7 @@ void main() {
       expect(find.text('Done'), findsOneWidget);
       // Plain left-click toggles the session row while armed (no detail
       // navigation — the tap selects instead).
-      await t.tap(find.textContaining('Thu, 3 Sep'));
+      await t.tap(find.textContaining('Thu, 03-09-2026'));
       await t.pumpAndSettle();
       expect(find.text('Delete 1'), findsOneWidget);
       expect(find.text('Select all'), findsOneWidget);

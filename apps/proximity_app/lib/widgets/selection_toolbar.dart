@@ -1,14 +1,15 @@
-// SelectionToolbar — the bulk-action bar for hold-and-tap lists (§4.1).
+// SelectionToolbar — the bulk-action bar for selectable lists (§4.1).
 //
 // Slides up from the bottom ("Approve N · Reject N · Select all · Cancel"),
 // replacing the bottom bar temporarily on screens that have one (inbox,
-// sessions list for multi-delete). Flat surface, hairline top divider —
-// this is working chrome, not a gradient/glow moment (§2.5).
+// sessions list for multi-delete, review/export picker). Flat surface,
+// hairline top divider — this is working chrome, not a gradient/glow
+// moment (§2.5).
 //
 // Generic by design: the caller supplies [actions] (e.g. Approve/Reject
 // built by the manual-attendance module, Delete built by the sessions
 // list). No checkbox appears here or anywhere in selection UI — selection
-// is hold-and-tap only.
+// is tap-to-select on action-only lists, hold-and-tap where taps navigate.
 library;
 
 import 'package:flutter/material.dart';

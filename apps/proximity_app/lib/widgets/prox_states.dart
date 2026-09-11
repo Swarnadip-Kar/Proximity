@@ -313,9 +313,7 @@ class _ProxEmptyStateState extends State<ProxEmptyState> {
   static double _cos(double x) => x.isNaN ? 0 : x >= 0 ? _cosImpl(x) : _cosImpl(-x);
   static double _sin(double x) => x.isNaN ? 0 : _cosImpl(x - 1.5708);
   static double _cosImpl(double x) {
-    // Inline cos to avoid dart:math import collision with the one in
-    // prox_verdict.dart — they share the same dart:math, but this keeps
-    // the file self-contained.
+    // Inline cos to keep the file self-contained (no dart:math import).
     return _dartMathCos(x);
   }
   static double _dartMathCos(double x) {
@@ -449,17 +447,22 @@ class ProxEmptyLine extends StatelessWidget {
   }
 }
 
-/// Signed-in identity header with gradient avatar ring. Avatar border
-/// animates slowly (brand gradient rotating) for a premium feel.
+/// Signed-in identity header with gradient avatar ring. Only the ring
+/// sweep rotates — the photo/initial inside never rotates.
 class ProxIdentityHeader extends StatefulWidget {
   final String displayName;
   final String email;
   final String heldLabel;
+
+  /// Volunteered Gmail profile photo (''/null = initial disc). Rendered
+  /// with initials fallback on error/offline.
+  final String? photoUrl;
   const ProxIdentityHeader({
     super.key,
     required this.displayName,
     required this.email,
     this.heldLabel = '',
+    this.photoUrl,
   });
 
   @override
@@ -495,12 +498,43 @@ class _ProxIdentityHeaderState extends State<ProxIdentityHeader> {
     final c = ProximityColors.of(context);
     final initial =
         widget.displayName.trim().isEmpty ? '?' : widget.displayName.trim()[0].toUpperCase();
+    final photo = (widget.photoUrl ?? '').trim();
+
+    Widget initials() => Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.accentBrand.withValues(alpha: 0.1),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            initial,
+            style: ProxType.display(color: c.accentBrand).copyWith(
+              fontSize: 22,
+            ),
+          ),
+        );
+
+    // Gmail photo inside the rotating gradient ring, initials fallback.
+    // Only the SweepGradient angles animate — the face below stays still.
+    final face = photo.isEmpty
+        ? initials()
+        : ClipOval(
+            child: Image.network(
+              photo,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => initials(),
+              frameBuilder: (context, child, frame, _) {
+                if (frame == null) return initials();
+                return child;
+              },
+            ),
+          );
 
     return ProxFadeSlideIn(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Avatar with gradient ring.
+          // Avatar with rotating gradient ring (sweep only, face static).
           Container(
             width: 64,
             height: 64,
@@ -523,19 +557,7 @@ class _ProxIdentityHeaderState extends State<ProxIdentityHeader> {
                 color: c.surfaceBase,
               ),
               padding: const EdgeInsets.all(2),
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: c.accentBrand.withValues(alpha: 0.1),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  initial,
-                  style: ProxType.display(color: c.accentBrand).copyWith(
-                    fontSize: 22,
-                  ),
-                ),
-              ),
+              child: face,
             ),
           ),
           const SizedBox(height: ProxSpacing.md),

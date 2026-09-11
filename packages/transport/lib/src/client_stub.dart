@@ -26,6 +26,12 @@ class WindowDescriptor {
   final String org;
   /// Mirror of client.dart: gated unicast prof Gmail, '' = unknown/legacy.
   final String profEmail;
+
+  /// Mirror of client.dart: gated unicast prof photo, '' = unknown.
+  final String profPhoto;
+
+  /// Mirror of client.dart: gated unicast prof display name, '' = unknown.
+  final String profName;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -37,6 +43,8 @@ class WindowDescriptor {
     required this.display,
     this.org = '',
     this.profEmail = '',
+    this.profPhoto = '',
+    this.profName = '',
   });
 }
 
@@ -80,18 +88,23 @@ class ProxClient {
         int waiting,
         String display,
         String org,
-        String profEmail
+        String profEmail,
+        String profPhoto,
+        String profName
       })> probeWindow(
           {Duration timeout = const Duration(seconds: 4),
           void Function(Object e)? onError,
           String org = ''}) =>
           _web();
 
-  Future<void> postWaiting(
+  /// Mirror of client.dart: presence + piggybacked window sample
+  /// (web never joins; identical signature so shared code compiles).
+  Future<({int waiting, bool windowOpen, String display})> postWaiting(
           {required String email,
           required String name,
           String roll = '',
-          String org = ''}) =>
+          String org = '',
+          String photoUrl = ''}) =>
       _web();
 
   Future<void> postLeave({required String email}) => _web();
@@ -100,7 +113,8 @@ class ProxClient {
           {required String email,
           required String name,
           String roll = '',
-          String org = ''}) =>
+          String org = '',
+          String photoUrl = ''}) =>
       _web();
 
   Future<String> fetchManualStatus(String email) => _web();

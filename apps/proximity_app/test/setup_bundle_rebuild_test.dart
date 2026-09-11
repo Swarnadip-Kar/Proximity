@@ -1,6 +1,7 @@
 // Setup-bundle rebuild proofs (items 2–4): progress placement, step
 // modularity, and trimmed-copy contracts. Item-1 (claim-denial
 // verdict-by-evidence) lives in setup_claim_denial_test.dart.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,17 +12,18 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/records/my_attendance_screen.dart';
 import 'package:proximity_app/features/setup/device_identity_screen.dart';
 import 'package:proximity_app/features/setup/device_sections.dart';
-import 'package:proximity_app/features/setup/enroll_intro.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
-import 'package:proximity_app/features/setup/intro_sections.dart';
 import 'package:proximity_app/features/setup/result_sections.dart';
 import 'package:proximity_app/features/setup/role_hub_screen.dart';
 import 'package:proximity_app/features/setup/role_sections.dart';
 import 'package:proximity_app/features/setup/setup_progress.dart';
 import 'package:proximity_app/features/setup/welcome_screen.dart';
 import 'package:proximity_app/features/setup/welcome_sections.dart';
+import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/widgets/details_expander.dart';
 import 'package:proximity_app/screens/setup_flow_screen.dart';
 
@@ -124,33 +126,6 @@ void main() {
   });
 
   group('step modularity (thin composers over sections)', () {
-    testWidgets('intro renders its five sections', (t) async {
-      final auth = FakeAuthService(_b);
-      final store = InMemoryDeviceStore();
-      final cloud = FakeCloudSync();
-      final box = <EnrollmentController>[];
-      await t.pumpWidget(_app(
-        Scaffold(
-          body: SingleChildScrollView(child: EnrollIntroContent()),
-        ),
-        _enrollOverrides(auth: auth, store: store, cloud: cloud, onCtl: box.add),
-      ));
-      final ctl = box.single;
-      await ctl.signIn();
-      ctl.setRoll('B-ROLL');
-      await ctl.generateKey();
-      await t.pumpAndSettle();
-      expect(find.byType(IntroOverviewSection), findsOneWidget);
-      expect(find.byType(IntroOnlineSection), findsOneWidget);
-      expect(find.byType(IntroOneDeviceSection), findsOneWidget);
-      expect(find.byType(IntroAccountSection), findsOneWidget);
-      expect(find.byType(IntroKeySection), findsOneWidget);
-      // Test-relevant actions stay visible at the composition level.
-      expect(find.text('Continue to face scan'), findsOneWidget);
-      expect(find.textContaining('Key: '), findsOneWidget);
-      expect(find.textContaining('Signed in as B'), findsOneWidget);
-    });
-
     testWidgets('result renders status section when face-done', (t) async {
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
@@ -235,10 +210,14 @@ void main() {
       await _settleStepped(t);
       expect(find.byType(WelcomeHeroSection), findsOneWidget);
       expect(find.byType(WelcomeSignInSection), findsOneWidget);
-      // Hero headline uses a display line-break ("Be there.\nBe marked.")
-      // — same words, premium two-line typography.
-      expect(find.textContaining('Be there.'), findsOneWidget);
-      expect(find.textContaining('Be marked.'), findsOneWidget);
+      // Landing rearrangement: top category header + centered brand.
+      // "Be there / Be marked" headline is gone; "PROXIMITY" (accent
+      // purple) moved top -> center; "Campus Attendance System" header
+      // sits at the top. Nothing else on the page moved.
+      expect(find.text('Campus Attendance System'), findsOneWidget);
+      expect(find.text('PROXIMITY'), findsOneWidget);
+      expect(find.textContaining('Be there.'), findsNothing);
+      expect(find.textContaining('Be marked.'), findsNothing);
       expect(find.text('Sign in with Google'), findsOneWidget);
     });
   });
@@ -275,8 +254,10 @@ void main() {
         _baseOverrides(auth, store, cloud),
       ));
       await _settleStepped(t);
-      expect(find.textContaining('Be there.'), findsOneWidget);
-      expect(find.textContaining('Be marked.'), findsOneWidget);
+      expect(find.text('Campus Attendance System'), findsOneWidget);
+      expect(find.text('PROXIMITY'), findsOneWidget);
+      expect(find.textContaining('Be there.'), findsNothing);
+      expect(find.textContaining('Be marked.'), findsNothing);
       expect(find.text('Sign in with Google'), findsOneWidget);
       expectCollapsed(t, 'For professors');
       // Taller radar hero may push the expander below the fold —
@@ -306,42 +287,6 @@ void main() {
           findsOneWidget);
     });
 
-    testWidgets('intro angle + wifi detail collapse', (t) async {
-      final auth = FakeAuthService(_b);
-      final store = InMemoryDeviceStore();
-      final cloud = FakeCloudSync();
-      final box = <EnrollmentController>[];
-      await t.pumpWidget(_app(
-        Scaffold(
-          body: SingleChildScrollView(child: EnrollIntroContent()),
-        ),
-        _enrollOverrides(auth: auth, store: store, cloud: cloud, onCtl: box.add),
-      ));
-      final ctl = box.single;
-      await ctl.signIn();
-      ctl.setRoll('B-ROLL');
-      await ctl.generateKey();
-      await t.pumpAndSettle();
-      // Essentials visible…
-      expect(find.text('Enroll this device'), findsWidgets);
-      expect(find.textContaining('Later attendance works fully offline'),
-          findsOneWidget);
-      expect(find.textContaining('One Gmail lives on one enrolled device'),
-          findsOneWidget);
-      // …secondary prose collapsed.
-      expectCollapsed(t, 'What the five angles involve');
-      expectCollapsed(t, 'What goes over WiFi');
-      await t.tap(find.text('What the five angles involve'));
-      await t.pumpAndSettle();
-      expectExpanded(t, 'What the five angles involve');
-      expect(find.textContaining('each angle really angle-checked'),
-          findsOneWidget);
-      await t.tap(find.text('What goes over WiFi'));
-      await t.pumpAndSettle();
-      expectExpanded(t, 'What goes over WiFi');
-      expect(find.textContaining('numbers only, no photo'), findsOneWidget);
-    });
-
     testWidgets('device offline note collapses', (t) async {
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
@@ -358,6 +303,136 @@ void main() {
       expectExpanded(t, 'Offline professors');
       expect(
           find.textContaining('Offline professors keep'), findsOneWidget);
+    });
+  });
+
+  group('router guards (exact table + in-tab, blocked-card vs redirect)', () {
+    List<Override> routerOverrides() => [
+          authServiceProvider.overrideWithValue(FakeAuthService(_b)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+        ];
+
+    Widget materialAppFor(String initialRoute) => ProviderScope(
+          overrides: routerOverrides(),
+          child: MaterialApp(
+            theme: proxLightTheme(),
+            routes: buildProxRoutes(),
+            onGenerateRoute: proxOnGenerateRoute,
+            onUnknownRoute: proxOnUnknownRoute,
+            initialRoute: initialRoute,
+          ),
+        );
+
+    // Mirrors shells._tabRoute: tab root at '/', every other name resolves
+    // exactly like the root router (same table + guards + unknown).
+    Widget inTabAppFor(String name) => ProviderScope(
+          overrides: routerOverrides(),
+          child: MaterialApp(
+            theme: proxLightTheme(),
+            home: Navigator(
+              initialRoute: name,
+              onGenerateRoute: (s) {
+                if (s.name == null || s.name == '/') {
+                  return MaterialPageRoute(
+                    settings: const RouteSettings(name: '/'),
+                    builder: (_) =>
+                        const Scaffold(body: Text('tab-root')),
+                  );
+                }
+                final exact = buildProxRoutes()[s.name];
+                if (exact != null) {
+                  return MaterialPageRoute(settings: s, builder: exact);
+                }
+                return proxOnGenerateRoute(s);
+              },
+              onUnknownRoute: proxOnUnknownRoute,
+            ),
+          ),
+        );
+
+    testWidgets('enroll exact-table renders guidance on records-only devices',
+        (t) async {
+      for (final route in ['enroll/capture', 'enroll/result']) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        await t.pumpWidget(materialAppFor(route));
+        await t.pumpAndSettle();
+        debugDefaultTargetPlatformOverride = null;
+        // Guarded web/desktop entry renders guidance, never the flow
+        // screen (exact-table wrapper runs guards BEFORE the builder).
+        expect(find.byType(MobileOnlyGuidanceScreen), findsOneWidget,
+            reason: route);
+        expect(find.text('Mobile only'), findsOneWidget);
+        expect(find.text('Open my records'), findsOneWidget);
+        if (route == 'enroll/capture') {
+          expect(find.byType(EnrollCaptureScreen), findsNothing);
+        } else {
+          expect(find.byType(EnrollResultScreen), findsNothing);
+        }
+      }
+    });
+
+    testWidgets('enroll renders guidance via in-tab router too', (t) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      await t.pumpWidget(inTabAppFor('enroll/capture'));
+      await t.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+      expect(find.byType(MobileOnlyGuidanceScreen), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
+    });
+
+    testWidgets('mark/* renders unknown via both routers (guards gone)',
+        (t) async {
+      for (final pump in [materialAppFor, inTabAppFor]) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        await t.pumpWidget(pump('mark/face'));
+        await t.pumpAndSettle();
+        debugDefaultTargetPlatformOverride = null;
+        expect(find.byType(MobileOnlyGuidanceScreen), findsNothing,
+            reason: 'mark/face must never render guidance');
+        // ProxRoutePlaceholder shows its title twice (app bar + empty
+        // state), so assert the placeholder type + detail copy, not a
+        // single text hit.
+        expect(find.byType(ProxRoutePlaceholder), findsOneWidget);
+        expect(
+            find.textContaining('does not match the route table'),
+            findsOneWidget);
+      }
+    });
+
+    testWidgets('guidance CTA replaces so back never loops', (t) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      await t.pumpWidget(materialAppFor('enroll/capture'));
+      await t.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+      expect(find.byType(MobileOnlyGuidanceScreen), findsOneWidget);
+      await t.tap(find.text('Open my records'));
+      await t.pumpAndSettle();
+      expect(find.byType(MyAttendanceScreen), findsOneWidget);
+      expect(find.byType(MobileOnlyGuidanceScreen), findsNothing);
+      // Back from records must not loop back onto guidance (replace,
+      // never push).
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(find.byType(MobileOnlyGuidanceScreen), findsNothing);
+    });
+
+    testWidgets('direct result shows blocked card (L1), router shows guidance',
+        (t) async {
+      // Direct mount (no router): the screen's own L1 blocked card.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final cloud = FakeCloudSync();
+      final box = <EnrollmentController>[];
+      await t.pumpWidget(_app(
+        const EnrollResultScreen(),
+        _enrollOverrides(auth: auth, store: store, cloud: cloud, onCtl: box.add),
+      ));
+      await t.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+      expect(find.textContaining('needs the mobile app'), findsOneWidget);
+      expect(find.byType(MobileOnlyGuidanceScreen), findsNothing);
     });
   });
 }

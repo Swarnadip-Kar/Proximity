@@ -17,10 +17,12 @@ import 'prox_cards.dart';
 import 'prox_states.dart';
 import '../core/sync/store/record_helpers.dart' as rh;
 
-/// UTC epoch millis as yyyy-MM-dd ('' when 0).
+/// UTC epoch millis as DD-MM-YYYY ('' when 0). Global date rule, display
+/// only — storage stays yyyy-MM-dd.
 String trustDateLabel(int millis) {
   if (millis <= 0) return '';
-  return rh.dateIsoOf(DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true));
+  return rh.displayDateOf(
+      DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true));
 }
 
 /// Short DKey fingerprint (first 12 hex + ellipsis).

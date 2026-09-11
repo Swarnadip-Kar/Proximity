@@ -5,10 +5,16 @@
 // records builds (Save downloads in-browser); only the Live tab runs the
 // room capture, which is never referenced here.
 //
+// Selection is tap-to-select (no hold needed): tapping a row toggles it,
+// the trailing share icon previews that one session, and the bottom
+// toolbar exports the tapped set as one combined matrix. Web builds keep
+// tap-to-preview (no multi-select on web records builds).
+//
 // Data logic preserved per the Phase-1 exemption (filter, sort, CSV bytes,
 // filenames, matrix builder): restyle only.
 library;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
@@ -26,11 +32,35 @@ import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/selection_controller.dart';
+import '../../widgets/selection_toolbar.dart';
+import '../../widgets/student_card.dart';
 import '../../widgets/web_banner.dart';
+
+/// Export header for CSV previews: three metadata rows —
+/// `Prof Name,<name>`, `Class Name,<class>`, `Prof Email,<email>` —
+/// followed by the body CSV unchanged. Values come from the host
+/// identity/account at export time (account displayName/email) and the
+/// threaded course/class label; no new plumbing or transport fields.
+/// Escaping/quoting is identical to the old org line and body (raw
+/// interpolation, no quoting).
+/// Shared by the export center and the course overview's selected-dates
+/// export — one builder, identical bytes.
+String exportHeader(String csv,
+        {required String profName,
+        required String className,
+        required String profEmail}) =>
+    'Prof Name,$profName\nClass Name,$className\nProf Email,$profEmail\n$csv';
 
 class ExportCenterScreen extends ConsumerStatefulWidget {
   final String courseName;
   const ExportCenterScreen({super.key, required this.courseName});
+
+  /// Canonical in-tab route name: `prof/courses/<course>/export`.
+  /// Matches the IA node in `proxOnGenerateRoute` so NAV logs, `popUntil`
+  /// by name/prefix, and deep-links share ONE identity with the named
+  /// route (no duplicate unnamed push).
+  static String routeName(String course) => 'prof/courses/$course/export';
 
   @override
   ConsumerState<ExportCenterScreen> createState() => _ExportCenterScreenState();
@@ -53,9 +83,16 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     return out;
   }
 
-  /// Org line for CSV previews: `Org,<org>` ('' = legacy local-only).
-  static String withOrgLine(String csv, String org) =>
-      'Org,${org.isEmpty ? '(legacy local-only)' : org}\n$csv';
+  /// Export header for CSV previews: `Prof Name` / `Class Name` /
+  /// `Prof Email` top rows (see [exportHeader]).
+  /// Top-level (not on the private State) so the course overview's
+  /// selected-dates export shares the exact builder.
+  static String withExportHeader(String csv,
+          {required String profName,
+          required String className,
+          required String profEmail}) =>
+      exportHeader(csv,
+          profName: profName, className: className, profEmail: profEmail);
 
   /// Tight title: short weekday + day/month, time when known.
   String _sessionLabel(ClassRecord r) => sessionTightLabel(
@@ -88,13 +125,49 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   }
 
   Future<void> _exportSession(ClassRecord r) async {
-    final csv = withOrgLine(r.toCsv(), r.org);
+    final acct = ref.read(accountProvider).valueOrNull;
+    final csv = withExportHeader(
+      r.toCsv(),
+      profName: (acct?.displayName ?? '').trim(),
+      className: r.classLabel,
+      profEmail: (acct?.email ?? '').trim(),
+    );
     await _showCsvDialog(
       title: _sessionLabel(r),
       csv: csv,
       filename:
           'attendance_${r.classLabel}_${r.dateIso}_${r.id.substring(0, r.id.length.clamp(0, 8))}.csv',
       subject: 'Attendance ${r.classLabel} ${r.dateIso}',
+    );
+  }
+
+  /// Exports the tapped sessions as one combined matrix (same builder as
+  /// the date-range export) in the shared CSV preview dialog. Selection
+  /// stays armed afterwards so the professor can re-export without
+  /// re-tapping.
+  Future<void> _exportSelected(
+      List<ClassRecord> sessions, Set<String> ids) async {
+    final sel = sessions.where((s) => ids.contains(s.id)).toList()
+      ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
+    if (sel.isEmpty || !mounted) return;
+    final acct = ref.read(accountProvider).valueOrNull;
+    final csv = withExportHeader(
+      buildDateRangeMatrix(sel),
+      profName: (acct?.displayName ?? '').trim(),
+      className: widget.courseName,
+      profEmail: (acct?.email ?? '').trim(),
+    );
+    final label =
+        sel.length == 1 ? _sessionLabel(sel.first) : '${sel.length} sessions';
+    BleLog.log('NAV', 'export ${widget.courseName} → selected $label');
+    await showCsvPreviewDialog(
+      context,
+      title: '${widget.courseName} · $label',
+      csv: csv,
+      onSave: () => _saveCsv(
+          csv, 'attendance_${widget.courseName}_selected.csv'),
+      onShare: () =>
+          _shareCsv(csv, 'Attendance ${widget.courseName} ($label)'),
     );
   }
 
@@ -122,8 +195,13 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     setState(() => _rangeError = null);
     // Matrix: rows keyed by email, P = intersection-present else A;
     // same-day repeats disambiguate with HH:mm in the header.
-    final org = inRange.isNotEmpty ? inRange.first.org : '';
-    final csv = withOrgLine(buildDateRangeMatrix(inRange), org);
+    final acct = ref.read(accountProvider).valueOrNull;
+    final csv = withExportHeader(
+      buildDateRangeMatrix(inRange),
+      profName: (acct?.displayName ?? '').trim(),
+      className: widget.courseName,
+      profEmail: (acct?.email ?? '').trim(),
+    );
     await _showCsvDialog(
       title: '${widget.courseName} · $rangeLabel',
       csv: csv,
@@ -141,7 +219,6 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
     final store = ref.watch(deviceStoreProvider);
     final acct = ref.watch(accountProvider).valueOrNull;
     final myOrg = (acct?.org ?? '').trim().toLowerCase();
@@ -163,73 +240,18 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
             builder: (context, snap) {
               final sessions =
                   _sessions(snap.data ?? const <ClassRecord>[], myOrg);
-              return ListView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: ProxSpacing.screenMargin,
-                  vertical: ProxSpacing.lg,
+              return SelectionScope(
+                child: _ExportBody(
+                  courseName: widget.courseName,
+                  sessions: sessions,
+                  loading: snap.connectionState == ConnectionState.waiting,
+                  rangeError: _rangeError,
+                  onExportRange: () => _exportRange(sessions),
+                  onPreviewSession: _exportSession,
+                  onExportSelected: (ids) =>
+                      _exportSelected(sessions, ids),
+                  sessionLabel: _sessionLabel,
                 ),
-                children: [
-                  const ClockHeader(),
-                  const WebRecordsBanner(),
-                  const SizedBox(height: ProxSpacing.sm),
-                  ProxSecondaryButton(
-                    icon: const Icon(Icons.calendar_month),
-                    label: const Text('Export date range'),
-                    onPressed: sessions.isEmpty
-                        ? null
-                        : () => _exportRange(sessions),
-                    expanded: true,
-                  ),
-                  if (_rangeError != null) ...[
-                    const SizedBox(height: ProxSpacing.sm),
-                    ProxErrorNote(_rangeError!),
-                  ],
-                  const SizedBox(height: ProxSpacing.sm),
-                  Text(
-                    '${sessions.length} sessions',
-                    style: proxTabular(
-                        context, ProxType.label(color: c.contentPrimary)),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                  DetailsExpander(
-                    title: 'Details',
-                    child: Text(
-                      'Rows key by email. P means present in every round, else A. Same-day repeats add the time.',
-                      style: ProxType.caption(color: c.contentSecondary),
-                    ),
-                  ),
-                  const SizedBox(height: ProxSpacing.sm),
-                  if (snap.connectionState == ConnectionState.waiting)
-                    const ProxShimmerHost(
-                      child: Column(
-                        children: [
-                          ProxShimmerRow(),
-                          SizedBox(height: ProxSpacing.sm),
-                          ProxShimmerRow(),
-                          SizedBox(height: ProxSpacing.sm),
-                          ProxShimmerRow(),
-                        ],
-                      ),
-                    )
-                  else if (sessions.isEmpty)
-                    const ProxEmptyState(
-                      message: 'No sessions yet for this course.',
-                    )
-                  else
-                    for (final session in sessions)
-                      Padding(
-                        padding:
-                            const EdgeInsets.only(bottom: ProxSpacing.sm),
-                        child: _ExportRow(
-                          title: _sessionLabel(session),
-                          subtitle:
-                              '${fullDateOf(session.dateIso)}\n${session.presentCount} present · ${session.windowCount} window${session.windowCount == 1 ? '' : 's'}',
-                          onTap: () => _exportSession(session),
-                          onExport: () => _exportSession(session),
-                        ),
-                      ),
-                ],
               );
             },
           ),
@@ -239,66 +261,172 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   }
 }
 
-class _ExportRow extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-  final VoidCallback onExport;
-  const _ExportRow(
-      {required this.title,
-      required this.subtitle,
-      required this.onTap,
-      required this.onExport});
+/// Export list content inside one [SelectionScope]: rows are tap-to-select
+/// (plain taps toggle, no hold needed — there is no detail to open here,
+/// so tap never conflicts with navigation). The trailing share icon
+/// previews that one session; the bottom toolbar exports the tapped set as
+/// one combined matrix. Web builds have no multi-select: tap previews.
+class _ExportBody extends ConsumerWidget {
+  final String courseName;
+  final List<ClassRecord> sessions;
+  final bool loading;
+  final String? rangeError;
+  final VoidCallback onExportRange;
+  final ValueChanged<ClassRecord> onPreviewSession;
+  final Future<void> Function(Set<String>) onExportSelected;
+  final String Function(ClassRecord) sessionLabel;
+
+  const _ExportBody({
+    required this.courseName,
+    required this.sessions,
+    required this.loading,
+    required this.rangeError,
+    required this.onExportRange,
+    required this.onPreviewSession,
+    required this.onExportSelected,
+    required this.sessionLabel,
+  });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final c = ProximityColors.of(context);
-    return Container(
-      constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
-      decoration: BoxDecoration(
-        color: c.surfaceRaised,
-        borderRadius: ProxRadii.cardSpecRadius,
-        border: Border.all(color: c.divider),
-        boxShadow: [c.elevationRaised],
-      ),
-      child: InkWell(
-        borderRadius: ProxRadii.cardSpecRadius,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(ProxSpacing.cardPadding),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+    final controller = ref.watch(selectionControllerProvider);
+    final count = controller.count;
+    // Tap-to-select is native-only; web keeps tap-to-preview.
+    final tapSelect = !kIsWeb;
+    final selecting = controller.selecting && !kIsWeb;
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProxSpacing.screenMargin,
+              vertical: ProxSpacing.lg,
+            ),
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: ProxType.body(color: c.contentPrimary),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: ProxType.caption(color: c.contentSecondary),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                    ),
-                  ],
+              const ClockHeader(),
+              const WebRecordsBanner(),
+              const SizedBox(height: ProxSpacing.sm),
+              ProxSecondaryButton(
+                icon: const Icon(Icons.calendar_month),
+                label: const Text('Export date range'),
+                onPressed: sessions.isEmpty ? null : onExportRange,
+                expanded: true,
+              ),
+              if (rangeError != null) ...[
+                const SizedBox(height: ProxSpacing.sm),
+                ProxErrorNote(rangeError!),
+              ],
+              const SizedBox(height: ProxSpacing.sm),
+              Text(
+                '${sessions.length} sessions',
+                style: proxTabular(
+                    context, ProxType.label(color: c.contentPrimary)),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              DetailsExpander(
+                title: 'Details',
+                child: Text(
+                  tapSelect
+                      ? 'Tap sessions to select them for a combined export. The share icon previews one session. Rows key by email; P means present in every round, else A.'
+                      : 'Rows key by email. P means present in every round, else A. Same-day repeats add the time.',
+                  style: ProxType.caption(color: c.contentSecondary),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.ios_share),
-                tooltip: 'Export CSV',
-                onPressed: onExport,
-              ),
+              if (tapSelect && sessions.isNotEmpty && !loading) ...[
+                const SizedBox(height: ProxSpacing.xs),
+                Text(
+                  'Tap to select',
+                  style: ProxType.caption(color: c.contentTertiary),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ],
+              const SizedBox(height: ProxSpacing.sm),
+              if (loading)
+                const ProxShimmerHost(
+                  child: Column(
+                    children: [
+                      ProxShimmerRow(),
+                      SizedBox(height: ProxSpacing.sm),
+                      ProxShimmerRow(),
+                      SizedBox(height: ProxSpacing.sm),
+                      ProxShimmerRow(),
+                    ],
+                  ),
+                )
+              else if (sessions.isEmpty)
+                const ProxEmptyState(
+                  message: 'No sessions yet for this course.',
+                )
+              else
+                for (final session in sessions)
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(bottom: ProxSpacing.sm),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: tapSelect
+                              ? StudentCard(
+                                  name: sessionLabel(session),
+                                  subtitle:
+                                      '${fullDateOf(session.dateIso)} · ${session.presentCount} present · ${session.windowCount} window${session.windowCount == 1 ? '' : 's'}',
+                                  selectionMode: true,
+                                  selected:
+                                      controller.isSelected(session.id),
+                                  onSelectionChanged: (select) {
+                                    if (select) {
+                                      controller.select(session.id);
+                                    } else {
+                                      controller.deselect(session.id);
+                                    }
+                                  },
+                                )
+                              : StudentCard(
+                                  name: sessionLabel(session),
+                                  subtitle:
+                                      '${fullDateOf(session.dateIso)} · ${session.presentCount} present · ${session.windowCount} window${session.windowCount == 1 ? '' : 's'}',
+                                  onTap: () =>
+                                      onPreviewSession(session),
+                                ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.ios_share),
+                          tooltip: 'Export CSV',
+                          onPressed: () =>
+                              onPreviewSession(session),
+                        ),
+                      ],
+                    ),
+                  ),
             ],
           ),
         ),
-      ),
+        SelectionToolbar(
+          visible: selecting,
+          selectedCount: count,
+          totalCount: sessions.length,
+          actions: [
+            SelectionToolbarAction(
+              label: 'Export $count',
+              onPressed: count == 0
+                  ? null
+                  : () async {
+                      await onExportSelected(
+                          controller.selectedIds);
+                    },
+            ),
+          ],
+          onSelectAll: () =>
+              controller.selectAll(sessions.map((s) => s.id)),
+          onCancel: controller.clear,
+        ),
+      ],
     );
   }
 }
+
+

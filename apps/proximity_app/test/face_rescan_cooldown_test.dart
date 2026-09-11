@@ -182,7 +182,7 @@ void main() {
       final recent = nowMs - 5 * 24 * 60 * 60 * 1000;
       await _overwriteStamp(store, recent);
       final eligible = faceRescanEligibleAt(recent);
-      final eligibleIso = dateIsoOf(eligible);
+      final eligibleIso = displayDateOf(eligible);
 
       await ctl.restartFace();
       // Started-but-unsaved rescan never stamps the quota.

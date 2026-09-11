@@ -61,8 +61,25 @@ void main() {
             course: 'CS201', sessions: sessions, email: _email))));
     await t.pumpAndSettle();
     expect(find.text('1/2 days attended · 1 partial'), findsOneWidget);
-    expect(find.textContaining('2026-09-04'), findsOneWidget);
+    expect(find.textContaining('04-09-2026'), findsOneWidget);
     expect(find.textContaining('Partial 1/2'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('course detail header falls back to letters without a photo',
+      (t) async {
+    final sessions = [
+      rec('s1', '2026-09-04', {_email: true}),
+    ];
+    await t.pumpWidget(ProviderScope(child: MaterialApp(
+        theme: proxLightTheme(),
+        home: CourseAttendanceDetailScreen(
+            course: 'CS201', sessions: sessions, email: _email))));
+    await t.pumpAndSettle();
+    // No cached photo seen → course-letter disc in the ring center, no
+    // network image attempted.
+    expect(find.text('CS'), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
     expect(t.takeException(), isNull);
   });
 

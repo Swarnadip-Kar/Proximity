@@ -1,7 +1,7 @@
-// Enrollment bundle flow: route helpers + IA map.
+// Enrollment route helpers + IA map (capture/result screens, embedded as
+// SetupFlow steps; the standalone intro route is deleted with the legacy
+// bundle entry — SetupFlow is the only enrollment flow).
 //
-// Bundle (approved IA — each screen breathes on its own page):
-//   EnrollIntro   (enroll/intro)   — pre-context + account + device key
 //   EnrollCapture (enroll/capture) — continuous 5-angle session, per-slot
 //   in-session retake
 //   EnrollResult  (enroll/result)  — save + claim outcome with next steps
@@ -17,6 +17,8 @@
 // fail-closed (no validated capture → no save; Save blocked till the 5
 // validate via self-check); atomic claim (one device per Gmail + install
 // binding + 30-day move + heartbeats); key always kept.
+// Back contract: see setup_step_scope.dart (canonical). Scope present →
+// stepper only, never push/pop; scope absent → the pushes/pops below.
 import 'package:flutter/material.dart';
 
 import 'enroll_capture.dart';
@@ -24,27 +26,55 @@ import 'enroll_result.dart';
 import 'enroll_widgets.dart';
 
 abstract final class EnrollFlow {
-  static const introRoute = '${EnrollNav.routePrefix}intro';
   static const captureRoute = '${EnrollNav.routePrefix}capture';
   static const resultRoute = '${EnrollNav.routePrefix}result';
 
+  /// Single-flight per route: a second open while the route is still on
+  /// top is dropped, so a validated double-tap never stacks two results
+  /// (back from the top result then lands on capture, not a second
+  /// result). Flags clear when the pushed route pops.
+  static bool _captureOpen = false;
+  static bool _resultOpen = false;
+
+  @visibleForTesting
+  static void debugReset() {
+    _captureOpen = false;
+    _resultOpen = false;
+  }
+
   /// Intro → Capture (key must exist; the button gates it).
   static Future<void> openCapture(BuildContext context) {
-    return Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: captureRoute),
-        builder: (_) => const EnrollCaptureScreen(),
-      ),
-    );
+    if (_captureOpen) return Future.value();
+    _captureOpen = true;
+    try {
+      final future = Navigator.of(context).push(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: captureRoute),
+          builder: (_) => const EnrollCaptureScreen(),
+        ),
+      );
+      return future.whenComplete(() => _captureOpen = false);
+    } catch (_) {
+      _captureOpen = false;
+      rethrow;
+    }
   }
 
   /// Capture → Result (5/5 validated; the button gates it).
   static Future<void> openResult(BuildContext context) {
-    return Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: resultRoute),
-        builder: (_) => const EnrollResultScreen(),
-      ),
-    );
+    if (_resultOpen) return Future.value();
+    _resultOpen = true;
+    try {
+      final future = Navigator.of(context).push(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: resultRoute),
+          builder: (_) => const EnrollResultScreen(),
+        ),
+      );
+      return future.whenComplete(() => _resultOpen = false);
+    } catch (_) {
+      _resultOpen = false;
+      rethrow;
+    }
   }
 }

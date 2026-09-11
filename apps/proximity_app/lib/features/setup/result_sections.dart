@@ -8,13 +8,15 @@
 // card around it.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/enrollment.dart';
 import '../../design/tokens.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
-import '../../widgets/prox_verdict.dart';
+import '../../widgets/verdict_badge.dart';
 import 'enroll_widgets.dart';
 import 'setup_step_scope.dart';
 
@@ -263,15 +265,14 @@ class ResultRefusalSection extends StatelessWidget {
                 onPressed: () {
                   // STEP-SCOPE: inside SetupFlow, the account step is the
                   // Account & key page (ID entry lives there after the
-                  // ## Setup pagination split; standalone popUntil
-                  // preserved).
+                  // Setup pagination split). Standalone pops back to the
+                  // rescan entry — 'enroll/intro' is a dead target here,
+                  // so never push; a plain pop returns to the caller.
                   final scope = SetupStepScope.of(context);
                   if (scope != null) {
                     scope.goTo(SetupStep.accountKey);
                   } else {
-                    Navigator.of(context).popUntil((route) =>
-                        route.isFirst ||
-                        route.settings.name == '${EnrollNav.routePrefix}intro');
+                    Navigator.of(context).pop();
                   }
                 },
               ),
@@ -315,17 +316,35 @@ class ResultSuccessSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final restored = st.restored && st.faceScore <= 0;
+    // Single-flight per button: a double-tap fires one stepper move only
+    // (the orchestrator drops overlaps; standalone pop/finish is gone
+    // after the first tap). Per-build latches suffice — the first tap
+    // navigates away, so a second tap shares this build only in the
+    // same-frame double case.
+    var rescanBusy = false;
+    var doneBusy = false;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: ProxSpacing.lg),
-        ProxVerdictBadge(
-          kind: ProxVerdictKind.marked,
-          title: '✓ Done',
-          detail: restored
+        // Single badge system: enroll-success uses the standard
+        // VerdictBadge(marked) pill with a custom '✓ Done' label — the
+        // same status + label idiom as the present/highlighted counts —
+        // with the success copy as plain text below (never a second
+        // verdict widget).
+        const Center(
+          child: VerdictBadge(
+            status: ProxStatus.marked,
+            label: '✓ Done',
+          ),
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        Text(
+          restored
               ? 'Key restored from this device — no fresh face match yet.'
               : 'Identity linked for attendance.',
+          textAlign: TextAlign.center,
         ),
         const SizedBox(height: ProxSpacing.lg),
         ProxCard(
@@ -364,13 +383,18 @@ class ResultSuccessSection extends StatelessWidget {
           onPressed: () {
             // Key kept; the saved enrollment is untouched (attendance
             // still works) until 3 new stills validate.
+            if (rescanBusy) return;
+            rescanBusy = true;
             EnrollLog.face('re-scan from result — key kept, slots cleared');
             ctl.restartFace();
             // STEP-SCOPE: inside SetupFlow, re-scan returns to the
             // capture step instead of popping (standalone pop preserved).
             final scope = SetupStepScope.of(context);
             if (scope != null) {
-              scope.goTo(SetupStep.capture);
+              unawaited(
+                  scope.goTo(SetupStep.capture).whenComplete(() {
+                rescanBusy = false;
+              }));
             } else {
               Navigator.of(context).pop();
             }
@@ -381,10 +405,15 @@ class ResultSuccessSection extends StatelessWidget {
           label: const Text('Done'),
           onPressed: () {
             // STEP-SCOPE: inside SetupFlow, Done exits via the flow
-            // (lands on mark/browse, never the roles hub).
+            // (lands on mark/browse, never the roles hub). Single-flight:
+            // Done double-tap completes once.
+            if (doneBusy) return;
+            doneBusy = true;
             final scope = SetupStepScope.of(context);
             if (scope != null) {
-              scope.complete();
+              unawaited(scope.complete().whenComplete(() {
+                doneBusy = false;
+              }));
             } else {
               EnrollNav.finish(context);
             }

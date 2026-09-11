@@ -109,6 +109,10 @@ Future<void> promptEnableBluetoothIfOff(
       ],
     ),
   );
+  // Mounted-before-ref after the dialog await: the screen may have
+  // unmounted while the prompt sat open (back/dispose) — never touch
+  // providers on a dead screen.
+  if (!context.mounted) return;
   if (ok == true) {
     try {
       await ref.read(bleEngineProvider).retryPendingScan();

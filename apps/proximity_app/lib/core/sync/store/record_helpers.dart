@@ -28,12 +28,24 @@ bool recordInCourse(ClassRecord record, String course) =>
     record.courseId == course ||
     (record.courseId.isEmpty && record.classLabel == course);
 
-/// Calendar date as yyyy-MM-dd (stamps, claim copy, trust labels, export
-/// filenames). Single definition — UI resolves it via device_store.
+/// Calendar date as yyyy-MM-dd (STORAGE ONLY: stamps, export filenames,
+/// CSV bytes, record ids). Single definition — UI resolves it via
+/// device_store. Never render this directly: user-visible dates use
+/// [displayDateOf] (DD-MM-YYYY) or the widgets/clock helpers
+/// ([Day], DD-MM-YYYY where the weekday is shown).
 String dateIsoOf(DateTime t) =>
     '${t.year.toString().padLeft(4, '0')}-'
     '${t.month.toString().padLeft(2, '0')}-'
     '${t.day.toString().padLeft(2, '0')}';
+
+/// Global date rule — DISPLAY ONLY, app-wide: DD-MM-YYYY (e.g. 03-09-2026).
+/// For DateTime values shown without a weekday (enrollment/trust/claim
+/// dates). Storage/CSV/filenames stay [dateIsoOf] (yyyy-MM-dd) — never
+/// route those through here.
+String displayDateOf(DateTime t) =>
+    '${t.day.toString().padLeft(2, '0')}-'
+    '${t.month.toString().padLeft(2, '0')}-'
+    '${t.year.toString().padLeft(4, '0')}';
 
 /// Today's date as yyyy-MM-dd (course creation stamp).
 String todayIso() => dateIsoOf(DateTime.now());

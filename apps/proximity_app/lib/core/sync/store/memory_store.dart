@@ -140,12 +140,54 @@ class InMemoryDeviceStore implements DeviceStore {
   @override
   Future<void> writeHostName(String name) async => hostName = name.trim();
 
+  final Map<String, bool> _showProfPhoto = {};
+
+  @override
+  Future<bool> readShowProfPhoto(String course) async =>
+      _showProfPhoto[course.trim()] ?? false;
+
+  @override
+  Future<void> writeShowProfPhoto(String course, bool show) async {
+    final key = course.trim();
+    if (key.isEmpty) return;
+    _showProfPhoto[key] = show;
+  }
+
+  final Map<String, String> _courseProfPhotos = {};
+
+  @override
+  Future<String> readCourseProfPhoto(String course) async =>
+      _courseProfPhotos[course.trim()] ?? '';
+
+  @override
+  Future<void> writeCourseProfPhoto(String course, String photoUrl) async {
+    final key = course.trim();
+    final url = photoUrl.trim();
+    if (key.isEmpty || url.isEmpty) return;
+    _courseProfPhotos[key] = url;
+  }
+
   @override
   Future<String?> readLastHost() async => lastHost;
 
   @override
   Future<void> writeLastHost(String hostPort) async =>
       lastHost = hostPort.trim();
+
+  String? _exportDir;
+
+  @override
+  Future<String?> readExportDir() async => _exportDir;
+
+  @override
+  Future<void> writeExportDir(String path) async {
+    final clean = path.trim();
+    if (clean.isEmpty) return;
+    _exportDir = clean;
+  }
+
+  @override
+  Future<void> clearExportDir() async => _exportDir = null;
 
   bool _orgBackfillComplete = false;
 

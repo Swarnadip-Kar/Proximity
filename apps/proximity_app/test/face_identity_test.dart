@@ -38,11 +38,17 @@ void main() {
   });
 
   group('L2 route guards (mobile-only set)', () {
-    test('enroll/* + mark/* are mobile-only; live/records are not', () {
+    test('enroll/* are mobile-only; mark/* guards are gone (in-tab only)',
+        () {
       for (final r in [
-        'enroll/intro',
         'enroll/capture',
         'enroll/result',
+      ]) {
+        expect(ProxRoutes.isMobileOnly(r), isTrue, reason: r);
+      }
+      // mark/* named routes are deleted (in-tab phases only) — no guard
+      // branches remain for them.
+      for (final r in [
         'mark/browse',
         'mark/join',
         'mark/waiting',
@@ -51,7 +57,9 @@ void main() {
         'mark/verdict',
         'mark/manual',
       ]) {
-        expect(ProxRoutes.isMobileOnly(r), isTrue, reason: r);
+        expect(ProxRoutes.isMobileOnly(r), isFalse, reason: r);
+        expect(ProxRoutes.mobileGuardRedirect(r, mobile: false), isNull,
+            reason: r);
       }
       for (final r in [
         'live/CS101',
@@ -70,10 +78,7 @@ void main() {
 
     test('records-only devices redirect mobile-only routes to records/mine',
         () {
-      expect(
-          ProxRoutes.mobileGuardRedirect('enroll/intro', mobile: false),
-          ProxRoutes.myAttendance);
-      expect(ProxRoutes.mobileGuardRedirect('mark/face', mobile: false),
+      expect(ProxRoutes.mobileGuardRedirect('enroll/capture', mobile: false),
           ProxRoutes.myAttendance);
       // Hosting + records stay put (professors host from desktops).
       expect(ProxRoutes.mobileGuardRedirect('live/CS101', mobile: false),
@@ -85,9 +90,8 @@ void main() {
           ProxRoutes.mobileGuardRedirect('prof/courses', mobile: false),
           isNull);
       // Mobile devices never redirect.
-      expect(ProxRoutes.mobileGuardRedirect('enroll/intro', mobile: true),
-          isNull);
-      expect(ProxRoutes.mobileGuardRedirect('mark/face', mobile: true),
+      expect(
+          ProxRoutes.mobileGuardRedirect('enroll/capture', mobile: true),
           isNull);
     });
   });

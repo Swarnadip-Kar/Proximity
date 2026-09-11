@@ -88,7 +88,7 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
       _run(() => entryContinueWithRole(
           ref, () => mounted, widget.account, role, which));
 
-  Future<void> _signOut() => _run(() => entrySignOut(ref));
+  Future<void> _signOut() => _run(() => entrySignOut(ref, () => mounted));
 
   void _openDeviceIdentity() {
     BleLog.log('NAV', 'entry open device & identity');
@@ -109,14 +109,22 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
         acct.email.toLowerCase(), () => entryRoleFor(ref, acct));
     return AdaptiveScaffold(
       title: 'Proximity',
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: FutureBuilder<Map<String, String>?>(
-              future: roleFuture,
-              builder: (context, snap) {
+      // Edge-to-edge landing: resume/register actions clear the system nav
+      // bar via live viewPadding (SafeArea bottom-only, mirroring
+      // _ShellEdgeBody). Zero hardcoded insets; no-op on desktop/Web.
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        bottom: true,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: FutureBuilder<Map<String, String>?>(
+                future: roleFuture,
+                builder: (context, snap) {
                 final role = snap.data;
                 final emailOk = role != null &&
                     (role['email'] ?? '').toLowerCase() ==
@@ -137,7 +145,8 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                     ProxIdentityHeader(
                         displayName: acct.displayName,
                         email: acct.email,
-                        heldLabel: emailOk ? entryHeldLabel(role) : ''),
+                        heldLabel: emailOk ? entryHeldLabel(role) : '',
+                        photoUrl: acct.photoUrl),
                     if (linked != null &&
                         linked.gmail.toLowerCase() !=
                             acct.email.toLowerCase()) ...[
@@ -167,8 +176,12 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                         onRegisterStudent: _registerStudent,
                       ),
                     ] else ...[
+                      // `role` is non-null on this branch (`held` is empty
+                      // when it is null, which takes the branch above); the
+                      // fallback keeps the read null-safe (never `!` on
+                      // session/identity state).
                       RoleResumeSection(
-                        role: role!,
+                        role: role ?? const <String, String>{},
                         ordered: ordered,
                         lastMode: roleLastMode(role),
                         busy: _busy,
@@ -190,7 +203,8 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                     ),
                   ],
                 );
-              },
+                },
+              ),
             ),
           ),
         ),

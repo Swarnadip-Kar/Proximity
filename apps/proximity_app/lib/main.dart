@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'firebase_options.dart';
@@ -73,6 +74,20 @@ Future<DeviceStore> _debugSeededStore() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Early edge-to-edge opt-in (API <35): must land before the first frame
+  // so the Activity window draws behind the system bars from launch.
+  // Native MainActivity + theme flags cover the splash; this covers the
+  // Flutter view. Theme-aware icon brightness is re-synced in build
+  // (_syncSystemChrome). Safe on iOS/desktop/Web (ignored there).
+  try {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      statusBarColor: Colors.transparent,
+      systemNavigationBarContrastEnforced: false,
+    ));
+  } catch (_) {}
   // Firebase is Android/iOS/macOS only (firebase_options throws
   // UnsupportedError on Windows/Linux/web). Fail-soft: the app still
   // starts offline — professors can host locally; sign-in screens explain
@@ -222,6 +237,12 @@ Future<void> main() async {
       child: const ProximityApp(),
     ),
   );
+  // Cold-start race cover: the engine applies its own window flags while
+  // attaching/drawing the first frame, which can stomp the pre-runApp
+  // opt-in above (background→foreground works because resume re-asserts).
+  // Re-assert once the first frame is on screen — by then the first build
+  // has recorded _lastResolvedBrightness, so icon contrast stays correct.
+  WidgetsBinding.instance.addPostFrameCallback((_) => _reassertEdgeToEdge());
 }
 
 class ProximityApp extends ConsumerStatefulWidget {
@@ -229,6 +250,54 @@ class ProximityApp extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<ProximityApp> createState() => _ProximityAppState();
+}
+
+/// Last applied nav-bar icon brightness (the overlay style is re-sent
+/// only on theme flips, never on every build).
+Brightness? _lastChromeNavBrightness;
+
+/// Last app-resolved brightness (theme choice, not platform), reused when
+/// re-asserting chrome after OS/plugin resets (resume, metrics change).
+Brightness? _lastResolvedBrightness;
+
+/// Re-assert edge-to-edge after events that reset window flags: permission
+/// sheets, camera/ML plugin activities, recent-apps return, keyboard
+/// open/close, gesture↔3-button switches. Forces the mode call and the
+/// overlay re-send with the last app brightness (never platform brightness,
+/// so an explicit Light/Dark choice keeps its icon contrast).
+void _reassertEdgeToEdge() {
+  try {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  } catch (_) {}
+  final b = _lastResolvedBrightness ??
+      WidgetsBinding.instance.platformDispatcher.platformBrightness;
+  _lastChromeNavBrightness = null;
+  _syncSystemChrome(b);
+}
+
+/// Edge-to-edge system chrome for the mobile shells: transparent Android
+/// system navigation bar so the shell chrome flows behind 3-button nav /
+/// gesture lines of any height (the layout half — extendBody + dynamic
+/// MediaQuery insets — lives in the shells, which rebuild on metrics
+/// change). Android-only call (the nav bar is an Android concept; iOS is
+/// fullscreen by default and needs no call); desktop/Web untouched.
+/// Status-bar fields stay null = unchanged. No `windowOptOutEdgeToEdge-
+/// Enforcement` anywhere (that flag OPTS OUT of edge-to-edge; targetSdk
+/// 36 enforces it on API 35+ and this call opts API ≤34 in — same end
+/// state on every Android version).
+void _syncSystemChrome(Brightness brightness) {
+  if (!isAndroid) return;
+  if (_lastChromeNavBrightness == brightness) return;
+  _lastChromeNavBrightness = brightness;
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarDividerColor: Colors.transparent,
+    systemNavigationBarIconBrightness: brightness == Brightness.dark
+        ? Brightness.light
+        : Brightness.dark,
+    systemNavigationBarContrastEnforced: false,
+  ));
 }
 
 /// The engine owns the flush; this only wakes it: connectivity-return edge
@@ -301,15 +370,57 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
             cloud: ref.read(cloudSyncProvider),
             profOf: _profOf);
       } catch (_) {}
+      // Plugin activities / permission sheets / recents reset window flags.
+      _reassertEdgeToEdge();
     }
   }
+
+  // NOTE: no didChangeMetrics override here. Re-calling
+  // setEnabledSystemUIMode inside didChangeMetrics triggers a new metrics
+  // notification, which loops forever ("Sending viewport metrics" spam).
+  // Resume + native focus handling + build-time sync cover resets.
 
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(appModeProvider);
+    // Stale-stack reset (account scope): both shells are keyed by the
+    // signed-in Gmail — the sync session covers the stream loading gap so
+    // the key is stable across it — so an account switch / sign-out
+    // remounts the shell and drops every per-tab Navigator stack
+    // (mark/courses/account) holding the previous identity's screens.
+    // `setMode(unset)` needs no key (the home swap unmounts the shells);
+    // lock-transition parking + the single setup-flow push stay owned by
+    // the shells' gate (read-only here).
+    String shellAccount = '';
+    try {
+      shellAccount = ref
+              .watch(accountProvider)
+              .valueOrNull
+              ?.email
+              .trim()
+              .toLowerCase() ??
+          '';
+    } catch (_) {}
+    if (shellAccount.isEmpty) {
+      try {
+        shellAccount =
+            ref.watch(authServiceProvider).current?.email.trim().toLowerCase() ??
+                '';
+      } catch (_) {}
+    }
+    if (shellAccount.isEmpty) shellAccount = 'signed-out';
     // Account-section addition: the persisted Dark/Light/System choice
     // (features/account/theme_mode.dart). Defaults to system.
     final themeMode = ref.watch(themeModeProvider);
+    final resolvedBrightness = switch (themeMode) {
+      ThemeMode.dark => Brightness.dark,
+      ThemeMode.light => Brightness.light,
+      ThemeMode.system => MediaQuery.platformBrightnessOf(context),
+    };
+    // Theme-aware nav-bar icon contrast for the transparent system bar
+    // (cached inside; no-op off Android).
+    _lastResolvedBrightness = resolvedBrightness;
+    _syncSystemChrome(resolvedBrightness);
     return MaterialApp(
       title: 'Proximity',
       debugShowCheckedModeBanner: false,
@@ -332,10 +443,12 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
         AppMode.unset => const LandingScreen(),
         // Web records builds never mark: students land on records.
         // Native students land on the 3-tab shell (Mark gate inside).
-        AppMode.student =>
-          kIsWeb ? const MyAttendanceScreen() : const StudentShell(),
+        AppMode.student => kIsWeb
+            ? const MyAttendanceScreen()
+            : StudentShell(key: ValueKey('student-shell-$shellAccount')),
         // Professor 3-tab shell (Live/Courses/Account).
-        AppMode.prof => const ProfShell(),
+        AppMode.prof =>
+            ProfShell(key: ValueKey('prof-shell-$shellAccount')),
         // Fresh-install entry: the ONE serialized setup flow (the
         // Mark-gate path pushes this same screen onto the Mark tab).
         AppMode.enroll => SetupFlowScreen(
@@ -351,6 +464,9 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
             },
             onComplete: () async {
               // Claim done → land on mark/browse, never the roles hub.
+              // Mounted-guarded: the flow may have been dismissed under us
+              // before completion lands.
+              if (!context.mounted) return;
               await setMode(ref, AppMode.student);
             },
           ),
@@ -389,7 +505,15 @@ class AdaptiveScaffold extends StatelessWidget {
     final cupertino =
         platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
     if (!cupertino) {
+      // Mobile edge-to-edge: scaffold background + AppBar bleed behind the
+      // transparent system bars (see _syncSystemChrome + android styles).
+      // Inset handling lives in the bodies, not here: tab roots clear via
+      // the shell's _ShellEdgeBody, landing/capture chrome seat their own
+      // bottom SafeAreas (all viewPadding-driven, zero hardcoded values).
+      // extendBody is a no-op without a bottom bar but keeps the contract
+      // explicit; desktop/Web have zero system insets so render unchanged.
       return Scaffold(
+        extendBody: isMobile,
         appBar: AppBar(title: Text(title), actions: actions, leading: leading),
         body: body,
         floatingActionButton: floatingActionButton,

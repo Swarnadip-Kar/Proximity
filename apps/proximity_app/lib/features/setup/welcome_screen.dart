@@ -74,23 +74,33 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   Widget build(BuildContext context) {
     return AdaptiveScaffold(
       title: 'Proximity',
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: ProxStaggered(
-              children: [
-                const WebRecordsBanner(),
-                const WelcomeHeroSection(),
-                const SizedBox(height: ProxSpacing.lg),
-                WelcomeSignInSection(
-                  busy: _busy,
-                  status: _status,
-                  onSignIn: _signIn,
-                  onOfflineProf: _continueOfflineProf,
-                ),
-              ],
+      // Edge-to-edge landing: actionable sign-in buttons clear the system
+      // nav bar via live viewPadding (SafeArea bottom-only, mirroring
+      // _ShellEdgeBody — AppBar owns the top). Zero hardcoded insets,
+      // rebuilds on metrics change; no-op on desktop/Web.
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        bottom: true,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: ProxStaggered(
+                children: [
+                  const WebRecordsBanner(),
+                  const WelcomeHeroSection(),
+                  const SizedBox(height: ProxSpacing.lg),
+                  WelcomeSignInSection(
+                    busy: _busy,
+                    status: _status,
+                    onSignIn: _signIn,
+                    onOfflineProf: _continueOfflineProf,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

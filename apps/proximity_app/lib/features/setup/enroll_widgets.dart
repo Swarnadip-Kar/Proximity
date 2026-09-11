@@ -1,7 +1,8 @@
 // Enrollment bundle shared vocabulary (feature-local).
 //
-// The squeezed single-page enrollment is split into Intro / Capture /
-// Result; these widgets + copy keep the three screens reading as one flow.
+// The squeezed single-page enrollment is split into Account & key /
+// Capture / Result; these widgets + copy keep the three screens reading
+// as one flow.
 // Motion follows the app language: user taps spring (ProxCurves.spring),
 // system arrivals ease (ProxCurves.standard), every duration routes through
 // ProxMotion so reduced-motion degrades to instant-but-correct. Nothing here
@@ -14,15 +15,9 @@ import 'package:proximity_ble/ble.dart';
 
 import '../../design/tokens.dart';
 
-/// Friendly retry brief — reassurance, never an error. Shown near the start
-/// of Intro + Capture, and repeated under targeted rescans so retry two or
-/// three never reads as failure.
-const enrollRetryBrief =
-    'Getting a good scan sometimes takes 3–4 tries, no worries 🙂';
-
 /// Decision-point log for the bundle, via the shared BleLog pattern:
 /// - FACE: why a rescan targets which slot(s), what the controller dropped.
-/// - NAV: bundle moves (opened, intro→capture, capture→result, done).
+/// - NAV: bundle moves (opened, account&key→capture, capture→result, done).
 /// - SYNC: why the online claim was refused (or linked).
 abstract final class EnrollLog {
   static void face(String msg) => BleLog.log('FACE', msg);
@@ -36,7 +31,7 @@ abstract final class EnrollLog {
 const enrollCapturePrompt = 'Rotate your face slowly, following the glow.';
 
 /// THE single ID-number entry of the bundle (entered exactly once, on the
-/// intro/account step; the result step shows it readonly). One entry, one
+/// account & key step; the result step shows it readonly). One entry, one
 /// validation (the controller's fail-closed roll check at Save) — never a
 /// second prompt. Owns its controller, seeded from [initialValue] and
 /// re-seeded when it changes externally (account switch clears the draft).

@@ -57,6 +57,30 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
   /// Empty = show all tags.
   late final Set<String> _only = {...widget.initialTags};
 
+  /// True once named-route arguments have been merged (once per mount).
+  var _routeTagsApplied = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Named `debug/log` pushes via the route table build a const screen
+    // (no constructor tags) — the drawer's Expand carries its selection in
+    // settings.arguments instead (see log_drawer). Merge once so the
+    // filter survives the named identity without touching the table.
+    if (_routeTagsApplied) return;
+    _routeTagsApplied = true;
+    try {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map && args['initialTags'] is List) {
+        final tags =
+            (args['initialTags'] as List).whereType<String>().toSet();
+        if (tags.isNotEmpty) _only.addAll(tags);
+      } else if (args is Set<String> && args.isNotEmpty) {
+        _only.addAll(args);
+      }
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();

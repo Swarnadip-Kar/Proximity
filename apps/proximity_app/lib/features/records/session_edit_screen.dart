@@ -32,8 +32,9 @@ import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
+import '../../widgets/clock.dart';
 import '../../widgets/log_drawer.dart';
-import '../../widgets/manual_add.dart';
+import '../manual_attendance/manual_attendance.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
@@ -53,6 +54,16 @@ class SessionEditScreen extends ConsumerStatefulWidget {
       required this.record,
       this.courseSessions = const [],
       this.readOnly = false});
+
+  /// Canonical in-tab route name:
+  /// `prof/courses/<course>/sessions/<sessionId>/edit`.
+  /// Documented equivalent (no `proxOnGenerateRoute` entry — the table only
+  /// handles `prof/courses/<course>[/export]`; in-tab pushes resolve record
+  /// objects directly, so this stays in-tab-only). Shares the
+  /// `prof/courses/<course>` prefix so `popUntil` by course still works and
+  /// NAV logs show a name (no duplicate unnamed push).
+  static String routeName(String course, String sessionId) =>
+      'prof/courses/$course/sessions/$sessionId/edit';
 
   @override
   ConsumerState<SessionEditScreen> createState() => _SessionEditScreenState();
@@ -371,7 +382,8 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  '${widget.record.classLabel} · ${widget.record.dateIso}',
+                  // Global date rule, display only: with-day DD-MM-YYYY.
+                  '${widget.record.classLabel} · ${shortDayDateOf(widget.record.dateIso)}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 4),

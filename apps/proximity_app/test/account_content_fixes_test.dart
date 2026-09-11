@@ -185,8 +185,8 @@ void main() {
       final stamp = DateTime.now().toUtc().millisecondsSinceEpoch -
           const Duration(days: 1).inMilliseconds;
       final eligible = faceRescanEligibleAt(stamp);
-      final eligibleIso = dateIsoOf(eligible.toUtc());
-      final lastIso = dateIsoOf(
+      final eligibleIso = displayDateOf(eligible.toUtc());
+      final lastIso = displayDateOf(
           DateTime.fromMillisecondsSinceEpoch(stamp, isUtc: true));
       final store = await _enrolledStore(lastFaceRescanAt: stamp);
       await t.pumpWidget(ProviderScope(
@@ -221,7 +221,7 @@ void main() {
       // Rescanned 31 days ago → window elapsed → allowed again.
       final stamp = DateTime.now().toUtc().millisecondsSinceEpoch -
           const Duration(days: 31).inMilliseconds;
-      final lastIso = dateIsoOf(
+      final lastIso = displayDateOf(
           DateTime.fromMillisecondsSinceEpoch(stamp, isUtc: true));
       final store = await _enrolledStore(lastFaceRescanAt: stamp);
       await t.pumpWidget(ProviderScope(
@@ -273,7 +273,7 @@ void main() {
       final store = await _enrolledStore();
       final movedAt = DateTime.now().toUtc().millisecondsSinceEpoch -
           const Duration(days: 1).inMilliseconds;
-      final retryIso = dateIsoOf(DateTime.fromMillisecondsSinceEpoch(
+      final retryIso = displayDateOf(DateTime.fromMillisecondsSinceEpoch(
           movedAt + const Duration(days: 30).inMilliseconds,
           isUtc: true));
       await t.pumpWidget(ProviderScope(

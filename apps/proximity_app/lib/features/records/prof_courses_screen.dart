@@ -29,15 +29,26 @@ import '../../widgets/clock.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
+import '../../widgets/prox_cards.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
+import '../../widgets/student_card.dart' show CourseLogo;
 import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
 import 'course_overview_screen.dart';
 
 class ProfCoursesScreen extends ConsumerStatefulWidget {
   const ProfCoursesScreen({super.key});
+
+  /// Canonical tab-root route name: `prof/courses`.
+  /// Matches the IA node (`ProxRoutes.profCourses` in `routes.dart`; the
+  /// value is duplicated here as a literal — importing the table would
+  /// cycle back into this screen). This root itself is built by the shell
+  /// tab navigator at `/`; the name documents the ONE IA identity so NAV
+  /// logs, `popUntil` by name/prefix, and deep-links agree with the
+  /// in-tab pushes below (no duplicate unnamed push).
+  static const String routeName = 'prof/courses';
 
   @override
   ConsumerState<ProfCoursesScreen> createState() => _ProfCoursesScreenState();
@@ -282,6 +293,9 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                                   'NAV', 'courses → overview ${rows[i].name}');
                               Navigator.of(context)
                                   .push(MaterialPageRoute(
+                                      settings: RouteSettings(
+                                          name: CourseOverviewScreen.routeName(
+                                              rows[i].name)),
                                       builder: (_) => CourseOverviewScreen(
                                           courseName: rows[i].name)))
                                   .then((_) {
@@ -324,62 +338,43 @@ class _PickerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    return Container(
-      constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
-      decoration: BoxDecoration(
-        color: c.surfaceRaised,
-        borderRadius: ProxRadii.cardSpecRadius,
-        border: Border.all(color: c.divider),
-        boxShadow: [c.elevationRaised],
-      ),
-      child: InkWell(
-        borderRadius: ProxRadii.cardSpecRadius,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(ProxSpacing.cardPadding),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: c.accentBrand.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(ProxRadii.md),
+    // Shared card shell (hover lift, gradient fill) + course logo disc —
+    // the same disc language as student avatars, replacing the one-off
+    // folder icon.
+    return ProxCard(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          CourseLogo(course: title),
+          const SizedBox(width: ProxSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: ProxType.body(color: c.contentPrimary),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-                alignment: Alignment.center,
-                child: Icon(Icons.folder_outlined, color: c.accentBrand),
-              ),
-              const SizedBox(width: ProxSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: ProxType.body(color: c.contentPrimary),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: ProxType.caption(color: c.contentSecondary),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                  ],
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: ProxType.caption(color: c.contentSecondary),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-              ),
-              const SizedBox(width: ProxSpacing.sm),
-              // Session-count donut: ring + count, brand-tinted.
-              _SessionDonut(count: sessionCount),
-              const SizedBox(width: ProxSpacing.xs),
-              Icon(Icons.chevron_right, color: c.contentTertiary),
-            ],
+              ],
+            ),
           ),
-        ),
+          const SizedBox(width: ProxSpacing.sm),
+          // Session-count donut: ring + count, brand-tinted.
+          _SessionDonut(count: sessionCount),
+          const SizedBox(width: ProxSpacing.xs),
+          Icon(Icons.chevron_right, color: c.contentTertiary),
+        ],
       ),
     );
   }

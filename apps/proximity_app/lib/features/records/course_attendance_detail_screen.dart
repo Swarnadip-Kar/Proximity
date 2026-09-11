@@ -27,11 +27,24 @@ class CourseAttendanceDetailScreen extends ConsumerStatefulWidget {
   final String course;
   final List<ClassRecord> sessions;
   final String email;
+
+  /// Cached professor Gmail photo for this course (seen live on this
+  /// device, '' = never seen). Photo first, course-letter disc fallback —
+  /// the same avatar contract as the course cards.
+  final String profPhotoUrl;
   const CourseAttendanceDetailScreen(
       {super.key,
       required this.course,
       required this.sessions,
-      required this.email});
+      required this.email,
+      this.profPhotoUrl = ''});
+
+  /// Canonical in-tab route name: `records/mine/<course>`.
+  /// Documented equivalent (deep-link table only has the `records/mine`
+  /// root; in-tab pushes resolve record objects directly, so this stays
+  /// in-tab-only). ONE identity for NAV logs and `popUntil` by name/prefix
+  /// (no duplicate unnamed push).
+  static String routeName(String course) => 'records/mine/$course';
 
   @override
   ConsumerState<CourseAttendanceDetailScreen> createState() =>
@@ -118,17 +131,12 @@ class _CourseAttendanceDetailScreenState
                   children: [
                     Semantics(
                       label: summary.line,
-                      child: SizedBox(
-                        width: 64,
-                        height: 64,
-                        child: CircularProgressIndicator(
-                          value: value,
-                          strokeWidth: 6,
-                          strokeCap: StrokeCap.round,
-                          backgroundColor: c.divider,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                              c.accentBrand),
-                        ),
+                      // Same widget as the course-list cards (copy-paste
+                      // parity by construction — one assembly, never drift).
+                      child: AttendanceRingAvatar(
+                        photoUrl: widget.profPhotoUrl,
+                        course: widget.course,
+                        value: value,
                       ),
                     ),
                     const SizedBox(width: ProxSpacing.lg),
@@ -188,3 +196,10 @@ class _CourseAttendanceDetailScreenState
     );
   }
 }
+
+/// Data limit (same as the cards): past-course records carry no photo, so
+/// a course never joined live on this device always renders the letter
+/// disc; the photo converges via the live gated /window unicast cached
+/// per course. The header renders [AttendanceRingAvatar] — the same
+/// assembly as the course-list cards.
+

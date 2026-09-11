@@ -32,6 +32,15 @@ class WindowDescriptor {
   /// Gated unicast ONLY (GET /window with a matching or legacy org —
   /// never UDP beacons, never BLE air packets, never Sig_p/Sig_s).
   final String profEmail;
+
+  /// Hosting professor's Gmail profile photo URL (same gated channel as
+  /// [profEmail]; '' = unknown). Rendered with initials fallback.
+  final String profPhoto;
+
+  /// Hosting professor's display name (same gated LAN channel as
+  /// [profEmail]; '' = unknown). Never BLE — air packets stay IP:port
+  /// hints only.
+  final String profName;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -43,6 +52,8 @@ class WindowDescriptor {
     required this.display,
     this.org = '',
     this.profEmail = '',
+    this.profPhoto = '',
+    this.profName = '',
   });
 }
 
@@ -115,7 +126,9 @@ class ProxClient {
         int waiting,
         String display,
         String org,
-        String profEmail
+        String profEmail,
+        String profPhoto,
+        String profName
       })> probeWindow(
       {Duration timeout = const Duration(seconds: 4),
       void Function(Object e)? onError,
@@ -139,7 +152,9 @@ class ProxClient {
           waiting: 0,
           display: '',
           org: '',
-          profEmail: ''
+          profEmail: '',
+          profPhoto: '',
+          profName: ''
         );
       }
       if (resp.statusCode != 200) {
@@ -151,7 +166,9 @@ class ProxClient {
           waiting: 0,
           display: '',
           org: '',
-          profEmail: ''
+          profEmail: '',
+          profPhoto: '',
+          profName: ''
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
@@ -163,6 +180,8 @@ class ProxClient {
         display: (m['display'] as String?) ?? '',
         org: (m['org'] as String?) ?? '',
         profEmail: ((m['profEmail'] as String?) ?? '').trim().toLowerCase(),
+        profPhoto: ((m['profPhoto'] as String?) ?? '').trim(),
+        profName: ((m['profName'] as String?) ?? '').trim(),
       );
     } catch (e) {
       onError?.call(e);
@@ -173,31 +192,56 @@ class ProxClient {
         waiting: 0,
         display: '',
         org: '',
-        profEmail: ''
+        profEmail: '',
+        profPhoto: '',
+        profName: ''
       );
     }
   }
 
-  Future<void> _postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _postJson(
+      String path, Map<String, dynamic> body) async {
     _http.badCertificateCallback = (cert, h, p) => true;
     final req =
         await _http.postUrl(_uri(path)).timeout(const Duration(seconds: 8));
     req.headers.contentType = ContentType.json;
     req.write(jsonEncode(body));
     final resp = await req.close().timeout(const Duration(seconds: 6));
-    await resp.transform(utf8.decoder).join();
+    final text = await resp.transform(utf8.decoder).join();
     if (resp.statusCode >= 400) {
       throw StateError('$path failed: ${resp.statusCode}');
     }
+    try {
+      final m = jsonDecode(text);
+      if (m is Map<String, dynamic>) return m;
+    } catch (_) {}
+    return const {};
   }
 
-  Future<void> postWaiting(
+  /// Presence heartbeat + piggybacked window sample (SYNC-owned): the
+  /// professor's POST /waiting reply carries the live window flag +
+  /// display code on the same round trip, so waiting-room entry fast-paths
+  /// without a second (rate-capped) GET /window. Tolerant-parsed
+  /// (absent keys = closed) so older hosts degrade to the probe path.
+  Future<({int waiting, bool windowOpen, String display})> postWaiting(
           {required String email,
           required String name,
           String roll = '',
-          String org = ''}) =>
-      _postJson('/waiting',
-          {'email': email, 'name': name, 'roll': roll, 'org': org});
+          String org = '',
+          String photoUrl = ''}) async {
+    final m = await _postJson('/waiting', {
+      'email': email,
+      'name': name,
+      'roll': roll,
+      'org': org,
+      if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
+    });
+    return (
+      waiting: (m['waiting'] as num?)?.toInt() ?? 0,
+      windowOpen: (m['windowOpen'] as bool?) ?? false,
+      display: (m['display'] as String?) ?? '',
+    );
+  }
 
   /// Explicit waiting-room leave (best-effort: never throws; the prof UI
   /// also converges because heartbeats stop with the room timers).
@@ -211,9 +255,15 @@ class ProxClient {
           {required String email,
           required String name,
           String roll = '',
-          String org = ''}) =>
-      _postJson('/manual-request',
-          {'email': email, 'name': name, 'roll': roll, 'org': org});
+          String org = '',
+          String photoUrl = ''}) =>
+      _postJson('/manual-request', {
+        'email': email,
+        'name': name,
+        'roll': roll,
+        'org': org,
+        if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
+      });
 
   Future<String> fetchManualStatus(String email) async {
     try {
@@ -299,8 +349,8 @@ class ProxClient {
     final sigP = Uint8List.fromList(hexDecode(body['sigP'] as String));
     // The descriptor never carries C_j (radio-only). The caller proves it
     // heard the live challenge by verifying Sig_p against its radio copy.
-    // `org` + `profEmail` ride alongside (join-gate display only — never
-    // in Sig_p/Sig_s; email is gated unicast only, never beacons/BLE).
+    // `org` + `profEmail` + `profName` ride alongside (join-gate display
+    // only — never in Sig_p/Sig_s; gated LAN unicast only, never BLE).
     WindowDescriptor descFor(int jj, Uint8List sig) => WindowDescriptor(
           classLabel: body['class'] as String,
           sessionId: sessionId,
@@ -313,6 +363,8 @@ class ProxClient {
           org: body['org'] as String? ?? '',
           profEmail:
               ((body['profEmail'] as String?) ?? '').trim().toLowerCase(),
+          profPhoto: ((body['profPhoto'] as String?) ?? '').trim(),
+          profName: ((body['profName'] as String?) ?? '').trim(),
         );
     bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
           profPk: profPk,

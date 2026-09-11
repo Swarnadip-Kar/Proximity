@@ -14,9 +14,9 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/sync/claim.dart';
-import 'package:proximity_app/features/setup/enroll_intro.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/intro_sections.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 
@@ -137,13 +137,14 @@ void main() {
   });
 
   group('single ID-number entry', () {
-    testWidgets('intro holds the one editable field, prefilled', (t) async {
+    testWidgets('account step holds the one editable field, prefilled', (t) async {
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
       await t.pumpWidget(ProviderScope(
         overrides: [enrollmentControllerProvider.overrideWith((ref) => ctl)],
-        child: const MaterialApp(home: EnrollIntroScreen()),
+        child: const MaterialApp(
+            home: Scaffold(body: IntroAccountSection())),
       ));
       await t.pumpAndSettle();
       expect(find.byType(EnrollRollField), findsOneWidget);
@@ -231,6 +232,108 @@ void main() {
       await ctl.enrollFace(_stills);
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.state.message, contains('Generate the device key first'));
+    });
+
+    test(
+        'rescan after restart restores the stored key (no key-gate error)',
+        () async {
+      // Reproduces the rescan bug: key generated earlier (stored on
+      // device), then a fresh controller (restart) with an empty draft.
+      // The capture screen's mount reconcile (`refreshFromAuth`) must
+      // reload the key before Save — the gate must not fire.
+      final store = InMemoryDeviceStore();
+      await store.writeEnrollment(StoredEnrollment(
+        email: 'b@univ.edu',
+        name: 'B',
+        roll: 'B-ROLL',
+        seedHex: 'ab' * 32,
+        pkHex: 'cd' * 32,
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      final auth = FakeAuthService(_b);
+      final ctl = _ctl(auth, store);
+      expect(ctl.state.pkHex, isEmpty);
+
+      await ctl.refreshFromAuth();
+
+      expect(ctl.state.pkHex.isNotEmpty, isTrue);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.message, isNot(contains('device key')));
+    });
+
+    test('stored-but-locked key gets the honest message, not the prompt',
+        () async {
+      // The locked hole: account adopted, but no usable key loaded while
+      // a stored enrollment exists for this account (as a failed sealed
+      // restore leaves them). The gate must name the recovery instead of
+      // implying the key was never generated.
+      final store = InMemoryDeviceStore();
+      final auth = FakeAuthService(_b);
+      final ctl = _ctl(auth, store);
+      await ctl.signIn();
+      expect(ctl.state.account?.email, 'b@univ.edu');
+      // Enrollment lands AFTER the adopt, so no restore ever ran for it.
+      await store.writeEnrollment(StoredEnrollment(
+        email: 'b@univ.edu',
+        name: 'B',
+        roll: 'B-ROLL',
+        seedHex: 'ab' * 32,
+        pkHex: 'cd' * 32,
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.state.message, contains('unlock'));
+      expect(ctl.state.message, contains('Generate device key'));
+      expect(ctl.state.message, isNot(contains('first, then scan')));
+    });
+
+    test('same-account refresh retries a missing key', () async {
+      // The refresh hole: account adopted but `_keys` null (a locked
+      // restore that only recovered pkHex). A later refresh must retry
+      // the restore instead of early-returning on the account match.
+      final store = InMemoryDeviceStore();
+      final auth = FakeAuthService(_b);
+      final ctl = _ctl(auth, store);
+      await ctl.signIn();
+      expect(ctl.state.account?.email, 'b@univ.edu');
+      expect(ctl.state.pkHex, isEmpty);
+      // Enrollment lands after the adopt (e.g. slow store read winning
+      // late): refresh must pick the key up now.
+      await store.writeEnrollment(StoredEnrollment(
+        email: 'b@univ.edu',
+        name: 'B',
+        roll: 'B-ROLL',
+        seedHex: 'ab' * 32,
+        pkHex: 'cd' * 32,
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      await ctl.refreshFromAuth();
+      expect(ctl.state.pkHex.isNotEmpty, isTrue);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
     });
 
     test('signed-out enrollFace stays put, enrolling nothing', () async {

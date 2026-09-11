@@ -38,15 +38,13 @@ abstract final class ProxDurations {
   /// instead of cascading forever on long lists.
   static const staggerCap = Duration(milliseconds: 400);
 
-  /// Verdict pop-in (✓ Marked spring). Consumed by [ProxVerdictBadge].
+  /// Verdict pop-in (✓ Marked spring). Consumed by [VerdictBadge].
   static const verdictPop = Duration(milliseconds: 450);
 
-  /// Error shake (one damped oscillation). Consumed by [ProxVerdictBadge]
-  /// and the enroll notice.
+  /// Error shake (one damped oscillation).
   static const shake = Duration(milliseconds: 500);
 
   /// No-signal breathing period (calm loop, timer-driven so tests settle).
-  /// Consumed by [ProxVerdictBadge].
   static const breath = Duration(milliseconds: 1200);
 
   /// Presence-dot pulse period (timer-driven toggle + implicit fade, so

@@ -66,13 +66,30 @@ Future<SignedAccount?> entrySignIn(WidgetRef ref) async {
 /// draft all go, so the next launch (or the account stream) lands on
 /// Welcome — never on the previous account's home, and the enroll card
 /// can never rebuild from a stale preseed.
-Future<void> entrySignOut(WidgetRef ref) async {
+///
+/// Offline switch-account path (no account at entry, prof mode set): also
+/// unsets the mode so the landing router shows Welcome with a working
+/// sign-in button. Without this the Account tab stays on the offline page
+/// (dead tap). Offline-safe: [setMode] touches only local providers + the
+/// device store, no network. Idempotent: no-op when already unset, so
+/// rapid taps cannot double-navigate. Signed-in callers are untouched
+/// (no mode change when an account was present at entry).
+Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
+  bool hadAccount = false;
+  try {
+    hadAccount = ref.read(authServiceProvider).current != null;
+  } catch (_) {}
   String email = '';
   try {
     email = ref.read(authServiceProvider).current?.email.toLowerCase() ?? '';
   } catch (_) {}
   BleLog.log('NAV', 'entry sign out${email.isNotEmpty ? ' $email' : ''}');
-  await ref.read(authServiceProvider).signOut();
+  // Crash-safety: every provider touch here is fail-soft — a post-await
+  // read on a dead screen's ref throws, and sign-out must never throw
+  // (callers dismiss/pop first, then sign out fire-and-forget or awaited).
+  try {
+    await ref.read(authServiceProvider).signOut();
+  } catch (_) {}
   try {
     await ref.read(deviceStoreProvider).clearRole();
   } catch (_) {}
@@ -87,6 +104,22 @@ Future<void> entrySignOut(WidgetRef ref) async {
     ref.read(linkedIdentityProvider.notifier).state = null;
   } catch (_) {}
   BleLog.log('STATE', 'entry role cache cleared; landing next');
+  if (!hadAccount) {
+    // Mounted-guarded idempotent mode exit (same law as [entryGoto]: the
+    // mode flip unmounts the caller mid-flight). No Navigator push here —
+    // the mode switch itself drives `home` to the landing router.
+    try {
+      if (isMounted != null && !isMounted()) return;
+      if (ref.read(appModeProvider) == AppMode.unset) return;
+    } catch (_) {
+      return;
+    }
+    try {
+      if (isMounted != null && !isMounted()) return;
+      BleLog.log('NAV', 'entry → unset (offline switch account)');
+      await setMode(ref, AppMode.unset);
+    } catch (_) {}
+  }
 }
 
 /// Repopulate [linkedIdentityProvider] from the on-device enrollment when
@@ -390,8 +423,9 @@ Future<void> entryRegisterStudent(
 Future<void> entryStampLastMode(WidgetRef ref, EntryMounted isMounted,
     SignedAccount acct, Map<String, String> role, String which) async {
   final email = acct.email.toLowerCase();
-  final uid = (role['uid'] ?? '').isNotEmpty
-      ? role['uid']!
+  final roleUid = (role['uid'] ?? '').trim();
+  final uid = roleUid.isNotEmpty
+      ? roleUid
       : (acct.uid.isNotEmpty ? acct.uid : email);
   final org = acct.org.isNotEmpty ? acct.org : (role['org'] ?? '');
   final merged = mergeRoleCache(role,
@@ -425,8 +459,16 @@ Future<void> entryStampLastMode(WidgetRef ref, EntryMounted isMounted,
 /// Continue into a held role. Returns a plain message when the continue
 /// itself must run under the caller's busy wrapper (student re-sign-in
 /// binding check); prof continues directly.
+///
+/// [operationTimeout] bounds the whole cloud section (gate + heartbeat +
+/// stamp). Every call inside already has its own shorter timeout, but on a
+/// stalled network each can burn its full budget in turn (~40s of dead UI
+/// with a disabled button and no feedback); the overall budget fails fast
+/// with one honest message instead. Safe: every write inside is idempotent
+/// (merge/touch), so aborting mid-flight retries cleanly.
 Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
-    SignedAccount acct, Map<String, String> role, String which) async {
+    SignedAccount acct, Map<String, String> role, String which,
+    {Duration operationTimeout = const Duration(seconds: 25)}) async {
   BleLog.log(
       'NAV', 'entry continue $which ${acct.email.toLowerCase()}');
   // Silent-pickup path (no fresh sign-in ran): restore the
@@ -437,11 +479,10 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
     await relinkLinkedIdentity(ref, acct);
   }
   if (which == 'prof') {
+    final profUid = (role['uid'] ?? '').trim();
     unawaited(entryMergeProfCloud(
         ref,
-        (role['uid'] ?? '').isNotEmpty
-            ? role['uid']!
-            : acct.email.toLowerCase(),
+        profUid.isNotEmpty ? profUid : acct.email.toLowerCase(),
         acct.email,
         role['displayName'] ?? acct.displayName,
         org: acct.org.isNotEmpty ? acct.org : (role['org'] ?? '')));
@@ -461,22 +502,34 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
   }
   // Re-sign-in binding check: enrollment moved to another device? Same
   // verdict as the enroll claim; also heartbeats last-online so a
-  // lost-phone story shows recency.
+  // lost-phone story shows recency. Overall-budgeted (see
+  // [operationTimeout]): a stalled network must surface one message, not
+  // a minute of dead UI.
   final cloud = ref.read(cloudSyncProvider);
   final email = acct.email.toLowerCase();
-  if (cloud.available && await cloud.isOnline()) {
-    final gate = await entryStudentGate(ref, email);
-    if (!gate.verdict.ok) {
-      BleLog.log('STATE', 'entry continue refused: ${gate.verdict.claim.name}');
-      throw StateError(studentClaimMessage(gate.verdict, gate.binding));
-    }
-    try {
-      await cloud.touchStudentDevice(
-          emailLower: email,
-          pkHex: gate.localPkHex,
-          installId: gate.installId);
-    } catch (_) {}
+  try {
+    await (() async {
+      if (cloud.available && await cloud.isOnline()) {
+        final gate = await entryStudentGate(ref, email);
+        if (!gate.verdict.ok) {
+          BleLog.log(
+              'STATE', 'entry continue refused: ${gate.verdict.claim.name}');
+          throw StateError(studentClaimMessage(gate.verdict, gate.binding));
+        }
+        try {
+          await cloud.touchStudentDevice(
+              emailLower: email,
+              pkHex: gate.localPkHex,
+              installId: gate.installId);
+        } catch (_) {}
+      }
+      await entryStampLastMode(ref, isMounted, acct, role, 'student');
+    })()
+        .timeout(operationTimeout);
+  } on TimeoutException {
+    BleLog.log('STATE', 'entry continue timed out for $email');
+    throw StateError(
+        'Taking too long — check your connection and try again.');
   }
-  await entryStampLastMode(ref, isMounted, acct, role, 'student');
   await entryGoto(ref, isMounted, AppMode.student);
 }

@@ -90,6 +90,7 @@ ThemeData _build(ColorScheme scheme, Brightness brightness) {
       titleTextStyle: text.titleLarge?.copyWith(
         color: scheme.onSurface,
         fontWeight: FontWeight.w600,
+        fontSize: 16,
         letterSpacing: -0.3,
       ),
     ),

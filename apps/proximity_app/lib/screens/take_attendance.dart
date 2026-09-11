@@ -47,6 +47,7 @@ import '../features/live/live_setup.dart';
 import '../features/live/manual_inbox.dart';
 import '../main.dart';
 import '../mode.dart';
+import '../widgets/host_preview_card.dart';
 import '../widgets/log_drawer.dart';
 
 // Recovery policy lives in the draft-recovery section; re-exported here
@@ -111,6 +112,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Timer? _idlePoll;
   String? serverLine;
   String? serverError;
+
+  /// Per-course opt-in: publish my Gmail photo to joining students.
+  /// Off by default (persisted per course in the device store).
+  bool _sharePhoto = false;
   HostSession? _session;
   String _ip = '';
   bool _resumed = false;
@@ -124,6 +129,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   String? _recordStartIso;
   String? _recordOrg;
   String _lastSavedSig = '';
+
+  /// Org the host actually announces (role-cache stamp, '' = legacy).
+  /// Same source as the beacon `org` students see on the waiting card —
+  /// the Setup preview passes this through so it can never drift.
+  String _announcedOrg = '';
 
   /// Prof org for new sessions (role cache stamped at sign-in; '' when
   /// offline-skipped). Cached per visit so later rounds keep the creation
@@ -139,6 +149,19 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     } catch (_) {
       return '';
     }
+  }
+
+  /// Loads the announced org from the SAME source the beacon airs
+  /// (`roleOrg` over the role cache — see host_driver `_startHostingInner`).
+  /// Read-only: no transport/beacon change, preview display only.
+  Future<void> _loadAnnouncedOrg() async {
+    try {
+      final role = await ref.read(deviceStoreProvider).readRole();
+      final org = roleOrg(role);
+      if (mounted && org != _announcedOrg) {
+        setState(() => _announcedOrg = org);
+      }
+    } catch (_) {}
   }
 
   final _nameCtrl = TextEditingController();
@@ -172,6 +195,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     super.initState();
     _host();
     _loadName();
+    _loadAnnouncedOrg();
     // Bluetooth off is otherwise a log-only failure: prompt once, up
     // front, with a tappable Turn-on (rounds need the radio).
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -179,15 +203,43 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     });
   }
 
-  /// Prefills the professor display name (linked identity, else last saved).
+  /// Prefills the professor display name: linked identity wins, last
+  /// saved name otherwise, Gmail display name as the final default — so
+  /// students see a name (never a bare email) even when the professor
+  /// never typed one. Publishes the filled value via `setDisplayName` so
+  /// the announcement carries it even when `_host` already ran (late
+  /// Gmail): the announcer reads the driver name live, and the student
+  /// cannot invent it — host-side publish only, no transport change.
   Future<void> _loadName() async {
     var name = ref.read(linkedIdentityProvider)?.name ?? '';
     try {
       final saved = await ref.read(deviceStoreProvider).readHostName();
       if (saved.isNotEmpty) name = saved;
     } catch (_) {}
+    if (name.isEmpty) {
+      try {
+        name = ref.read(authServiceProvider).current?.displayName.trim() ?? '';
+      } catch (_) {}
+    }
+    if (name.isEmpty) {
+      name = ref.read(accountProvider).valueOrNull?.displayName.trim() ?? '';
+    }
+    if (name.isEmpty) {
+      // Late Gmail: the account stream may not have emitted when initState
+      // ran. Await the first value (bounded) so an empty field still
+      // converges to the known Gmail name instead of airing blank.
+      try {
+        final acct = await ref
+            .read(accountProvider.future)
+            .timeout(const Duration(seconds: 5));
+        name = acct?.displayName.trim() ?? '';
+      } catch (_) {}
+    }
     if (mounted && _nameCtrl.text.isEmpty && name.isNotEmpty) {
       setState(() => _nameCtrl.text = name);
+      try {
+        unawaited(ref.read(hostDriverProvider).setDisplayName(name));
+      } catch (_) {}
     }
   }
 
@@ -234,6 +286,47 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _ip = session.hostIp;
       serverLine = session.addressLine;
     });
+    // Announce the setup name field as-is (the announcer reads it live,
+    // so a Gmail-defaulted field the professor never typed still airs a
+    // name — students see it instead of a bare email). Idempotent: the
+    // same value rewrites the same pref.
+    try {
+      final field = _nameCtrl.text.trim();
+      if (field.isEmpty) {
+        var gmail = '';
+        try {
+          gmail =
+              ref.read(authServiceProvider).current?.displayName.trim() ?? '';
+        } catch (_) {}
+        gmail = gmail.isNotEmpty
+            ? gmail
+            : (ref.read(accountProvider).valueOrNull?.displayName.trim() ??
+                '');
+        if (gmail.isNotEmpty && mounted) {
+          setState(() => _nameCtrl.text = gmail);
+        }
+      }
+      final announced = _nameCtrl.text.trim();
+      if (announced.isNotEmpty) {
+        unawaited(
+            ref.read(hostDriverProvider).setDisplayName(announced));
+      }
+    } catch (_) {}
+    // Publish the host Gmail photo to joining students ONLY when the
+    // professor opted in for this course (off by default). Students
+    // converge on the next room poll; initials fallback when absent or
+    // off. Best-effort, never blocks hosting.
+    try {
+      final share = await ref
+          .read(deviceStoreProvider)
+          .readShowProfPhoto(widget.courseName);
+      if (!mounted) return;
+      setState(() => _sharePhoto = share);
+      final photo = share
+          ? (ref.read(accountProvider).valueOrNull?.photoUrl?.trim() ?? '')
+          : '';
+      unawaited(ref.read(hostDriverProvider).setHostPhoto(photo));
+    } catch (_) {}
     // Discovery assumptions, never silent: logged on every hosting start
     // (LAN tag) so a dead enterprise AP reads as explained, not empty.
     for (final line in discoveryAssumptionLines()) {
@@ -896,6 +989,57 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (mounted) setState(() {});
   }
 
+  /// Per-course photo opt-in toggle: persists immediately, then
+  /// publishes (or clears) the host Gmail photo for joining students.
+  Future<void> _setSharePhoto(bool share) async {
+    try {
+      await ref
+          .read(deviceStoreProvider)
+          .writeShowProfPhoto(widget.courseName, share);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _sharePhoto = share);
+    try {
+      final photo = share
+          ? (ref.read(accountProvider).valueOrNull?.photoUrl?.trim() ?? '')
+          : '';
+      unawaited(ref.read(hostDriverProvider).setHostPhoto(photo));
+    } catch (_) {}
+  }
+
+  /// Professor eject from the roster (swipe → confirm): drops the student
+  /// from waiting + manual queue + tally + dup flags, then refreshes. The
+  /// next history upsert/snapshot no longer contains them; rejoin/re-mark
+  /// re-adds. Returns true when anything was removed (drives the
+  /// Dismissible animation).
+  Future<bool> _removeStudent(String email) async {
+    var removed = false;
+    try {
+      removed = await _driver?.removeStudent(email) ?? false;
+    } catch (_) {
+      removed = false;
+    }
+    if (!mounted) return removed;
+    setState(() {});
+    bumpLiveHistoryTick();
+    if (removed) {
+      // Tapping anywhere on the bar (OK action) dismisses it at once —
+      // a passive bar that ignores taps reads as a stuck popup.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Removed — they can rejoin anytime.'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'OK',
+            onPressed: () =>
+                ScaffoldMessenger.of(context).hideCurrentSnackBar(),
+          ),
+        ),
+      );
+    }
+    return removed;
+  }
+
   @override
   Widget build(BuildContext context) {
     final linked = ref.watch(linkedIdentityProvider);
@@ -907,6 +1051,16 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     final hostLine = linked == null
         ? null
         : 'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}';
+    // Header avatar reuses the exact opt-in state above (no new plumbing):
+    // gated Gmail photo iff `_sharePhoto` is on, else the initials disc.
+    final headerPhotoUrl = liveHeaderPhotoUrl(
+      sharePhoto: _sharePhoto,
+      accountPhotoUrl:
+          ref.watch(accountProvider).valueOrNull?.photoUrl,
+    );
+    final headerAvatarName = _nameCtrl.text.trim().isNotEmpty
+        ? _nameCtrl.text.trim()
+        : (linked?.name ?? '');
     // Back-intercept (§3.5, navigation-shell rebuild): the shell still owns
     // tab back — in-tab back pops this tab's stack only, and this screen
     // never leaves the shell or touches mode. The route carries its own
@@ -962,6 +1116,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                 windowNo: _windowNo,
                 hosting: hosting,
                 hostLine: hostLine,
+                photoUrl: headerPhotoUrl,
+                avatarName: headerAvatarName,
                 onStart: _startNext,
                 onRetake: () => _start(_windowNo),
                 onTakeAnother: _startNext,
@@ -1015,6 +1171,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                       names: tally.nameMap(),
                       onResolve: _resolveDup,
                       tally: tally,
+                      onRemoveStudent: _removeStudent,
                     ),
                   ),
                   // 1 — Inbox only: pending manual requests. Wrappers bump
@@ -1056,23 +1213,48 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                           .any((r) => r.email == email.toLowerCase()),
                     ),
                   ),
-                  // 3 — Setup only: name/IP/discovery before Start.
+                  // 3 — Setup only: name/IP/discovery before Start, plus
+                  // a live student-view preview (same shared card).
                   SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
-                    child: LiveSetupSection(
-                      hosting: hosting,
-                      live: live,
-                      nameCtrl: _nameCtrl,
-                      onNameChanged: (v) {
-                        try {
-                          ref.read(hostDriverProvider).setDisplayName(v);
-                        } catch (_) {}
-                      },
-                      serverLine: serverLine,
-                      allIps: _session?.allIps ?? const [],
-                      currentIp: _ip,
-                      onPickIp: _pickIp,
-                      serverError: serverError,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        LiveSetupSection(
+                          hosting: hosting,
+                          live: live,
+                          nameCtrl: _nameCtrl,
+                          onNameChanged: (v) {
+                            try {
+                              ref
+                                  .read(hostDriverProvider)
+                                  .setDisplayName(v);
+                            } catch (_) {}
+                            // Live preview follows typing.
+                            if (mounted) setState(() {});
+                          },
+                          serverLine: serverLine,
+                          allIps: _session?.allIps ?? const [],
+                          currentIp: _ip,
+                          onPickIp: _pickIp,
+                          serverError: serverError,
+                          showProfPhoto: _sharePhoto,
+                          onShowProfPhotoChanged: _setSharePhoto,
+                        ),
+                        // Student-view preview from the first setup paint
+                        // (pre-hosting included): the toggle + name field
+                        // above drive it live, so the professor sees the
+                        // student view before going live.
+                        if (!live) ...[
+                          const SizedBox(height: ProxSpacing.md),
+                          _StudentViewPreview(
+                            displayName: _nameCtrl.text,
+                            showPhoto: _sharePhoto,
+                            org: _announcedOrg,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
@@ -1081,6 +1263,50 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// "This is what students will see": the SAME shared [HostPreviewCard]
+// the waiting room renders — display name as typed (Gmail name by
+// default), Gmail email + announced org, Gmail photo iff the photo toggle
+// is on (letter initial otherwise). Updates live with name/toggle/org.
+// [org] is the announced org the beacon airs (role-cache stamp) — passed
+// in so the preview mapping is provably identical to the waiting card
+// (same widget + same inputs: displayName/email/org/photo).
+class _StudentViewPreview extends ConsumerWidget {
+  final String displayName;
+  final bool showPhoto;
+  final String org;
+
+  const _StudentViewPreview({
+    required this.displayName,
+    required this.showPhoto,
+    this.org = '',
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = ProximityColors.of(context);
+    final acct = ref.watch(accountProvider).valueOrNull;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'This is what students will see',
+          style: ProxType.label(color: c.contentSecondary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        const SizedBox(height: ProxSpacing.xs),
+        HostPreviewCard(
+          displayName: displayName,
+          email: acct?.email ?? '',
+          org: org,
+          photoUrl: showPhoto ? (acct?.photoUrl ?? '') : '',
+        ),
+      ],
     );
   }
 }

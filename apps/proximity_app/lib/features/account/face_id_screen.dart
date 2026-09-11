@@ -15,6 +15,8 @@
 // without a device key the capture screen itself refuses.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -92,39 +94,50 @@ class FaceIdScreen extends ConsumerWidget {
                 sheetTitle: 'Re-scan face',
                 icon: Icons.face,
                 buttonKey: const Key('face-id-rescan'),
-                sheetBuilder: (sheetContext) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Your device key is kept — capture the 5 stills again. Attendance on the saved enrollment keeps working until the new capture validates.',
-                      style: ProxType.body(color: c.contentPrimary),
-                    ),
-                    const SizedBox(height: ProxSpacing.md),
-                    OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        minimumSize:
-                            const Size(64, ProxSpacing.minTap),
-                        foregroundColor: c.accentBrand,
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(ProxRadii.button),
-                        ),
+                sheetBuilder: (sheetContext) {
+                  // Single-flight for the rescan entry: Continue double-tap
+                  // pushes one capture only (EnrollFlow drops the second
+                  // while one is open; this latch covers the gap before it
+                  // engages). Per-sheet latch — the sheet is gone after the
+                  // first tap, so a shared build only matters same-frame.
+                  var entryBusy = false;
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Your device key is kept — capture the 5 stills again. Attendance on the saved enrollment keeps working until the new capture validates.',
+                        style: ProxType.body(color: c.contentPrimary),
                       ),
-                      onPressed: () {
-                        Navigator.of(sheetContext).pop();
-                        // Same function the enroll-result Re-scan calls:
-                        // key kept, saved enrollment untouched until the
-                        // new capture validates.
-                        ref
-                            .read(enrollmentControllerProvider.notifier)
-                            .restartFace();
-                        EnrollFlow.openCapture(context);
-                      },
-                      child: const Text('Continue to face scan'),
-                    ),
-                  ],
-                ),
+                      const SizedBox(height: ProxSpacing.md),
+                      OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize:
+                              const Size(64, ProxSpacing.minTap),
+                          foregroundColor: c.accentBrand,
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(ProxRadii.button),
+                          ),
+                        ),
+                        onPressed: () {
+                          if (entryBusy) return;
+                          entryBusy = true;
+                          Navigator.of(sheetContext).pop();
+                          // Same function the enroll-result Re-scan calls:
+                          // key kept, saved enrollment untouched until the
+                          // new capture validates.
+                          ref
+                              .read(enrollmentControllerProvider.notifier)
+                              .restartFace();
+                          unawaited(EnrollFlow.openCapture(context)
+                              .whenComplete(() => entryBusy = false));
+                        },
+                        child: const Text('Continue to face scan'),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: ProxSpacing.xl),
             ],
@@ -139,7 +152,8 @@ class FaceIdScreen extends ConsumerWidget {
 // Inline rescan note (student face-id section only — no shared file).
 //
 // rule line (days from [kFaceRescanCooldown], never a literal), the last
-// + next-eligible dates when a rescan stamp exists (via [dateIsoOf]),
+// + next-eligible dates when a rescan stamp exists (via [displayDateOf],
+// global DD-MM-YYYY rule),
 // and the refusal string verbatim when blocked (via
 // [faceRescanCooldownMessage] — never paraphrased). Blocked state comes
 // from the documented read-only accessor
@@ -190,12 +204,14 @@ class _FaceRescanRules extends ConsumerWidget {
       builder: (context, snap) {
         final stamp = snap.data?.stampMillis ?? 0;
         final blockedUntil = snap.data?.blockedUntil;
+        // Global date rule, display only: DD-MM-YYYY.
         final lastIso = stamp > 0
-            ? dateIsoOf(
+            ? displayDateOf(
                 DateTime.fromMillisecondsSinceEpoch(stamp, isUtc: true))
             : null;
-        final nextIso =
-            blockedUntil != null ? dateIsoOf(blockedUntil.toUtc()) : null;
+        final nextIso = blockedUntil != null
+            ? displayDateOf(blockedUntil.toUtc())
+            : null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,

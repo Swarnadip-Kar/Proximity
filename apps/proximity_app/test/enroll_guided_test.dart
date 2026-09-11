@@ -25,10 +25,13 @@ import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/enroll_flow.dart';
+import 'package:proximity_app/features/setup/enroll_result.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
+import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/widgets/prox_buttons.dart';
@@ -134,6 +137,10 @@ Future<void> _drain(WidgetTester t) async {
 }
 
 void main() {
+  // EnrollFlow single-flight flags are static: a test that leaves a pushed
+  // result on top must not block the next test's push.
+  setUp(EnrollFlow.debugReset);
+  tearDown(EnrollFlow.debugReset);
   group('pose windows (pure, no native calls)', () {
     test('centre accepts near-frontal only', () {
       expect(EnrollPoseWindows.check('centre', 0, 0, 0).ok, isTrue);
@@ -407,35 +414,21 @@ void main() {
       expect(faceEnrollSlots, ['centre', 'left', 'right', 'up', 'down']);
     });
 
-    testWidgets('camera oval overlay renders + repaints (sweep included)',
+    testWidgets('camera oval overlay renders + repaints on progress',
         (t) async {
       await t.pumpWidget(const MaterialApp(
         home: Scaffold(body: FaceCaptureOvalOverlay(progress: 0)),
       ));
       expect(find.byType(CustomPaint), findsWidgets);
-      // Animated sweep segment…
+      // Advancing progress repaints…
       await t.pumpWidget(const MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 0.5, sweepAngle: 1.0)),
+        home: Scaffold(body: FaceCaptureOvalOverlay(progress: 0.5)),
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
-      // …advancing sweep repaints…
+      // …to full.
       await t.pumpWidget(const MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 0.5, sweepAngle: 2.0)),
-      ));
-      await t.pump();
-      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
-      // …and the reduced-motion steady full-rim glow renders too.
-      await t.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 1.0,
-                sweepAngle: 0.0,
-                sweepSpan: 2 * 3.141592653589793)),
+        home: Scaffold(body: FaceCaptureOvalOverlay(progress: 1.0)),
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
@@ -459,6 +452,47 @@ void main() {
   });
 
   group('EnrollCaptureScreen continuous session', () {
+    testWidgets('mount restores the stored key (rescan after restart)',
+        (t) async {
+      // Rescan regression: key generated earlier (stored on device), then
+      // a fresh controller (restart) with an empty draft. Mounting the
+      // capture screen must reconcile (refreshFromAuth) so Save does not
+      // fail-closed with "Generate the device key first".
+      final store = InMemoryDeviceStore();
+      await store.writeEnrollment(StoredEnrollment(
+        email: 's@x.in',
+        name: 'S',
+        roll: 'R1',
+        seedHex: 'ab' * 32,
+        pkHex: 'cd' * 32,
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: kFaceVerifierVer,
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      final ctl = EnrollmentController(
+        auth: FakeAuthService(const SignedAccount(
+            email: 's@x.in', displayName: 'S', uid: 'u1')),
+        store: store,
+        verifier: FakeFaceVerifier(),
+        deviceKey: FakeDeviceKey(),
+      );
+      expect(ctl.state.pkHex, isEmpty);
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      await t.pumpAndSettle();
+      expect(ctl.state.pkHex.isNotEmpty, isTrue);
+      expect(t.takeException(), isNull);
+      // Drain: cancel the live loop (pops back to the launcher).
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('preview is overlay-only: dots, prompt once, zero jargon',
         (t) async {
       final ctl = await _keyReady();
@@ -621,6 +655,109 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
+    testWidgets('validated Continue double-press navigates exactly once',
+        (t) async {
+      // Single-flight: two synchronous Continue presses fire one navigation,
+      // so back from the top result lands on capture (not a second result).
+      // (Two gesture taps cannot both land — the entering route obscures the
+      // button — so the latch is driven directly, same call stack as a tap.)
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(ctl: ctl));
+      await _openSession(t);
+      await _pumpUntil(t, find.text('Save enrollment'));
+      await t.pumpAndSettle();
+      // Back to the validated capture step (loop stopped — settle-safe).
+      await t.pageBack();
+      await t.pumpAndSettle();
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      final continueBtn = find.widgetWithText(ProxPrimaryButton, 'Continue');
+      expect(continueBtn, findsOneWidget);
+      final onContinue =
+          t.widget<ProxPrimaryButton>(continueBtn).onPressed!;
+      onContinue();
+      onContinue();
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+      await t.pumpAndSettle();
+      expect(find.byType(EnrollResultScreen), findsOneWidget);
+      // Exactly one result above capture: one back lands on capture with
+      // Continue still offered (not a second result).
+      await t.pageBack();
+      await t.pumpAndSettle();
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      expect(find.widgetWithText(ProxPrimaryButton, 'Continue'),
+          findsOneWidget);
+      expect(find.byType(EnrollResultScreen), findsNothing);
+      // Drain via cancel (disposes the session camera).
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('EnrollFlow.openResult double-call pushes one result',
+        (t) async {
+      // Static single-flight: the second synchronous call is dropped.
+      final ctl = await _keyReady();
+      late BuildContext ctx;
+      await t.pumpWidget(ProviderScope(
+        overrides: [enrollmentControllerProvider.overrideWith((ref) => ctl)],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Builder(builder: (c) {
+            ctx = c;
+            return const Text('home');
+          }),
+        ),
+      ));
+      await t.pump();
+      EnrollFlow.openResult(ctx);
+      EnrollFlow.openResult(ctx);
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+      await t.pumpAndSettle();
+      expect(find.byType(EnrollResultScreen), findsOneWidget);
+      await t.pageBack();
+      await t.pumpAndSettle();
+      expect(find.text('home'), findsOneWidget);
+      expect(find.byType(EnrollResultScreen), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('EnrollFlow.openCapture double-call pushes one capture',
+        (t) async {
+      // Static single-flight: the second synchronous call is dropped.
+      final ctl = await _keyReady();
+      late BuildContext ctx;
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          enrollmentControllerProvider.overrideWith((ref) => ctl),
+          enrollSessionCameraProvider
+              .overrideWithValue(FakeEnrollSessionCamera()),
+          poseGateProvider.overrideWithValue(FakePoseGate()),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Builder(builder: (c) {
+            ctx = c;
+            return const Text('home');
+          }),
+        ),
+      ));
+      await t.pump();
+      EnrollFlow.openCapture(ctx);
+      EnrollFlow.openCapture(ctx);
+      await t.pump(const Duration(milliseconds: 100));
+      await t.pump(const Duration(milliseconds: 300));
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      // Drain via cancel before the loop can complete (bounded pumps only —
+      // the sweep timer is periodic, never pumpAndSettle while mounted).
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(find.text('home'), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('alternating classifications keep one static prompt',
         (t) async {
       // Stills arrive left/right while centre is missing: buckets fill
@@ -741,6 +878,9 @@ void main() {
     });
 
     testWidgets('records-only device sees the blocked card', (t) async {
+      // Direct mount (no router): the screen's own L1 blocked card.
+      // Router mounts (MaterialApp.routes / in-tab) render
+      // MobileOnlyGuidanceScreen instead — see the next two tests.
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
@@ -749,6 +889,58 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
       expect(find.textContaining('needs the mobile app'), findsOneWidget);
       expect(find.textContaining('Capture'), findsNothing);
+      expect(find.byType(MobileOnlyGuidanceScreen), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('router serves guidance for enroll/capture (MaterialApp.routes)',
+        (t) async {
+      // Guarded web/desktop entry via the exact table: renders guidance,
+      // never the flow screen (table wrapper runs guards BEFORE builder).
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      await t.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
+        routes: buildProxRoutes(),
+        onGenerateRoute: proxOnGenerateRoute,
+        onUnknownRoute: proxOnUnknownRoute,
+        initialRoute: 'enroll/capture',
+      ));
+      await t.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+      expect(find.byType(MobileOnlyGuidanceScreen), findsOneWidget);
+      expect(find.text('Mobile only'), findsOneWidget);
+      expect(find.text('Open my records'), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('router serves guidance via in-tab router too', (t) async {
+      // Same table + guards + unknown shape as shells._tabRoute.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      await t.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
+        home: Navigator(
+          initialRoute: 'enroll/capture',
+          onGenerateRoute: (s) {
+            if (s.name == null || s.name == '/') {
+              return MaterialPageRoute(
+                settings: const RouteSettings(name: '/'),
+                builder: (_) => const Scaffold(body: Text('tab-root')),
+              );
+            }
+            final exact = buildProxRoutes()[s.name];
+            if (exact != null) {
+              return MaterialPageRoute(settings: s, builder: exact);
+            }
+            return proxOnGenerateRoute(s);
+          },
+          onUnknownRoute: proxOnUnknownRoute,
+        ),
+      ));
+      await t.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = null;
+      expect(find.byType(MobileOnlyGuidanceScreen), findsOneWidget);
+      expect(find.byType(EnrollCaptureScreen), findsNothing);
       expect(t.takeException(), isNull);
     });
   });

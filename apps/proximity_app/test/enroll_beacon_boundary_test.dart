@@ -23,8 +23,8 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/enroll_flow.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -113,6 +113,9 @@ Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
     w.children.whereType<CaptureOverlay>().isNotEmpty);
 
 void main() {
+  // EnrollFlow single-flight flags are static: reset between tests.
+  setUp(EnrollFlow.debugReset);
+  tearDown(EnrollFlow.debugReset);
   group('device-boundary parity (elongation fix)', () {
     testWidgets('Scaffold defaults match original (no overflow flags)',
         (t) async {
@@ -192,114 +195,16 @@ void main() {
     });
   });
 
-  group('rotating beacon painter', () {
-    test('trail fully fades: tail transparent, head bright, tail short', () {
-      // Tail tip fully transparent (no remnant survives to the next pass).
-      expect(FaceCaptureOvalOverlay.beaconAlpha(0), 0.0);
-      // Head brightest.
-      expect(
-          FaceCaptureOvalOverlay.beaconAlpha(
-              FaceCaptureOvalOverlay.beaconSlices - 1),
-          1.0);
-      // Monotonic fade head-ward, bounded 0..1.
-      var prev = -1.0;
-      for (var i = 0; i < FaceCaptureOvalOverlay.beaconSlices; i++) {
-        final a = FaceCaptureOvalOverlay.beaconAlpha(i);
-        expect(a, inInclusiveRange(0.0, 1.0));
-        expect(a, greaterThanOrEqualTo(prev));
-        prev = a;
-      }
-      // SHORT tail: default span well before a full revolution.
-      const defaultSpan = 1.047;
-      expect(defaultSpan, lessThan(3.141592653589793));
-      expect(FaceCaptureOvalOverlay.isSteadyGlow(defaultSpan), isFalse);
-    });
-
-    test('reduced motion is a steady soft full-rim glow (no animation)', () {
-      const full = 2 * 3.141592653589793;
-      expect(FaceCaptureOvalOverlay.isSteadyGlow(full), isTrue);
-      // Soft: visible but not harsh full opacity.
-      expect(FaceCaptureOvalOverlay.steadyGlowAlpha, greaterThan(0.0));
-      expect(FaceCaptureOvalOverlay.steadyGlowAlpha, lessThan(1.0));
-    });
-
-    testWidgets('beacon + steady + marking states all render', (t) async {
-      // Beacon head mid-travel.
+  group('marking still-capture oval (beacon branches removed)', () {
+    testWidgets('marking states render (progress arc only, no beacon)',
+        (t) async {
       await t.pumpWidget(const MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 0.4, sweepAngle: 1.0, sweepSpan: 1.047)),
+        home: Scaffold(body: FaceCaptureOvalOverlay(progress: 0.4)),
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
-      // Steady soft full-rim (reduced motion).
-      await t.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 1.0,
-                sweepAngle: 0.0,
-                sweepSpan: 2 * 3.141592653589793)),
-      ));
-      await t.pump();
-      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
-      // Marking (null sweep) unchanged.
       await t.pumpWidget(const MaterialApp(
         home: Scaffold(body: FaceCaptureOvalOverlay(progress: 1.0)),
-      ));
-      await t.pump();
-      expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);
-      expect(t.takeException(), isNull);
-    });
-  });
-
-  group('two role-separated ovals (green progress, blue beacon)', () {
-    test('progress green is the token completion green, never beacon blue',
-        () {
-      expect(FaceCaptureOvalOverlay.progressGreen,
-          ProxStateColors.markedDark);
-      expect(FaceCaptureOvalOverlay.progressGreen, const Color(0xFF4ADE80));
-      // Distinct hues from the beacon blue in both brightnesses.
-      expect(FaceCaptureOvalOverlay.progressGreen,
-          isNot(ProxPalette.primaryLight));
-      expect(FaceCaptureOvalOverlay.progressGreen,
-          isNot(ProxPalette.primaryDark));
-    });
-
-    test('progress radius larger than beacon radius on both axes', () {
-      expect(FaceCaptureOvalOverlay.progressWidthFraction,
-          greaterThan(FaceCaptureOvalOverlay.beaconWidthFraction));
-      expect(FaceCaptureOvalOverlay.progressHeightFraction,
-          greaterThan(FaceCaptureOvalOverlay.beaconHeightFraction));
-      const size = Size(400, 600);
-      final beacon = FaceCaptureOvalOverlay.beaconRectFor(size);
-      final outer = FaceCaptureOvalOverlay.progressRectFor(size,
-          enrollment: true);
-      expect(outer.width, greaterThan(beacon.width));
-      expect(outer.height, greaterThan(beacon.height));
-      expect(outer.center, beacon.center);
-      // Marking path keeps the legacy rect (identical pixels).
-      expect(
-          FaceCaptureOvalOverlay.progressRectFor(size, enrollment: false),
-          beacon);
-    });
-
-    test('progress paint green in enrollment, legacy color at marking', () {
-      const fallback = Color(0xFF4340D6);
-      expect(
-          FaceCaptureOvalOverlay.progressColorFor(
-              enrollment: true, fallback: fallback),
-          FaceCaptureOvalOverlay.progressGreen);
-      expect(
-          FaceCaptureOvalOverlay.progressColorFor(
-              enrollment: false, fallback: fallback),
-          fallback);
-    });
-
-    testWidgets('enrollment green arc + beacon render together', (t) async {
-      await t.pumpWidget(const MaterialApp(
-        home: Scaffold(
-            body: FaceCaptureOvalOverlay(
-                progress: 0.6, sweepAngle: 1.0, sweepSpan: 1.047)),
       ));
       await t.pump();
       expect(find.byType(FaceCaptureOvalOverlay), findsOneWidget);

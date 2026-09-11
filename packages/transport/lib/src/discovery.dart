@@ -552,7 +552,9 @@ Future<ClassAnnouncement?> probeHost(
       host: host,
       port: port,
       display: '',
-      prof: '',
+      // Gated LAN unicast name (same channel as the email backfill) —
+      // never BLE, which stays IP:port hints only.
+      prof: r.profName,
       windowOpen: r.windowOpen,
       ts: DateTime.now().toUtc(),
       org: r.org,

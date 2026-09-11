@@ -2,15 +2,15 @@
 //
 // `features/manual_attendance/` module's [ManualInboxView] (§4.8) instead
 // of owning checkbox selection state inline. The old checkbox-list +
-// Select-all pattern is gone (hold-and-tap + SelectionToolbar per §4.1);
-// decisions still delegate to the live screen (driver → draft →
-// snapshot) with the same constructor, so the counts on screen always
-// match the driver queue.
+// Select-all pattern is gone (tap-to-select + SelectionToolbar per §4.1,
+// same contract as the review/export picker); decisions still delegate
+// to the live screen (driver → draft → snapshot) with the same
+// constructor, so the counts on screen always match the driver queue.
 //
 // host driver is a plain Provider over mutating server state — it never
-// notifies, so this section used to re-render only when its caller
-// rebuilt (the focused `LiveInboxScreen` builds once; the take host while
-// idle rebuilds only on waiting-room deltas). This section now polls the
+// notifies, so this section used to re-render only when its callers
+// rebuilt (a focused section builds once; the take host while idle
+// rebuilds only on waiting-room deltas). This section now polls the
 // LOCAL `manualPending` getter on the existing 2s cadence (take idle poll
 // when the pending set actually changes: no extra network/proof load,
 // decided rows still leave via the existing decide + prune paths, and the

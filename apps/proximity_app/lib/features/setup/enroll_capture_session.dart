@@ -92,7 +92,10 @@ class RealEnrollSessionCamera implements EnrollSessionCamera {
       orElse: () => cams.first,
     );
     final ctl =
-        CameraController(front, ResolutionPreset.medium, enableAudio: false);
+        // Max sensor resolution: the preset drives BOTH the preview and
+        // takePicture stills, so enrollment captures carry full detail
+        // for the template pipeline. Layout/overlays untouched.
+        CameraController(front, ResolutionPreset.max, enableAudio: false);
     try {
       await ctl.initialize();
     } catch (e) {
@@ -214,6 +217,13 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   var _denied = false;
   var _failed = false;
   var _saving = false;
+
+  /// Single-flight for the validated auto-advance: the terminal navigation
+  /// (stepper advance or result push) fires at most once per driver, so an
+  /// auto-advance racing a manual Continue cannot stack two results. The
+  /// manual Continue latch lives on the screen; EnrollFlow drops any
+  /// residual second push while a result is open.
+  var _advanceBusy = false;
 
   /// Set when the loop must not continue: set complete (save ran) or
   /// dispose. The loop schedules nothing further once set.
@@ -394,12 +404,23 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         EnrollLog.face('session validated — continuing');
         if (!mounted) return;
         // STEP-SCOPE: inside SetupFlow, Continue advances the stepper
-        // instead of pushing the standalone result route.
+        // instead of pushing the standalone result route. Single-flight
+        // via _advanceBusy (auto vs manual Continue race).
+        if (_advanceBusy) return;
+        _advanceBusy = true;
         final scope = SetupStepScope.of(context);
         if (scope != null) {
-          scope.next();
+          unawaited(scope.next().whenComplete(() => _advanceBusy = false));
         } else {
-          EnrollFlow.openResult(context);
+          try {
+            final pushed = EnrollFlow.openResult(context);
+            unawaited(pushed.whenComplete(() {
+              if (!_done) _advanceBusy = false;
+            }));
+          } catch (_) {
+            _advanceBusy = false;
+            rethrow;
+          }
         }
       } else {
         EnrollLog.face('controller: ${after.message}');

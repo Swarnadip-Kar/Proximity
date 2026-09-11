@@ -156,6 +156,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         state = state.copyWith(
             phase: EnrollPhase.signedIn, account: current, message: '');
         await _tryRestore(current);
+        return;
+      }
+      // Same account but no usable key (e.g. a locked restore that only
+      // recovered pkHex): retry the restore so a later Save does not hit
+      // the key gate with a key this device holds. No-op when keys are
+      // loaded or nothing is stored.
+      if (current != null && _keys == null) {
+        await _tryRestore(current);
       }
       return;
     }
@@ -262,7 +270,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           await _deviceKey.ensure();
         } catch (e) {
           // Records-only device holding a phone-bound enrollment: the key
-          // stays locked; the holder continues on their phone.
+          // stays locked; the holder continues on their phone. Logged:
+          // pkHex is recovered but `_keys` stays null, so a later Save
+          // without a retrying refresh would hit the key gate.
+          BleLog.log('SEC',
+              'enroll restore: DKey unavailable, key locked (pk known)');
           state = state.copyWith(
             phase: EnrollPhase.signedIn,
             pkHex: stored.pkHex,
@@ -281,6 +293,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           keys = ed.KeyPair(sk, ed.public(sk));
         } on StateError catch (e) {
           if ('$e'.contains('restore detected')) {
+            BleLog.log('SEC',
+                'enroll restore detected (clone) — re-enroll required');
             state = state.copyWith(
               phase: EnrollPhase.signedIn,
               message: 'restore detected — re-enroll',
@@ -327,7 +341,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             'Key restored from this device — no fresh match yet. Scan again to verify.',
       );
     } catch (_) {
-      // Corrupt store entry: ignore, proceed as fresh enrollment.
+      // Corrupt store entry: ignore, proceed as fresh enrollment. Logged:
+      // without this, a later Save fails with the misleading key-gate
+      // prompt while the log drawer stays silent.
+      BleLog.log('SEC', 'enroll restore failed, proceeding fresh');
     }
   }
 
@@ -384,9 +401,23 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       return;
     }
     if (_keys == null || state.pkHex.isEmpty) {
+      // Locked-key honesty: when this account HAS a stored enrollment,
+      // the key exists but could not be unlocked (DKey/restore failure) —
+      // saying "generate first" misleads (it was generated). Point at the
+      // recovery instead. Genuinely keyless drafts keep the original
+      // prompt (pinned by test).
+      var locked = false;
+      try {
+        final stored = await _store.readEnrollment();
+        locked = stored != null &&
+            stored.email.trim().toLowerCase() ==
+                acct.email.trim().toLowerCase();
+      } catch (_) {}
       state = state.copyWith(
           phase: EnrollPhase.error,
-          message: 'Generate the device key first, then scan.');
+          message: locked
+              ? 'Couldn\u2019t unlock this device\u2019s key — tap Generate device key to make a new one, then scan.'
+              : 'Generate the device key first, then scan.');
       return;
     }
     if (imagePaths.length != faceEnrollSlots.length) {

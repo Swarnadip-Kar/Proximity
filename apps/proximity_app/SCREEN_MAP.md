@@ -63,9 +63,10 @@ lives in `screens/setup_flow_screen.dart`, each step's content is a
 presentational widget in `features/setup/` — same `features/`↔`screens/`
 split the rest of the app already follows, just applied one level down
 inside a single screen instead of across a whole route table.
-- `enroll/intro` EXISTS — reason: pre-context (2 min, online once,
-  1-device rule) + account + device key. Shares one step-screen with
-  `device` (redesign §3.3) — adjacent reads, one CTA, not two pushes.
+- `enroll/intro` REMOVED — standalone intro route deleted with the legacy
+  bundle entry; SetupFlowScreen is the only enrollment flow. Pre-context
+  (2 min, online once, 1-device rule) + account + device key now live as
+  SetupFlow steps (Confirm device → Account & key), not a separate push.
 - `enroll/capture` EXISTS — reason: continuous 5-angle face session
   (centre/left/right/up/down, one camera open, ML Kit pose-gated per
   angle), plugin-owned matching, fail-closed. The 5 angles are one

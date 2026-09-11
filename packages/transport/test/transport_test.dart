@@ -48,6 +48,32 @@ void main() {
     expect(a.keyPem, contains('PRIVATE KEY'));
   });
 
+  test('GET /window: gated profName rides LAN unicast, omitted when empty',
+      () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final server = await makeServer(prof: prof, stu: stu);
+    server.sessionProfEmail = 'Prof@Example.com';
+    server.sessionProfName = 'Dr Ada';
+    try {
+      // Named host: gated LAN name lands on the announcement (BLE
+      // untouched — probeHost synthesizes from the unicast result).
+      final hit = await probeHost('127.0.0.1', server.port, org: '');
+      expect(hit, isNotNull);
+      expect(hit!.prof, 'Dr Ada');
+      // Unnamed host: name stays empty (key omitted server-side so legacy
+      // payloads stay byte-equal).
+      server.sessionProfEmail = '';
+      server.sessionProfName = '';
+      server.sessionProfPhoto = '';
+      final bare = await probeHost('127.0.0.1', server.port, org: '');
+      expect(bare, isNotNull);
+      expect(bare!.prof, '');
+    } finally {
+      await server.stop();
+    }
+  });
+
   test('GET / status page: reachable, no auth, no PII', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();

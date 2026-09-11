@@ -1,7 +1,6 @@
 // Setup pagination proofs (## Setup pagination + ## About-page removal):
 // the flow is six one-purpose pages (device → account&key; the
-// About-to-enroll explainer page is removed from the flow, its sections
-// staying live on the standalone EnrollIntroScreen);
+// About-to-enroll explainer page is removed from the flow);
 // welcome/capture/result stay one page each. Start-index semantics,
 // listeners, lazy camera mount, back behavior, and scope branches are
 // behavior-identical (capture/result are 4/5; progress counts 6 pages).
@@ -158,7 +157,6 @@ void main() {
       // Assert the user-visible label, not the button implementation.
       expect(find.widgetWithText(ProxPrimaryButton, 'Continue'), findsOneWidget);
       // Intro purposes live on later pages, never here.
-      expect(find.byType(IntroOverviewSection), findsNothing);
       expect(find.byType(IntroAccountSection), findsNothing);
       expect(find.byType(IntroKeySection), findsNothing);
       expect(find.text('Continue to face scan'), findsNothing);
@@ -195,10 +193,7 @@ void main() {
       expect(find.byType(IntroAccountSection), findsOneWidget);
       expect(find.byType(IntroKeySection), findsOneWidget);
       expect(find.text('Continue to face scan'), findsOneWidget);
-      // Explainer + device purposes live on earlier pages, never here.
-      expect(find.byType(IntroOverviewSection), findsNothing);
-      expect(find.byType(IntroOnlineSection), findsNothing);
-      expect(find.byType(IntroOneDeviceSection), findsNothing);
+      // Device purposes live on earlier pages, never here.
       expect(find.byType(DeviceIdentityContent), findsNothing);
     });
 
@@ -265,7 +260,6 @@ void main() {
       await t.pump(const Duration(milliseconds: 300));
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.byType(DeviceIdentityContent), findsNothing);
-      expect(find.byType(IntroOverviewSection), findsNothing);
       expect(find.byType(IntroAccountSection), findsNothing);
       // Drain: cancel the live loop (pops back to the launcher), then
       // let beats and sweep ticks fire post-dispose (same _drain pattern
@@ -310,7 +304,6 @@ void main() {
       await t.pumpAndSettle();
       expect(find.byType(ResultStatusSection), findsOneWidget);
       expect(find.byType(DeviceIdentityContent), findsNothing);
-      expect(find.byType(IntroOverviewSection), findsNothing);
     });
   });
 
@@ -393,6 +386,87 @@ void main() {
       await _settleStepped(t);
       expect(find.text('Confirm device'), findsOneWidget);
       expect(find.text('Account & key'), findsNothing);
+      await _settleStepped(t);
+    });
+
+    testWidgets('double Continue advances exactly one page (single-flight)',
+        (t) async {
+      final store = InMemoryDeviceStore();
+      await store.writeRole(_studentRole());
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Confirm device'), findsOneWidget);
+      // Double-tap without settling between taps: the second is dropped.
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Continue'));
+      await _settleStepped(t);
+      expect(find.text('Account & key'), findsOneWidget);
+      expect(find.text('Face capture'), findsNothing);
+      await _settleStepped(t);
+    });
+
+    testWidgets('overlapping first-step backs fire onFirstBack once',
+        (t) async {
+      var firstBacks = 0;
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService()),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            // Slow parent: holds the single-flight busy so the overlap is
+            // deterministic (fake-clock time only advances on pump).
+            onFirstBack: () async {
+              firstBacks++;
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Sign in with Google'), findsOneWidget);
+      // Two system backs issued before either settles: one fires.
+      final pop1 = t.binding.handlePopRoute();
+      final pop2 = t.binding.handlePopRoute();
+      await pop1;
+      await pop2;
+      await _settleStepped(t);
+      expect(firstBacks, 1);
       await _settleStepped(t);
     });
   });

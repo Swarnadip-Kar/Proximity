@@ -10,15 +10,30 @@
 // (c) the student `entryContinueWithRole` path relinks BEFORE the mode
 //     flip (goto) — the mode observed at the moment linked is set is still
 //     unset, and the call lands on student with linked set.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
+import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/setup/role_sections.dart';
 import 'package:proximity_app/mode.dart';
+
+/// Cloud whose binding gate never answers (stalled network worse than
+/// offline: no error, just silence). Models the classroom blackhole that
+/// used to leave Continue spinning with a dead button and no message.
+class _HangingGateCloud extends FakeCloudSync {
+  _HangingGateCloud() : super(available: true, online: true);
+
+  @override
+  Future<StudentDeviceDoc?> fetchStudentDevice(String emailLower) =>
+      Completer<StudentDeviceDoc?>().future;
+}
 
 const _email = 'student@example.com';
 const _installId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -47,12 +62,15 @@ Future<InMemoryDeviceStore> _enrolledStore() async {
 }
 
 ProviderContainer _container(
-    {required InMemoryDeviceStore store, SignedAccount? account}) {
+    {required InMemoryDeviceStore store,
+    SignedAccount? account,
+    FakeCloudSync? cloud}) {
   return ProviderContainer(overrides: [
     authServiceProvider.overrideWithValue(FakeAuthService(account)),
     // Offline cloud: the student continue path skips the binding gate and
     // goes straight to stamp + goto (no network semantics in this test).
-    cloudSyncProvider.overrideWithValue(FakeCloudSync(available: false)),
+    cloudSyncProvider
+        .overrideWithValue(cloud ?? FakeCloudSync(available: false)),
     deviceStoreProvider.overrideWithValue(store),
   ]);
 }
@@ -177,5 +195,91 @@ void main() {
       // …but linked was set before that flip.
       expect(modeWhenLinkedSet, AppMode.unset);
     });
+
+    testWidgets('stalled gate fails fast with a connection message',
+        (t) async {
+      // Regression for the stuck Continue: a blackholed network used to
+      // leave the button disabled with no feedback (each inner call can
+      // burn its full budget in turn). The overall budget surfaces one
+      // honest message and never navigates.
+      final store = await _enrolledStore();
+      final container = _container(
+        store: store,
+        account: const SignedAccount(
+            email: _email,
+            displayName: 'Test User',
+            uid: 'test-uid',
+            org: 'example.com'),
+        cloud: _HangingGateCloud(),
+      );
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      const acct = SignedAccount(
+          email: _email,
+          displayName: 'Test User',
+          uid: 'test-uid',
+          org: 'example.com');
+      const role = <String, String>{
+        'email': _email,
+        'uid': 'test-uid',
+        'roles': 'student',
+        'lastMode': 'student',
+        'displayName': '',
+        'org': 'example.com',
+      };
+      // runAsync: the operation budget is a real timer, and the hanging
+      // fetch never yields — awaiting both under fake async would
+      // deadlock the test body itself.
+      await t.runAsync(() async {
+        await expectLater(
+          entryContinueWithRole(ref, () => true, acct, role, 'student',
+              operationTimeout: const Duration(milliseconds: 200)),
+          throwsA(isA<StateError>().having(
+              (e) => e.message, 'message', contains('Taking too long'))),
+        );
+      });
+      // Never navigated on the timeout path.
+      expect(container.read(appModeProvider), AppMode.unset);
+    });
+
+    testWidgets('resume narrates the wait while busy', (t) async {
+      // The disabled-button silence is what read as "no response": while
+      // busy, the resume section now says what it is doing.
+      await t.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
+        home: const Scaffold(
+          body: RoleResumeSection(
+            role: <String, String>{},
+            ordered: ['student'],
+            lastMode: 'student',
+            busy: true,
+            onContinue: _noopContinue,
+          ),
+        ),
+      ));
+      await t.pump();
+      expect(find.text('Contacting server…'), findsOneWidget);
+    });
+
+    testWidgets('resume stays quiet when idle', (t) async {
+      await t.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
+        home: const Scaffold(
+          body: RoleResumeSection(
+            role: <String, String>{},
+            ordered: ['student'],
+            lastMode: 'student',
+            busy: false,
+            onContinue: _noopContinue,
+          ),
+        ),
+      ));
+      await t.pump();
+      expect(find.text('Contacting server…'), findsNothing);
+      expect(find.text('Continue as Student'), findsOneWidget);
+    });
   });
 }
+
+Future<void> _noopContinue(Map<String, String> role, String which) async {}

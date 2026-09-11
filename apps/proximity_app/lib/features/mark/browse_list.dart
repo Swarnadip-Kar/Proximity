@@ -32,57 +32,112 @@ int signalBarsFor({
   return 1;
 }
 
+/// Avatar ring for a browse tile (pure, unit-testable): the ring mirrors
+/// the idle indicator exactly — window open (non-idle) gets the gradient
+/// ring treatment shared with the selection/identity rings (`StudentCard`
+/// ring, `AccountChip` header, `ProxIdentityHeader`); idle rows stay flat
+/// even when recently heard (2 bars), since recency is not openness.
+/// Pure for unit tests.
+bool browseRingFor({required bool windowOpen}) => windowOpen;
+
+/// Gated photo lookup for one host key: the trimmed URL, or '' when the
+/// host never published one (opted-out / unknown / legacy → the
+/// class-letter disc). Pure for unit tests.
+String gatedPhotoFor(Map<String, String> byHost, String key) =>
+    (byHost[key] ?? '').trim();
+
 /// One discovered class: the lightweight `StudentCard` variant (§6.1) —
 /// course name, professor display name when given, tap → waiting — with the
-/// 3-bar recency glyph + open chevron / `idle` trailing it.
+/// 3-bar recency glyph + open chevron / `idle` trailing it. The card avatar
+/// shows the professor's gated photo when published, else the class-letter
+/// disc; non-idle tiles carry the gradient ring (+ live glow while open).
 class BrowseTile extends StatelessWidget {
   final LiveClass live;
   final String profEmail;
+
+  /// Gated prof Gmail photo (same org-checked /window unicast as the
+  /// email — never beacons/BLE). '' = opted-out/unknown/legacy: the avatar
+  /// falls back to the class-letter disc, exactly as before.
+  final String profPhotoUrl;
+
   final VoidCallback onTap;
 
   const BrowseTile({
     super.key,
     required this.live,
     required this.profEmail,
+    this.profPhotoUrl = '',
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final a = live.last;
     final bars = signalBarsFor(
       windowOpen: a.windowOpen,
       lastSeen: live.lastSeen,
       now: DateTime.now().toUtc(),
     );
-    return Row(
+    final card = StudentCard(
+      // Gated prof Gmail (org-checked /window unicast only — never
+      // beacons/BLE). Empty on legacy/unknown: the card reads as
+      // before. Institute org rides the announcement already.
+      //
+      // Gated prof photo on the same channel: non-empty renders the
+      // photo, empty renders the class-letter disc (the card's own
+      // initials fallback — never blank, never a network spinner).
+      //
+      // Mark tiles use the large 56 avatar (rosters/records keep 40).
+      avatarSize: 56,
+      photoUrl: profPhotoUrl,
+      name: a.classLabel,
+      // No host IP, no org on the card (join + org gate still use them
+      // internally; manual entry has its own field). Keeps the tile
+      // scannable.
+      subtitle: [
+        if (a.prof.isNotEmpty) a.prof,
+        if (a.display.isNotEmpty) 'Code ${a.display}',
+      ].join(' · '),
+      // Email on its own line below (never repeats the announced name —
+      // same dedupe contract as the host card second line).
+      subtitle2: (profEmail.isNotEmpty &&
+              profEmail.toLowerCase() != a.prof.toLowerCase())
+          ? profEmail
+          : null,
+      status: a.windowOpen
+          ? const VerdictBadge(
+              status: ProxStatus.waiting,
+              label: 'Open',
+            )
+          : null,
+      onTap: onTap,
+    );
+    final row = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(
-          child: StudentCard(
-            // Gated prof Gmail (org-checked /window unicast only — never
-            // beacons/BLE). Empty on legacy/unknown: the card reads as
-            // before. Institute org rides the announcement already.
-            name: a.classLabel,
-            subtitle: [
-              if (a.prof.isNotEmpty) a.prof,
-              if (profEmail.isNotEmpty) profEmail,
-              a.host,
-              if (a.display.isNotEmpty) 'Code ${a.display}',
-              if (a.org.isNotEmpty) a.org,
-            ].join(' · '),
-            status: a.windowOpen
-                ? const VerdictBadge(
-                    status: ProxStatus.waiting,
-                    label: 'Open',
-                  )
-                : null,
-            onTap: onTap,
-          ),
-        ),
+        Expanded(child: card),
         const SizedBox(width: ProxSpacing.sm),
         _SignalCluster(bars: bars, windowOpen: a.windowOpen),
       ],
+    );
+    // Non-idle ring (window open only — mirrors the `idle` caption /
+    // `Open` badge source of truth): the same gradient + glow idiom as
+    // the avatar rings elsewhere (`gradientBrand` outline, `glowLive`
+    // while the window is open). Static — no sweep timer — so browse
+    // lists stay pumpAndSettle-safe; motion lives only in the
+    // selection/identity rings. Idle rows return the plain row above
+    // (pixel-identical).
+    if (!browseRingFor(windowOpen: a.windowOpen)) return row;
+    return Container(
+      key: const ValueKey('browse-ring'),
+      decoration: BoxDecoration(
+        borderRadius: ProxRadii.cardSpecRadius,
+        gradient: c.gradientBrand,
+        boxShadow: a.windowOpen ? [c.glowLive.toShadow()] : null,
+      ),
+      padding: const EdgeInsets.all(1.5),
+      child: row,
     );
   }
 }

@@ -28,6 +28,9 @@ Future<T?> showProxSheet<T>({
   required String title,
   required Widget Function(BuildContext context) builder,
 }) {
+  // Dead-screen guard: callers awaiting a previous sheet/dialog may resume
+  // after dispose — never open a sheet on an unmounted context.
+  if (!context.mounted) return Future.value(null);
   final c = ProximityColors.of(context);
   return showModalBottomSheet<T>(
     context: context,

@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/widgets/manual_add.dart';
+import 'package:proximity_app/features/manual_attendance/manual_attendance.dart';
 import 'package:proximity_storage/storage.dart';
 
 Future<FakeCloudSync> seededCloud() async {

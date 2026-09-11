@@ -15,11 +15,19 @@ class AttendanceRecord {
   final String email;
   final String name;
   String roll;
+
+  /// Student's volunteered Gmail photo URL ('' = absent → initials).
+  /// Session RAM only, never persisted to records; latest non-empty wins,
+  /// empty never clobbers (same rule as name/roll).
+  String photoUrl;
   final Set<int> wins = {}; // window numbers (1-based) marked present
   bool faceFlag = false;
   bool late = false;
   AttendanceRecord(
-      {required this.email, required this.name, this.roll = ''});
+      {required this.email,
+      required this.name,
+      this.roll = '',
+      this.photoUrl = ''});
 
   bool presentIn(int windowNo) => wins.contains(windowNo);
 
@@ -60,29 +68,45 @@ class TallyStore {
     if (windowNo > 0) _openedWindows.add(windowNo);
   }
 
-  void ensure(String email, String name, [String roll = '']) {
+  void ensure(String email, String name,
+      [String roll = '', String photoUrl = '']) {
     final key = email.toLowerCase();
     final existing = _rows[key];
     if (existing == null) {
-      _rows[key] =
-          AttendanceRecord(email: key, name: name, roll: roll);
+      _rows[key] = AttendanceRecord(
+          email: key, name: name, roll: roll, photoUrl: photoUrl);
       return;
     }
     // Manual entries may correct the display name / ID number: keep the
     // latest non-empty values (marks, flags and wins are preserved).
     if (name.isNotEmpty && name != existing.name) {
-      _rows[key] = AttendanceRecord(email: key, name: name, roll: roll.isNotEmpty ? roll : existing.roll)
+      _rows[key] = AttendanceRecord(
+          email: key,
+          name: name,
+          roll: roll.isNotEmpty ? roll : existing.roll,
+          photoUrl:
+              photoUrl.isNotEmpty ? photoUrl : existing.photoUrl)
         ..wins.addAll(existing.wins)
         ..faceFlag = existing.faceFlag
         ..late = existing.late;
-    } else if (roll.isNotEmpty) {
-      existing.roll = roll;
+    } else {
+      if (roll.isNotEmpty) {
+        existing.roll = roll;
+      }
+      // Volunteered photo converges like the name: latest non-empty wins,
+      // empty never clobbers a known photo.
+      if (photoUrl.isNotEmpty) {
+        existing.photoUrl = photoUrl;
+      }
     }
   }
 
   void mark(String email, String name, int windowNo,
-      {bool faceFlag = false, bool late = false, String roll = ''}) {
-    ensure(email, name, roll);
+      {bool faceFlag = false,
+      bool late = false,
+      String roll = '',
+      String photoUrl = ''}) {
+    ensure(email, name, roll, photoUrl);
     final r = _rows[email.toLowerCase()]!;
     r.wins.add(windowNo);
     if (faceFlag) r.faceFlag = true;
@@ -188,6 +212,17 @@ class TallyStore {
       );
 
   int get size => _rows.length;
+
+  /// Professor eject: drops one email's record (marks, flags, wins).
+  /// Opened windows are kept (the rounds happened). Returns true when a
+  /// record existed. Session-local: the next history upsert/snapshot
+  /// simply no longer contains them; re-marking re-adds.
+  bool remove(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    return _rows.remove(key) != null;
+  }
+
   void clear() {
     _rows.clear();
     _openedWindows.clear();

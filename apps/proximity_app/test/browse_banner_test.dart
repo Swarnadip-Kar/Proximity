@@ -1,6 +1,6 @@
 // Browse discovery-honesty widget test (Track 4 §2): enterprise-AP shape
-// (UDP dead, BLE hints listing) says so aloud + the ladder lives behind
-// the Details expander (one line, collapsed by default).
+// (UDP dead, BLE hints listing) says so aloud + helpful join instructions
+// live behind the Details expander (collapsed by default).
 // Split from offline_live_test: testWidgets installs the mock-HTTP binding,
 // which would break that file's real-loopback live tests.
 import 'package:flutter/material.dart';
@@ -16,7 +16,7 @@ Widget _themed(Widget body) => MaterialApp(
 
 Widget _browse({bool broadcastBlocked = false}) => _themed(
       BrowseClassesView(
-        identityLine: 'S',
+        avatarName: 'S',
         ipInitial: '',
         onIpChanged: (_) {},
         onJoin: () {},
@@ -33,11 +33,12 @@ void main() {
       (t) async {
     await t.pumpWidget(_browse(broadcastBlocked: true));
     expect(find.textContaining('blocks discovery broadcasts'), findsOneWidget);
-    // Ladder prose moved behind Details (§4.7 — AnimatedCrossFade keeps
+    // Helpful instructions behind Details (§4.7 — AnimatedCrossFade keeps
     // the collapsed child in the tree, so expand to read it).
     await t.tap(find.text('Details'));
     await t.pumpAndSettle();
-    expect(find.textContaining('Path:'), findsOneWidget);
+    expect(find.textContaining('same network as your professor'),
+        findsOneWidget);
   });
 
   testWidgets('no banner when beacons flow', (t) async {
@@ -46,6 +47,7 @@ void main() {
     expect(find.textContaining('blocks discovery broadcasts'), findsNothing);
     await t.tap(find.text('Details'));
     await t.pumpAndSettle();
-    expect(find.textContaining('Path:'), findsOneWidget);
+    expect(find.textContaining('same network as your professor'),
+        findsOneWidget);
   });
 }

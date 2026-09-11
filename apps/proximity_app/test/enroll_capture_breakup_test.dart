@@ -29,6 +29,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
@@ -110,11 +111,14 @@ void main() {
     testWidgets('bare frame preserves the native ratio (portrait feed)',
         (t) async {
       // Wide box (800x400) + portrait ratio (3:4): the frame self-sizes
-      // to 300x400 through the loose Stack — ratio kept, zero treatment.
+      // through the loose Stack — ratio kept, zero treatment. The Stack
+      // sits 32 below the box top (preview rides low), so the
+      // height-constrained frame is 400-32 tall.
       const ratio = 3 / 4;
       final feed = await pumpBare(t, boxW: 800, boxH: 400, ratio: ratio);
       expect(feed.width / feed.height, moreOrLessEquals(ratio, epsilon: 0.01));
-      expect(feed.height, moreOrLessEquals(400, epsilon: 1));
+      expect(
+          feed.height, moreOrLessEquals(400 - ProxSpacing.xxl, epsilon: 1));
       await t.pumpWidget(const SizedBox());
     });
 

@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'record_helpers.dart';
 import 'store_base.dart';
+import '../../export_location.dart' show exportDirPrefsKey;
 
 class SecureDeviceStore implements DeviceStore {
   static const _kEnroll = 'prox.enrollment.v1';
@@ -20,6 +21,8 @@ class SecureDeviceStore implements DeviceStore {
   static const _kCourses = 'prox.courses.v1';
   static const _kMode = 'prox.mode.v1';
   static const _kHostName = 'prox.hostname.v1';
+  static const _kShowProfPhoto = 'prox.showprofphoto.v1.';
+  static const _kCourseProfPhoto = 'prox.courseprofphoto.v1.';
   static const _kLastHost = 'prox.lasthost.v1';
   static const _kOrgBackfill = 'prox.orgBackfill.v1';
   final FlutterSecureStorage _secure;
@@ -208,6 +211,35 @@ class SecureDeviceStore implements DeviceStore {
   }
 
   @override
+  Future<bool> readShowProfPhoto(String course) async {
+    final prefs = await _prefs();
+    return prefs.getBool('$_kShowProfPhoto${course.trim()}') ?? false;
+  }
+
+  @override
+  Future<void> writeShowProfPhoto(String course, bool show) async {
+    final key = course.trim();
+    if (key.isEmpty) return;
+    final prefs = await _prefs();
+    await prefs.setBool('$_kShowProfPhoto$key', show);
+  }
+
+  @override
+  Future<String> readCourseProfPhoto(String course) async {
+    final prefs = await _prefs();
+    return prefs.getString('$_kCourseProfPhoto${course.trim()}') ?? '';
+  }
+
+  @override
+  Future<void> writeCourseProfPhoto(String course, String photoUrl) async {
+    final key = course.trim();
+    final url = photoUrl.trim();
+    if (key.isEmpty || url.isEmpty) return;
+    final prefs = await _prefs();
+    await prefs.setString('$_kCourseProfPhoto$key', url);
+  }
+
+  @override
   Future<String?> readLastHost() async {
     final prefs = await _prefs();
     return prefs.getString(_kLastHost);
@@ -217,6 +249,27 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> writeLastHost(String hostPort) async {
     final prefs = await _prefs();
     await prefs.setString(_kLastHost, hostPort.trim());
+  }
+
+  @override
+  Future<String?> readExportDir() async {
+    final prefs = await _prefs();
+    final v = (prefs.getString(exportDirPrefsKey) ?? '').trim();
+    return v.isEmpty ? null : v;
+  }
+
+  @override
+  Future<void> writeExportDir(String path) async {
+    final clean = path.trim();
+    if (clean.isEmpty) return;
+    final prefs = await _prefs();
+    await prefs.setString(exportDirPrefsKey, clean);
+  }
+
+  @override
+  Future<void> clearExportDir() async {
+    final prefs = await _prefs();
+    await prefs.remove(exportDirPrefsKey);
   }
 
   @override

@@ -38,14 +38,33 @@ import '../../design/tokens.dart';
 import '../../widgets/clock.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/fallback_button.dart';
-import '../../widgets/ladder_line.dart';
+import '../../widgets/student_card.dart' show studentInitials;
 import 'browse_banner.dart';
 import 'browse_empty.dart';
 import 'browse_list.dart';
 import 'join_by_ip.dart';
 
 class BrowseClassesView extends StatefulWidget {
+  /// Joining student's own name for the top-left avatar initials ('' =
+  /// unknown → the avatar renders nothing, never a blank disc).
+  final String avatarName;
+
+  /// Joining student's volunteered Gmail photo ('' = initials fallback).
+  final String avatarPhotoUrl;
+
+  /// Joining student's identity lines (`name · roll\ngmail`, or the
+  /// not-enrolled guidance) — the exact previous browse identity string,
+  /// now rendered BESIDE the avatar instead of below the clock. '' =
+  /// nothing to show (clock still renders).
   final String identityLine;
+
+  /// Split identity lines for the Mark header: time on top, then name, ID,
+  /// then email. When [identityName] is non-empty these win over the legacy
+  /// combined [identityLine]; legacy callers keep passing the single string
+  /// and render exactly as before.
+  final String identityName;
+  final String identityId;
+  final String identityEmail;
   final String ipInitial;
   final ValueChanged<String?> onIpChanged;
   final VoidCallback onJoin;
@@ -62,9 +81,18 @@ class BrowseClassesView extends StatefulWidget {
   /// (no dangling separators).
   final Map<String, String> profEmailByHost;
 
+  /// Gated prof photos by `host:port` (same unicast as [profEmailByHost]).
+  /// Empty/absent renders the class-letter disc (no blank avatar).
+  final Map<String, String> profPhotoByHost;
+
   const BrowseClassesView({
     super.key,
-    required this.identityLine,
+    this.avatarName = '',
+    this.avatarPhotoUrl = '',
+    this.identityLine = '',
+    this.identityName = '',
+    this.identityId = '',
+    this.identityEmail = '',
     required this.ipInitial,
     required this.onIpChanged,
     required this.onJoin,
@@ -74,6 +102,7 @@ class BrowseClassesView extends StatefulWidget {
     required this.onRefresh,
     this.broadcastBlocked = false,
     this.profEmailByHost = const {},
+    this.profPhotoByHost = const {},
   });
 
   @override
@@ -137,6 +166,8 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
+    final hasAvatar = widget.avatarName.trim().isNotEmpty ||
+        widget.avatarPhotoUrl.trim().isNotEmpty;
     // Pull-down = instant local refresh (expiry pruning + recompute).
     // No network scan: discovery is passive (UDP beacons + BLE hints).
     return RefreshIndicator(
@@ -150,11 +181,63 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
           ProxSpacing.xxl,
         ),
         children: [
-          _slim(const ClockHeader()),
-          const SizedBox(height: ProxSpacing.xs),
-          _slim(Text(
-            widget.identityLine,
-            style: ProxType.body(color: c.contentPrimary),
+          // Joining-as header: enlarged avatar (volunteered Gmail photo in
+          // the Accounts-page glowing gradient ring, photo → initials,
+          // nothing when unknown) with metadata BESIDE it: ClockHeader on
+          // top, then name, ID, email — each ellipsized on its own line.
+          _slim(Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _BrowseAvatar(
+                name: widget.avatarName,
+                photoUrl: widget.avatarPhotoUrl,
+              ),
+              if (hasAvatar) const SizedBox(width: ProxSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Time on top, then name, ID, email — each on its own
+                    // line. Legacy single-string callers render below the
+                    // clock exactly as before.
+                    const ClockHeader(),
+                    if (widget.identityName.isNotEmpty) ...[
+                      const SizedBox(height: ProxSpacing.xs),
+                      Text(
+                        widget.identityName,
+                        style: ProxType.title(color: c.accentBrand),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      if (widget.identityId.isNotEmpty)
+                        Text(
+                          widget.identityId,
+                          style: ProxType.body(color: c.contentSecondary)
+                              .copyWith(fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      if (widget.identityEmail.isNotEmpty)
+                        Text(
+                          widget.identityEmail,
+                          style: ProxType.label(color: c.contentSecondary),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                    ] else if (widget.identityLine.isNotEmpty) ...[
+                      const SizedBox(height: ProxSpacing.xs),
+                      Text(
+                        widget.identityLine,
+                        style: ProxType.body(color: c.contentPrimary),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           )),
           if (widget.joinError.isNotEmpty && !_errorDismissed) ...[
             const SizedBox(height: ProxSpacing.sm),
@@ -175,7 +258,13 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
             title: 'Details',
             child: Padding(
               padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
-              child: LadderLine(),
+              child: Text(
+                'Join the same network as your professor and keep Bluetooth on. '
+                'If your class is not visible, ask the professor to announce the IP '
+                'verbally and enter it with “Enter IP manually”.',
+                // Same size as the previous ladder line (bodySmall).
+                style: ProxType.caption(color: c.contentSecondary),
+              ),
             ),
           )),
           if (widget.broadcastBlocked && !_blockedDismissed) ...[
@@ -201,6 +290,8 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                   live: widget.live[i],
                   profEmail:
                       widget.profEmailByHost[widget.live[i].last.key] ?? '',
+                  profPhotoUrl: gatedPhotoFor(widget.profPhotoByHost,
+                      widget.live[i].last.key),
                   onTap: () => widget.onTapLive(widget.live[i]),
                 ),
               )),
@@ -236,4 +327,78 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
           child: child,
         ),
       );
+}
+
+/// Joining-as avatar for the browse top-left (visual only): the
+/// volunteered Gmail photo in the Accounts-page glowing gradient ring.
+/// Photo → initials fallback (shared `studentInitials` helper, same
+/// contract as the roster/host avatars); unknown renders nothing, never
+/// a blank disc. Static — no sweep timer, no implicit-animation loop —
+/// settle-safe.
+class _BrowseAvatar extends StatelessWidget {
+  final String name;
+  final String photoUrl;
+
+  const _BrowseAvatar({required this.name, required this.photoUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final url = photoUrl.trim();
+    if (name.trim().isEmpty && url.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    Widget initials() => Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.accentBrand.withValues(alpha: 0.12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            studentInitials(name),
+            style: ProxType.title(color: c.accentBrand),
+            overflow: TextOverflow.clip,
+            maxLines: 1,
+          ),
+        );
+
+    final face = url.isEmpty
+        ? initials()
+        : ClipOval(
+            child: Image.network(
+              url,
+              width: 56,
+              height: 56,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => initials(),
+              frameBuilder: (context, child, frame, _) {
+                if (frame == null) return initials();
+                return child;
+              },
+            ),
+          );
+
+    return Container(
+      key: const ValueKey('browse-avatar-ring'),
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: c.gradientBrand,
+        boxShadow: [c.glowLive.toShadow()],
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c.surfaceBase,
+        ),
+        padding: const EdgeInsets.all(2),
+        child: face,
+      ),
+    );
+  }
 }

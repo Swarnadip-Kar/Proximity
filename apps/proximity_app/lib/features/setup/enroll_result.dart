@@ -47,7 +47,7 @@ class EnrollResultScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Records-only devices never save enrollment (see EnrollIntro guard).
+    // Records-only devices never save enrollment (see AccountKeyStep guard).
     if (!canUseFace()) {
       return ProxScreen(
         title: 'Save enrollment',

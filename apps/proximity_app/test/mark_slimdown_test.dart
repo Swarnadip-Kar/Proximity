@@ -29,14 +29,16 @@ Widget _themed(Widget body) => MaterialApp(
     );
 
 Widget _browse({
-  String identityLine = 'Test User · 1\nstudent@example.com',
+  String avatarName = 'Test User',
+  String avatarPhotoUrl = '',
   String joinError = '',
   List<LiveClass> live = const [],
   bool broadcastBlocked = false,
 }) =>
     _themed(
       BrowseClassesView(
-        identityLine: identityLine,
+        avatarName: avatarName,
+        avatarPhotoUrl: avatarPhotoUrl,
         ipInitial: '',
         onIpChanged: (_) {},
         onJoin: () {},
@@ -114,12 +116,15 @@ void main() {
       await t.pumpWidget(_browse());
       await t.pumpAndSettle();
       // Kept: empty state, section header, fallback-weight IP entry,
-      // foreground note, identity line.
+      // foreground note, top-left avatar (initials, no text block).
       expect(find.text('Looking for a class…'), findsOneWidget);
       expect(find.text('Live on this WiFi'), findsOneWidget);
       expect(find.text('Enter IP manually'), findsOneWidget);
       expect(find.textContaining('foreground'), findsOneWidget);
-      expect(find.textContaining('Test User'), findsOneWidget);
+      expect(find.text('TU'), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('browse-avatar-ring')), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
       // Removed: records entry, enroll entry (both linked states gone —
       // the gate routes unenrolled users, Courses owns records).
       expect(find.text('My attendance records (synced)'), findsNothing);
@@ -132,7 +137,7 @@ void main() {
       var tapped = false;
       await t.pumpWidget(_themed(
         BrowseClassesView(
-          identityLine: 'S',
+          avatarName: 'S',
           ipInitial: '',
           onIpChanged: (_) {},
           onJoin: () {},

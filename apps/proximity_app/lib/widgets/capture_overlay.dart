@@ -189,17 +189,40 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Face-guide oval derived from the ACTUAL preview box (see
-  /// [previewRectFor]): the same 0.70w x 0.52h fractions applied to the
+  /// [previewRectFor]): the same 0.80w x 0.60h fractions applied to the
   /// video rect, not the full Stack size. Null aspect == [guideRectFor]
   /// legacy behavior. Pure for unit tests.
+  ///
+  /// Portrait clamp (face-guiding oval): the guide is a TRUE oval via
+  /// `drawOval` (never a rounded rect) and stays taller than wide on every
+  /// viewport. Phone portrait previews already satisfy w < h, so their
+  /// pixels are byte-identical; wide/desktop preview boxes (landscape
+  /// sensor ratios) would otherwise compute w >= h — there the width is
+  /// narrowed to `h * faceWidthToHeight`, keeping the same center/height.
+  /// Paint, preview sizing, and thresholds are untouched (static shape, no
+  /// new animation — settle-safe).
+  static const faceWidthToHeight = 0.75;
+
   static Rect guideRectForAspect(Size size, double? aspectRatio) {
     final preview = previewRectFor(size, aspectRatio);
+    var w = preview.width * 0.80;
+    final h = preview.height * 0.60;
+    if (w >= h) w = h * faceWidthToHeight;
     return Rect.fromCenter(
       center: preview.center,
-      width: preview.width * 0.70,
-      height: preview.height * 0.52,
+      width: w,
+      height: h,
     );
   }
+
+  /// Prompt line top: [ProxSpacing.xxl] + [ProxSpacing.sm] below the oval
+  /// (the scale tops at xxl — this composes tokens rather than inventing
+  /// a step), clamped into the Stack so the text stays clear of the face
+  /// zone on small screens (and never leaves the viewport). Pure for unit
+  /// tests.
+  static double promptTopFor(Size size, Rect oval) =>
+      (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm)
+          .clamp(0.0, size.height - ProxSpacing.xxl);
 
   /// Beacon position for travel/target [angle] on [oval] (east = 0,
   /// clockwise on screen). Pure for unit tests.
@@ -365,9 +388,13 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
           // are present. Null aspect == legacy full-size behavior.
           final oval = CaptureOverlay.guideRectForAspect(
               size, widget.previewAspectRatio);
+          // Prompt sits one md gap below the oval, clamped into the Stack
+          // so it stays clear of the face zone on small screens. The
+          // travelling comet beacon rides the oval rim itself (see
+          // beaconPointFor); the top progress bar + this below-oval line
+          // are the elements held clear above/below the oval.
           final promptTop = bounded
-              ? (oval.bottom + ProxSpacing.md)
-                  .clamp(0.0, size.height - ProxSpacing.xxl)
+              ? CaptureOverlay.promptTopFor(size, oval)
               : null;
           return Stack(
             fit: StackFit.expand,
@@ -375,7 +402,10 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
               CustomPaint(
                 painter: _CaptureOverlayPainter(
                   scrim: c.gradientScrim,
-                  guideRing: c.contentPrimary,
+                  // On-scrim chrome is ALWAYS white: both themes use a
+                  // near-black scrim, so theme text (near-black in light
+                  // mode) vanishes on it. Camera overlay ignores app theme.
+                  guideRing: Colors.white,
                   guideHalo: tone,
                   beaconColor: tone,
                   beaconGlow: c.glowMarked,
@@ -388,15 +418,21 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 child: const SizedBox.expand(),
               ),
               // (1) ONE slim progress bar, pinned just below the top app
-              // bar. Edge-to-edge: the bar clears a transparent overlay app
-              // bar via [topInset] plus the notch via SafeArea (the video +
-              // scrim paint fullscreen under both); standalone callers keep
-              // topInset 0 so this stays pinned at the top. Hidden in
-              // single-shot mode (mark/face) — angle completion is
-              // meaningless for an instant check.
+              // bar: screen-margin pill (the overlay-float language —
+              // full-bleed lines belong on opaque app-bar seams like
+              // [SetupProgressOverlay], not floating over video).
+              // Edge-to-edge: the bar clears a transparent overlay app
+              // bar via [topInset] plus the notch via SafeArea (the video
+              // + scrim paint fullscreen under both). [topInset] is
+              // screen-measured but this Stack starts [ProxSpacing.xxl]
+              // lower (preview rides low), so subtract that here —
+              // otherwise the bar lands a full offset below the seam.
+              // Standalone callers keep topInset 0 (clamped, never
+              // negative). Hidden in single-shot mode (mark/face).
               if (widget.showProgress)
                 Positioned(
-                  top: widget.topInset + ProxSpacing.sm,
+                  top: (widget.topInset - ProxSpacing.xxl)
+                      .clamp(0.0, double.infinity),
                   left: ProxSpacing.screenMargin,
                   right: ProxSpacing.screenMargin,
                   child: SafeArea(
@@ -406,13 +442,17 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                       child: LinearProgressIndicator(
                         value: widget.progress.clamp(0.0, 1.0),
                         minHeight: 4,
-                        backgroundColor: c.divider,
+                        // White track: theme divider vanishes on the
+                        // near-black scrim in light mode.
+                        backgroundColor:
+                            Colors.white.withValues(alpha: 0.24),
                         valueColor: AlwaysStoppedAnimation<Color>(tone),
                       ),
                     ),
                   ),
                 ),
-              // (3) ONE short guiding prompt line below the oval.
+              // (3) ONE short guiding prompt line below the oval. White
+              // for the same on-scrim reason as the guide ring above.
               if (promptTop != null)
                 Positioned(
                   top: promptTop,
@@ -420,7 +460,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   right: ProxSpacing.screenMargin,
                   child: Text(
                     line,
-                    style: ProxType.label(color: c.contentPrimary),
+                    style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
@@ -433,7 +473,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   bottom: ProxSpacing.xl,
                   child: Text(
                     line,
-                    style: ProxType.label(color: c.contentPrimary),
+                    style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,

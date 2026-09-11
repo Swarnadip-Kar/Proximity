@@ -30,15 +30,41 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
+import 'account_common.dart';
 
 /// One-button mode exit, composed INSIDE the Account pages (never a
 /// shell-level affordance — `shells.dart` is read-only).
-class AccountModeSwitch extends ConsumerWidget {
+///
+/// Stale-stack safe: the transition reset (root setup-flow dismissed first
+/// per the product decision, then this tab popped to root) runs BEFORE the
+/// mirrored `setMode(ref, AppMode.unset)` exit, so the previous identity's
+/// pushed screens can never survive underneath. Mounted + busy guarded so
+/// rapid taps cannot double-exit (same icon/label/key contract).
+class AccountModeSwitch extends ConsumerStatefulWidget {
   final SignedAccount acct;
   const AccountModeSwitch({required this.acct, super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AccountModeSwitch> createState() => _AccountModeSwitchState();
+}
+
+class _AccountModeSwitchState extends ConsumerState<AccountModeSwitch> {
+  bool _busy = false;
+
+  Future<void> _switchMode() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      prepareAccountTransition(context);
+      if (!mounted) return;
+      await setMode(ref, AppMode.unset);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: ProxSpacing.sm),
       child: Center(
@@ -49,7 +75,7 @@ class AccountModeSwitch extends ConsumerWidget {
           ),
           icon: const Icon(Icons.switch_account),
           label: const Text('Switch mode'),
-          onPressed: () => setMode(ref, AppMode.unset),
+          onPressed: _busy ? null : _switchMode,
         ),
       ),
     );
