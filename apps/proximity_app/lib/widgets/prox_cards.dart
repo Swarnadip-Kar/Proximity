@@ -47,14 +47,22 @@ class _ProxCardState extends State<ProxCard> {
     final card = AnimatedContainer(
       duration: ProxDurations.small,
       curve: ProxCurves.standard,
-      padding: widget.padding,
+      padding: const EdgeInsets.all(ProxSpacing.cardPadding),
       decoration: BoxDecoration(
-        color: c.surfaceRaised,
+        // Subtle vertical gradient: raised → overlay-blend. Adds depth
+        // over flat fills while staying quiet on both themes.
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            c.surfaceRaised,
+            Color.lerp(c.surfaceRaised, c.surfaceOverlay, 0.55)!,
+          ],
+        ),
         borderRadius: ProxRadii.cardSpecRadius,
         border: Border.all(
-          color: _hovering
-              ? c.accentBrand.withValues(alpha: 0.15)
-              : c.divider,
+          color: _hovering ? c.accentBrand : c.divider,
+          width: _hovering ? 1.2 : 1.0,
         ),
         boxShadow: [shadow],
       ),

@@ -77,6 +77,7 @@ class DeviceTrustBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     final until = trustDateLabel(attestedUntilMillis);
     return ProxCard(
       child: Column(
@@ -90,9 +91,7 @@ class DeviceTrustBadge extends StatelessWidget {
               if (until.isNotEmpty) 'Attested until $until',
               'Key ${trustPkDFingerprint(pkDHex)}',
             ].join(' · '),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            style: ProxType.caption(color: c.contentSecondary),
           ),
         ],
       ),
@@ -110,6 +109,7 @@ class WrongOrgCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return ProxCard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,17 +124,14 @@ class WrongOrgCard extends StatelessWidget {
               children: [
                 Text(
                   'Wrong organization for this class',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: ProxType.title(color: c.contentPrimary),
                 ),
                 const SizedBox(height: ProxSpacing.xs),
                 Text(
                   'This class is for $classOrg, but you are signed in as $myOrg. '
                   'No proof was sent. Join your institute class instead — '
                   'cross-org marking is refused by design.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  style: ProxType.body(color: c.contentSecondary),
                 ),
               ],
             ),

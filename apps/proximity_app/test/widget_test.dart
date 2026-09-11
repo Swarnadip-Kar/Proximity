@@ -95,7 +95,10 @@ ProviderScope testScope(
 /// Shell-tab helper (§3.1 rebuild): tab content other than the default
 /// tab is offstage — navigate the bottom bar before asserting on it.
 Future<void> openTab(WidgetTester t, String label) async {
-  await t.tap(find.widgetWithText(BottomNavigationBar, label));
+  await t.tap(find.descendant(
+    of: find.byKey(const ValueKey('shell-bar')),
+    matching: find.text(label),
+  ));
   await t.pumpAndSettle();
 }
 

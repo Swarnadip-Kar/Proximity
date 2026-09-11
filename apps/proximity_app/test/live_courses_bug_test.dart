@@ -28,7 +28,7 @@ Future<void> _openTab(WidgetTester t, String label) async {
   // Tap the tab-bar label itself (not the bar center): center-tap only
   // ever hits the middle tab.
   final labelInBar = find.descendant(
-    of: find.byType(BottomNavigationBar),
+    of: find.byKey(const ValueKey('shell-bar')),
     matching: find.text(label),
   );
   expect(labelInBar, findsOneWidget, reason: 'tab $label exists in bar');

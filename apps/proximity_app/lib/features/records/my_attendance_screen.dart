@@ -23,6 +23,7 @@ import '../../widgets/clock.dart';
 import '../../widgets/course_attendance.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
+import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
 import 'course_attendance_detail_screen.dart';
@@ -301,7 +302,17 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
                 const SizedBox(height: ProxSpacing.sm),
                 if (_offlineNote.isNotEmpty) ProxSyncNote(_offlineNote),
                 if (_loading)
-                  const Center(child: CircularProgressIndicator())
+                  const ProxShimmerHost(
+                    child: Column(
+                      children: [
+                        ProxShimmerRow(),
+                        SizedBox(height: ProxSpacing.sm),
+                        ProxShimmerRow(),
+                        SizedBox(height: ProxSpacing.sm),
+                        ProxShimmerRow(),
+                      ],
+                    ),
+                  )
                 else if (_error.isNotEmpty)
                   ProxErrorNote(_error)
                 else if (_sessions.isEmpty)

@@ -69,7 +69,7 @@ Future<FakeHostDriver> _seededDriver() async {
 
 Future<void> _openTab(WidgetTester t, String label) async {
   final labelInBar = find.descendant(
-    of: find.byType(BottomNavigationBar),
+    of: find.byKey(const ValueKey('shell-bar')),
     matching: find.text(label),
   );
   expect(labelInBar, findsOneWidget, reason: 'tab $label exists in bar');

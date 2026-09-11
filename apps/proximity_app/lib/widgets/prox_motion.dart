@@ -314,9 +314,11 @@ class _ProxPulseGlowState extends State<ProxPulseGlow> {
         ? 0.25
         : (_bright ? 0.35 : 0.15);
 
-    return AnimatedContainer(
-      duration: ProxDurations.glow,
-      curve: ProxCurves.standard,
+    // Instant steps (same settle-safe pattern as ProxDot): a continuous
+    // implicit animation here would schedule endless frames and
+    // pumpAndSettle would never complete. The 2s cadence keeps the
+    // breathing readable without motion smoothing.
+    return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         boxShadow: [

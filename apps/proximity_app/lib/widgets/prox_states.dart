@@ -238,7 +238,9 @@ class _ProxEmptyStateState extends State<ProxEmptyState> {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    return ProxFadeSlideIn(
+    // Hero entrance for the illustration: empty states land with a
+    // premium settle instead of a plain fade.
+    return ProxHeroEntrance(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: ProxSpacing.xxl),
         child: Column(

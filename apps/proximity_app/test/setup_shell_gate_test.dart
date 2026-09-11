@@ -109,18 +109,17 @@ void main() {
         await t.pump(const Duration(milliseconds: 500));
       }
 
-      // Bottom bar: Mark · Courses · Account (wide test surface).
-      expect(find.widgetWithText(BottomNavigationBar, 'Mark'), findsOneWidget);
-      expect(
-          find.widgetWithText(BottomNavigationBar, 'Courses'), findsOneWidget);
-      expect(
-          find.widgetWithText(BottomNavigationBar, 'Account'), findsOneWidget);
+      // Pill bar: Mark · Courses · Account (wide test surface).
+      expect(find.byKey(const ValueKey('shell-bar')), findsOneWidget);
+      expect(find.text('Mark'), findsOneWidget);
+      expect(find.text('Courses'), findsWidgets);
+      expect(find.text('Account'), findsOneWidget);
 
       // Mark gate: unenrolled → SetupFlowScreen at sign-in, never bare
       // mark/browse (no StudentHomeScreen visible above the flow).
       expect(find.byType(SetupFlowScreen), findsOneWidget);
       expect(find.byType(StudentShell), findsOneWidget);
-      expect(find.widgetWithText(BottomNavigationBar, 'Mark'), findsOneWidget);
+      expect(find.text('Mark'), findsOneWidget);
       // Drain stagger one-shots (stepped: lets each tick settle).
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
@@ -156,11 +155,20 @@ void main() {
         await t.pump(const Duration(milliseconds: 500));
       }
 
-      expect(find.widgetWithText(BottomNavigationBar, 'Live'), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell-bar')), findsOneWidget);
       expect(
-          find.widgetWithText(BottomNavigationBar, 'Courses'), findsOneWidget);
+          find.descendant(
+            of: find.byKey(const ValueKey('shell-bar')),
+            matching: find.text('Live'),
+          ),
+          findsOneWidget);
+      expect(find.text('Courses'), findsWidgets);
       expect(
-          find.widgetWithText(BottomNavigationBar, 'Account'), findsOneWidget);
+          find.descendant(
+            of: find.byKey(const ValueKey('shell-bar')),
+            matching: find.text('Account'),
+          ),
+          findsOneWidget);
       // No registered courses → guidance + Courses pointer (records-only
       // Courses tab owns registration).
       expect(find.text('Go to Courses'), findsOneWidget);

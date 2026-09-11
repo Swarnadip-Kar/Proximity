@@ -140,6 +140,45 @@ class _StudentCardState extends State<StudentCard> {
   var _pressed = false;
   var _hovering = false;
 
+  /// Rotating selection-ring driver: timer-stepped angle (timers never
+  /// block pumpAndSettle), armed only while the ring is on and motion
+  /// is allowed.
+  Timer? _ringTimer;
+  var _ringAngle = 0.0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncRing();
+  }
+
+  @override
+  void didUpdateWidget(StudentCard old) {
+    super.didUpdateWidget(old);
+    _syncRing();
+  }
+
+  void _syncRing() {
+    final want =
+        (widget.selected || widget.selectionMode) &&
+        !ProxMotion.reduced(context);
+    if (want && _ringTimer == null) {
+      _ringTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
+        if (!mounted) return;
+        setState(() => _ringAngle += 0.25);
+      });
+    } else if (!want && _ringTimer != null) {
+      _ringTimer?.cancel();
+      _ringTimer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ringTimer?.cancel();
+    super.dispose();
+  }
+
   void _handleTap() {
     final onSelection = widget.onSelectionChanged;
     if (widget.selectionMode && onSelection != null) {
@@ -200,13 +239,16 @@ class _StudentCardState extends State<StudentCard> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Avatar with gradient ring on selection.
+          // Avatar with gradient ring on selection. The ring slowly
+          // rotates while armed (timer-stepped, reduce-motion safe).
           // NOTE: padding animates 0 ↔ 2.5, so the curve must NOT overshoot
           // (easeOutBack dips below 0 → AnimatedContainer asserts
           // padding.isNonNegative). Keep the spring for scale only.
-          AnimatedContainer(
-            duration: ProxDurations.small,
-            curve: ProxCurves.standard,
+          Transform.rotate(
+            angle: ringOn ? _ringAngle : 0,
+            child: AnimatedContainer(
+              duration: ProxDurations.small,
+              curve: ProxCurves.standard,
             width: 40,
             height: 40,
             decoration: BoxDecoration(
@@ -222,25 +264,26 @@ class _StudentCardState extends State<StudentCard> {
                   : null,
               color: ringOn ? null : avatarColor.withValues(alpha: 0.15),
             ),
-            padding: EdgeInsets.all(ringOn ? 2.5 : 0),
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: ringOn
-                    ? c.surfaceRaised
-                    : Colors.transparent,
-              ),
-              padding: EdgeInsets.all(ringOn ? 1 : 0),
+              padding: EdgeInsets.all(ringOn ? 2.5 : 0),
               child: Container(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: avatarColor.withValues(alpha: ringOn ? 0.2 : 0.15),
+                  color: ringOn
+                      ? c.surfaceRaised
+                      : Colors.transparent,
                 ),
-                alignment: Alignment.center,
-                child: Text(
-                  studentInitials(widget.name),
-                  style: ProxType.label(color: avatarFg),
-                  overflow: TextOverflow.clip,
+                padding: EdgeInsets.all(ringOn ? 1 : 0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: avatarColor.withValues(alpha: ringOn ? 0.2 : 0.15),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    studentInitials(widget.name),
+                    style: ProxType.label(color: avatarFg),
+                    overflow: TextOverflow.clip,
+                  ),
                 ),
               ),
             ),
@@ -333,6 +376,19 @@ class _RoundChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final color = tick.present ? c.statusMarked : c.contentSecondary;
+    // One-shot scale-in when the chip first appears (completes, so
+    // pumpAndSettle-safe; skipped under reduce-motion).
+    if (ProxMotion.reduced(context)) return _chip(c, color);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.6, end: 1.0),
+      duration: ProxDurations.verdictPop,
+      curve: ProxCurves.verdictSpring,
+      builder: (_, v, child) => Transform.scale(scale: v, child: child),
+      child: _chip(c, color),
+    );
+  }
+
+  Widget _chip(ProximityColors c, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: ProxSpacing.sm,

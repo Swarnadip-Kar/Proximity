@@ -151,13 +151,30 @@ class FallbackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
+    final c = ProximityColors.of(context);
+    // Ghost brand treatment: brand border, transparent fill, 4% brand
+    // tint on hover — fallback weight, never primary.
+    return OutlinedButton.icon(
       key: buttonKey,
-      style: TextButton.styleFrom(
+      style: OutlinedButton.styleFrom(
         minimumSize: const Size(64, ProxSpacing.minTap),
+        foregroundColor: c.accentBrand,
+        side: BorderSide(
+          color: c.accentBrand.withValues(alpha: 0.4),
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ProxRadii.pill),
+        ),
+      ).copyWith(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered)) {
+            return c.accentBrand.withValues(alpha: 0.04);
+          }
+          return Colors.transparent;
+        }),
       ),
       onPressed: () => openSheet(context),
-      icon: Icon(icon),
+      icon: Icon(icon, size: ProxIconSizes.md),
       label: Text(label, overflow: TextOverflow.ellipsis),
     );
   }

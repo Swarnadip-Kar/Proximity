@@ -354,7 +354,7 @@ void main() {
 
     // Courses tab: records/management only (already records-only).
     final coursesTab = find.descendant(
-      of: find.byType(BottomNavigationBar),
+      of: find.byKey(const ValueKey('shell-bar')),
       matching: find.text('Courses'),
     );
     await t.tap(coursesTab);

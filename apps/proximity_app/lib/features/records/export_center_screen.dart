@@ -24,6 +24,7 @@ import '../../widgets/csv_preview.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
+import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/web_banner.dart';
 
@@ -200,7 +201,17 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
                   ),
                   const SizedBox(height: ProxSpacing.sm),
                   if (snap.connectionState == ConnectionState.waiting)
-                    const Center(child: CircularProgressIndicator())
+                    const ProxShimmerHost(
+                      child: Column(
+                        children: [
+                          ProxShimmerRow(),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerRow(),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerRow(),
+                        ],
+                      ),
+                    )
                   else if (sessions.isEmpty)
                     const ProxEmptyState(
                       message: 'No sessions yet for this course.',

@@ -128,20 +128,39 @@ Future<void> steppedSettle(WidgetTester t) async {
   }
 }
 
+/// Shell bar + tab finders (gradient-pill bar): tabs are keyed
+/// `shell-tab-<label>` inside the `shell-bar` container.
+Finder _tabInBar(String label) => find.descendant(
+      of: find.byKey(const ValueKey('shell-bar')),
+      matching: find.text(label),
+    );
+
 Future<void> _openTab(WidgetTester t, String label) async {
-  final labelInBar = find.descendant(
-    of: find.byType(BottomNavigationBar),
-    matching: find.text(label),
-  );
+  final labelInBar = _tabInBar(label);
   expect(labelInBar, findsOneWidget, reason: 'tab $label exists in bar');
   await t.tap(labelInBar);
   await steppedSettle(t);
 }
 
-/// Bottom-bar selected index (bar/content sync both ways).
-int _barIndex(WidgetTester t) =>
-    t.widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
-        .currentIndex;
+/// Bottom-bar selected index (bar/content sync both ways): the active
+/// pill is the one whose AnimatedContainer carries the brand gradient.
+int _barIndex(WidgetTester t) {
+  final isStudent =
+      find.byKey(const ValueKey('shell-tab-Mark')).evaluate().isNotEmpty;
+  final labels =
+      isStudent ? ['Mark', 'Courses', 'Account'] : ['Live', 'Courses', 'Account'];
+  for (var i = 0; i < labels.length; i++) {
+    final containers = t.widgetList<AnimatedContainer>(find.descendant(
+      of: find.byKey(ValueKey('shell-tab-${labels[i]}')),
+      matching: find.byType(AnimatedContainer),
+    ));
+    for (final ac in containers) {
+      final d = ac.decoration;
+      if (d is BoxDecoration && d.gradient != null) return i;
+    }
+  }
+  return -1;
+}
 
 /// Finger swipe across tab content: negative dx pages forward (toward
 /// higher indices), positive dx pages back.
@@ -226,10 +245,7 @@ void main() {
       expect(find.byType(StudentHomeScreen), findsOneWidget);
 
       // Mark(0) → Courses(1): incoming starts fully right, eases to rest.
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Courses'),
-      ));
+      await t.tap(_tabInBar('Courses'));
       await t.pump();
       expect(_movingDx(t), [1.0]);
       await t.pump(const Duration(milliseconds: 110));
@@ -243,19 +259,13 @@ void main() {
       expect(find.byType(MyAttendanceScreen), findsOneWidget);
 
       // Same-tab tap restarts nothing (settled at rest).
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Courses'),
-      ));
+      await t.tap(_tabInBar('Courses'));
       await t.pump();
       expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
 
       // Courses(1) → Mark(0): incoming starts fully left.
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Mark'),
-      ));
+      await t.tap(_tabInBar('Mark'));
       await t.pump();
       expect(_movingDx(t), [-1.0]);
       await t.pump(ProxDurations.tabSlide);
@@ -382,20 +392,14 @@ void main() {
       await steppedSettle(t);
       expect(find.text('Go to Courses'), findsOneWidget);
 
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Account'),
-      ));
+      await t.tap(_tabInBar('Account'));
       await t.pump();
       expect(_movingDx(t), [1.0]);
       await t.pump(ProxDurations.tabSlide);
       expect(_movingDx(t), isEmpty);
       await steppedSettle(t);
 
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Live'),
-      ));
+      await t.tap(_tabInBar('Live'));
       await t.pump();
       expect(_movingDx(t), [-1.0]);
       await steppedSettle(t);
@@ -466,19 +470,13 @@ void main() {
       }
 
       // Switches still land instantly with no slide mid-flight.
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Courses'),
-      ));
+      await t.tap(_tabInBar('Courses'));
       await t.pump();
       expect(_movingDx(t), isEmpty);
       expect(find.text('Register new course'), findsOneWidget);
       await steppedSettle(t);
 
-      await t.tap(find.descendant(
-        of: find.byType(BottomNavigationBar),
-        matching: find.text('Live'),
-      ));
+      await t.tap(_tabInBar('Live'));
       await t.pump();
       expect(_movingDx(t), isEmpty);
       await steppedSettle(t);

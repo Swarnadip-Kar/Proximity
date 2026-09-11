@@ -64,11 +64,30 @@ class WaitingListSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          'Waiting area (${waitingRows.length})',
-          style: ProxType.title(color: c.contentPrimary),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
+        Row(
+          children: [
+            // Breathing presence halo: the waiting area is live. The dot
+            // itself stays static — ProxDot(pulse:true) runs a continuous
+            // implicit animation that pumpAndSettle can never outlast
+            // (same reason roster badges are static). The halo steps on a
+            // settle-safe timer instead.
+            ProxPulseGlow(
+              color: ProxStateColors.of(context, ProxState.waiting),
+              blurRadius: 12,
+              child: ProxDot(
+                color: ProxStateColors.of(context, ProxState.waiting),
+              ),
+            ),
+            const SizedBox(width: ProxSpacing.sm),
+            Expanded(
+              child: Text(
+                'Waiting area (${waitingRows.length})',
+                style: ProxType.title(color: c.contentPrimary),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: ProxSpacing.sm),
         if (waitingRows.isEmpty)

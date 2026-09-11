@@ -96,25 +96,29 @@ class _WelcomeHeroSectionState extends State<WelcomeHeroSection> {
                     surfaceColor: c.surfaceBase,
                   ),
                 ),
-                // Center beacon with glow.
-                Container(
-                  width: 68,
-                  height: 68,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: c.gradientBrand,
-                    boxShadow: [
-                      BoxShadow(
-                        color: c.accentBrand.withValues(alpha: 0.4),
-                        blurRadius: 32,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.sensors,
-                    size: 32,
-                    color: Colors.white,
+                // Center beacon with breathing glow.
+                ProxPulseGlow(
+                  color: c.accentBrand,
+                  blurRadius: 32,
+                  child: Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: c.gradientBrand,
+                      boxShadow: [
+                        BoxShadow(
+                          color: c.accentBrand.withValues(alpha: 0.4),
+                          blurRadius: 32,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.sensors,
+                      size: 32,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],

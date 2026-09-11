@@ -61,16 +61,49 @@ class _DetailsExpanderState extends State<DetailsExpander> {
       children: [
         InkWell(
           onTap: _toggle,
-          child: Container(
+          borderRadius: BorderRadius.circular(ProxRadii.chip),
+          child: AnimatedContainer(
+            duration:
+                ProxMotion.effective(context, ProxDurations.small),
+            curve: ProxCurves.standard,
             constraints:
                 const BoxConstraints(minHeight: ProxSpacing.minTap),
             alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProxSpacing.sm,
+              vertical: ProxSpacing.xs,
+            ),
+            decoration: BoxDecoration(
+              color: _open
+                  ? c.accentBrand.withValues(alpha: 0.07)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(ProxRadii.chip),
+            ),
             child: Row(
               children: [
+                // Brand accent tick mirrors the section-header language.
+                AnimatedContainer(
+                  duration: ProxMotion.effective(
+                      context, ProxDurations.small),
+                  width: 2,
+                  height: _open ? 16 : 12,
+                  decoration: BoxDecoration(
+                    gradient: _open ? c.gradientBrand : null,
+                    color: _open ? null : c.divider,
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+                const SizedBox(width: ProxSpacing.sm),
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: ProxType.label(color: c.contentSecondary),
+                    style: ProxType.label(
+                      color:
+                          _open ? c.contentPrimary : c.contentSecondary,
+                    ).copyWith(
+                      fontWeight:
+                          _open ? FontWeight.w600 : FontWeight.w500,
+                    ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
@@ -84,7 +117,8 @@ class _DetailsExpanderState extends State<DetailsExpander> {
                   child: Icon(
                     Icons.expand_more,
                     size: 20,
-                    color: c.contentSecondary,
+                    color:
+                        _open ? c.accentBrand : c.contentSecondary,
                   ),
                 ),
               ],

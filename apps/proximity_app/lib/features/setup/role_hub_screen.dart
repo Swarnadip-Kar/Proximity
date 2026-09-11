@@ -25,6 +25,7 @@ import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
 import '../../widgets/prox_motion.dart';
+import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import 'device_identity_screen.dart';
 import '../entry/entry_flow.dart';
@@ -149,7 +150,15 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                     const SizedBox(height: ProxSpacing.lg),
                     if (snap.connectionState == ConnectionState.waiting &&
                         role == null) ...[
-                      const Center(child: CircularProgressIndicator()),
+                      const ProxShimmerHost(
+                        child: Column(
+                          children: [
+                            ProxShimmerRow(),
+                            SizedBox(height: ProxSpacing.sm),
+                            ProxShimmerRow(),
+                          ],
+                        ),
+                      ),
                     ] else if (!hasProf && !hasStudent) ...[
                       RoleRegisterSection(
                         profNameCtrl: _profNameCtrl,

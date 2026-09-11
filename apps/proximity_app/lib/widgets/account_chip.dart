@@ -14,6 +14,8 @@
 // `face_verification` output.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
@@ -95,23 +97,64 @@ class AccountChip extends StatelessWidget {
 
     if (!largeHeader) return content;
 
-    // Gradient wash behind the Account header — stronger and subtly
-    // animated compared to the old static 14% version.
+    // Gradient wash behind the Account header — stronger and gently
+    // breathing compared to the old static 14% version.
     return Stack(
       children: [
-        Positioned.fill(
-          child: Opacity(
-            opacity: 0.18,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: c.gradientBrand,
-                borderRadius: ProxRadii.cardSpecRadius,
-              ),
-            ),
-          ),
-        ),
+        const Positioned.fill(child: _WashGlow()),
         content,
       ],
+    );
+  }
+}
+
+/// Breathing gradient wash (timer-driven opacity 0.14↔0.22, reduce-motion
+/// safe — timers never block pumpAndSettle).
+class _WashGlow extends StatefulWidget {
+  const _WashGlow();
+
+  @override
+  State<_WashGlow> createState() => _WashGlowState();
+}
+
+class _WashGlowState extends State<_WashGlow> {
+  Timer? _timer;
+  var _bright = false;
+  var _armed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_armed) return;
+    _armed = true;
+    if (!ProxMotion.reduced(context)) {
+      _timer = Timer.periodic(ProxDurations.glow, (_) {
+        if (!mounted) return;
+        setState(() => _bright = !_bright);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    // Instant steps, not AnimatedOpacity: continuous implicit animation
+    // would schedule endless frames and pumpAndSettle would time out
+    // (same settle-safe rule as ProxDot/ProxPulseGlow).
+    return Opacity(
+      opacity: _bright ? 0.22 : 0.14,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: c.gradientBrand,
+          borderRadius: ProxRadii.cardSpecRadius,
+        ),
+      ),
     );
   }
 }

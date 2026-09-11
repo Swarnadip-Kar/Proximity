@@ -376,6 +376,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 painter: _CaptureOverlayPainter(
                   scrim: c.gradientScrim,
                   guideRing: c.contentPrimary,
+                  guideHalo: tone,
                   beaconColor: tone,
                   beaconGlow: c.glowMarked,
                   oval: oval,
@@ -449,6 +450,10 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
 class _CaptureOverlayPainter extends CustomPainter {
   final LinearGradient scrim;
   final Color guideRing;
+
+  /// Head-position guide halo: concentric pulse rings around the oval in
+  /// the signal tone. Alpha breathes with [dim] (existing pulse timer).
+  final Color guideHalo;
   final Color beaconColor;
   final ProxGlow beaconGlow;
   final Rect oval;
@@ -466,6 +471,7 @@ class _CaptureOverlayPainter extends CustomPainter {
   _CaptureOverlayPainter({
     required this.scrim,
     required this.guideRing,
+    required this.guideHalo,
     required this.beaconColor,
     required this.beaconGlow,
     required this.oval,
@@ -486,7 +492,8 @@ class _CaptureOverlayPainter extends CustomPainter {
 
     final alpha = dim ? 0.55 : 1.0;
     // (2a) ONE static face-guide oval (always drawn — the single-shot
-    // screen keeps this framing guide).
+    // screen keeps this framing guide) plus two concentric guide halos
+    // in the signal tone that breathe with the pulse timer.
     canvas.drawOval(
       oval,
       Paint()
@@ -494,6 +501,17 @@ class _CaptureOverlayPainter extends CustomPainter {
         ..strokeWidth = 3
         ..color = guideRing.withValues(alpha: 0.95 * alpha),
     );
+    for (final pad in [7.0, 14.0]) {
+      canvas.drawOval(
+        oval.inflate(pad),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5
+          ..color = guideHalo.withValues(
+            alpha: (pad > 10 ? 0.18 : 0.30) * alpha,
+          ),
+      );
+    }
     // (2b) ONE glowing COMET travelling on the oval (static at the target
     // under reduce-motion — the angle is resolved in build): bright head
     // dot + halo, with a short fading tail streaming behind it, opposite
@@ -545,5 +563,6 @@ class _CaptureOverlayPainter extends CustomPainter {
       old.oval != oval ||
       old.beaconColor != beaconColor ||
       old.showBeacon != showBeacon ||
-      old.guideRing != guideRing;
+      old.guideRing != guideRing ||
+      old.guideHalo != guideHalo;
 }

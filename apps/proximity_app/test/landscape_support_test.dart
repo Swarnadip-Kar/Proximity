@@ -127,15 +127,13 @@ void main() {
         await t.pumpWidget(_app(const StudentShell()));
         await _settleShort(t);
         expect(t.takeException(), isNull);
-        expect(find.byType(BottomNavigationBar), findsOneWidget);
-        expect(find.widgetWithText(BottomNavigationBar, 'Mark'),
-            findsOneWidget);
-        expect(find.widgetWithText(BottomNavigationBar, 'Courses'),
-            findsOneWidget);
-        expect(find.widgetWithText(BottomNavigationBar, 'Account'),
-            findsOneWidget);
+        // Gradient-pill shell bar: keyed container + tab labels.
+        expect(find.byKey(const ValueKey('shell-bar')), findsOneWidget);
+        expect(find.text('Mark'), findsOneWidget);
+        expect(find.text('Courses'), findsWidgets);
+        expect(find.text('Account'), findsOneWidget);
         // Tab bar sits above the bottom edge (SafeArea honored).
-        final bar = t.getRect(find.byType(BottomNavigationBar));
+        final bar = t.getRect(find.byKey(const ValueKey('shell-bar')));
         expect(bar.bottom, lessThanOrEqualTo(size.height));
         expect(bar.width, moreOrLessEquals(size.width, epsilon: 1));
       });
@@ -158,11 +156,19 @@ void main() {
         ));
         await _settleShort(t);
         expect(t.takeException(), isNull);
-        expect(find.widgetWithText(BottomNavigationBar, 'Live'),
+        expect(find.byKey(const ValueKey('shell-bar')), findsOneWidget);
+        expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('shell-bar')),
+              matching: find.text('Live'),
+            ),
             findsOneWidget);
-        expect(find.widgetWithText(BottomNavigationBar, 'Courses'),
-            findsOneWidget);
-        expect(find.widgetWithText(BottomNavigationBar, 'Account'),
+        expect(find.text('Courses'), findsWidgets);
+        expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('shell-bar')),
+              matching: find.text('Account'),
+            ),
             findsOneWidget);
       });
     }

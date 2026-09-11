@@ -29,6 +29,8 @@ import '../../widgets/clock.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
+import '../../widgets/prox_motion.dart';
+import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
@@ -234,33 +236,59 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                     ),
                   if (!kIsWeb) const SizedBox(height: ProxSpacing.sm),
                   if (snap.connectionState == ConnectionState.waiting)
-                    const Center(child: CircularProgressIndicator())
+                    const ProxShimmerHost(
+                      child: Column(
+                        children: [
+                          ProxShimmerCard(lines: 2),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerCard(lines: 2),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerCard(lines: 2),
+                        ],
+                      ),
+                    )
                   else if (rows.isEmpty)
                     ProxEmptyState(
                       message: kIsWeb
                           ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
-                          : 'No courses yet. Register your first course above.',
+                          : 'No courses yet. Register your first course to start taking attendance.',
+                      // Sub-action CTA: same sheet as the button above.
+                      actionLabel: kIsWeb ? null : 'Register course',
+                      onAction: kIsWeb ? null : _register,
                     )
                   else
-                    for (final row in rows)
-                      Padding(
-                        padding:
-                            const EdgeInsets.only(bottom: ProxSpacing.sm),
-                        child: _PickerCard(
-                          title: row.name,
-                          subtitle:
-                              '${row.sessions} sessions · ${_lastDateLabel(row.lastDate)}',
-                          onTap: () {
-                            BleLog.log(
-                                'NAV', 'courses → overview ${row.name}');
-                            Navigator.of(context)
-                                .push(MaterialPageRoute(
-                                    builder: (_) => CourseOverviewScreen(
-                                        courseName: row.name)))
-                                .then((_) {
-                              if (mounted) setState(() {});
-                            });
-                          },
+                    // Staggered entrance: each card fades/slides in 40ms
+                    // apart (capped), giving the catalog a settled landing.
+                    for (var i = 0; i < rows.length; i++)
+                      ProxFadeSlideIn(
+                        delay: Duration(
+                          milliseconds: (i *
+                                  ProxDurations.staggerStep.inMilliseconds)
+                              .clamp(
+                                  0,
+                                  ProxDurations
+                                      .staggerCap.inMilliseconds),
+                        ),
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.only(bottom: ProxSpacing.sm),
+                          child: _PickerCard(
+                            title: rows[i].name,
+                            subtitle:
+                                '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}',
+                            sessionCount: rows[i].sessions,
+                            onTap: () {
+                              BleLog.log(
+                                  'NAV', 'courses → overview ${rows[i].name}');
+                              Navigator.of(context)
+                                  .push(MaterialPageRoute(
+                                      builder: (_) => CourseOverviewScreen(
+                                          courseName: rows[i].name)))
+                                  .then((_) {
+                                if (mounted) setState(() {});
+                              });
+                            },
+                          ),
                         ),
                       ),
                   DetailsExpander(
@@ -283,9 +311,15 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
 class _PickerCard extends StatelessWidget {
   final String title;
   final String subtitle;
+
+  /// Session count rendered as a trailing donut badge.
+  final int sessionCount;
   final VoidCallback onTap;
   const _PickerCard(
-      {required this.title, required this.subtitle, required this.onTap});
+      {required this.title,
+      required this.subtitle,
+      this.sessionCount = 0,
+      required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -339,10 +373,52 @@ class _PickerCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: ProxSpacing.sm),
+              // Session-count donut: ring + count, brand-tinted.
+              _SessionDonut(count: sessionCount),
+              const SizedBox(width: ProxSpacing.xs),
               Icon(Icons.chevron_right, color: c.contentTertiary),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Trailing session-count donut: 40dp ring in brand tint with the count
+/// centered. Pure count display (no fraction implied).
+class _SessionDonut extends StatelessWidget {
+  final int count;
+  const _SessionDonut({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              value: 1.0,
+              strokeWidth: 3,
+              backgroundColor: Colors.transparent,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                c.accentBrand.withValues(alpha: 0.22),
+              ),
+            ),
+          ),
+          Text(
+            '$count',
+            style: ProxType.label(color: c.accentBrand).copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

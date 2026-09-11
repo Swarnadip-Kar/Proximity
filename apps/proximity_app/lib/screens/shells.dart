@@ -39,6 +39,7 @@ import '../screens/setup_flow_screen.dart';
 import '../screens/student_home.dart';
 import '../widgets/clock.dart';
 import '../widgets/prox_buttons.dart';
+import '../widgets/prox_glass.dart';
 import '../widgets/web_banner.dart';
 import 'take_attendance.dart';
 import 'package:proximity_storage/storage.dart';
@@ -258,7 +259,21 @@ class _SettleIcon extends StatelessWidget {
   }
 }
 
-BottomNavigationBarItem _tabItem({
+/// One tab in the shell bar: icon pair + label. Carries the active flag
+/// so the bar can render the gradient pill without reading item internals.
+@immutable
+class _ShellTab {
+  final Widget icon;
+  final Widget activeIcon;
+  final String label;
+  const _ShellTab({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+  });
+}
+
+_ShellTab _tabItem({
   required Widget icon,
   required Widget activeIcon,
   required String label,
@@ -267,32 +282,27 @@ BottomNavigationBarItem _tabItem({
 }) {
   // Icon-only below the 360dp breakpoint (§3.1 — labels handled by the
   // bar); inactive stays outlined, active filled, in both modes.
-  return BottomNavigationBarItem(
-    icon: _SettleIcon(active: active, child: icon),
-    activeIcon: _SettleIcon(active: active, child: activeIcon),
-    label: narrow ? null : label,
-    tooltip: label,
-  );
+  // [active]/[narrow] are carried by the bar render, not the item.
+  return _ShellTab(icon: icon, activeIcon: activeIcon, label: label);
 }
 
-/// Frosted glass bottom bar wrapping a standard BottomNavigationBar.
+/// Frosted glass bottom bar with sliding gradient pill indicator.
 ///
-/// Active tab: filled icon + label in white over brand tint. Inactive:
-/// outlined icon + muted label. The bar sits in a frosted glass container
-/// with backdrop blur — content scrolls behind with a beautiful blur
-/// transition. Uses standard BottomNavigationBar for test compatibility
-/// (find.byType/find.widgetWithText).
+/// Active tab: filled icon + label in white over the brand gradient pill.
+/// Inactive tabs: outlined icon + muted label. The pill cross-fades between
+/// positions on [ProxDurations.tabIndicator]. The bar sits in a
+/// [ProxGlassBottomBar] so content scrolls behind with a blur transition.
 Widget _shellBar({
   required BuildContext context,
   required int index,
-  required List<BottomNavigationBarItem> items,
+  required List<_ShellTab> items,
   required ValueChanged<int> onTap,
 }) {
-  final c = ProximityColors.of(context);
   final narrow = MediaQuery.sizeOf(context).width < 360;
-  final glass = ProxGlass.of(context);
 
+  final glass = ProxGlass.of(context);
   return ClipRRect(
+    key: const ValueKey('shell-bar'),
     borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
     child: BackdropFilter(
       filter: ImageFilter.blur(
@@ -311,31 +321,129 @@ Widget _shellBar({
         ),
         child: SafeArea(
           top: false,
-          child: BottomNavigationBar(
-            currentIndex: index,
-            onTap: onTap,
-            type: BottomNavigationBarType.fixed,
-            elevation: 0,
-            backgroundColor: Colors.transparent,
-            selectedItemColor: c.accentBrand,
-            unselectedItemColor: c.contentSecondary,
-            selectedFontSize: 11,
-            unselectedFontSize: 11,
-            selectedLabelStyle: ProxType.label(color: c.accentBrand).copyWith(
-              fontWeight: FontWeight.w700,
-              fontSize: 11,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                for (var i = 0; i < items.length; i++)
+                  Expanded(
+                    child: _ShellBarTab(
+                      key: ValueKey('shell-tab-${items[i].label}'),
+                      tab: items[i],
+                      active: i == index,
+                      narrow: narrow,
+                      onTap: () => onTap(i),
+                    ),
+                  ),
+              ],
             ),
-            unselectedLabelStyle: ProxType.label(color: c.contentSecondary).copyWith(
-              fontSize: 11,
-            ),
-            showSelectedLabels: !narrow,
-            showUnselectedLabels: !narrow,
-            items: items,
           ),
         ),
       ),
     ),
   );
+}
+
+/// Individual tab: gradient pill when active, plain when idle.
+/// Icon settles 4dp on activation; label uses tabular 11sp semibold.
+class _ShellBarTab extends StatelessWidget {
+  final _ShellTab tab;
+  final bool active;
+  final bool narrow;
+  final VoidCallback onTap;
+
+  const _ShellBarTab({
+    super.key,
+    required this.tab,
+    required this.active,
+    required this.narrow,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final icon = _SettleIcon(
+      active: active,
+      child: active ? tab.activeIcon : tab.icon,
+    );
+    final label = !narrow
+        ? Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Text(
+              tab.label,
+              style: ProxType.label(
+                color: active ? Colors.white : c.contentSecondary,
+              ).copyWith(fontWeight: FontWeight.w700, fontSize: 11),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          )
+        : const SizedBox.shrink();
+
+    // NOTE: no Center/Align/Container-alignment anywhere in this subtree:
+    // the Scaffold bottom-bar slot measures with unbounded height and
+    // expanding alignment widgets resolve to full-screen height, collapsing
+    // the body to zero (see tab_slide swipe tests). Min-sizing Rows only —
+    // the outer Row centers the pill horizontally, heights hug content.
+    final pill = AnimatedContainer(
+      duration:
+          ProxMotion.effective(context, ProxDurations.tabIndicator),
+      curve: ProxCurves.standard,
+      padding: EdgeInsets.symmetric(
+        vertical: 8,
+        horizontal: active ? 14 : 10,
+      ),
+      decoration: BoxDecoration(
+        gradient: active ? c.gradientBrand : null,
+        borderRadius: BorderRadius.circular(ProxRadii.pill),
+        boxShadow: active
+            ? [
+                BoxShadow(
+                  color: c.accentBrand.withValues(alpha: 0.28),
+                  blurRadius: 12,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : null,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconTheme(
+            data: IconThemeData(
+              color: active ? Colors.white : c.contentSecondary,
+              size: ProxIconSizes.md,
+            ),
+            child: icon,
+          ),
+          // Flexible lets long labels shrink with ellipsis inside
+          // narrow cells instead of overflowing the pill.
+          Flexible(child: label),
+        ],
+      ),
+    );
+
+    return Semantics(
+      button: true,
+      selected: active,
+      label: tab.label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        // Flexible (loose) caps the pill at the cell width on narrow
+        // phones — the label ellipsizes instead of striping. Still
+        // min-sizing vertically, so the bar height hugs content.
+        child: Row(
+          mainAxisSize: MainAxisSize.max,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [Flexible(child: pill)],
+        ),
+      ),
+    );
+  }
 }
 
 /// Per-tab navigator: tab root at '/', every other name resolves exactly
