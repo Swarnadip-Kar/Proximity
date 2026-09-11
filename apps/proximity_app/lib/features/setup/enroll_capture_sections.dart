@@ -1,6 +1,6 @@
 // EnrollCapture section widgets — one purpose per widget.
 //
-// SPLIT from enroll_capture.dart (2026-09-10 breakup — see
+// SPLIT from enroll_capture.dart (2026-09-10 breakup): the composer
 // (enroll_capture.dart) owns NO layout below the Scaffold/Column level:
 // every region below is one of these sections. The session driver lives in
 // enroll_capture_session.dart and is never touched here (pure props in,
@@ -197,7 +197,7 @@ class EnrollCapturePreview extends StatelessWidget {
         // the controller's own slot list, verified 5 via faceEnrollSlots,
         // never hardcoded).
         CaptureOverlay(
-          progress: doneCount / total,
+          progress: total <= 0 ? 0.0 : doneCount / total,
           currentAngle: nextAngle,
           totalAngles: totalAngles,
           statusLine: statusLine,

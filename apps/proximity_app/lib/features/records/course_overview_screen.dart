@@ -171,6 +171,7 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     if (picked == null || picked.isEmpty || picked == widget.courseName) {
       return;
     }
+    if (!mounted) return;
     final store = ref.read(deviceStoreProvider);
     final ok = await syncEngine.renameCourseLocal(
         store, widget.courseName, picked);

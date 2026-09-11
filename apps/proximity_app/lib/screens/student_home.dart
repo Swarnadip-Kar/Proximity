@@ -1,6 +1,7 @@
 // Student flow: manual join (IP shown by professor; BLE discovery lands
-// with the radio slice) → real face scan → 30s listening radar → signed
-// ACK. Foreground-required; backgrounding pauses. Identical Android/iOS.
+// with the radio slice) → face check → 45s-bounded radio wait ([silenceCap]
+// probe decides) → signed ACK. Foreground-required; backgrounding pauses.
+// Identical Android/iOS.
 //
 // Layout contract: this screen owns discovery/waiting/proving orchestration
 // and composes the mark feature sections (browse, join-by-IP, waiting

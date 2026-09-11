@@ -106,6 +106,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
     try {
       final acct = ref.read(authServiceProvider).current ??
           await ref.read(accountProvider.future);
+      if (!mounted || gen != _gen) return;
       if (acct == null) {
         if (mounted && gen == _gen) {
           setState(() {
@@ -118,6 +119,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
       final cloud = ref.read(cloudSyncProvider);
       final store = ref.read(deviceStoreProvider);
       _hidden = await store.readHiddenSessions();
+      if (!mounted || gen != _gen) return;
       final email = acct.email.toLowerCase();
       var online = false;
       try {
@@ -173,6 +175,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
     try {
       final acct = ref.read(authServiceProvider).current ??
           await ref.read(accountProvider.future);
+      if (!mounted || gen != _gen) return;
       if (acct == null) {
         if (mounted && gen == _gen) {
           setState(() {
@@ -330,6 +333,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
         } catch (_) {}
       }
     } catch (_) {}
+    if (!mounted) return;
     _hidden.addAll(ids);
     if (!mounted) return;
     setState(() {

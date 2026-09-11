@@ -1,5 +1,6 @@
-// 2026-09-10, supersedes PROXIMITY_UI_REDESIGN.md §6.2 two-oval rule and the
-// previous CaptureOverlay two-oval contract — logged as deviation in
+// Overlay redesign (2026-09-10, see `## Overlay redesign` in
+// INTEGRATION_LOG): supersedes PROXIMITY_UI_REDESIGN.md §6.2 two-oval rule
+// and the previous CaptureOverlay two-oval contract.
 //
 // Full-bleed camera preview with exactly three overlay elements, nothing
 // else — shared by `mark/face` and `enroll/capture` (one overlay design,
@@ -24,12 +25,13 @@
 // of `N` around a circle; callers with semantic directions (left/right/up/
 // down) may pass [targetDirection] explicitly.
 //
-// `## Face-check single-shot`): callers pass `showProgress: false` +
-// `showBeacon: false` to hide the multi-angle guidance (slim progress bar
+// (See `## Face-check single-shot` in INTEGRATION_LOG): callers pass
+// `showProgress: false` + `showBeacon: false` to hide the multi-angle guidance (slim progress bar
 // + travelling comet) and keep the static framing oval + one prompt line
 //
-// the top bar clear a transparent overlay app bar, and the bar rides
-// inside a SafeArea so chrome avoids the notch while the video + scrim
+// (See `## Edge-to-edge capture` in INTEGRATION_LOG): the overlay takes a
+// top inset so the top bar clears a transparent overlay app bar, and the
+// bar rides inside a SafeArea so chrome avoids the notch while the video + scrim
 // paint fullscreen under it. Beacon/progress semantics, prompt copy, and
 // reduce-motion behavior are unchanged.
 //
@@ -114,7 +116,7 @@ class CaptureOverlay extends StatefulWidget {
   final bool showProgress;
   final bool showBeacon;
 
-  /// Top chrome inset (additive edge-to-edge option, default 0 =
+  /// Top chrome inset (additive edge-to-edge option, default 0 = no inset):
   /// clears a transparent overlay app bar when the preview extends behind
   /// it (enroll passes the app-bar height). Callers without an overlay app
   /// bar leave 0. Pure layout — zero effect on beacon/progress semantics,
@@ -220,9 +222,12 @@ class CaptureOverlay extends StatefulWidget {
   /// a step), clamped into the Stack so the text stays clear of the face
   /// zone on small screens (and never leaves the viewport). Pure for unit
   /// tests.
-  static double promptTopFor(Size size, Rect oval) =>
-      (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm)
-          .clamp(0.0, size.height - ProxSpacing.xxl);
+  static double promptTopFor(Size size, Rect oval) {
+    final max = size.height - ProxSpacing.xxl;
+    if (max <= 0) return 0.0;
+    return (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm)
+        .clamp(0.0, max);
+  }
 
   /// Beacon position for travel/target [angle] on [oval] (east = 0,
   /// clockwise on screen). Pure for unit tests.

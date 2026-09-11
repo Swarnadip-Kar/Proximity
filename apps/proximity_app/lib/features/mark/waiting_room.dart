@@ -3,8 +3,8 @@
 // n waiting), pre-warms BLE, and parks here. When the window opens the
 // room auto-advances to face check with no new taps.
 //
-// `effect.glow.live` behind it) with `Connected` / `Not connected` as the
-// only two states and the waiting line beneath; the per-round trail renders
+// A centered presence ring (96dp, `effect.glow.live` behind it) with
+// `Connected` / `Not connected` as the only two states and the waiting line beneath; the per-round trail renders
 // as pill chips; the manual fallback sits at the bottom at low emphasis.
 // All status copy is verbatim from the previous screen.
 library;

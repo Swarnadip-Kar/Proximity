@@ -1,6 +1,6 @@
-//
-// `widgets/manual_add.dart` (shared by the live direct entry and the
-// saved-session editor). It moved here into `features/manual_attendance/`
+// Manual-add form UI (professor direct entry + saved-session editor).
+// Moved from `widgets/manual_add.dart` (shared by the live direct entry
+// and the saved-session editor) into `features/manual_attendance/`.
 // Search/queue orchestration now lives in `manual_directory.dart` (same
 // module); this file is the form UI only. Restyle is tokens-only (error /
 // secondary copy onto `ProximityColors`; directory hits render as the one

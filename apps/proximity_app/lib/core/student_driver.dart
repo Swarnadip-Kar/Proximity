@@ -1,6 +1,6 @@
 // Student prove driver: face check against the enrolled template, then a
-// 30s radio wait for the professor's rotating challenge, then HTTPS prove
-// with channel binding. Full gate, no fake success:
+// 45s-bounded radio wait ([silenceCap]) for the professor's rotating
+// challenge, then HTTPS prove with channel binding. Full gate, no fake success:
 //
 //   no fresh face  → faceFailed (SK never signs)
 //   no radio heard → noSignal (screenshot codes can't mark)

@@ -1,6 +1,7 @@
 // Offline manual-add queue: replay/apply order + single-flight guard.
-// widget keeps only the UI and calls [processPendingAdds] (same signature);
-// bodies here are verbatim moves.
+// Search/form UI lives in `features/manual_attendance/` and calls
+// [processPendingAdds]; poison entries are dropped with a SYNC line so one
+// bad row never stalls the queue.
 library;
 
 import 'dart:async';
@@ -124,8 +125,15 @@ class SyncQueue {
     final resolvedIds = <String>[];
     final remaining = <Map<String, dynamic>>[];
     for (final raw in items) {
-      final item = PendingManualAdd.fromJson(
-          Map<String, dynamic>.from(raw as Map));
+      PendingManualAdd item;
+      try {
+        item = PendingManualAdd.fromJson(
+            Map<String, dynamic>.from(raw as Map));
+      } catch (_) {
+        BleLog.log(ProxLogTags.sync,
+            'manual queue poison entry dropped (${raw['id'] ?? 'no-id'} — queue continues)');
+        continue;
+      }
       var done = false;
       try {
         if (item.roll.isNotEmpty) {

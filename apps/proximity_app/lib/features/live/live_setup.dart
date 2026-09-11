@@ -2,9 +2,10 @@
 // the first Start — display name, announce-IP picker, visibility guidance,
 // and the Bluetooth/permission error line.
 //
-// visible; the discovery/ladder explanation collapses into a shared
-// [DetailsExpander] (§4.7) instead of an always-visible paragraph. Pinned
-// copy (`Starting host…`, the name field label, `Announcing on <ip> ·
+// The server line stays visible; the discovery/ladder explanation
+// collapses into a shared [DetailsExpander] (§4.7) instead of an
+// always-visible paragraph. Pinned copy (`Starting host…`, the name field
+// label, `Announcing on <ip> · change`).
 //
 // This section is idle-time only: once the window is LIVE the header owns
 // the screen and this collapses to the server line + errors. Nothing here

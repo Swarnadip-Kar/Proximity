@@ -3,9 +3,10 @@
 // dots are ignored while parsing so pasted input still resolves.
 //
 // Modal-ready by construction (compact column, no screen padding of its
-// own — the parent supplies it): it ships inline in the browse list today
-// to preserve the tested join contract (keys `ipfield`/`ipport`, 'Join'),
-// The last-joined IP pre-fills the field so rejoining costs zero taps.
+// own — the parent supplies it): it ships as the fallback sheet's content
+// on the browse list today to preserve the tested join contract (keys
+// `ipfield`/`ipport`, 'Join'), never an inline row. The last-joined IP
+// pre-fills the field so rejoining costs zero taps.
 library;
 
 import 'package:flutter/material.dart';

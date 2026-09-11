@@ -1,5 +1,5 @@
-// Account system sections — extracted verbatim from the page footers in
-// sign-out row. No copy changed; sign-out still calls `entrySignOut`.
+// Account system sections — extracted verbatim from the page footers into
+// the log + sign-out rows. No copy changed; sign-out still calls `entrySignOut`.
 library;
 
 import 'package:flutter/material.dart';

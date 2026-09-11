@@ -1,6 +1,6 @@
 //
-// compact button that behaves EXACTLY like the student mark screen's
-// top-right mode action (`screens/student_home.dart` AppBar — mirrored
+// Mode-switch row (Account menu): a compact button that behaves EXACTLY
+// like the student mark screen's top-right mode action (`screens/student_home.dart` AppBar — mirrored
 // call-for-call, never reinvented):
 //   IconButton(
 //     icon: const Icon(Icons.switch_account),
@@ -9,7 +9,7 @@
 //   )
 // Same icon, same `Switch mode` vocabulary (the mark action's tooltip,
 // verbatim), same `setMode(ref, AppMode.unset)` exit path → landing hub.
-// network untouched.
+// Attendance/network contracts untouched.
 //
 // Handoff: the hub owns acquire/switch checks from here on — landing→hub
 // resume covers register + continue for both roles (see

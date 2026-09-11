@@ -649,11 +649,14 @@ apps/proximity_app/      single app: student + prof modes (mobile + desktop) + w
   lib/core/sync/         SyncEngine + outbox + union merge + org/roles/claim/
                          directory/cloud_api/sessions/queue/backends
   lib/core/sync/store/   DeviceStore (secure/memory) + record_helpers (pure)
-  lib/features/          entry / enroll / face_identity / live / mark /
-                         review / records / debug (one dir per flow)
+  lib/features/          account / debug / entry / face_identity / live /
+                         manual_attendance / mark / records / setup
+                         (one dir per flow; SetupFlow-only enrollment lives
+                         in setup/, not a standalone enroll flow)
   lib/widgets/           prox_* shared library (cards/tiles/buttons/states/
                          motion/verdict) + trust_cards/sync_badge/clock/...
-  lib/screens/           thin hosts: student_home + take_attendance
+  lib/screens/           thin hosts: landing + setup_flow_shells +
+                         student_home + take_attendance + face_capture
                          (orchestration only; rendering lives in features/)
   lib/design/            tokens (single source: spacing/type/color/motion)
 packages/protocol/       pure Dart: HMAC/UUID pack, Ed25519, window timer,
@@ -730,8 +733,8 @@ mandatory during windows on all OS (keep-open banner).
   (doc id = record id, `set(merge:true)`, monotonic timestamps).
 - Tests: golden vectors (HMAC/UUID pack/Ed25519 RFC8032, ticket/dSig
   preimages), claim/tier unit tests, dedup/flood unit tests, two-phone
-  relay test, suite: protocol 96 · transport 35 · ble 35 · storage 9 ·
-  app 202 · functions 18, `flutter analyze` clean, `flutter build web`
+  relay test, suite: protocol 113 · transport 51 · ble 35 · storage 11 ·
+  app 902, `flutter analyze` clean, `flutter build web`
   green. Pilots pending: 30-room, 150-hall, 500-hall load + adversarial
   drill (forwarded code, off-site VPN, lent phone, photo spoof,
   dual-phone wormhole attempt). Ship only when wormhole needs active accomplice across both windows.
@@ -753,8 +756,8 @@ session backup + student records + web records build +
 org join-gate with structured
 wrong-org receipts (§3.0) + Track 6 consolidation (§13). (GATT
 `PROX_SVC`/`PROX_CHR` fallback is future work, not shipped.)
-Suite: protocol 96 · transport 35 · ble 35 · storage 9 · app 202 ·
-functions 18, `flutter analyze` clean, `flutter build web` green.
+Suite: protocol 113 · transport 51 · ble 35 · storage 11 · app 902,
+`flutter analyze` clean, `flutter build web` green.
 Prior-track verified: `flutter build macos`, `flutter build apk`,
 `flutter build ios --no-codesign` green (2026-09-06; Track 6 touches
 Dart only — no native/web manifests changed, so no rebuild was
@@ -816,7 +819,7 @@ one-liner idioms and intentional seams (below).
   each has one clear purpose (student prove continuation vs prof host
   orchestration) and already delegates rendering to `features/`
   sections — further splits make forward-only wrappers (§4 smell).
-- **`LadderLine` vs `ProxSyncNote`, `CheckboxListTile` ×2, tertiary
+- **`formatLadderLine` Path line vs `ProxSyncNote`, `CheckboxListTile` ×2, tertiary
   `TextButton`s, compat barrels, per-timer durations:** distinct visual
   intents / too few sites to earn a module / documented reservations.
 - **`my_attendance` student-pull path** goes direct to

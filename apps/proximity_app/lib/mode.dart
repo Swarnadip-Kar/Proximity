@@ -4,7 +4,9 @@ import 'package:proximity_ble/ble.dart';
 import 'core/device_store.dart';
 import 'design/tokens.dart';
 
-/// Single app, two modes. Desktop defaults to prof; mobile switches freely.
+/// Single app: student/prof modes (+ enroll/take debug previews, never
+/// persisted). Student marking is mobile-only; professor hosting runs on
+/// any OS; web is records-only (see routes.dart guards + main.dart home).
 enum AppMode { unset, student, prof, enroll, take }
 
 final appModeProvider = StateProvider<AppMode>((ref) => _initialMode());

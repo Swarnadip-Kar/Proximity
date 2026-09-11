@@ -65,9 +65,15 @@ class SecureDeviceStore implements DeviceStore {
     if (raw == null) return [];
     try {
       final list = jsonDecode(raw) as List;
-      return list
-          .map((e) => ClassRecord.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final out = <ClassRecord>[];
+      for (final e in list) {
+        try {
+          if (e is Map) {
+            out.add(ClassRecord.fromJson(Map<String, dynamic>.from(e)));
+          }
+        } catch (_) {}
+      }
+      return out;
     } catch (_) {
       return [];
     }
@@ -112,9 +118,17 @@ class SecureDeviceStore implements DeviceStore {
     }
     try {
       final list = jsonDecode(raw) as List;
-      return list
-          .map((e) => Course.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final out = <Course>[];
+      for (final e in list) {
+        try {
+          if (e is Map) {
+            final c =
+                Course.fromJson(Map<String, dynamic>.from(e));
+            if (c.name.isNotEmpty) out.add(c);
+          }
+        } catch (_) {}
+      }
+      return out;
     } catch (_) {
       return [];
     }
@@ -355,7 +369,13 @@ class SecureDeviceStore implements DeviceStore {
   Future<Map<String, dynamic>?> readSession(String course) async {
     final all = await _readSessions();
     final v = all[course];
-    return v == null ? null : Map<String, dynamic>.from(v as Map);
+    if (v == null) return null;
+    try {
+      if (v is! Map) return null;
+      return Map<String, dynamic>.from(v);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -451,9 +471,13 @@ class SecureDeviceStore implements DeviceStore {
     if (raw == null) return [];
     try {
       final list = jsonDecode(raw) as List;
-      return [
-        for (final e in list) Map<String, dynamic>.from(e as Map)
-      ];
+      final out = <Map<String, dynamic>>[];
+      for (final e in list) {
+        try {
+          if (e is Map) out.add(Map<String, dynamic>.from(e));
+        } catch (_) {}
+      }
+      return out;
     } catch (_) {
       return [];
     }
@@ -471,9 +495,13 @@ class SecureDeviceStore implements DeviceStore {
     if (raw == null) return [];
     try {
       final list = jsonDecode(raw) as List;
-      return [
-        for (final e in list) Map<String, dynamic>.from(e as Map)
-      ];
+      final out = <Map<String, dynamic>>[];
+      for (final e in list) {
+        try {
+          if (e is Map) out.add(Map<String, dynamic>.from(e));
+        } catch (_) {}
+      }
+      return out;
     } catch (_) {
       return [];
     }
@@ -507,9 +535,15 @@ class SecureDeviceStore implements DeviceStore {
     if (raw == null) return [];
     try {
       final list = jsonDecode(raw) as List;
-      return list
-          .map((e) => ClassRecord.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final out = <ClassRecord>[];
+      for (final e in list) {
+        try {
+          if (e is Map) {
+            out.add(ClassRecord.fromJson(Map<String, dynamic>.from(e)));
+          }
+        } catch (_) {}
+      }
+      return out;
     } catch (_) {
       return [];
     }

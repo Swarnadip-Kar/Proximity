@@ -157,6 +157,7 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
       List<StudentDirectoryEntry> hits = const [];
       try {
         final online = cloud.available && await cloud.isOnline();
+        if (!mounted) return;
         if (!online) {
           setState(() => _status =
               'You appear offline — connect to the internet to update your ID.');
@@ -164,7 +165,9 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
         }
         hits = await cloud.searchStudents(
             rollPrefix: want, org: org, limit: 10);
+        if (!mounted) return;
       } on StateError catch (e) {
+        if (!mounted) return;
         final msg = '$e'.replaceFirst('StateError: ', '');
         if (isRulesDenialMessage(e.message)) {
           setState(() => _status = e.message);
@@ -191,6 +194,7 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
       } on StateError catch (e) {
         // Rules-denied hint is already friendly/actionable (deploy line),
         // never raw Firebase text — surface verbatim.
+        if (!mounted) return;
         setState(() => _status = e.message);
         BleLog.log('SYNC', 'id update refused (see screen message)');
         return;

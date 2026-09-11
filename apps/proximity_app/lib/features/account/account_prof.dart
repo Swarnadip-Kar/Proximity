@@ -27,8 +27,11 @@ class AccountProfDeviceFacts extends ConsumerWidget {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        final installId = (snap.data ?? const [null, null])[0] ?? '';
-        final hostName = (snap.data ?? const [null, null])[1] ?? '';
+        final data = snap.data;
+        final installId =
+            (data != null && data.isNotEmpty ? data[0] : null) ?? '';
+        final hostName =
+            (data != null && data.length > 1 ? data[1] : null) ?? '';
         final id = installId.trim();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,

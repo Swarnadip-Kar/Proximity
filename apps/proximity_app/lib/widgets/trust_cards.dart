@@ -1,12 +1,13 @@
-//
+// Trust cards (entry/mark/records shared): settled-design verdict states.
 // One place for every settled-design state that previously lived as ad-hoc
 // copy across entry/mark/records screens:
 //   - device trust tiers FULL/STD/STALE/NONE + attestation anomaly flags
-//     (Tracks 2+3 dual-key model + §3.4 server re-verifier);
-//   - SyncEngine status strip (unsynced badge counts, offline/online,
-//
-// narrow domain interfaces (DeviceKey, StudentDeviceDoc, SyncEngine
-// pendingCount, WindowProbe). No widget here signs, verifies, or mutates
+//     (Tracks 2+3 dual-key model, offline-only trust per design §3.4 —
+//     no server re-check exists);
+//   - wrong-org refusal card (class org vs signed-in org, no proof sent).
+// Sync status (unsynced counts, offline/online) lives in
+// `sync_badge.dart`, not here. Callers pass narrow domain interfaces
+// (DeviceKey, StudentDeviceDoc, SyncEngine pendingCount, WindowProbe). No widget here signs, verifies, or mutates
 // sync state.
 library;
 

@@ -41,12 +41,6 @@ abstract final class ProxDurations {
   /// Verdict pop-in (✓ Marked spring). Consumed by [VerdictBadge].
   static const verdictPop = Duration(milliseconds: 450);
 
-  /// Error shake (one damped oscillation).
-  static const shake = Duration(milliseconds: 500);
-
-  /// No-signal breathing period (calm loop, timer-driven so tests settle).
-  static const breath = Duration(milliseconds: 1200);
-
   /// Presence-dot pulse period (timer-driven toggle + implicit fade, so
   /// widget tests still settle). Consumed by [ProxDot] and the pulsing
   /// [ProxStateBadge].
@@ -105,9 +99,6 @@ abstract final class ProxDurations {
 
   /// Tab indicator pill slide from one position to another.
   static const tabIndicator = Duration(milliseconds: 260);
-
-  /// Gradient wash sweep used on account header and welcome hero.
-  static const gradientSweep = Duration(milliseconds: 8000);
 }
 
 /// Easing vocabulary. Rule of thumb (see PROXIMITY_DESIGN §7 flows):
@@ -160,7 +151,6 @@ abstract final class ProxRadii {
   static const double chip = 999;
   static const double terminal = 10;
 
-  static BorderRadius get cardRadius => BorderRadius.circular(card);
   static BorderRadius get buttonRadius => BorderRadius.circular(button);
   static BorderRadius get chipRadius => BorderRadius.circular(chip);
 

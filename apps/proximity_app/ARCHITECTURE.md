@@ -16,20 +16,22 @@ lib/
     prox_states.dart    # ProxStateBadge (pulse opt-in) / SectionHeader /
                         # Empty / Loading / Sync+Error notes
     prox_motion.dart    # ProxFadeSlideIn / ProxStaggered / ProxSwitcher
-    prox_verdict.dart   # Verdict badges with distinct motion per kind
-    animated.dart       # FaceOval / PresentTicker (live contract: face
-                        #   check + take header; MarkedBadge removed Track 5 —
-                        #   superseded by ProxVerdictBadge)
-    trust_cards.dart    # Track 5: DeviceTrustBadge / WrongOrgCard /
-                        # HonestUnreachableCard / SyncStatusStrip (settled
-                        # states, presentation only)
-    manual_add.dart / ip_join.dart / clock.dart / ...
+    verdict_badge.dart  # VerdictBadge: the one verdict pill (elastic
+                        #   scale-in on flip-to-Marked lives inside it;
+                        #   supersedes the old MarkedBadge)
+    animated.dart       # PresentTicker (take-header presence ticker)
+    trust_cards.dart    # Track 5: DeviceTrustBadge / WrongOrgCard (settled
+                        # states, presentation only; sync status lives in
+                        # sync_badge.dart)
+    ip_join.dart / clock.dart / selection_toolbar.dart / ...
   routes.dart        # IA route table + web guards + ProxRouteObserver (NAV log);
-                     # additive — screens migrate to pushNamed bundle by bundle
-  screens/           # legacy screens (migration source; behavior frozen)
-  features/          # IA bundles, one dir per flow (entry/live/mark/enroll/
-                     # records/debug); new screens land here, then routes.dart
-                     # builders repoint from screens/ to features/
+                      # entry/records deep-links + web records-only redirects
+  screens/           # thin hosts (landing/setup_flow/student_home/
+                      # take_attendance/face_capture — orchestration stays,
+                      # rendering lives in features/)
+  features/          # IA bundles, one dir per flow (account/debug/entry/
+                      # face_identity/live/manual_attendance/mark/records/
+                      # setup); hosts compose sections from here
   core/              # drivers, sync, face, BLE (no UI)
   main.dart          # app entry + AdaptiveScaffold (Cupertino nav on Apple OS)
   mode.dart          # AppMode + linked identity (+ STATE log on transitions)
@@ -118,23 +120,30 @@ objects). Guards in `ProxRoutes.isNativeOnly` / `webGuardRedirect`
 (web records builds redirect native-only deep-links to `records/mine`;
 screens keep their own banners + hidden actions as the second gate).
 Preview flags (`PROX_MODE`, `mode.dart`) and `MaterialApp.home` still
-drive launch — the table is additive until every bundle migrates.
+drive launch — the table covers entry/records deep-links; live/mark/
+enroll render in-tab in their hosts (no named routes for those).
 
 ```
 welcome · roles · device                        → entry bundle
-prof/courses · prof/courses/<course>            → prof setup (overview)
-prof/sessions/<id> · prof/sessions/<id>/edit    → session detail (read) / edit
-prof/courses/<course>/export                    → export center
+prof/courses · prof/courses/<course>            → prof setup (overview;
+                                                  in-tab identities, also
+                                                  deep-linkable)
+prof/courses/<course>/sessions/<id>[ /edit]     → session detail (read) / edit
+                                                  (in-tab identities)
+prof/courses/<course>/export                    → export center (in-tab
+                                                  identity, also deep-linkable)
 live/<course> (+ /roster /inbox /add            → prof live (one host screen;
-  /setup /recover)                                sections split on migration)
-mark/browse · mark/join · mark/waiting          → student mark (one
-  mark/face · mark/proving · mark/verdict          continuation; phases split
-  mark/manual                                      on migration)
+  /setup /recover)                                section suffixes land on the
+                                                  host — no standalone section
+                                                  screens)
+mark/* (browse/waiting/face/proving/            → student mark (one
+  verdict/manual phases, in-tab only —            continuation; no named
+  no named routes)                                mark routes)
 enroll/capture · enroll/result                    → SetupFlow steps (same names
                                                   EnrollFlow pushes; standalone
                                                   enroll/intro deleted — SetupFlow
                                                   is the only enrollment flow)
-records/mine · records/course/<course>          → records
+records/mine · records/mine/<course>            → records (in-tab identities)
 debug/log                                       → filterable system log
 ```
 
@@ -150,7 +159,7 @@ extend the shared widget instead of copying it):
   while live); "Section (n)" heading → `ProxSectionHeader`.
 - sync/offline line → `ProxSyncNote`; error line → `ProxErrorNote`;
   spinner + label → `ProxLoadingRow`; list-empty → `ProxEmptyState`;
-  screen shell → `ProxScreen`; full verdict → `ProxVerdictBadge`.
+  screen shell → `ProxScreen`; full verdict → `VerdictBadge`.
 - search field with the `prof-search` key and directory-search fields keep
   their keys and copy (widget-test contract); style via the shared input
   theme, not per-field decoration.
@@ -171,7 +180,7 @@ extend the shared widget instead of copying it):
    - user tapped → `ProxCurves.spring`, micro/small
    - system changed → `ProxCurves.standard`, small/medium
    - screen transition → `ProxCurves.emphasized`, medium/large
-   - verdict pop → `ProxVerdictBadge` only (elastic reserved for Marked)
+    - verdict pop → `VerdictBadge` only (elastic reserved for Marked)
 6. **Verdicts differ by motion, not just color:** marked = spring pop,
    late = rise+fade, no-signal = breathing fade, error = one shake.
 7. **Reduce-motion:** route durations through `ProxMotion.effective` (the

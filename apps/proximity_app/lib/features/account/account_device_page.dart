@@ -1,6 +1,6 @@
 // Account → Device sub-page (one essential feature).
 //
-// owns the device facts only — the existing `AccountDeviceSection`
+// This page owns the device facts only — the existing `AccountDeviceSection`
 // key-fingerprint facts. Trust stays truthful (real NONE on
 // software-backed builds, never faked FULL).
 library;

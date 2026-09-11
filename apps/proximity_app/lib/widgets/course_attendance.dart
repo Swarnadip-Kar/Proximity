@@ -1,6 +1,6 @@
 // Student course attendance (modular UI): the per-course summary model,
 // header, and session tile shared by MyAttendanceScreen (course cards)
-// and StudentCourseScreen (sessions + totals). Pure summary math lives
+// and CourseAttendanceDetailScreen (sessions + totals). Pure summary math lives
 // here so unit tests cover it without widgets.
 library;
 

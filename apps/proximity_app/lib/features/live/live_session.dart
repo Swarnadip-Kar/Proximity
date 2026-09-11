@@ -8,8 +8,9 @@
 // answers "is this actually running" at a glance. Verdict vocabulary
 // (`Start`/`Stop`/`Retake round N`/`Take another round`/`End attendance`),
 // the elapsed `mm:ss` clock, and the present/waiting denominator rule are
+// frozen (same copy, same clock, same rule as the pre-split screen).
 //
-// (today) renders via the frozen records helpers (`fullDateOf` +
+// The date/day line (today) renders via the frozen records helpers (`fullDateOf` +
 // `todayIso`, same formats as the session detail/roomy lines) so the
 // Live page shows date/day like Courses does. Pure display, no lifecycle/
 // draft/snapshot/timing change.

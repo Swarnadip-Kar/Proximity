@@ -1,4 +1,5 @@
 //
+// Account shared helpers (compact menu + sub-pages).
 // Owns: the label+value row, the local enrollment + move-gate reads, the
 // enroll-entry push + fallback-sheet body, the per-account scoping helpers
 // (`enrolledForAccount` / `storedForAccount` / linked roll+org), and the

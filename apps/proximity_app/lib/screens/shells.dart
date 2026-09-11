@@ -294,8 +294,9 @@ _ShellTab _tabItem({
 /// [ProxGlassBottomBar] so content scrolls behind with a blur transition.
 ///
 /// Sizing (one step up from the original compact bar, token-driven):
-/// icons [ProxIconSizes.lg], labels 12sp semibold, pill padding v10 /
-/// h16-active-h12-idle, bar padding v10 / h12 ([ProxSpacing.md]).
+/// icons [ProxIconSizes.lg], labels 13sp semibold ([ProxType.labelSize]),
+/// pill padding vertical xs / horizontal sm, bar padding vertical xs /
+/// horizontal sm.
 Widget _shellBar({
   required BuildContext context,
   required int index,
@@ -1239,11 +1240,12 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
             return const Center(child: CircularProgressIndicator());
           }
           final data = snap.data ?? const [];
-          final courses =
-              data.isEmpty ? const <Course>[] : data[0] as List<Course>;
-          final history = data.length < 2
-              ? const <ClassRecord>[]
-              : data[1] as List<ClassRecord>;
+          final courses = data.isNotEmpty && data[0] is List<Course>
+              ? data[0] as List<Course>
+              : const <Course>[];
+          final history = data.length >= 2 && data[1] is List<ClassRecord>
+              ? data[1] as List<ClassRecord>
+              : const <ClassRecord>[];
           if (courses.isEmpty) {
             return Center(
               child: SingleChildScrollView(

@@ -1,4 +1,5 @@
 //
+// Device section (Account menu): local key facts + move status. It
 // also shows the Device ID (install id, SelectableText abbreviated + full)
 // and the DKey fingerprint via the existing trust helper
 // (`trustPkDFingerprint`). The trust tier stays TRUTHFUL — a

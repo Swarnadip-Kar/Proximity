@@ -1,9 +1,10 @@
 // Live roster (prof live, §7.1): waiting area + present (intersection) +
 // partial + dup flags + search + per-student per-round ticks (R1 ✓ · R2 ✗).
 //
-// render as the one shared `StudentCard` (§4.1) with round-tick pills
+// Rows render as the one shared `StudentCard` (§4.1) with round-tick pills
 // instead of screen-local tiles and raw tick strings. Present rule,
-// intersection gate (partials never promote via search), search filter,
+// intersection gate (partials never promote via search), and search filter
+// are frozen (behavior unchanged).
 //
 // Present rule (behavioral law): present = intersection of ALL windows
 // taken. A student who marked R1 but missed R2 stays visible under
@@ -549,6 +550,7 @@ class _DupFlagSectionState extends State<DupFlagSection> {
   }
 
   Future<void> _resolve(List<String> members) async {
+    if (members.isEmpty) return;
     final key = _key(members);
     if (!_resolving.add(key)) return;
     try {

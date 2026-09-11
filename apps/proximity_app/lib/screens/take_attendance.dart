@@ -12,8 +12,8 @@
 // separate feature on the course page (per-session + date-range matrix).
 //
 // Layout contract: this screen owns hosting/window/draft orchestration
-// and composes the live feature sections behind an explicit sub-nav
-// content completely via an IndexedStack — each sub-tab shows ONLY its
+// and composes the live feature sections behind an explicit sub-nav;
+// sub-tab content swaps completely via an IndexedStack — each sub-tab shows ONLY its
 // view, no shared scroll, no intersection, inactive views stay mounted so
 // their state survives switches (mid-approve inbox selection, roster
 // search, direct-add fields). Roster = waiting + dup + marked
@@ -84,7 +84,10 @@ class _LiveSubNav extends StatelessWidget {
       ],
       selected: {selected},
       showSelectedIcon: false,
-      onSelectionChanged: (s) => onSelect(s.first),
+      onSelectionChanged: (s) {
+        if (s.isEmpty) return;
+        onSelect(s.first);
+      },
     );
   }
 }
@@ -549,7 +552,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   List<int> _intList(Object? v, int n) {
     if (v is List && v.length == n) {
       final out = [
-        for (final e in v) (e as num?)?.toInt() ?? 0,
+        for (final e in v)
+          e is num ? e.toInt() : int.tryParse('$e') ?? 0,
       ];
       if (out.every((e) => e > 0)) return out;
     }

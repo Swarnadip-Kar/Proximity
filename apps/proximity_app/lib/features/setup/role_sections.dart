@@ -1,7 +1,7 @@
 // Role-hub sections: register / resume / add-role / footer.
 //
-// guards, same button labels). The screen owns the role-future cache, the
-// busy/status state machine, and the entry_flow calls; sections own the
+// Split from the screen, one purpose per widget (same guards, same button
+// labels). The screen owns the role-future cache, the busy/status state machine, and the entry_flow calls; sections own the
 // layout. Secondary prose sits collapsed behind DetailsExpanders (§4.7);
 // headers, buttons, fields, warnings, and status signals stay visible.
 library;

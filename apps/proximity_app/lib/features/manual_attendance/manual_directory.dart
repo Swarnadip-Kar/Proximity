@@ -1,9 +1,10 @@
-//
+// Search/queue orchestration for the manual-add form. The
 // orchestration below lived inline in `widgets/manual_add.dart`
 // (`_ManualAddFormState`: debounce timer, online-probe cache,
 // `searchStudents` queries, `writePendingAdds` paths, all four submit
-// same queries, same queue writes, same user-facing copy — so the
-// `ManualAddForm` UI (now `manual_add_form.dart`, same module) and the
+// paths). Moved here verbatim: same queries, same queue writes, same
+// user-facing copy — so the `ManualAddForm` UI (now
+// `manual_add_form.dart`, same module) behaves identically.
 //
 // What this owns: directory search (400ms debounce, stale-generation
 // drop, 15s online-probe cache, 10s failure-log throttle), exact-ID

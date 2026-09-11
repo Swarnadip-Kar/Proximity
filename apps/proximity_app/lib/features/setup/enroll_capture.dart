@@ -2,7 +2,8 @@
 // (Android-face-unlock-style). ONE camera session opened once and closed
 // on done/cancel.
 //
-// `## Enroll capture breakup`). This file owns build ONLY:
+// (Post `## Enroll capture breakup` in INTEGRATION_LOG). This file owns
+// build ONLY:
 //   enroll_capture_session.dart — camera seam + session driver (open/close,
 //     classify-fill loop, save, dispose, timers; relocated verbatim).
 //   enroll_capture_sections.dart — section widgets (bare preview
@@ -11,6 +12,7 @@
 // in [EnrollCaptureSessionDriver] and reads it through its public getters.
 //
 // Preview fidelity (squish fix, hardened 2026-09-10 — see
+// `## Capture preview fidelity` in INTEGRATION_LOG): the surface is
 // a BARE CameraPreview at its native aspect (zero treatment — no wrapper
 // of any kind; the plugin self-maintains its ratio under the loose,
 // centered Stack, so NO stretch, NO cover-crop, NO double-boxing).
@@ -18,13 +20,13 @@
 // fallback buttons) lives in the overlay layer above the untouched
 // preview surface. Reduced-motion behavior preserved (sweep timer never
 // starts; comet parks statically at the target).
-// capture`): the Scaffold extends the body behind the status bar and a
-// transparent overlay app bar, so the bare feed fills edge-to-edge with
+// Edge-to-edge (see `## Edge-to-edge capture` in INTEGRATION_LOG): the
+// Scaffold extends the body behind the status bar and a transparent overlay app bar, so the bare feed fills edge-to-edge with
 // chrome floating above it (top bar clears the app bar via the overlay
 // inset + SafeArea; toast + bottom bar are SafeArea-seated).
 //
-// `## Overlay redesign`): ONE slim progress bar pinned below the app bar
-// (overall completion), ONE static oval + ONE glowing green comet —
+// Overlay contract (see `## Overlay redesign` in INTEGRATION_LOG): ONE
+// slim progress bar pinned below the app bar (overall completion), ONE static oval + ONE glowing green comet —
 // bright head plus short fading tail —
 // (live head-position target for the next unfilled angle), ONE prompt
 // below the oval (rotate slowly, follow the glow) — no dots, no labels,

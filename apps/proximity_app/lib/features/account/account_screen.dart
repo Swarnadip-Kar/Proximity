@@ -1,11 +1,13 @@
 //
-// consolidated-page direction (one sectioned page + DetailsExpander).
+// Account tab root (student): compact menu + one-feature pushes — the
+// consolidated-page direction (one sectioned page + DetailsExpander),
+// overridden to a menu by hard constraint.
 // The root is now compact by hard constraint: header chip + mode switch +
 // plain navigation rows only (Enrollment >, Device >, Face ID >,
 // System log >) + inline Appearance theme at the end (above sign-out) +
 // small sign-out action. No explainer cards, no embedded sections, no long
 // prose on the root; every fact block lives exactly one level down in its
-// in behavior into:
+// sub-page; the menu routes by behavior into:
 // - Enrollment (+ editable ID + inline device/binding rules) → `account_enrollment_page.dart`
 // - Device (facts + trust honesty + inline days/why) → `account_device_page.dart`
 // - Appearance (theme) → inline `AccountThemeRow` at the root end (no sub-page)
@@ -15,7 +17,8 @@
 // Preserved from prior ## Account entries: per-account scoping,
 // re-enroll gating (no enroll CTA while enrolled — now enforced in the
 // sub-pages), photo (`AccountHeaderCard` passthrough), switch behavior
-// (`AccountModeSwitch` runs the identical continue/register machinery).
+// (`AccountModeSwitch` runs the identical `setMode(unset)` exit; the hub
+// owns acquire/switch from there).
 //
 // `studentClaimMessage` verbatim; move cadence reads `once a month`
 // (code is 30-day `kStudentMoveCooldown` — gap 6).

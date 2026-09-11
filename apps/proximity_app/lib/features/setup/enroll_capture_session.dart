@@ -1,7 +1,7 @@
 // EnrollCapture session driver — the camera-session owner for the
 // continuous multi-angle face session (Android-face-unlock-style).
 //
-// SPLIT from enroll_capture.dart (2026-09-10 breakup — see
+// SPLIT from enroll_capture.dart (2026-09-10 breakup):
 //   enroll_capture_session.dart  (THIS file) — camera seam
 //     (EnrollSessionCamera / Real / Fake / provider) + the session driver
 //     (open/close, classify-fill loop, save, dispose, timers).
@@ -9,12 +9,12 @@
 //     (letterboxed preview surface, bottom bar, slot top-up, blocked card).
 //   enroll_capture.dart — thin composer screen (build only, no driver).
 //
-// the pre-split `_EnrollCaptureScreenState` implementation in
-// enroll_capture.dart (699-line monolith) — same identifiers, same
-// comments, same frozen copy/timings. The ONLY additions are the thin
-// public accessors + the init/dispose entry points at the bottom, which
-// are verbatim excerpts of the old initState/dispose bodies (minus the
-// `super` calls, which stay on the screen). Called out in full in
+// Verbatim relocation of the pre-split `_EnrollCaptureScreenState`
+// implementation in enroll_capture.dart (699-line monolith) — same
+// identifiers, same comments, same frozen copy/timings. The ONLY additions
+// are the thin public accessors + the init/dispose entry points at the
+// bottom, which are verbatim excerpts of the old initState/dispose bodies
+// (minus the `super` calls, which stay on the screen).
 //
 // The driver is a mixin (`on ConsumerState`) so `ref` / `context` /
 // `mounted` / `setState` resolve exactly as they did on the old State —
@@ -436,10 +436,6 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
 
   /// Accepted-still count (drives the overlay progress bar).
   int get doneCount => _doneCount;
-
-  /// Filled slot names (kept for completeness; the overlay reads
-  /// [nextAngle], the loop reads [_filled] internally).
-  Set<String> get filledSlots => _filled;
 
   /// Next unfilled slot index (overlay head-position target).
   int get nextAngle => _nextAngle;

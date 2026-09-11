@@ -14,8 +14,8 @@
 //     via a transaction so racing devices resolve to exactly one winner.
 //     NO reset path exists by design: professor registration is
 //     self-asserted this phase, so any reset permission would let a student
-//     self-reset around the cooldown. Genuine loss waits out the week;
-//     manual attendance covers the gap. Face photos/templates are NEVER
+//     self-reset around the cooldown. Genuine loss waits out the 30-day
+//     cooldown; manual attendance covers the gap. Face photos/templates are NEVER
 //     written here — only the device public key + install id.
 //   studentDirectory/{emailLower}: {email, name, roll, nameLower,
 //     updatedAtMillis} — minimal professor-searchable directory, maintained

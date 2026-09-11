@@ -140,6 +140,7 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
       ),
     );
     if (picked != null && picked.isNotEmpty) {
+      if (!mounted) return;
       await ref.read(deviceStoreProvider).addCourse(picked);
       BleLog.log('NAV', 'courses: registered $picked');
       if (mounted) setState(() {});
@@ -208,11 +209,12 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
             future: Future.wait([store.readCourses(), store.readHistory()]),
             builder: (context, snap) {
               final data = snap.data ?? const [];
-              final courses =
-                  data.isEmpty ? const <Course>[] : data[0] as List<Course>;
-              final history = data.length < 2
-                  ? const <ClassRecord>[]
-                  : data[1] as List<ClassRecord>;
+              final courses = data.isNotEmpty && data[0] is List<Course>
+                  ? data[0] as List<Course>
+                  : const <Course>[];
+              final history = data.length >= 2 && data[1] is List<ClassRecord>
+                  ? data[1] as List<ClassRecord>
+                  : const <ClassRecord>[];
               final rows = _rows(courses, history);
               return ListView(
                 padding: const EdgeInsets.symmetric(

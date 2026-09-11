@@ -228,10 +228,15 @@ class PluginFaceVerifier implements FaceVerifier {
       throw StateError(
           'No enrolled face found on this phone — recapture in good light, holding still.');
     }
-    return faceMeanEmbedding([
-      for (final r in records)
-        (r.embedding as List).map((e) => (e as num).toDouble()).toList(),
-    ]);
+    try {
+      return faceMeanEmbedding([
+        for (final r in records)
+          (r.embedding as List).map((e) => (e as num).toDouble()).toList(),
+      ]);
+    } catch (_) {
+      throw StateError(
+          'Enrolled face data was unreadable — re-enroll this device from the home screen, then join again.');
+    }
   }
 
   @override

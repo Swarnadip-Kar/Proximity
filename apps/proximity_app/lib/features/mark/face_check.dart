@@ -2,8 +2,8 @@
 // itself the moment this step appears (zero taps); the Scan button stays
 // as fallback/retry. The radio keeps listening under the camera UI.
 //
-// shared-overlay uniformity in `## Overlay redesign`): this is an INSTANT
-// single-shot check, not an enrollment session, so it shows NO multi-angle
+// Shared-overlay uniformity (same overlay as enrollment): this is an
+// INSTANT single-shot check, not an enrollment session, so it shows NO multi-angle
 // guidance — no rotation instruction, no orbiting beacon/comet, no progress
 // bar, no angle counts. Exactly two overlay elements: ONE static framing
 // oval + ONE prompt line below it (the host notice when present, else the
@@ -36,8 +36,8 @@
 // `ProxPrimaryButton` (button radius token inside). No BorderRadius.zero,
 // no missing card/sheet radius in this file.
 //
-// capture`): the residual squish was the view's own Column/Expanded/
-// Padding boxing plus the parent app-bar region — the preview now fills
+// Residual-squish note (see `## Edge-to-edge capture` in INTEGRATION_LOG):
+// the residual squish was the view's own Column/Expanded/Padding boxing plus the parent app-bar region — the preview now fills
 // edge-to-edge within this view as the fullscreen Stack background with
 // the app-bar-era chrome gone from its layout path, and the Scan fallback
 // floats above it as a SafeArea-positioned overlay. The host shell app bar

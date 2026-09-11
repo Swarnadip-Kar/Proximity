@@ -1,7 +1,7 @@
 // Device & identity sections: account / key / move status.
 //
-// same guards, same verdicts). The content state owns the store/gate
-// reads and sign-out; sections own the layout. Refusal copy comes from
+// Split from the screen, one purpose per widget (same guards, same
+// verdicts). The content state owns the store/gate reads and sign-out; sections own the layout. Refusal copy comes from
 // studentClaimMessage verbatim; only the offline-professor note collapses
 // behind a DetailsExpander (§4.7).
 library;

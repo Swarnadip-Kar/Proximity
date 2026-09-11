@@ -6,8 +6,8 @@
 // professors may skip offline), and the sign-in action. Zero-tap state is
 // value + sign-in: nothing here needs an account to read.
 //
-// Absorbs the signed-out branch of screens/landing.dart
-// records builds), same mounted-guarded navigation. The rings hero is
+// Absorbs the signed-out branch of screens/landing.dart (shown when the
+// account stream is null on any build), same mounted-guarded navigation. The rings hero is
 // rebuilt here with real typographic hierarchy (theme display/body tokens
 // — Space Grotesk display + Inter body via the app theme, intentional
 // spacing) instead of the old title-plus-spinner placeholder rhythm.
@@ -24,7 +24,7 @@ import '../entry/entry_flow.dart';
 import 'welcome_sections.dart';
 
 /// Unauthenticated welcome. Hosted wherever the account stream is null
-/// (proposed: landing router shows this when `accountProvider` is null).
+/// (landing router shows this when `accountProvider` is null).
 ///
 /// Thin composer over [WelcomeHeroSection] + [WelcomeSignInSection]: owns
 /// the sign-in/offline state machine, sections own the copy layout.

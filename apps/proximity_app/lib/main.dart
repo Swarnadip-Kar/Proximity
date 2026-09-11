@@ -1,5 +1,7 @@
-// Single-app entry: Prof + Student modes in one app (per updated requirement).
-// Mobile devices switch modes; desktop runs Prof mode. Identical security all OS.
+// Single-app entry: student + professor modes in one app (design §1 goal 6).
+// Student marking (radio + face + device keys) is mobile-only; professor
+// hosting runs on any OS; web is records-only. Trust is tiered by device,
+// never identical across platforms.
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';

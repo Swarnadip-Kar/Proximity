@@ -1,4 +1,5 @@
 //
+// Post-End records freshness tick (prof live → Courses tab).
 // Root cause it serves (post-End freshness): `ProfCoursesScreen` and
 // `CourseOverviewScreen` read via `FutureBuilder` futures built from
 // `store.readCourses()`/`store.readHistory()`. Both states live inside the

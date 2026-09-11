@@ -101,10 +101,6 @@ class FirebaseAuthService implements AuthService {
     return null;
   }
 
-  /// Best-effort `hd` out of a raw Google idToken JWT (null when absent).
-  static String? hdFromIdToken(String? idToken) =>
-      parseHdFromIdToken(idToken);
-
   @override
   Stream<SignedAccount?> watchAccount() {
     if (!available) return Stream.value(null);

@@ -1,7 +1,7 @@
 // Account → Enrollment sub-page (enrollment facts + device/binding rules).
 //
-// page (§5.1) is split back into a compact menu + one-feature pushes.
-// This page owns enrollment status + the editable ID row + the inline
+// The consolidated Account page (§5.1) is split back into a compact menu +
+// one-feature pushes. This page owns enrollment status + the editable ID row + the inline
 // `AccountEnrollmentSection` + `AccountIdRow` widgets, same enroll-entry
 // sheet + per-account scoping + re-enroll gating; rules render from the
 // shared `device_rules.dart` source (same strings, same keys).

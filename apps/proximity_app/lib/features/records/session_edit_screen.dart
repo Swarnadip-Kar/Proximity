@@ -7,7 +7,8 @@
 // editor — SessionDetailScreen covers viewing there; [readOnly] keeps the
 // same guarantee if one is ever pushed on web.
 //
-// rows + partial + absent quick lists + Save) and Add person (the
+// Two sub-tabs: Marks (per-round person rows + partial + absent quick
+// lists + Save) and Add person (the ManualAddForm edit-* + queue behavior,
 // ManualAddForm edit-* + queue behavior, unchanged). The sub-nav SWAPS
 // content via an IndexedStack — each sub-tab shows ONLY its view, no shared
 // scroll; inactive views stay mounted so their state survives switches.
@@ -405,7 +406,10 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
                 ],
                 selected: {tab},
                 showSelectedIcon: false,
-                onSelectionChanged: (s) => _selectTab(s.first),
+                onSelectionChanged: (s) {
+                  if (s.isEmpty) return;
+                  _selectTab(s.first);
+                },
               ),
             ),
           Expanded(

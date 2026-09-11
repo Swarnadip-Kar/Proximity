@@ -3,8 +3,9 @@
 // Pill, icon + short word, color from `status.*` tokens. Exhaustive set,
 // copied verbatim from the existing verdict vocabulary — this component only
 // standardizes rendering, never invents new states. Supersedes the old
-// INSIDE this component as a transition-in animation when its state flips
-// to `Marked`, not as a separate widget.
+// `MarkedBadge`: the elastic pop now lives INSIDE this component as a
+// transition-in animation when its state flips to `Marked`, not as a
+// separate widget.
 //
 // UI Overhaul: on flip-to-Marked, a brief gradient wash radiates outward
 // from the badge, giving a "confirmed" celebration micro-moment. The pill

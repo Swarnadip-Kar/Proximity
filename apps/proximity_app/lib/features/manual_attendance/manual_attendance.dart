@@ -5,10 +5,9 @@
 // imported by both routes — not duplicated screen-local UI. The inbox
 // carries its own `SelectionScope` instance per list (see
 // `manual_inbox.dart`); the form's search/queue orchestration lives in
-// `manual_directory.dart`.
-//
-// saved-session editor, `direct_add.dart` (pre-rebuild), and
-// `manual_add_test.dart` — keep resolving.
+// `manual_directory.dart`. Consumed by the live direct-add/inbox sections,
+// the saved-session editor, and `manual_add_test.dart` — one import,
+// same form.
 library;
 
 export 'manual_add_form.dart';

@@ -466,8 +466,8 @@ class ClassRecord {
     return ClassRecord(
       id: j['id'] as String? ?? '',
       courseId: j['courseId'] as String? ?? '',
-      classLabel: j['classLabel'] as String,
-      dateIso: j['dateIso'] as String,
+      classLabel: j['classLabel'] as String? ?? '',
+      dateIso: j['dateIso'] as String? ?? '',
       timestampIso: j['timestampIso'] as String? ?? '',
       startIso: j['startIso'] as String? ?? '',
       w1: wins == null
@@ -483,10 +483,18 @@ class ClassRecord {
                   (k, v) => MapEntry(k as String, (v as bool?) ?? false))))
           : null,
       windows: wins,
-      names: Map<String, String>.from(
-          (j['names'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
-      rolls: Map<String, String>.from(
-          (j['rolls'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
+      names: j['names'] is Map
+          ? {
+              for (final e in (j['names'] as Map).entries)
+                '${e.key}': '${e.value ?? ''}',
+            }
+          : const {},
+      rolls: j['rolls'] is Map
+          ? {
+              for (final e in (j['rolls'] as Map).entries)
+                '${e.key}': '${e.value ?? ''}',
+            }
+          : const {},
       org: j['org'] as String? ?? '',
       faceFlags: [
         for (final e in (j['faceFlags'] as List? ?? const [])) '$e',
@@ -505,7 +513,7 @@ class Course {
   Map<String, dynamic> toJson() => {'name': name, 'createdAt': createdAt};
 
   factory Course.fromJson(Map<String, dynamic> j) =>
-      Course(name: j['name'] as String, createdAt: j['createdAt'] as String? ?? '');
+      Course(name: j['name'] as String? ?? '', createdAt: j['createdAt'] as String? ?? '');
 }
 
 /// Date-range matrix export for a course (req 6).

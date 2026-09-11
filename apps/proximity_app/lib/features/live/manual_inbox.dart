@@ -1,13 +1,13 @@
 // Manual inbox (prof live, §7.1): pending manual-attendance requests.
 //
-// `features/manual_attendance/` module's [ManualInboxView] (§4.8) instead
+// Composes the `features/manual_attendance/` module's [ManualInboxView] (§4.8) instead
 // of owning checkbox selection state inline. The old checkbox-list +
 // Select-all pattern is gone (tap-to-select + SelectionToolbar per §4.1,
 // same contract as the review/export picker); decisions still delegate
 // to the live screen (driver → draft → snapshot) with the same
 // constructor, so the counts on screen always match the driver queue.
 //
-// host driver is a plain Provider over mutating server state — it never
+// The host driver is a plain Provider over mutating server state — it never
 // notifies, so this section used to re-render only when its callers
 // rebuilt (a focused section builds once; the take host while idle
 // rebuilds only on waiting-room deltas). This section now polls the

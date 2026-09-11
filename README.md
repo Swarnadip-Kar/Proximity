@@ -295,12 +295,15 @@ apps/proximity_app/      single app: student (mobile) + prof (any OS) modes + we
                           device_store, enrollment, ble_radio, host_driver, student_driver,
                           platformx/net_if/file_saver (web-safe shims), sync_hook
   lib/features/          face_identity/ (plugin adapter + DKey + mobile gates),
-                          enrollment/, mark/, live/ (roster/inbox/add/setup sections),
-                          records/, entry/
-  lib/screens/           landing/roles/device hub, student_home (mark phases), take_attendance
-                          (host), course/session/record screens (see SCREEN_MAP.md)
-  lib/widgets/           trust_cards (verdict/trust/sync chips), sync_badge, ladder_line,
-                          manual_add (+ offline queue), course_attendance, clock, animated
+                          setup/ (SetupFlow-only enrollment), mark/, live/ (roster/inbox/add/setup sections),
+                          records/, entry/, account/, manual_attendance/, debug/
+  lib/screens/           landing/roles/device entry router, setup_flow (+ SetupFlow-only
+                          enrollment), student_home (mark phases), take_attendance
+                          (host), face_capture (course/session/record screens live
+                          in lib/features/records/ — see SCREEN_MAP.md)
+  lib/widgets/           trust_cards (trust/verdict states), sync_badge, verdict_badge,
+                          course_attendance, clock, animated (PresentTicker), ip_join
+                          (manual attendance lives in lib/features/manual_attendance/)
 packages/protocol/       pure Dart: air framing, HMAC/UUID pack, Ed25519, window timer,
                           mesh/relay/dedup, face gate policy, device-proof verify
 packages/ble/            BLE engine (rotation/relay/nextChallenge) + Linux BlueZ advertise shim (+ web stub)
@@ -313,7 +316,7 @@ packages/storage/        tally + course history + roster helpers (in-memory API;
 
 Prereqs: Flutter stable, Firebase CLI + flutterfire, Xcode (iOS/macOS),
 Android SDK. Firebase project: `proximity-attendence`. Suite status:
-protocol 96 · transport 35 · ble 35 · storage 9 · app 202 · functions 18 — green,
+protocol 113 · transport 51 · ble 35 · storage 11 · app 902 — green,
 `flutter analyze` clean, `flutter build web` green.
 
 ```bash
@@ -473,8 +476,8 @@ Simulator UI walkthrough without taps/accounts:
   (a plain id-diff merge would skip them); manual-add search drops stale
   generations (slow query never overwrites newer keystrokes); enrollment
   rescan replaces per-sample via the plugin gallery (monotonic progress,
-  never a whole-set wipe); the enroll capture saves 3 stills
-  (Centre/Left/Right) and save stays blocked until all three register
+  never a whole-set wipe); the enroll capture saves 5 stills
+  (Centre/Left/Right/Up/Down) and save stays blocked until all five register
   (Cancel always exits — a capture exit means success or the holder's
   own Cancel); single-flight autosaves, single-flight hosting/prove/queue
   (`_starting`, `_listening`, `_hostingBusy`, `_resolvingQueue`);

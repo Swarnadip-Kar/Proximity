@@ -4,8 +4,8 @@
 // landing + enrollment clutter: which Gmail is signed in vs enrolled on
 // this install, does this device hold the student key, and where does the
 // signed-in Gmail stand on the one-device move rule (free to enroll /
-// this device / eligible to move / waits out the week with an exact date).
-// Also carries the offline-professor local-only note and sign-out.
+// this device / eligible to move / waits out the 30-day cooldown with an
+// exact date). Also carries the offline-professor local-only note and sign-out.
 //
 // Behavior: binding/move status reuses the exact claim verdict
 // ([entryStudentGate] — same reasons the server refuses), read best-effort
