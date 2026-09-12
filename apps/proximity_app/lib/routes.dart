@@ -1,5 +1,10 @@
 // Proximity named-route table (foundation track shared infra).
 //
+// Decision (audit close-out): route names stay `records/*` (not
+// `courses/*`). Renaming would break deep-links, history ids, and the
+// `prof/courses` popUntil prefix contract for zero user gain — the Courses
+// tab label already reads user-facing while routes stay stable.
+//
 // Approved IA, one line per node. Names use the bundle convention already
 // established in the tree (bare `bundle/page`, no leading slash — matches
 // `EnrollNav.routePrefix` so `popUntil` prefix matches keep working):

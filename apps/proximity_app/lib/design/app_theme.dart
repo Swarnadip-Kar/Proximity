@@ -3,9 +3,14 @@
 // Font pairing (google_fonts, pure Dart — safe on every build target):
 //   display → "Space Grotesk" (headings, hero numbers, verdict titles)
 //   body    → "Inter" (everything else: labels, captions, lists)
-// Shape: 14dp cards, 12dp buttons, pill chips. Elevation is deliberately
-// flat (border + 0-1dp) so live screens with BLE + camera stay cheap to
-// composite — no blur/shadow parties on the scan path.
+// Shape: 16dp spec cards (14dp legacy inputs only), 12dp buttons, 999 pills.
+// Elevation is deliberately flat (border + 0-1dp) so live screens with
+// BLE + camera stay cheap to composite — no blur/shadow parties on scan.
+//
+// Decisions (audit close-out): ThemeMode stays system (no in-app switcher
+// — OS setting is the source of truth, both themes ship full parity);
+// ProxType is the scale for new type, textTheme carries the same pairing
+// for legacy Material widgets until migrated piece by piece.
 library;
 
 import 'package:flutter/material.dart';
