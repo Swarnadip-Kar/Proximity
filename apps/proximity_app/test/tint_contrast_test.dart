@@ -47,15 +47,10 @@ Widget _app(Widget child, {required bool dark}) => MaterialApp(
       home: Scaffold(body: child),
     );
 
-/// A display name hashing to the late avatar slot (palette index 2).
-String _lateName() {
-  const light = ProximityColors.light();
-  for (var i = 0; i < 500; i++) {
-    final name = 'late-probe-$i';
-    if (studentAvatarColor(light, name) == light.statusLate) return name;
-  }
-  throw StateError('no late-slot name found');
-}
+/// Probe names covering all avatar slots (identity palette is verdict-free
+/// by construction — no name can land on a verdict hue).
+List<String> _avatarProbeNames() =>
+    [for (var i = 0; i < 10; i++) 'avatar-probe-$i'];
 
 void main() {
   const light = ProximityColors.light();
@@ -206,16 +201,30 @@ void main() {
           reason: 'badge fill must stay on the frozen status hex');
     });
 
-    test('avatar initials on late/review slots use the on-tint', () {
-      final name = _lateName();
-      expect(studentAvatarColor(light, name), light.statusLate);
-      expect(studentAvatarForeground(light, name), light.onTintLate);
-      // Dark slot renders identically to before (on-tint == status).
-      expect(studentAvatarForeground(dark, name),
-          studentAvatarColor(dark, name));
-      // Non-late/review slots are untouched.
-      expect(studentAvatarForeground(light, 'Ada Lovelace'),
-          studentAvatarColor(light, 'Ada Lovelace'));
+    test('avatars avoid verdict hues; foreground equals base', () {
+      // Identity palette split: avatars never use Marked/Late/Review/Error,
+      // so the on-tint remap path for avatars is dead — foreground is base
+      // on both themes. On-tints remain pinned for badges/banners elsewhere.
+      final verdictLight = {
+        light.statusMarked,
+        light.statusLate,
+        light.statusReview,
+        light.statusError,
+      };
+      final verdictDark = {
+        dark.statusMarked,
+        dark.statusLate,
+        dark.statusReview,
+        dark.statusError,
+      };
+      for (final name in _avatarProbeNames()) {
+        final aLight = studentAvatarColor(light, name);
+        final aDark = studentAvatarColor(dark, name);
+        expect(verdictLight, isNot(contains(aLight)));
+        expect(verdictDark, isNot(contains(aDark)));
+        expect(studentAvatarForeground(light, name), aLight);
+        expect(studentAvatarForeground(dark, name), aDark);
+      }
     });
 
     testWidgets('drift banner icon uses onTintLate', (tester) async {
