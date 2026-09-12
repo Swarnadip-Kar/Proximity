@@ -27,6 +27,7 @@ import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../core/enrollment.dart';
+import '../../core/security/integrity.dart';
 import '../../core/sync_hook.dart';
 import '../../mode.dart';
 
@@ -223,6 +224,116 @@ Future<Map<String, String>?> entryRoleFor(
   } catch (_) {}
   BleLog.log('STATE', 'entry roles miss $email (register once per account)');
   return cache;
+}
+
+/// §5 integrity gates (2C) — the ONLY entry-side integrity API. Sensitive
+/// paths call these before doing work; the verdict object (never a bool)
+/// flows onward so the hash binds into dSig and the host can flag.
+///
+/// Enforcement law (mirrors `core/security/integrity.dart`):
+/// - enroll HARD-BLOCKS privileged/hooked/tampered/emulator: the helper
+///   throws StateError with actionable copy (UI surfaces `message`).
+/// - host/prove NEVER block offline: they return the fresh verdict; the
+///   prove path binds `verdict.hash` into dSig (wiring owned by
+///   sec-sync/sec-hwkey) and the professor flags `integrity-flagged`
+///   (never auto-absent offline).
+/// - startup reuses main.dart's cached snapshot; sensitive ops always
+///   re-probe fresh (no stale-cache decisions).
+/// - Spark-free: no network, no quota — pure local probe + hash.
+
+/// Startup verdict: main.dart's cached [IntegrityGate.lastVerdict] when
+/// present, else one fresh [IntegrityOp.startup] probe. Never throws.
+Future<IntegrityVerdict> entryIntegrityStartup() async {
+  final cached = IntegrityGate.lastVerdict;
+  if (cached != null) return cached;
+  try {
+    return await IntegrityGate.performCheck();
+  } catch (_) {
+    // Probe failure ⇒ clean verdict (fail-open probe, fail-closed gate):
+    // startup must never brick offline marking.
+    return IntegrityVerdict(
+      rooted: false,
+      hooked: false,
+      tampered: false,
+      emulator: false,
+      debug: false,
+      hash: IntegrityGate.verdictHashOf(
+          rooted: false,
+          hooked: false,
+          tampered: false,
+          emulator: false,
+          debug: false),
+    );
+  }
+}
+
+/// Pre-enroll gate: fresh probe; throws StateError naming the taint when
+/// the device is privileged/hooked/tampered/emulator. Call before
+/// generateKey AND before upload (claim). Debug alone passes.
+Future<IntegrityVerdict> entryRequireEnrollIntegrity() async {
+  final verdict =
+      await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+  final reason = IntegrityGate.enrollBlockReason(verdict);
+  if (reason.isNotEmpty) {
+    BleLog.log('SEC', 'enroll integrity BLOCKED → ${verdict.hash}');
+    throw StateError(reason);
+  }
+  return verdict;
+}
+
+/// Pre-host gate: fresh probe for the professor session. Advisory only —
+/// hosting stays offline-capable; the returned verdict's hash rides the
+/// session so tainted-student proves still flag correctly. Never throws.
+Future<IntegrityVerdict> entryHostIntegrity() async {
+  try {
+    return await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.host);
+  } catch (_) {
+    BleLog.log('SEC', 'host integrity probe failed — assuming clean');
+    return IntegrityVerdict(
+      rooted: false,
+      hooked: false,
+      tampered: false,
+      emulator: false,
+      debug: false,
+      hash: IntegrityGate.verdictHashOf(
+          rooted: false,
+          hooked: false,
+          tampered: false,
+          emulator: false,
+          debug: false),
+    );
+  }
+}
+
+/// Pre-prove gate: fresh probe for marking. NEVER blocks (offline marking
+/// preserved): bind `verdict.hash` into dSig and carry
+/// `verdict.flagForMarking` (`''` | `'integrity-flagged'`) to the host.
+/// Never throws.
+Future<IntegrityVerdict> entryMarkingIntegrity() async {
+  try {
+    final verdict =
+        await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.prove);
+    if (verdict.flagForMarking.isNotEmpty) {
+      BleLog.log('SEC',
+          'marking tainted (${verdict.hash}) → will flag, never absent');
+    }
+    return verdict;
+  } catch (_) {
+    BleLog.log('SEC', 'marking integrity probe failed — proving clean');
+    return IntegrityVerdict(
+      rooted: false,
+      hooked: false,
+      tampered: false,
+      emulator: false,
+      debug: false,
+      hash: IntegrityGate.verdictHashOf(
+          rooted: false,
+          hooked: false,
+          tampered: false,
+          emulator: false,
+          debug: false),
+    );
+  }
 }
 
 /// "Professor (Name) + Student" label for the identity header.
