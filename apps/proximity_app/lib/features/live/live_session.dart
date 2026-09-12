@@ -234,14 +234,18 @@ class LiveControlCluster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The single most "alive" moment in the app. Actions fire
-    // immediately; only the visuals transition.
+    // Disabled always explains itself: flat buttons alone read as broken.
+    final c = ProximityColors.of(context);
     return ProxSwitcher(
-      child: Wrap(
+      child: Column(
         key: ValueKey<bool>(live),
-        spacing: ProxSpacing.sm,
-        runSpacing: ProxSpacing.sm,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Wrap(
+            spacing: ProxSpacing.sm,
+            runSpacing: ProxSpacing.sm,
+            children: [
           if (live) ...[
             ProxPrimaryButton(
               label: const Text('Stop'),
@@ -280,6 +284,15 @@ class LiveControlCluster extends StatelessWidget {
                 label: const Text('End attendance'),
                 onPressed: (!hosting) ? null : onEnd,
               ),
+          ],
+        ],
+        ),
+          if (!live && !hosting) ...[
+            const SizedBox(height: ProxSpacing.xs),
+            Text(
+              'Hosting offline — actions resume when the server starts.',
+              style: ProxType.caption(color: c.contentSecondary),
+            ),
           ],
         ],
       ),
