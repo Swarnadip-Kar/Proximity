@@ -34,6 +34,7 @@ import '../../main.dart';
 import '../../widgets/clock.dart';
 import '../../widgets/csv_preview.dart';
 import '../../widgets/details_expander.dart';
+import '../../widgets/fallback_button.dart' show showProxSheet;
 import '../../widgets/log_drawer.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
@@ -147,23 +148,33 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
 
   Future<void> _rename() async {
     _renameCtrl.text = widget.courseName;
-    final picked = await showDialog<String>(
+    // Sheet chrome (not AlertDialog): scrim/elevation/radius tokens,
+    // ProxPrimary Save + ProxSecondary Cancel. Behavior unchanged.
+    final picked = await showProxSheet<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit course'),
-        content: TextField(
-          controller: _renameCtrl,
-          decoration: const InputDecoration(labelText: 'Course name'),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
+      title: 'Edit course',
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _renameCtrl,
+            decoration: const InputDecoration(labelText: 'Course name'),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(_renameCtrl.text.trim()),
-            child: const Text('Save'),
+          const SizedBox(height: ProxSpacing.lg),
+          ProxPrimaryButton(
+            label: const Text('Save'),
+            onPressed: () =>
+                Navigator.of(ctx).pop(_renameCtrl.text.trim()),
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+          Center(
+            child: ProxSecondaryButton(
+              label: const Text('Cancel'),
+              onPressed: () => Navigator.of(ctx).pop(),
+            ),
           ),
         ],
       ),
