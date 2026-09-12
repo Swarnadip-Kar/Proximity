@@ -171,8 +171,6 @@ class MarkVerdictView extends StatelessWidget {
               ),
               const SizedBox(height: ProxSpacing.md),
               VerdictBackToClasses(onBack: onBack),
-              const SizedBox(height: ProxSpacing.xs),
-              VerdictManualFallback(onRequest: onManualInstead),
             ],
           ),
         ),
