@@ -1110,7 +1110,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             // never replays entrances (waiting rows are keyed; present
             // rows mount static, see the roster section).
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              padding: const EdgeInsets.fromLTRB(
+                  ProxSpacing.screenMargin, 12, ProxSpacing.screenMargin, 0),
               child: LiveSessionHeader(
                 live: live,
                 elapsed: elapsed,
@@ -1137,7 +1138,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             ),
             if (_resumed)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                padding: const EdgeInsets.fromLTRB(
+                    ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
                 child: DraftResumedBanner(
                   present: present,
                   windowsTaken: windowsTaken,
@@ -1145,7 +1147,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                 ),
               ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(
+                  ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
               child: _LiveSubNav(
                 selected: _section,
                 inboxCount: manualPending.length,
