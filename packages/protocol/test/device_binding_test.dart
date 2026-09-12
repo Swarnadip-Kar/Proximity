@@ -1,17 +1,24 @@
-// Device-binding + local-trust goldens (Tracks 2+3).
+// Device-binding + local-trust goldens (Tracks 2+3 + security §4 liveness).
 //
 // Covers the reconciled 2/3 interface: extended Sig_s preimage binding
-// (score/faceValidAt/verifierVer/pkD/ticket), verifyProve bound-ticket
-// gates (tampered score, tampered timestamp, replay, unknown verifier),
-// device-proof tiers (FULL/STD fresh→confirmed, STALE grace→confirmed+
-// banner, NONE→fallback-flagged confirm at verifyProve), and attestation anomaly flags
-// (score==1.000 repeats, future/reused faceValidAt, verifierVer flapping).
+// (score/faceValidAt/verifierVer/livenessScore/livenessVer/pkD/ticket),
+// verifyProve bound-ticket gates (tampered score, tampered timestamp,
+// replay, unknown verifier, liveness-unbound/unknown-liveness/
+// below-threshold), device-proof tiers (FULL/STD fresh→confirmed, STALE
+// grace→confirmed+ banner, NONE→fallback-flagged confirm at verifyProve),
+// and attestation anomaly flags (score==1.000 repeats, future/reused
+// faceValidAt, verifierVer flapping).
 import 'dart:typed_data';
 
 import 'package:proximity_protocol/protocol.dart';
 import 'package:test/test.dart';
 
 const _ver = 'face_verification/0.3.9+b45ab893';
+// Security §4 liveness fixtures (sec-protocol 1A): passive classifier
+// output + pipeline pin. All bound happy-paths use these; gate tests vary
+// them to hit each reject.
+const _livScore = 0.92;
+const _livVer = 'liveness/minifasnet-v2+a1b2c3d4';
 
 ({Uint8List sess, Uint8List wid, dynamic stu, Uint8List cj}) _setup(int j) {
   final stu = ProxCrypto.generateEdKeypair();
@@ -39,6 +46,8 @@ VerifyRequest _boundReq({
   Set<int> seen = const {},
   List<double> prior = const [],
   String lastVer = '',
+  double livenessScore = _livScore,
+  String livenessVer = _livVer,
 }) =>
     VerifyRequest(
       id: id,
@@ -56,6 +65,8 @@ VerifyRequest _boundReq({
       faceValidAtMs: faceValidAt.millisecondsSinceEpoch,
       pkD: pkD,
       faceTicketHashBytes: ticket,
+      livenessScore: livenessScore,
+      livenessVer: livenessVer,
       attestationLevel: level,
       attestedAt: now.subtract(const Duration(days: 1)),
       attestedUntil:
@@ -66,6 +77,8 @@ VerifyRequest _boundReq({
       lastVerifierVer: lastVer,
     );
 
+
+
 void main() {
   group('extended Sig_s ticket binding', () {
     test('ticket fields are inside Sig_s: score tamper fails verify', () {
@@ -75,7 +88,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final pkD = randBytes(32);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
@@ -134,7 +149,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
         sessionId: s.sess,
@@ -163,7 +180,9 @@ void main() {
             faceTicketHashBytes: ProxCrypto.faceTicketHash(
                 faceScore: score,
                 faceValidAtMs: later.millisecondsSinceEpoch,
-                verifierVer: _ver),
+                verifierVer: _ver,
+                livenessScore: _livScore,
+                livenessVer: _livVer),
           ),
           isFalse);
     });
@@ -207,7 +226,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final pkD = randBytes(32);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
@@ -255,7 +276,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: signedScore,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final pkD = randBytes(32);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
@@ -303,7 +326,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
         sessionId: s.sess,
@@ -349,7 +374,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: evilVer);
+          verifierVer: evilVer,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
         sessionId: s.sess,
@@ -499,7 +526,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
         sessionId: s.sess,
@@ -549,7 +578,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: signedScore,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final pkD = randBytes(32);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
@@ -598,7 +629,9 @@ void main() {
       final ticket = ProxCrypto.faceTicketHash(
           faceScore: score,
           faceValidAtMs: now.millisecondsSinceEpoch,
-          verifierVer: _ver);
+          verifierVer: _ver,
+          livenessScore: _livScore,
+          livenessVer: _livVer);
       final sig = ProxCrypto.signStudentProve(
         studentSk: s.stu.privateKey,
         sessionId: s.sess,
@@ -627,6 +660,8 @@ void main() {
               verifierVer: _ver,
               faceValidAtMs: now.millisecondsSinceEpoch,
               faceTicketHashBytes: ticket,
+              livenessScore: _livScore,
+              livenessVer: _livVer,
               attestationLevel: AttestationLevel.none,
             ),
             expectedCj: s.cj,

@@ -29,12 +29,19 @@
 // P-256 verification itself lives in the platform adapter (app layer):
 // this file holds the pure tier/anomaly decisions beside
 // evaluateStudentClaim (claim.dart forwards here), plus the canonical
-// attestation-challenge helper. Trust caveat, stated plainly: the
-// [level] below is SELF-ASSERTED by the presenting device — no chain
-// verification exists anywhere in this system (no billing-gated backend
-// carries one), so FULL/STD mean "claims hardware backing", verified
-// only as a fresh signature over the live challenge, never as silicon
+// attestation-challenge helper and the offline chain-pinning types
+// (security §2, sec-protocol 1A). Trust caveat, stated plainly: the
+// [level] below is SELF-ASSERTED by the presenting device — full X.509
+// chain verification lives in the platform adapter (app layer) against
+// pins provisioned here; no billing-gated backend carries one, so FULL/STD
+// mean "claims hardware backing", verified only as a fresh signature over
+// the live challenge plus offline pin checks below, never as server
 // provenance. See PROXIMITY_DESIGN.md §3.4.
+//
+// Security §4 liveness: the face ticket bound into Sig_s/dSig now carries
+// (livenessScore, livenessVer) — see crypto/primitives.dart faceTicketHash
+// and crypto/verify.dart liveness gates. This file does NOT gate liveness;
+// it owns the device side (chain/level/window + dSig tier).
 library;
 
 import 'dart:convert';
@@ -151,8 +158,234 @@ class DeviceProofResult {
       tier == DeviceTier.fresh || tier == DeviceTier.stale;
 }
 
-/// Attestation challenge bound at enrollment:
+// ------------------------------------------------- attestation types ---
+
+/// Offline attestation chain (security §2, §7).
+///
+/// Wire form is `attestationChain (list<string> DER hex)` on
+/// `studentDevices/{email}` — leaf-first, root-last, each entry DER-hex of
+/// one X.509 cert. This class is the pure-Dart in-memory form: no ASN.1
+/// parse, no platform code, no IMEI. Full X.509 signature verify lives in
+/// the platform adapter (app layer, owned by sec-hwkey); the pure pin
+/// checks below ([verifyAttestationChainPin]) run offline on the professor
+/// phone against pinned roots provisioned at setup time.
+class AttestationChain {
+  /// Raw DER bytes per cert, leaf-first.
+  final List<Uint8List> certsDer;
+
+  const AttestationChain([this.certsDer = const []]);
+
+  /// Parses the Firestore wire form (list of DER-hex strings). Throws
+  /// [FormatException] on non-hex input (strict — never silent empty).
+  factory AttestationChain.fromHexList(List<String> hexList) =>
+      AttestationChain(
+          hexList.map((h) => hexDecode(h)).toList(growable: false));
+
+  /// Serializes back to the Firestore wire form.
+  List<String> toHexList() =>
+      certsDer.map((c) => hexEncode(c)).toList(growable: false);
+
+  bool get isEmpty => certsDer.isEmpty;
+  bool get isNotEmpty => certsDer.isNotEmpty;
+  int get length => certsDer.length;
+
+  /// Leaf (presenting device cert) or null when empty.
+  Uint8List? get leaf => certsDer.isEmpty ? null : certsDer.first;
+
+  /// Root (last cert) or null when empty.
+  Uint8List? get root => certsDer.isEmpty ? null : certsDer.last;
+}
+
+/// Attestation validity window (security §2: +90d, 14d stale grace).
+///
+/// Pure value type beside [evaluateDeviceProof]: the tier function keeps
+/// taking raw DateTimes (unchanged semantics — see below), this type is
+/// the canonical carrier for claim/sync layers (owned by sec-sync) so
+/// window math has one home.
+class AttestationWindow {
+  final DateTime attestedAt;
+  final DateTime attestedUntil;
+
+  const AttestationWindow(
+      {required this.attestedAt, required this.attestedUntil});
+
+  /// Fresh: now <= attestedUntil.
+  bool contains(DateTime now) => !now.toUtc().isAfter(attestedUntil.toUtc());
+
+  /// Stale: past attestedUntil but within [kDeviceStaleGrace].
+  bool isStale(DateTime now) {
+    final n = now.toUtc();
+    if (!n.isAfter(attestedUntil.toUtc())) return false;
+    return n.difference(attestedUntil.toUtc()) <= kDeviceStaleGrace;
+  }
+
+  /// Expired: past attestedUntil + grace.
+  bool isExpired(DateTime now) => !contains(now) && !isStale(now);
+}
+
+/// Android Key Attestation extension OID for the attestation record
+/// (security §2: professor verifies offline vs pinned Google roots).
+/// OID 1.3.6.1.4.1.11129.2.1.17.
+const String kKeyAttestationOid = '1.3.6.1.4.1.11129.2.1.17';
+
+/// DER TLV encoding of [kKeyAttestationOid]:
+/// 06 09 2B 06 01 04 01 D6 79 02 01 11.
+/// Pure-byte needle for [attestationLeafHasKeyOid] — no ASN.1 parser needed.
+const List<int> kKeyAttestationOidDer = [
+  0x06,
+  0x09,
+  0x2B,
+  0x06,
+  0x01,
+  0x04,
+  0x01,
+  0xD6,
+  0x79,
+  0x02,
+  0x01,
+  0x11,
+];
+
+/// True when [leafDer] contains the Key Attestation OID TLV.
+///
+/// Minimal pure-Dart format check: the leaf of a genuine Android key
+/// attestation cert carries extension 1.3.6.1.4.1.11129.2.1.17. Absence
+/// means "not an attestation cert" (fail closed). Full cert-signature
+/// verify is the platform adapter's job — this only gates format.
+bool attestationLeafHasKeyOid(Uint8List leafDer) {
+  final needle = kKeyAttestationOidDer;
+  if (leafDer.length < needle.length) return false;
+  outer:
+  for (var i = 0; i <= leafDer.length - needle.length; i++) {
+    for (var k = 0; k < needle.length; k++) {
+      if (leafDer[i + k] != needle[k]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/// True when [leafDer] contains [challenge] as a contiguous byte run.
+///
+/// The enrollment challenge (see [deviceBindingChallenge]) is embedded in
+/// the attestation record by the OS; the offline professor check requires
+/// an exact match. Pure-byte containment — no parsing, no platform code.
+bool attestationLeafContainsChallenge(
+    Uint8List leafDer, Uint8List challenge) {
+  if (challenge.isEmpty || leafDer.length < challenge.length) return false;
+  outer:
+  for (var i = 0; i <= leafDer.length - challenge.length; i++) {
+    for (var k = 0; k < challenge.length; k++) {
+      if (leafDer[i + k] != challenge[k]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/// Offline chain-pinning verdict (pure).
+class ChainPinResult {
+  final bool ok;
+  final String reason;
+  final List<String> flags;
+  const ChainPinResult(
+      {required this.ok, required this.reason, this.flags = const []});
+}
+
+/// Offline chain-vs-pinned-roots check (security §2-last-para, pure half).
+///
+/// Checks, in order (fail-closed, first failure wins):
+/// 1. [level] >= TEE (FULL/STD only — NONE never pins);
+/// 2. [chain] non-empty, every cert non-empty;
+/// 3. leaf carries the Key Attestation OID ([kKeyAttestationOid]) —
+///    else `missing-attestation-oid`;
+/// 4. leaf embeds [expectedChallenge] (see [deviceBindingChallenge]) —
+///    else `challenge-mismatch`;
+/// 5. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
+///    setup) — else `unknown-root`.
+///
+/// [pinnedRootHashes] are raw 32-byte SHA-256 digests of trusted root DERs
+/// (TOFU→pin-check: first online fetch pins, offline verifies against the
+/// pin). iOS App Attest flows through the same carrier with Apple roots —
+/// the OID/challenge gates are Android-shaped; iOS callers pass their
+/// pinned Apple root and skip the OID gate via [requireKeyOid] = false.
+///
+/// X.509 signature math is explicitly OUT of scope here (platform adapter
+/// owns it) — this is the pure format+pin+challenge gate the professor
+/// runs offline before [evaluateDeviceProof] tiers the proof.
+ChainPinResult verifyAttestationChainPin({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required AttestationLevel level,
+  bool requireKeyOid = true,
+}) {
+  if (level == AttestationLevel.none) {
+    return const ChainPinResult(
+        ok: false, reason: 'level-none', flags: ['attest-level-none']);
+  }
+  if (chain.isEmpty) {
+    return const ChainPinResult(
+        ok: false, reason: 'empty-chain', flags: ['attest-empty-chain']);
+  }
+  for (final c in chain.certsDer) {
+    if (c.isEmpty) {
+      return const ChainPinResult(
+          ok: false, reason: 'empty-cert', flags: ['attest-empty-cert']);
+    }
+  }
+  final leaf = chain.leaf!;
+  if (requireKeyOid && !attestationLeafHasKeyOid(leaf)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'missing-attestation-oid',
+        flags: ['attest-missing-oid']);
+  }
+  if (expectedChallenge.isEmpty ||
+      !attestationLeafContainsChallenge(leaf, expectedChallenge)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'challenge-mismatch',
+        flags: ['attest-challenge-mismatch']);
+  }
+  final root = chain.root!;
+  final rootHash = ProxCrypto.sha256Sync(root);
+  final pinned = pinnedRootHashes.any((h) => bytesEqual(h, rootHash));
+  if (!pinned) {
+    return const ChainPinResult(
+        ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
+  }
+  return const ChainPinResult(ok: true, reason: 'ok');
+}
+
+/// M1-gap enrollment challenge (security §2, canonical):
+/// SHA256(emailLower || installId || pkS32).
+///
+/// Binds the key to the Gmail + install at enrollment without a server
+/// nonce (no billing-gated backend exists to supply one). Lowercases +
+/// trims the email, UTF-8 encodes email + installId, appends the raw 32-byte
+/// Ed25519 pkS. Pure Dart — no platform code, no IMEI/serial/phone-ID.
+/// The OS attestation record embeds this challenge; the offline professor
+/// re-computes it and checks leaf containment via
+/// [verifyAttestationChainPin].
+Uint8List deviceBindingChallenge({
+  required String emailLower,
+  required String installId,
+  required Uint8List pkS,
+}) =>
+    ProxCrypto.sha256Sync(concat([
+      utf8.encode(emailLower.trim().toLowerCase()),
+      utf8.encode(installId),
+      pkS,
+    ]));
+
+/// Legacy attestation challenge (pre-M1-gap):
 /// SHA256(serverNonce || emailLower || installId || pkS32).
+///
+/// Kept so historical call sites/tests compile — new enrollments MUST use
+/// [deviceBindingChallenge] (no server nonce exists offline). Do not call
+/// for new code.
+@Deprecated('M1-gap canonical is deviceBindingChallenge (no serverNonce).')
 Uint8List attestationChallenge({
   required Uint8List serverNonce,
   required String emailLower,

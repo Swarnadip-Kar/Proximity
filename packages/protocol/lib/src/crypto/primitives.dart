@@ -17,6 +17,15 @@
 //              verifierVer allowlist, BLE sighting (unchanged), signed ACK
 //              (unchanged) + attestation anomaly flags. Sig_p/ACK layouts
 //              and all crypto primitives are untouched.)
+//   faceTicketHash8 (security §4, sec-protocol 1A):
+//              SHA-256(scoreMilliBE16 || faceValidAtBE64 || verifierVerHash8
+//                      || livenessMilliBE16 || livenessVerHash8)[0:8].
+//              Sig_s AND dSig bind this hash, so the liveness classifier
+//              output (score + pipeline version) is transplant-proof. The
+//              preimage is LONGER than the pre-liveness 3-field form, so old
+//              tickets/sigs never verify against it and vice versa — the
+//              host fails them as `bad-sig`/`liveness-unbound`, never as a
+//              silent downgrade.
 //   Sig_ack  = Sign(SK_p, sessionID || windowID || j || ID_utf8 || decision_u8 || serverTimeMs_BE64)
 //   Sig_d    = Sign(DKey_P256, sessionID || windowID || j || C_j ||
 //                     faceTicketHash8 || pkS32)
@@ -163,33 +172,74 @@ class ProxCrypto {
   static Uint8List verifierVerHash8(String verifierVer) =>
       Uint8List.fromList(sha256Sync(utf8.encode(verifierVer)).sublist(0, 8));
 
-  /// Face ticket hash: SHA-256(scoreMilliBE16 || faceValidAtBE64 ||
-  /// verifierVerHash8)[0:8]. The ticket (score, faceValidAt, verifierVer)
-  /// travels in POST /prove `face:{...}`; its hash binds into Sig_s AND
-  /// into dSig so neither signature can be transplanted across tickets.
-  /// No images/embeddings leave the device — only this hash + the ticket.
+  /// Liveness score canonical: milli-units u16 BE (0..1000), same scale
+  /// as [faceMilliBe]. Keeps the ticket deterministic. The classifier
+  /// (security §4 `LivenessGate.detect`) emits 0..1; the host gates
+  /// `>= kLivenessThreshold` (see crypto/verify.dart).
+  static Uint8List livenessMilliBe(double livenessScore) {
+    final m = (livenessScore.clamp(0.0, 1.0) * 1000).round().clamp(0, 1000);
+    final b = ByteData(2)..setUint16(0, m, Endian.big);
+    return b.buffer.asUint8List();
+  }
+
+  /// Liveness pipeline binding: SHA-256(utf8(livenessVer))[0:8]. Binds
+  /// WHICH anti-spoof pipeline produced the score (host checks the
+  /// liveness allowlist; unknown versions fail closed). 8 bytes keep the
+  /// ticket compact. Empty string = unbound (legacy / pre-liveness).
+  static Uint8List livenessVerHash8(String livenessVer) =>
+      Uint8List.fromList(sha256Sync(utf8.encode(livenessVer)).sublist(0, 8));
+
+  /// Face+liveness ticket hash (security §4):
+  /// SHA-256(scoreMilliBE16 || faceValidAtBE64 || verifierVerHash8 ||
+  /// livenessMilliBE16 || livenessVerHash8)[0:8].
+  ///
+  /// The ticket (score, faceValidAt, verifierVer, livenessScore,
+  /// livenessVer) travels in POST /prove `face:{...}` (+ `liveness:{...}`;
+  /// no images/embeddings leave the device); its hash binds into Sig_s AND
+  /// into dSig so neither signature can be transplanted across tickets or
+  /// across liveness outputs.
+  ///
+  /// No-silent-downgrade: the preimage is LONGER than the pre-liveness
+  /// 3-field form (score||faceValidAt||verifierVerHash8), so a ticket hash
+  /// computed without liveness NEVER equals one computed with liveness,
+  /// and old signatures never verify against the extended preimage (host
+  /// fails them `bad-sig` / `liveness-unbound`).
+  ///
+  /// Migration: [livenessScore]/[livenessVer] default to neutral (0.0/'')
+  /// so pre-liveness call sites still compile — but the PREIMAGE itself is
+  /// extended, and the host (verify.dart bound path) requires a non-zero
+  /// liveness score + allowlisted livenessVer. Defaults exist only to keep
+  /// the migration compilable, never to accept legacy proofs at runtime.
   static Uint8List faceTicketHash({
     required double faceScore,
     required int faceValidAtMs,
     required String verifierVer,
+    double livenessScore = 0.0,
+    String livenessVer = '',
   }) =>
       Uint8List.fromList(sha256Sync(concat([
         faceMilliBe(faceScore),
         faceValidAtBe(faceValidAtMs),
         verifierVerHash8(verifierVer),
+        livenessMilliBe(livenessScore),
+        livenessVerHash8(livenessVer),
       ])).sublist(0, 8));
 
-  /// Sig_s preimage (Tracks 2+3 extended): sessionID || windowID || j32 ||
-  /// C_j || ID || faceMilliBE || faceValidAtBE || verifierVerHash8 ||
-  /// pkD32 || faceTicketHash8.
+  /// Sig_s preimage (Tracks 2+3 extended + security §4 liveness):
+  /// sessionID || windowID || j32 || C_j || ID || faceMilliBE ||
+  /// faceValidAtBE || verifierVerHash8 || pkD32 || faceTicketHash8,
+  /// where faceTicketHash8 already binds
+  /// (score||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8).
   ///
-  /// Backward-compatible call shape: the four new fields default to neutral
-  /// (epoch 0, empty verifier, empty pkD/ticket) so pre-Tracks-2+3 call
-  /// sites still compile — but the PREIMAGE itself is extended (longer
-  /// than the old 6-field form), so old signatures never verify against
-  /// the new preimage and vice versa. Legacy defaults exist only to keep
-  /// the migration compilable, never to accept legacy proofs at runtime
-  /// (the host requires a non-zero faceValidAt + allowlisted verifierVer).
+  /// Backward-compatible call shape: the new fields default to neutral
+  /// (epoch 0, empty verifier, empty pkD/ticket, liveness 0.0/'') so
+  /// pre-existing call sites still compile — but the PREIMAGE itself is
+  /// extended (longer than the old 6-field form AND longer than the
+  /// pre-liveness ticket form), so old signatures never verify against
+  /// the new preimage and vice versa. Legacy/liveness-less defaults exist
+  /// only to keep the migration compilable, never to accept legacy proofs
+  /// at runtime (the host requires a non-zero faceValidAt + allowlisted
+  /// verifierVer + livenessScore >= Tl + allowlisted livenessVer).
   static Uint8List studentProvePreimage({
     required Uint8List sessionId,
     required Uint8List windowId,
@@ -201,13 +251,17 @@ class ProxCrypto {
     String verifierVer = '',
     Uint8List? pkD,
     Uint8List? faceTicketHashBytes,
+    double livenessScore = 0.0,
+    String livenessVer = '',
   }) {
     final d = pkD ?? Uint8List(0);
     final t = faceTicketHashBytes ??
         faceTicketHash(
             faceScore: faceScore,
             faceValidAtMs: faceValidAtMs,
-            verifierVer: verifierVer);
+            verifierVer: verifierVer,
+            livenessScore: livenessScore,
+            livenessVer: livenessVer);
     return concat([
       sessionId,
       windowId,
@@ -234,6 +288,8 @@ class ProxCrypto {
     String verifierVer = '',
     Uint8List? pkD,
     Uint8List? faceTicketHashBytes,
+    double livenessScore = 0.0,
+    String livenessVer = '',
   }) =>
       sign(
           studentSk,
@@ -247,7 +303,9 @@ class ProxCrypto {
               faceValidAtMs: faceValidAtMs,
               verifierVer: verifierVer,
               pkD: pkD,
-              faceTicketHashBytes: faceTicketHashBytes));
+              faceTicketHashBytes: faceTicketHashBytes,
+              livenessScore: livenessScore,
+              livenessVer: livenessVer));
 
   static bool verifyStudentProve({
     required ed.PublicKey studentPk,
@@ -262,6 +320,8 @@ class ProxCrypto {
     String verifierVer = '',
     Uint8List? pkD,
     Uint8List? faceTicketHashBytes,
+    double livenessScore = 0.0,
+    String livenessVer = '',
   }) =>
       verify(
           studentPk,
@@ -275,7 +335,9 @@ class ProxCrypto {
               faceValidAtMs: faceValidAtMs,
               verifierVer: verifierVer,
               pkD: pkD,
-              faceTicketHashBytes: faceTicketHashBytes),
+              faceTicketHashBytes: faceTicketHashBytes,
+              livenessScore: livenessScore,
+              livenessVer: livenessVer),
           sig);
 
   /// Sig_d (device-key) preimage: sessionID || windowID || j32 || C_j ||
@@ -283,6 +345,13 @@ class ProxCrypto {
   /// Secure Enclave; `none` stub on desktop/web). The P-256 verify itself
   /// lives in the platform adapter (app layer) — this canonical preimage
   /// is the shared contract both sides sign/verify against.
+  ///
+  /// Security §4: [faceTicketHashBytes] MUST be the extended 5-field ticket
+  /// (score||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8).
+  /// Changing the liveness score/ver changes the ticket, which changes this
+  /// preimage — dSig is transplant-proof across liveness outputs. Old
+  /// 3-field tickets produce a different preimage and fail dSig verify
+  /// (no silent downgrade). Layout bytes here are unchanged on purpose.
   static Uint8List deviceProvePreimage({
     required Uint8List sessionId,
     required Uint8List windowId,

@@ -57,9 +57,27 @@ RateLimiter proveLimiter() =>
 RateLimiter windowLimiter() =>
     RateLimiter(maxHits: kRateWindowMax, window: kRateWindow);
 
+/// Liveness gate threshold Tl (security §4, sec-protocol 1A).
+///
+/// The passive anti-spoof classifier (`LivenessGate.detect` in the app,
+/// owned by sec-liveness) emits 0..1 on the same milli scale as the face
+/// score. The host confirms only when `livenessScore >= kLivenessThreshold`.
+/// Value 0.70 mirrors [kFaceThreshold] (strict, fail-closed); course-pinned
+/// stricter lists are future work — lowering this constant is a ticket
+/// break (bump min_version, never silent).
+const double kLivenessThreshold = 0.70;
+
+/// Liveness pipeline allowlist prefix. Stored `livenessVer` values look like
+/// `liveness/minifasnet-v2+<assetHash8>` (model + weights pin). The host
+/// accepts any version with this prefix unless a course pins a stricter
+/// list (offline professor verifies against this prefix; mismatches fail
+/// closed as `unknown-liveness-verifier`).
+const String kLivenessVerPrefix = 'liveness/';
+
 /// Professor verification per POST + BLE sighting (§5.3), pure-logic half:
 /// window open, C_j match, UUID_S match, sig verify, PK lookup + CRL,
-/// face, sighting. Identity is the Gmail account (no institute-ID matching).
+/// face, liveness (§4), sighting. Identity is the Gmail account
+/// (no institute-ID matching).
 class VerifyRequest {
   final String id;
   final Uint8List windowId;
@@ -80,6 +98,15 @@ class VerifyRequest {
   final int faceValidAtMs;
   final Uint8List pkD; // DKey raw (empty = unbound legacy)
   final Uint8List faceTicketHashBytes;
+  // Security §4 liveness ticket (transported in POST /prove
+  // liveness:{score,ver} — classifier output only, no images). Sig_s AND
+  // dSig bind both fields via the extended faceTicketHash (score||face ||
+  // verifierVerHash8||livenessMilli||livenessVerHash8). Empty/0.0 =
+  // unbound (pre-liveness); the bound path fails those closed, never as
+  // a silent downgrade.
+  final double livenessScore;
+  final String livenessVer;
+  final List<String> livenessAllowlist;
   // window. [dSigValid] is the P-256 verify over deviceProvePreimage,
   // computed by the platform adapter before calling in.
   final AttestationLevel attestationLevel;
@@ -109,6 +136,9 @@ class VerifyRequest {
     this.faceValidAtMs = 0,
     Uint8List? pkD,
     Uint8List? faceTicketHashBytes,
+    this.livenessScore = 0.0,
+    this.livenessVer = '',
+    this.livenessAllowlist = const [kLivenessVerPrefix],
     this.attestationLevel = AttestationLevel.none,
     DateTime? attestedAt,
     DateTime? attestedUntil,
@@ -137,24 +167,29 @@ class VerifyOutcome {
 
 /// Stateless verifier (caller supplies enrolled PK + CRL + expected C_j).
 ///
-/// Two modes (migration-safe):
+/// Three modes (migration-safe, no silent downgrade):
 /// - legacy (default): [VerifyRequest] carries no ticket (empty
-///   verifierVer/pkD) and [requireBoundTicket] is false — the original
-///   6-field Sig_s preimage path with neutral defaults. Existing callers
-///   verify exactly as before; no new gate applies.
-/// - bound (Tracks 2+3): the request carries the face ticket
-///   (score/faceValidAt/verifierVer + pkD) or [requireBoundTicket] is true
-///   (the professor server always sets it) — Sig_s is verified over the
-///   extended preimage, the verifierVer allowlist + faceValid window apply,
+///   verifierVer/pkD/livenessVer) and [requireBoundTicket] is false — the
+///   original 6-field Sig_s preimage path with neutral defaults. Existing
+///   callers verify exactly as before; no new gate applies.
+/// - bound (Tracks 2+3 + §4 liveness): the request carries the
+///   face+liveness ticket (score/faceValidAt/verifierVer +
+///   livenessScore/livenessVer + pkD) or [requireBoundTicket] is true (the
+///   professor server always sets it) — Sig_s is verified over the extended
+///   preimage, the verifierVer allowlist + faceValid window apply, the
+///   liveness gate (`>= kLivenessThreshold` + liveness allowlist) applies,
 ///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner),
-///   and attestation anomaly flags ride on the outcome. Legacy tickets fail
-///   closed here (`face-unbound` / `unknown-verifier`), never auto-present.
+///   and attestation anomaly flags ride on the outcome. Legacy and
+///   pre-liveness tickets fail closed here (`face-unbound` /
+///   `unknown-verifier` / `liveness-unbound` / `unknown-liveness-verifier` /
+///   `liveness-below-threshold`), never auto-present.
 /// - bound with level NONE (graceful fallback — HW keys don't ship, so
 ///   production `SoftwareDeviceKey` is always NONE): the ticket-bound Sig_s,
-///   face threshold/window, allowlist and sighting checks all still apply,
-///   but no device tier is claimed and `dSig` is not gated. Confirms with a
-///   `device-none-fallback` flag (logged, never silent). Tampered ticket/pkD
-///   bindings still fail as `bad-sig`; FULL/STD/expiry semantics unchanged.
+///   face threshold/window, allowlists (face + liveness), liveness threshold
+///   and sighting checks all still apply, but no device tier is claimed and
+///   `dSig` is not gated. Confirms with a `device-none-fallback` flag
+///   (logged, never silent). Tampered ticket/pkD/liveness bindings still
+///   fail as `bad-sig`; FULL/STD/expiry semantics unchanged.
 VerifyOutcome verifyProve({
   required VerifyRequest req,
   required Uint8List expectedCj,
@@ -189,7 +224,9 @@ VerifyOutcome verifyProve({
   final bound = requireBoundTicket ||
       req.verifierVer.isNotEmpty ||
       req.faceValidAtMs != 0 ||
-      req.pkD.isNotEmpty;
+      req.pkD.isNotEmpty ||
+      req.livenessVer.isNotEmpty ||
+      req.livenessScore != 0.0;
   // The SIGNED stamp is authoritative for the preimage: legacy callers
   // leave faceValidAtMs at 0 (matching their sign-time defaults), bound
   // callers stamp the same millis they signed. The DateTime field drives
@@ -200,7 +237,9 @@ VerifyOutcome verifyProve({
       : ProxCrypto.faceTicketHash(
           faceScore: req.faceScore,
           faceValidAtMs: faceAtMs,
-          verifierVer: req.verifierVer);
+          verifierVer: req.verifierVer,
+          livenessScore: req.livenessScore,
+          livenessVer: req.livenessVer);
   final sigOk = ProxCrypto.verifyStudentProve(
     studentPk: studentPk,
     sessionId: sessionId,
@@ -249,12 +288,35 @@ VerifyOutcome verifyProve({
           : 'face-unbound';
       return VerifyOutcome(ProveDecision.invalid, reason, flags());
     }
+    // Security §4 liveness gate: the extended ticket binds
+    // (livenessScore, livenessVer); the host requires a present,
+    // allowlisted liveness pipeline AND a score >= Tl. Pre-liveness
+    // tickets (0.0/'') fail as `liveness-unbound` — never a silent
+    // downgrade to face-only. Unknown pipelines fail as
+    // `unknown-liveness-verifier`; weak scores fail as
+    // `liveness-below-threshold`. Applies on BOTH the NONE fallback and
+    // the FULL/STD tier paths (photo-spoof must fail even without HW).
+    final livenessAllowed = req.livenessAllowlist
+        .any((p) => req.livenessVer.startsWith(p));
+    if (req.livenessVer.isEmpty || req.livenessScore == 0.0) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'liveness-unbound', flags());
+    }
+    if (!livenessAllowed) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'unknown-liveness-verifier', flags());
+    }
+    if (req.livenessScore < kLivenessThreshold) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'liveness-below-threshold', flags());
+    }
     // Graceful NONE fallback: HW keys don't ship, so production is
     // always level NONE (`SoftwareDeviceKey`). A bound-NONE proof verifies
     // exactly like the legacy unbound proof for everything EXCEPT the tier
-    // — same ticket-bound Sig_s (already verified above), same face
-    // threshold/window, same allowlist gate, same sighting gate — with no
-    // tier claimed and no dSig gate. Logged via the fallback flag.
+    // — same ticket-bound Sig_s (already verified above, liveness-bound),
+    // same face threshold/window, same allowlists (face + liveness), same
+    // liveness threshold, same sighting gate — with no tier claimed and no
+    // dSig gate. Logged via the fallback flag.
     if (req.attestationLevel == AttestationLevel.none) {
       final fallbackFlags = [...flags(), 'device-none-fallback'];
       final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
