@@ -270,13 +270,13 @@ class LiveControlCluster extends StatelessWidget {
                 onPressed: (!hosting) ? null : onTakeAnother,
                 expanded: false,
               ),
-              ProxSecondaryButton(
+              ProxDangerButton(
                 label: const Text('End attendance'),
                 onPressed: (!hosting) ? null : onEnd,
               ),
             ],
             if (windowNo == 0)
-              ProxSecondaryButton(
+              ProxDangerButton(
                 label: const Text('End attendance'),
                 onPressed: (!hosting) ? null : onEnd,
               ),
