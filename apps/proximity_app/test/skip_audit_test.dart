@@ -359,12 +359,15 @@ void main() {
       final prof = ProxCrypto.generateEdKeypair();
       final seed = randBytes(32);
       final store = InMemoryDeviceStore();
+      // Sealed-only fixture (security §2): the FaceGate pre-sign check is
+      // the gate under test, so the key envelope must be production-shaped.
       await store.writeEnrollment(StoredEnrollment(
         email: _email,
         name: 'S',
         roll: '1',
-        seedHex: hexEncode(seed),
+        seedHex: '',
         pkHex: 'cd' * 32,
+        sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
         faceId: 'face-test-id',
         enrolledAt: DateTime.now().toUtc(),
         verifierVer: kFaceVerifierVer,

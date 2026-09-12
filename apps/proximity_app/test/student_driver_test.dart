@@ -21,21 +21,31 @@ const _beacon = ClassBeacon(
   displayCode: 'X',
 );
 
+/// Sealed-only helper (security §2): stores a DKey-sealed envelope, never
+/// a raw seed. The envelope is sealed with a throwaway [FakeDeviceKey]
+/// (key-independent PXK1 in tests) so any driver-held [FakeDeviceKey]
+/// unseals it — mirroring HW production where the same silicon seals +
+/// unseals. Pass [sealedKeyHex] explicitly only for clone tests.
 Future<InMemoryDeviceStore> enrolledStore({
   String verifierVer = kFaceVerifierVer,
   String faceId = 'face-test-id',
   String? seedHex,
+  String? sealedKeyHex,
   String attestationLevel = 'NONE',
   DateTime? attestedUntil,
   String pkDHex = '',
 }) async {
   final s = InMemoryDeviceStore();
+  final seedBytes = hexDecode(seedHex ?? ('ab' * 32));
+  final sealed = sealedKeyHex ??
+      hexEncode(await FakeDeviceKey().seal(Uint8List.fromList(seedBytes)));
   await s.writeEnrollment(StoredEnrollment(
     email: _email,
     name: 'S',
     roll: '1',
-    seedHex: seedHex ?? ('ab' * 32),
+    seedHex: '',
     pkHex: 'cd' * 32,
+    sealedKeyHex: sealed,
     faceId: faceId,
     enrolledAt: DateTime.now().toUtc(),
     verifierVer: verifierVer,
@@ -257,7 +267,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -343,7 +354,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -426,7 +438,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -502,7 +515,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -582,7 +596,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -652,7 +667,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -745,7 +761,8 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
@@ -846,7 +863,8 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
     final stuPk = ed.public(ed.newKeyFromSeed(seed));
     final pkDHex = hexEncode(Uint8List.fromList(List.filled(32, 7)));
     final store = await enrolledStore(
-      seedHex: hexEncode(seed),
+      seedHex: '',
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       attestationLevel: 'FULL',
       attestedUntil: DateTime.now().toUtc().add(const Duration(days: 80)),
       pkDHex: pkDHex,

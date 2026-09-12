@@ -33,6 +33,7 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/screens/face_capture.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/widgets/prox_buttons.dart';
 import 'package:proximity_app/widgets/prox_cards.dart';
@@ -465,12 +466,17 @@ void main() {
       // capture screen must reconcile (refreshFromAuth) so Save does not
       // fail-closed with "Generate the device key first".
       final store = InMemoryDeviceStore();
+      // Sealed-only fixture (security §2): the stored key is a DKey-sealed
+      // envelope, never a raw seed.
+      final sealedFixture = hexEncode(await FakeDeviceKey()
+          .seal(Uint8List.fromList(hexDecode('ab' * 32))));
       await store.writeEnrollment(StoredEnrollment(
         email: 's@x.in',
         name: 'S',
         roll: 'R1',
-        seedHex: 'ab' * 32,
+        seedHex: '',
         pkHex: 'cd' * 32,
+        sealedKeyHex: sealedFixture,
         faceId: 'face-1',
         enrolledAt: DateTime.utc(2026, 9, 1),
         verifierVer: kFaceVerifierVer,

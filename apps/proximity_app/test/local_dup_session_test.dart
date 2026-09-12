@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -30,14 +31,18 @@ List<double> _vec(int seed) {
   return [for (final x in v) x / sqrt(n)];
 }
 
+/// Sealed-only fixture (security §2): DKey-sealed envelope, never raw seed.
 Future<InMemoryDeviceStore> _enrolledAs(String email, String seedByte) async {
   final s = InMemoryDeviceStore();
+  final sealed = hexEncode(await FakeDeviceKey()
+      .seal(Uint8List.fromList(hexDecode(seedByte * 32))));
   await s.writeEnrollment(StoredEnrollment(
     email: email,
     name: email.split('@').first.toUpperCase(),
     roll: '1',
-    seedHex: seedByte * 32,
+    seedHex: '',
     pkHex: 'cd' * 30 + seedByte * 2,
+    sealedKeyHex: sealed,
     faceId: 'face-$email',
     enrolledAt: DateTime.now().toUtc(),
     verifierVer: kFaceVerifierVer,

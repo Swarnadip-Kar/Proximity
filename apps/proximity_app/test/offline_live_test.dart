@@ -17,14 +17,18 @@ import 'package:proximity_transport/transport.dart';
 
 const _email = 's@x.in';
 
+/// Sealed-only fixture (security §2): DKey-sealed envelope, never raw seed.
 Future<InMemoryDeviceStore> _enrolled() async {
   final s = InMemoryDeviceStore();
+  final sealed = hexEncode(await FakeDeviceKey()
+      .seal(Uint8List.fromList(hexDecode('ab' * 32))));
   await s.writeEnrollment(StoredEnrollment(
     email: _email,
     name: 'S',
     roll: '1',
-    seedHex: 'ab' * 32,
+    seedHex: '',
     pkHex: 'cd' * 32,
+    sealedKeyHex: sealed,
     faceId: 'face-test-id',
     enrolledAt: DateTime.now().toUtc(),
     verifierVer: kFaceVerifierVer,

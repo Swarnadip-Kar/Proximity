@@ -7,6 +7,7 @@
 // a stale preseed. Bug 2 (double ID entry): the ID number is typed exactly
 // once (intro, shared EnrollRollField); the save step shows it readonly
 // with fail-closed validation at Save.
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,7 @@ import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/setup/intro_sections.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_protocol/protocol.dart';
 
 const _a =
     SignedAccount(email: 'a@gmail.com', displayName: 'A', uid: 'ua');
@@ -241,13 +243,16 @@ void main() {
       // device), then a fresh controller (restart) with an empty draft.
       // The capture screen's mount reconcile (`refreshFromAuth`) must
       // reload the key before Save — the gate must not fire.
+      // Sealed-only fixture (security §2).
       final store = InMemoryDeviceStore();
       await store.writeEnrollment(StoredEnrollment(
         email: 'b@univ.edu',
         name: 'B',
         roll: 'B-ROLL',
-        seedHex: 'ab' * 32,
+        seedHex: '',
         pkHex: 'cd' * 32,
+        sealedKeyHex: hexEncode(await FakeDeviceKey()
+            .seal(Uint8List.fromList(hexDecode('ab' * 32)))),
         faceId: 'face-1',
         enrolledAt: DateTime.utc(2026, 9, 1),
         verifierVer: kFaceVerifierVer,
@@ -314,13 +319,15 @@ void main() {
       expect(ctl.state.account?.email, 'b@univ.edu');
       expect(ctl.state.pkHex, isEmpty);
       // Enrollment lands after the adopt (e.g. slow store read winning
-      // late): refresh must pick the key up now.
+      // late): refresh must pick the key up now. Sealed-only (security §2).
       await store.writeEnrollment(StoredEnrollment(
         email: 'b@univ.edu',
         name: 'B',
         roll: 'B-ROLL',
-        seedHex: 'ab' * 32,
+        seedHex: '',
         pkHex: 'cd' * 32,
+        sealedKeyHex: hexEncode(await FakeDeviceKey()
+            .seal(Uint8List.fromList(hexDecode('ab' * 32)))),
         faceId: 'face-1',
         enrolledAt: DateTime.utc(2026, 9, 1),
         verifierVer: kFaceVerifierVer,
