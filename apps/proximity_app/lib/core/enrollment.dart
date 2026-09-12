@@ -264,50 +264,54 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // Sealed path (production): unwrap needs THIS device's DKey — a
       // backup-restore clone carrying ciphertext fails here with
       // 'restore detected — re-enroll' and must re-enroll, never match.
+      // Sealed-only (security §2): unwrap needs THIS device's HW DKey — a
+      // backup-restore clone carrying ciphertext fails here with
+      // 'restore detected — re-enroll' and must re-enroll, never match.
+      // Legacy raw-seed docs (sealedKeyHex empty) never restore — the key
+      // step re-runs on secure hardware (software enrollments re-enroll
+      // via the MoveIntent fast path; no silent downgrade, no seed read).
+      if (stored.sealedKeyHex.isEmpty) {
+        BleLog.log('SEC',
+            'enroll restore: unsealed legacy doc — re-enroll on hardware');
+        return;
+      }
       ed.KeyPair keys;
-      if (stored.sealedKeyHex.isNotEmpty) {
-        try {
-          await _deviceKey.ensure();
-        } catch (e) {
-          // Records-only device holding a phone-bound enrollment: the key
-          // stays locked; the holder continues on their phone. Logged:
-          // pkHex is recovered but `_keys` stays null, so a later Save
-          // without a retrying refresh would hit the key gate.
+      try {
+        await _deviceKey.ensure();
+      } catch (e) {
+        // Records-only device holding a phone-bound enrollment: the key
+        // stays locked; the holder continues on their phone. Logged:
+        // pkHex is recovered but `_keys` stays null, so a later Save
+        // without a retrying refresh would hit the key gate.
+        BleLog.log('SEC',
+            'enroll restore: DKey unavailable, key locked (pk known)');
+        state = state.copyWith(
+          phase: EnrollPhase.signedIn,
+          pkHex: stored.pkHex,
+          roll: stored.roll,
+          restored: false,
+          faceScore: 0,
+          message:
+              'This enrollment is bound to your phone — continue enrollment there.',
+        );
+        return;
+      }
+      try {
+        final seed =
+            await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
+        final sk = ed.newKeyFromSeed(seed);
+        keys = ed.KeyPair(sk, ed.public(sk));
+      } on StateError catch (e) {
+        if ('$e'.contains('restore detected')) {
           BleLog.log('SEC',
-              'enroll restore: DKey unavailable, key locked (pk known)');
+              'enroll restore detected (clone) — re-enroll required');
           state = state.copyWith(
             phase: EnrollPhase.signedIn,
-            pkHex: stored.pkHex,
-            roll: stored.roll,
-            restored: false,
-            faceScore: 0,
-            message:
-                'This enrollment is bound to your phone — continue enrollment there.',
+            message: 'restore detected — re-enroll',
           );
           return;
         }
-        try {
-          final seed =
-              await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
-          final sk = ed.newKeyFromSeed(seed);
-          keys = ed.KeyPair(sk, ed.public(sk));
-        } on StateError catch (e) {
-          if ('$e'.contains('restore detected')) {
-            BleLog.log('SEC',
-                'enroll restore detected (clone) — re-enroll required');
-            state = state.copyWith(
-              phase: EnrollPhase.signedIn,
-              message: 'restore detected — re-enroll',
-            );
-            return;
-          }
-          rethrow;
-        }
-      } else {
-        // Legacy/test path: raw seed hex.
-        final seed = hexDecode(stored.seedHex);
-        final sk = ed.newKeyFromSeed(seed);
-        keys = ed.KeyPair(sk, ed.public(sk));
+        rethrow;
       }
       _keys = keys;
       _restoredRoll = stored.roll;
@@ -353,10 +357,13 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     state = state.copyWith(roll: roll.trim());
   }
 
-  /// Step 2: generate Ed25519 keypair (SKey) + ensure the HW device key
-  /// (DKey) it seals to. A fresh key simply replaces any previous one on
-  /// this device; cross-device duplicates are refused by the online claim
-  /// at Save (one device per Gmail).
+  /// Step 2: generate Ed25519 keypair (SKey) + bind the HW device key
+  /// (DKey) it seals to, embedding the M1-gap challenge
+  /// `SHA256(email || installId || pkS)` at HW key creation. Software is
+  /// not enrollable (`level == none` → `Software-no-enroll`); desktop/web
+  /// fail closed before anything generates. A fresh key simply replaces
+  /// any previous one on this device; cross-device duplicates are refused
+  /// by the online claim at Save (one device per Gmail).
   Future<void> generateKey() async {
     final acct = state.account;
     if (acct == null) {
@@ -365,9 +372,30 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       return;
     }
     try {
+      requireMobileFace();
+    } on StateError catch (e) {
+      state = state.copyWith(phase: EnrollPhase.error, message: '$e');
+      return;
+    }
+    try {
       final kp = ProxCrypto.generateEdKeypair();
-      final pkHex =
-          hexEncode(Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32)));
+      final pkS = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
+      final pkHex = hexEncode(pkS);
+      final installId = await getOrCreateInstallId(_store);
+      try {
+        await _deviceKey.bindEnrollment(
+            email: acct.email.toLowerCase(), installId: installId, pkS: pkS);
+      } on StateError catch (e) {
+        state = state.copyWith(phase: EnrollPhase.error, message: '$e');
+        return;
+      }
+      if (_deviceKey.level == AttestationLevel.none) {
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            message:
+                'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
+        return;
+      }
       _keys = kp;
       _faceId = null;
       _restoredRoll = null;
@@ -578,12 +606,18 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // cannot enroll (no HW key) — fail closed before the claim.
       Uint8List sealed;
       Uint8List pkDRaw;
+      List<String> chainDERHex;
       try {
         requireMobileFace();
         await _deviceKey.ensure();
+        if (_deviceKey.level == AttestationLevel.none) {
+          throw StateError(
+              'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
+        }
         sealed = await _deviceKey.seal(
             Uint8List.fromList(ed.seed(kp.privateKey)));
         pkDRaw = _deviceKey.pkD;
+        chainDERHex = _deviceKey.chainDERHex;
       } on StateError catch (e) {
         state = state.copyWith(
             phase: EnrollPhase.error, message: '$e');
@@ -734,13 +768,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   prevEnrollment.email.toLowerCase() == email
               ? prevEnrollment.lastFaceRescanAtMillis
               : 0);
+      // Sealed-only (security §2 F1 fix): never writes `seedHex` (always
+      // `''` via toJson) — `sealedKeyHex + pkDHex + chainDERHex` only.
       await _store.writeEnrollment(StoredEnrollment(
         email: email,
         name: name,
         roll: roll,
-        seedHex: hexEncode(ed.seed(kp.privateKey)),
+        seedHex: '',
         pkHex: pkHex,
         sealedKeyHex: hexEncode(sealed),
+        chainDERHex: chainDERHex,
         faceId: faceId,
         enrolledAt: now,
         verifierVer: _verifier.verifierVer,
@@ -804,13 +841,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       throw StateError(
           'No enrolled device found for this account — enroll this device first.');
     }
+    // Sealed-only: roll rewrite preserves the HW envelope + chain and
+    // wipes any legacy raw seed (migration: seedHex → '').
     await _store.writeEnrollment(StoredEnrollment(
       email: stored.email,
       name: stored.name,
       roll: want,
-      seedHex: stored.seedHex,
+      seedHex: '',
       pkHex: stored.pkHex,
       sealedKeyHex: stored.sealedKeyHex,
+      chainDERHex: stored.chainDERHex,
       faceId: stored.faceId,
       enrolledAt: stored.enrolledAt,
       verifierVer: stored.verifierVer,
