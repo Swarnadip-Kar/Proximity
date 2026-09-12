@@ -1,9 +1,9 @@
-// Join-page visuals (UI/UX slice): present-idiom status on the waiting
-// room + joining-as avatar top-left on the browse list.
+// Join-page visuals (UI/UX slice): connection pill on the waiting room +
+// joining-as avatar top-left on the browse list.
 //
 // The waiting room carries no student identity block (removed) — the
 // avatar lives on the browse list top-left instead (photo → initials,
-// glowing Accounts-page ring, static and settle-safe).
+// gradient ring WITHOUT glow, static and settle-safe).
 //
 // Settle-safe by construction: empty-URL initials paths only (no
 // network-image widget tests), no timers/implicit-animation loops — every
@@ -11,9 +11,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/mark/browse_classes.dart';
 import 'package:proximity_app/features/mark/waiting_room.dart';
+import 'package:proximity_app/widgets/student_card.dart';
 import 'package:proximity_app/widgets/verdict_badge.dart';
 
 Widget _themed(Widget body) => MaterialApp(
@@ -47,32 +47,28 @@ Widget _browse({String avatarName = '', String avatarPhotoUrl = ''}) =>
     );
 
 void main() {
-  testWidgets('connected badge uses the present (marked/green) idiom',
+  testWidgets('connected pill uses brand, not the Marked verdict idiom',
       (t) async {
     await t.pumpWidget(_room(connected: true));
     await t.pumpAndSettle();
     // Copy unchanged — the verbatim join words still render.
     expect(find.text('Connected'), findsOneWidget);
-    final badge = t.widget<VerdictBadge>(find.byType(VerdictBadge).first);
-    expect(badge.label, 'Connected');
-    // Visual prop only: the global present status language (green).
-    expect(badge.status, ProxStatus.marked);
+    // Transport state, not attendance: no verdict badge anywhere here.
+    expect(find.byType(VerdictBadge), findsNothing);
     // No student identity block on the waiting room anymore.
     expect(find.byKey(const ValueKey('browse-avatar-ring')), findsNothing);
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('not-connected badge keeps the waiting treatment', (t) async {
+  testWidgets('not-connected pill keeps the neutral treatment', (t) async {
     await t.pumpWidget(_room(connected: false));
     await t.pumpAndSettle();
     expect(find.text('Not connected'), findsOneWidget);
-    final badge = t.widget<VerdictBadge>(find.byType(VerdictBadge).first);
-    expect(badge.label, 'Not connected');
-    expect(badge.status, ProxStatus.waiting);
+    expect(find.byType(VerdictBadge), findsNothing);
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('browse top-left shows initials + glowing ring on empty photo',
+  testWidgets('browse top-left shows initials + gradient ring, no glow',
       (t) async {
     await t.pumpWidget(_browse(avatarName: 'Ada Lovelace'));
     await t.pumpAndSettle();
@@ -82,15 +78,10 @@ void main() {
     expect(find.text('Ada Lovelace'), findsNothing);
     expect(find.byType(Image), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    // Glowing gradient ring: token gradient + glow shadow, static.
-    final ringFinder = find.byKey(const ValueKey('browse-avatar-ring'));
-    expect(ringFinder, findsOneWidget);
-    final ring = t.widget<Container>(ringFinder);
-    final dec = ring.decoration! as BoxDecoration;
-    expect(dec.gradient, isNotNull);
-    expect(dec.boxShadow, isNotNull);
-    expect(dec.boxShadow, isNotEmpty);
-    expect(dec.shape, BoxShape.circle);
+    // Shared ProxAvatar behind the alias: gradient ring, never glow.
+    expect(
+        find.byKey(const ValueKey('browse-avatar-ring')), findsOneWidget);
+    expect(find.byType(ProxAvatar), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 

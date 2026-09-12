@@ -108,7 +108,7 @@ void main() {
     var marked = false;
     for (var i = 0; i < 20 && !marked; i++) {
       await t.pump(const Duration(seconds: 1));
-      marked = find.text('✓ Marked').evaluate().isNotEmpty;
+      marked = find.text('Marked').evaluate().isNotEmpty;
     }
     expect(marked, isTrue);
     // Round ends behind the badge → rewait waiting room for the next round.

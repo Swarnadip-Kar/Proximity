@@ -193,7 +193,7 @@ void main() {
         ),
       ));
       await t.pumpAndSettle();
-      expect(find.text('✓ Marked'), findsOneWidget);
+      expect(find.text('Marked'), findsOneWidget);
       await t.tap(find.text('Back to classes'));
       await t.pumpAndSettle();
       expect(backed, isTrue);
@@ -227,7 +227,8 @@ void main() {
       await pumpVerdict(t, MarkVerdict.needsReview, 0);
       expect(find.text('Back'), findsOneWidget);
       await pumpVerdict(t, MarkVerdict.noSignal, 0);
-      expect(find.text('Try again'), findsOneWidget);
+      // Shared back action (copy matches one-step browsing teardown).
+      expect(find.text('Back to classes'), findsOneWidget);
     });
   });
 
@@ -241,13 +242,13 @@ void main() {
       var marked = false;
       for (var i = 0; i < 20 && !marked; i++) {
         await t.pump(const Duration(seconds: 1));
-        marked = find.text('✓ Marked').evaluate().isNotEmpty;
+        marked = find.text('Marked').evaluate().isNotEmpty;
       }
       expect(marked, isTrue);
       await t.pumpAndSettle();
       await t.tap(find.text('Back to classes'));
       await t.pumpAndSettle();
-      expect(find.text('✓ Marked'), findsNothing);
+      expect(find.text('Marked'), findsNothing);
       expect(find.text('Enter IP manually'), findsOneWidget);
       // The rewait chain is dead (run-guarded teardown): no silent hop
       // back into waiting/face/proving behind the browse list.
@@ -313,14 +314,14 @@ void main() {
       var marked = false;
       for (var i = 0; i < 20 && !marked; i++) {
         await t.pump(const Duration(seconds: 1));
-        marked = find.text('✓ Marked').evaluate().isNotEmpty;
+        marked = find.text('Marked').evaluate().isNotEmpty;
       }
       expect(marked, isTrue);
       await t.pumpAndSettle();
       await t.binding.handlePopRoute();
       await t.pumpAndSettle();
       // One step to browse — never waiting/face/proving on the way.
-      expect(find.text('✓ Marked'), findsNothing);
+      expect(find.text('Marked'), findsNothing);
       expect(find.textContaining('has not yet started'), findsNothing);
       expect(find.text('Enter IP manually'), findsOneWidget);
       expect(t.takeException(), isNull);

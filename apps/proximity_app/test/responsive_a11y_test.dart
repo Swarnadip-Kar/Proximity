@@ -186,7 +186,7 @@ void main() {
       textScale: 1.3,
     ));
     await tester.pumpAndSettle();
-    expect(find.text('✓ Marked'), findsOneWidget);
+    expect(find.text('Marked'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -368,11 +368,11 @@ void main() {
     await tester.pump();
     // Wash up: badge word renders in the documented dark ink (#14161A —
     // 8.27:1 on the wash's darkest stop), never status-green on green.
-    final washed = tester.widget<Text>(find.text('✓ Marked'));
+    final washed = tester.widget<Text>(find.text('Marked'));
     expect(washed.style?.color, const Color(0xFF14161A));
     // Wash lifts after the 400ms beat: normal token colors return.
     await tester.pump(const Duration(milliseconds: 500));
-    final released = tester.widget<Text>(find.text('✓ Marked'));
+    final released = tester.widget<Text>(find.text('Marked'));
     expect(released.style?.color, const ProximityColors.light().statusMarked);
   });
 

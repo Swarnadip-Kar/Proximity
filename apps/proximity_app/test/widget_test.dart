@@ -328,11 +328,11 @@ void main() {
     for (var i = 0; i < 10 && !listening; i++) {
       await t.pump(const Duration(seconds: 2));
       listening = find.textContaining('Waiting for the class signal').evaluate().isNotEmpty ||
-          find.text('✓ Marked').evaluate().isNotEmpty;
+          find.text('Marked').evaluate().isNotEmpty;
     }
     expect(listening, isTrue);
     await t.pump(const Duration(seconds: 30));
-    expect(find.text('✓ Marked'), findsOneWidget);
+    expect(find.text('Marked'), findsOneWidget);
   });
 
   testWidgets('marked round rejoins waiting and marks the next round',
@@ -353,7 +353,7 @@ void main() {
     var marked = false;
     for (var i = 0; i < 20 && !marked; i++) {
       await t.pump(const Duration(seconds: 1));
-      marked = find.text('✓ Marked').evaluate().isNotEmpty;
+      marked = find.text('Marked').evaluate().isNotEmpty;
     }
     expect(marked, isTrue);
     expect(driver.listens, 1);
@@ -375,7 +375,7 @@ void main() {
     var marked2 = false;
     for (var i = 0; i < 30 && !marked2; i++) {
       await t.pump(const Duration(seconds: 1));
-      marked2 = find.text('✓ Marked').evaluate().isNotEmpty &&
+      marked2 = find.text('Marked').evaluate().isNotEmpty &&
           driver.listens == 2;
     }
     expect(marked2, isTrue);
@@ -401,7 +401,7 @@ void main() {
     var marked = false;
     for (var i = 0; i < 20 && !marked; i++) {
       await t.pump(const Duration(seconds: 1));
-      marked = find.text('✓ Marked').evaluate().isNotEmpty;
+      marked = find.text('Marked').evaluate().isNotEmpty;
     }
     expect(marked, isTrue);
     expect(driver.listens, 1);
@@ -421,7 +421,7 @@ void main() {
     await t.pump(const Duration(seconds: 15));
     expect(find.text('Class ended — back to the live list.'), findsOneWidget);
     expect(find.textContaining('has not yet started'), findsNothing);
-    expect(find.text('✓ Marked'), findsNothing);
+    expect(find.text('Marked'), findsNothing);
     expect(driver.listens, 1);
     expect(t.takeException(), isNull);
   });
@@ -471,11 +471,11 @@ void main() {
     for (var i = 0; i < 20 && !listening; i++) {
       await t.pump(const Duration(seconds: 1));
       listening = find.textContaining('Waiting for the class signal').evaluate().isNotEmpty ||
-          find.text('✓ Marked').evaluate().isNotEmpty;
+          find.text('Marked').evaluate().isNotEmpty;
     }
     expect(listening, isTrue);
     await t.pump(const Duration(seconds: 35));
-    expect(find.text('✓ Marked'), findsOneWidget);
+    expect(find.text('Marked'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
   testWidgets('student without enrollment cannot join', (t) async {
@@ -524,12 +524,12 @@ void main() {
     for (var i = 0; i < 20 && !listening; i++) {
       await t.pump(const Duration(seconds: 1));
       listening = find.textContaining('Waiting for the class signal').evaluate().isNotEmpty ||
-          find.text('✓ Marked').evaluate().isNotEmpty;
+          find.text('Marked').evaluate().isNotEmpty;
     }
     expect(listening, isTrue);
     // Fake marks at once; the pump lets the verdict screen land.
     await t.pump(const Duration(seconds: 35));
-    expect(find.text('✓ Marked'), findsOneWidget);
+    expect(find.text('Marked'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -1016,7 +1016,7 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('failed listen parks on no-signal with Try again', (t) async {
+  testWidgets('failed listen parks on no-signal with a way back', (t) async {
     final flaky = _FlakyStudentDriver();
     await t.pumpWidget(testScope(
         studentDriver: flaky,
@@ -1037,7 +1037,8 @@ void main() {
     }
     expect(parked, isTrue);
     expect(flaky.listens, 1);
-    await t.tap(find.text('Try again'));
+    // Shared back action (copy matches one-step browsing teardown).
+    await t.tap(find.text('Back to classes'));
     await t.pumpAndSettle();
     expect(find.text('Enter IP manually'), findsOneWidget);
     expect(t.takeException(), isNull);
@@ -1102,7 +1103,7 @@ void main() {
     for (var i = 0; i < 20 && !listening; i++) {
       await t.pump(const Duration(seconds: 1));
       listening = find.textContaining('Waiting for the class signal').evaluate().isNotEmpty ||
-          find.text('✓ Marked').evaluate().isNotEmpty;
+          find.text('Marked').evaluate().isNotEmpty;
     }
     expect(listening, isTrue);
     expect(find.textContaining('Waiting for the class signal'),
@@ -1199,7 +1200,7 @@ void main() {
     for (var i = 0; i < 20 && !listening; i++) {
       await t.pump(const Duration(seconds: 1));
       listening = find.textContaining('Waiting for the class signal').evaluate().isNotEmpty ||
-          find.text('✓ Marked').evaluate().isNotEmpty;
+          find.text('Marked').evaluate().isNotEmpty;
     }
     expect(listening, isTrue);
     await t.pump(const Duration(seconds: 35));

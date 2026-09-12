@@ -234,7 +234,7 @@ void main() {
       ));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);
-      expect(find.text('✓ Marked'), findsOneWidget);
+      expect(find.text('Marked'), findsOneWidget);
     });
 
     testWidgets('student home browse settles at 844x390 130%', (t) async {
