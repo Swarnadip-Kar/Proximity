@@ -1,5 +1,9 @@
 # Build + dependency outputs (never committed).
 **/.dart_tool/
 **/build/
+# Rules-drill runtime (regenerable, never committed — see
+# PROXIMITY_SECURITY.md verification log for the fetch commands).
+apps/proximity_app/rules-drill/node_modules/
+apps/proximity_app/rules-drill/jdk21/
 # (directory-only patterns: files like android/build.gradle.kts are source
 # and stay tracked).
