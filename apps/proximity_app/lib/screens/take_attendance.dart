@@ -91,7 +91,41 @@ class _LiveSubNav extends StatelessWidget {
         const ButtonSegment(value: 0, label: Text('Roster')),
         ButtonSegment(
           value: 1,
-          label: Text(inboxCount > 0 ? 'Inbox ($inboxCount)' : 'Inbox'),
+          // Stable width: count badge reserves space via maintainSize —
+          // 0→N no longer shifts Roster/Add/Setup segments.
+          label: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Inbox'),
+              Visibility(
+                visible: inboxCount > 0,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.accentBrand.withValues(alpha: 0.12),
+                        borderRadius:
+                            BorderRadius.circular(ProxRadii.pill),
+                      ),
+                      child: Text(
+                        '$inboxCount',
+                        style: ProxType.caption(color: c.accentBrand),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         const ButtonSegment(value: 2, label: Text('Add')),
         const ButtonSegment(value: 3, label: Text('Setup')),
