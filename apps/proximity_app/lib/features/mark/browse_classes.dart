@@ -206,7 +206,7 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                       const SizedBox(height: ProxSpacing.xs),
                       Text(
                         widget.identityName,
-                        style: ProxType.title(color: c.accentBrand),
+                        style: ProxType.title(color: c.contentPrimary),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,
                       ),
