@@ -112,6 +112,11 @@ abstract final class ProxRoutes {
   // web records build redirects instead of landing on a dead camera.
   static const faceCapture = 'face/capture';
 
+  // Serialized setup flow (shell auto-push on the root navigator when the
+  // current account is unenrolled; see shells _maybePushFlow and
+  // account_common dismissSetupFlowFirst — one constant, not two literals).
+  static const setupFlow = 'setup-flow';
+
   // Records.
   static const myAttendance = 'records/mine';
 
