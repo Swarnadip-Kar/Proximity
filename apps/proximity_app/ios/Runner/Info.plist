@@ -23,6 +23,13 @@
 	     via IOSOptions: synchronizable=false, accessibility
 	     first_unlock_this_device_only, i.e. thisDeviceOnly: items never sync
 	     via iCloud and never migrate to a new device via backup/restore). -->
+	<!-- Release distribution (audit 2026-09-12 H4): the app uses only
+	     exempt standard encryption (TLS, Keychain, platform biometrics —
+	     no proprietary crypto), so App Store Connect export compliance is
+	     pre-answered. A missing key stalls TestFlight/App Store processing
+	     behind a compliance questionnaire. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
