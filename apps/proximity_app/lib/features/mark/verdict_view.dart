@@ -194,7 +194,13 @@ class MarkVerdictView extends StatelessWidget {
                 if (attemptsLeft > 0)
                   ProxPrimaryButton(
                     icon: const Icon(Icons.refresh),
-                    label: Text('Retry face scan ($attemptsLeft left)'),
+                    // Tabular digits: 4→1 no longer shifts button width.
+                    label: Text(
+                      'Retry face scan ($attemptsLeft left)',
+                      style: const TextStyle(
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
                     onPressed: onRetryFace,
                     expanded: false,
                   )
