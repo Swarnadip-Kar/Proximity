@@ -346,5 +346,14 @@ service cloud.firestore {
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg());
     }
+
+    // §6 force-update floor + §5 integrity posture (2C, append-only):
+    // world-readable version floor so stale builds self-block at online
+    // gates without sign-in; nothing else opens (list/write deny).
+    // App Check enforcement is a console toggle (no rules syntax on Spark).
+    match /app_config/{id} {
+      allow get: if true;
+      allow list, write: if false;
+    }
   }
 }
