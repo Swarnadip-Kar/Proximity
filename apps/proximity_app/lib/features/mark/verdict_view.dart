@@ -95,7 +95,6 @@ class MarkVerdictView extends StatelessWidget {
                   children: [
                     const VerdictBadge(
                       status: ProxStatus.marked,
-                      label: '✓ Marked',
                     ),
                     if (roundMarks.isNotEmpty) ...[
                       const SizedBox(height: ProxSpacing.sm),
