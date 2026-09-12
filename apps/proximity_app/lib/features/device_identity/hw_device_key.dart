@@ -1,70 +1,58 @@
 // HW-bound device key (PROXIMITY_SECURITY.md §2, F1+F2 fix).
 //
-// `HwDeviceKey implements DeviceKey`: P-256, non-exportable, ES256.
-// Production backend is `attested_secure_keys ^0.1.0` (exilonX, stable
-// 2026-08-10, device-verified StrongBox/TEE + Secure Enclave) — the ONLY
-// importer of the plugin once 1B lands the pubspec line (see wiring below).
-// This file compiles WITHOUT the plugin today (backend seam) so the
-// sealed-only enrollment/prove cutover reviews + tests green while 1B owns
-// `pubspec.yaml`; the adapter is a 15-line follow-up, no logic re-review.
+// `HwDeviceKey implements DeviceKey`: P-256, non-exportable, ES256, backed
+// by `attested_secure_keys ^0.1.1` (StrongBox→TEE / Secure Enclave) via
+// [AttestedSecureKeysBackend] below — the ONLY importer of the plugin.
 //
-// Production wiring (1B adds `attested_secure_keys: ^0.1.0`, then):
-// ```dart
-// import 'package:attested_secure_keys/attested_secure_keys.dart';
-// class AttestedSecureKeysBackend implements HwKeyBackend {
-//   final AttestedSecureKeys keys;
-//   AttestedSecureKeysBackend([AttestedSecureKeys? k])
-//       : keys = k ?? const AttestedSecureKeys(
-//             aOptions: AndroidKeyOptions.defaultOptions, // StrongBox-preferred → TEE
-//             iOptions: IosKeyOptions.defaultOptions);   // thisDeviceOnly
-//   // generateKey: minSecurityLevel: KeySecurityLevel.trustedEnvironment
-//   //   (StrongBox→TEE / Secure Enclave floor; software throws
-//   //   HwKeyUnsupportedError → Software-no-enroll, never silent downgrade),
-//   //   userAuth: UserAuthPolicy.timeBound(4h) (one strong-biometric per
-//   //   school block; per-use would prompt every 5s rotation and strand
-//   //   marking — setUserAuthenticationRequired + invalidatedByBiometric-
-//   //   Enrollment on Android, biometryCurrentSet on iOS either way),
-//   //   attestationChallenge: challenge, aOptions/iOptions: defaults.
-//   // sign → Es256Signature.bytes (64B raw R||S). attest → KeyAttestation
-//   //   .x5c (base64 DER) decoded to DER bytes. Jwk x/y (base64url) → pkD
-//   //   via HwDeviceKey.pkDFromXY below. Map KeySecurityLevel:
-//   //   strongBox/secureEnclave → AttestationLevel.full,
-//   //   trustedEnvironment → .standard, software/unknown → .none.
-// }
-// ```
+// Backend contract (see the plugin facade
+// `AttestedSecureKeys.generateKey/sign/attest/getKeyInfo`):
+// - generateKey: minSecurityLevel `trustedEnvironment` (StrongBox→TEE /
+//   Secure Enclave floor; anything lower throws `HwKeyUnsupportedError` →
+//   `Software-no-enroll`, never a silent software key), userAuth
+//   `UserAuthPolicy.timeBound(4h)` (one strong-biometric per school block;
+//   per-use would prompt every 5s rotation and strand marking),
+//   attestationChallenge = the enrollment challenge
+//   (`SHA256(emailLower || installId || pkS32)` via [enrollmentChallenge]).
+// - sign → `Es256Signature.bytes` (64B raw R||S).
+// - attest → `KeyAttestation.x5c` (base64 DER, leaf-first) decoded to DER
+//   bytes. JWK x/y (base64url) → pkD via [HwDeviceKey.pkDFromXY].
+// - Level map: strongBox/secureEnclave → `AttestationLevel.full`,
+//   trustedEnvironment → `.standard`, software/unknown → `.none` (and
+//   `.none` throws `Software-no-enroll`, never enrolls).
+// - Attest failure MUST throw (never an empty-chain proceed): enrollment
+//   catches `StateError`, so every attest error is wrapped as one.
 //
 // Enrollment challenge (M1 gap: no server nonce exists offline — no
 // billing-gated backend — so the client binds Gmail+install+pkS):
 // `challenge = SHA256(emailLower || installId || pkS32)` via
-// `deviceBindingChallenge` (protocol, sec-protocol 1A, already on branch).
-// The OS embeds it in the attestation record; the offline professor
-// re-computes + checks leaf containment vs pinned roots (protocol
-// `verifyAttestationChainPin`). No IMEI/serial/phone-ID anywhere — the
-// (pkD, installId) pair is the identity; installId is an app UUID.
+// `deviceBindingChallenge` (protocol). The OS embeds it in the attestation
+// record; the offline professor re-computes + checks leaf containment vs
+// pinned roots (protocol `verifyAttestationChainPin`). No IMEI/serial/
+// phone-ID anywhere — the (pkD, installId) pair is the identity; installId
+// is an app UUID.
 //
-// Seal envelope (M1): PXK1 + 12B nonce + 32B body + 16B tag (64B). Pad =
-// SHA256(pkD64 || nonce); body = seed XOR pad; tag = SHA256(pkD || nonce
-// || body)[0:16], verified with the CURRENT HW pkD — a backup-restore
-// clone holds a different HW key (different pkD) so the tag fails with
-// 'restore detected — re-enroll', never a raw fallback. This is an
-// authenticated HW-bound envelope (SHA256-based, no new dep); ciphertext
-// at rest is ALSO under OS AES-GCM via hardened flutter_secure_storage
-// (`SecureStoreOptions`: AES_GCM_NoPadding, thisDeviceOnly, no backup).
-// Full AES-GCM-SIV with an HW-derived KEK is deferred — envelope
-// authenticity + HW-binding already give clone-detection. No silent
-// downgrade: tag/length/magic mismatch → restore-detected.
+// Seal envelope (PXK2): AES-256-GCM under a random per-device DEK that
+// lives ONLY in HW-backed secure storage ([HwSealStore] — Android Keystore
+// / iOS Keychain, this-device-only). Layout magic(4) + nonce(12) +
+// ciphertext(32) + tag(16) = 64B (protocol `sealWithDek`/`unsealWithDek`).
+// No pkD-derived keystream anywhere: the retired SHA256(pkD) envelope is
+// deleted. A backup-restore clone holds ciphertext whose DEK never
+// migrated (Keystore/Keychain keys are non-exportable and this-device-only)
+// so unseal fails the GCM tag with 'restore detected — re-enroll', never a
+// raw fallback. Tag/length/magic mismatch → restore-detected.
 //
-// Constraints (locked): Spark-free (no Firebase/Functions here), offline
-// marking preserved (all ops local Keystore/Enclave, no network),
-// desktop/web fail-closed (mobile gate on every op + UnavailableDeviceKey
-// stays the DI-wired stub for records-only), no IMEI, no silent downgrade
-// (software level → Software-no-enroll; empty sealed → re-enroll).
+// Constraints (locked): offline marking preserved (all ops local
+// Keystore/Enclave, no network), desktop/web fail-closed (mobile gate on
+// every op + UnavailableDeviceKey stays the DI-wired stub for
+// records-only), no IMEI, no silent downgrade (software level →
+// Software-no-enroll; empty sealed → re-enroll).
 library;
 
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:attested_secure_keys/attested_secure_keys.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:proximity_protocol/protocol.dart';
 
 import '../../core/platformx.dart';
@@ -78,8 +66,8 @@ const String kHwDeviceKeyAlias = 'prox.deviceKey.v1';
 const Duration kHwDeviceKeyAuthValidity = Duration(hours: 4);
 
 /// Production backend surface (mirrors `AttestedSecureKeys` 1:1 so the
-/// adapter above is mechanical). Protocol types only — no plugin import
-/// here, no drift when the plugin lands.
+/// adapter stays mechanical). Protocol types only — no plugin import
+/// here, no drift when the plugin revs.
 abstract class HwKeyBackend {
   /// Generates (or replaces) the HW key bound to [attestationChallenge].
   /// Throws when the hardware floor cannot be met (fail-closed, never a
@@ -99,7 +87,8 @@ abstract class HwKeyBackend {
   Future<Uint8List> sign({required String alias, required Uint8List payload});
 
   /// Verbatim attestation chain (DER bytes, leaf-first) bound to
-  /// [serverNonce] (here: the enrollment challenge).
+  /// [serverNonce] (here: the enrollment challenge). MUST throw when no
+  /// chain can be produced (never an empty-chain proceed).
   Future<List<Uint8List>> attest({
     required String alias,
     required Uint8List serverNonce,
@@ -127,6 +116,177 @@ class HwKeyHandle {
   });
 }
 
+/// Maps a plugin [KeySecurityLevel] to the protocol [AttestationLevel]:
+/// strongBox/secureEnclave → full, trustedEnvironment → standard,
+/// software/unknown → none (callers throw `Software-no-enroll` on none).
+AttestationLevel mapKeySecurityLevel(KeySecurityLevel level) =>
+    switch (level) {
+      KeySecurityLevel.strongBox => AttestationLevel.full,
+      KeySecurityLevel.secureEnclave => AttestationLevel.full,
+      KeySecurityLevel.trustedEnvironment => AttestationLevel.standard,
+      KeySecurityLevel.software => AttestationLevel.none,
+      KeySecurityLevel.unknown => AttestationLevel.none,
+    };
+
+/// Production [HwKeyBackend] over `attested_secure_keys` (StrongBox→TEE /
+/// Secure Enclave, ES256, challenge-bound). The ONLY importer of the
+/// plugin: every op throws its native errors through (no swallowing) —
+/// [HwDeviceKey] maps the fail-closed cases to `StateError`.
+class AttestedSecureKeysBackend implements HwKeyBackend {
+  final AttestedSecureKeys keys;
+
+  AttestedSecureKeysBackend([AttestedSecureKeys? keys])
+      : keys = keys ??
+            const AttestedSecureKeys(
+              aOptions: AndroidKeyOptions.defaultOptions,
+              iOptions: IosKeyOptions.defaultOptions,
+            );
+
+  @override
+  Future<HwKeyHandle> generateKey({
+    required String alias,
+    required Uint8List attestationChallenge,
+  }) async {
+    late final HwKey key;
+    try {
+      key = await keys.generateKey(
+        alias: alias,
+        minSecurityLevel: KeySecurityLevel.trustedEnvironment,
+        userAuth:
+            const UserAuthPolicy.timeBound(kHwDeviceKeyAuthValidity),
+        attestationChallenge: attestationChallenge,
+      );
+    } on HwKeyUnsupportedError catch (e) {
+      throw StateError(
+          'Software-no-enroll: secure hardware unavailable (${e.bestAvailable ?? 'none'}) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
+    }
+    final level = mapKeySecurityLevel(key.effectiveLevel);
+    if (level == AttestationLevel.none || !key.isHardwareBacked) {
+      throw StateError(
+          'Software-no-enroll: device key is not hardware-backed (level ${key.effectiveLevel.name}) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
+    }
+    return HwKeyHandle(
+      pkDRaw: HwDeviceKey.pkDFromXY(
+          key.publicJwk.x, key.publicJwk.y),
+      level: level,
+      gatedByUserAuth: key.gatedByUserAuth,
+    );
+  }
+
+  @override
+  Future<HwKeyHandle?> getKeyInfo({required String alias}) async {
+    final info = await keys.getKeyInfo(alias: alias);
+    if (info == null) return null;
+    return HwKeyHandle(
+      pkDRaw: HwDeviceKey.pkDFromXY(
+          info.publicJwk.x, info.publicJwk.y),
+      level: mapKeySecurityLevel(info.securityLevel),
+      gatedByUserAuth: info.gatedByUserAuth,
+    );
+  }
+
+  @override
+  Future<bool> containsKey({required String alias}) =>
+      keys.containsKey(alias: alias);
+
+  @override
+  Future<Uint8List> sign({
+    required String alias,
+    required Uint8List payload,
+  }) async {
+    // Biometric-gated keys throw UserNotAuthenticatedError here when the
+    // 4h grant lapsed — propagates so the UI re-prompts (never swallowed).
+    final sig = await keys.sign(alias: alias, payload: payload);
+    return Uint8List.fromList(sig.bytes);
+  }
+
+  @override
+  Future<List<Uint8List>> attest({
+    required String alias,
+    required Uint8List serverNonce,
+  }) async {
+    // AttestationUnavailableError (and any platform failure) propagates —
+    // [HwDeviceKey.bindEnrollment] wraps it as StateError (fail-closed).
+    final attestation =
+        await keys.attest(alias: alias, serverNonce: serverNonce);
+    return [
+      for (final b64 in attestation.x5c)
+        Uint8List.fromList(base64.decode(b64.trim()))
+    ];
+  }
+
+  @override
+  Future<void> deleteKey({required String alias}) =>
+      keys.deleteKey(alias: alias);
+}
+
+/// HW-bound DEK store for the AES-GCM seal envelope.
+///
+/// The 32B DEK lives ONLY here (never in Firestore, never in the sealed
+/// blob): Android Keystore-backed AES-GCM storage / iOS Keychain
+/// this-device-only, with NO per-use biometric prompt (use is already gated
+/// by the 4h HW-key grant + the face check; a per-read prompt would strand
+/// every 5s prove rotation). A backup-restore clone loses the DEK
+/// (Keystore/Keychain keys never migrate) so unseal fails closed.
+abstract class HwSealStore {
+  /// Stored DEK, or null when absent (fresh install / wiped storage).
+  /// Malformed entries read as null (never a half key).
+  Future<Uint8List?> readDek({required String alias});
+
+  /// Persists [dek32] (must be 32B).
+  Future<void> writeDek(
+      {required String alias, required Uint8List dek32});
+
+  /// Drops the DEK (re-enroll flows).
+  Future<void> deleteDek({required String alias});
+}
+
+/// Production [HwSealStore] over `flutter_secure_storage` (already a direct
+/// app dep; prompt-free hardened options — NOT the biometric-gated
+/// `SecureStoreOptions.storage`, which would prompt on every prove).
+class FlutterSealStore implements HwSealStore {
+  final FlutterSecureStorage storage;
+
+  const FlutterSealStore(
+      [this.storage = const FlutterSecureStorage(
+        aOptions: AndroidOptions(),
+        iOptions: IOSOptions(
+          accessibility:
+              KeychainAccessibility.first_unlock_this_device,
+        ),
+      )]);
+
+  /// FSS key for the DEK of [alias].
+  static String keyFor(String alias) => '$alias.dek';
+
+  @override
+  Future<Uint8List?> readDek({required String alias}) async {
+    final raw = await storage.read(key: keyFor(alias));
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final dek = hexDecode(raw.trim());
+      if (dek.length != 32) return null;
+      return dek;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> writeDek(
+      {required String alias, required Uint8List dek32}) async {
+    if (dek32.length != 32) {
+      throw ArgumentError('DEK must be 32B.');
+    }
+    await storage.write(key: keyFor(alias), value: hexEncode(dek32));
+  }
+
+  @override
+  Future<void> deleteDek({required String alias}) async {
+    await storage.delete(key: keyFor(alias));
+  }
+}
+
 /// HW-bound `DeviceKey` (P-256, non-exportable, ES256).
 ///
 /// Owns the enrollment challenge binding + chain persistence carrier
@@ -136,6 +296,7 @@ class HwKeyHandle {
 /// records-only stub — this self-gate is defense in depth).
 class HwDeviceKey implements DeviceKey {
   final HwKeyBackend _backend;
+  final HwSealStore _sealStore;
   final String alias;
 
   Uint8List? _pkD;
@@ -146,8 +307,12 @@ class HwDeviceKey implements DeviceKey {
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   Uint8List? _lastChallenge;
 
-  HwDeviceKey({required HwKeyBackend backend, this.alias = kHwDeviceKeyAlias})
-      : _backend = backend;
+  HwDeviceKey(
+      {required HwKeyBackend backend,
+      HwSealStore? sealStore,
+      this.alias = kHwDeviceKeyAlias})
+      : _backend = backend,
+        _sealStore = sealStore ?? const FlutterSealStore();
 
   /// M1-gap canonical challenge: SHA256(emailLower || installId || pkS32).
   /// Thin wrapper over the protocol contract (sec-protocol 1A).
@@ -212,6 +377,9 @@ class HwDeviceKey implements DeviceKey {
   /// `SHA256(email || installId || pkS)` as the attestation challenge and
   /// caching the chain. Idempotent per enrollment (same inputs → same
   /// challenge; a new key replaces the old under [alias]).
+  ///
+  /// Attestation MUST succeed: any attest failure (or empty chain) throws
+  /// `StateError` — enrollment never proceeds with an unbound key.
   @override
   Future<void> bindEnrollment({
     required String email,
@@ -227,16 +395,22 @@ class HwDeviceKey implements DeviceKey {
       throw StateError(
           'Software-no-enroll: secure hardware unavailable (level none) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
     }
-    List<Uint8List> chain = const [];
+    late final List<Uint8List> chain;
     try {
       chain = await _backend.attest(alias: alias, serverNonce: challenge);
-    } catch (_) {
-      chain = const [];
+    } catch (e) {
+      throw StateError(
+          'attestation failed — re-enroll on a device with secure hardware (${e.runtimeType}).');
+    }
+    if (chain.isEmpty || chain.any((c) => c.isEmpty)) {
+      throw StateError(
+          'attestation failed — empty attestation chain (no hardware proof).');
     }
     _adopt(handle, chain: chain, challenge: challenge);
   }
 
-  void _adopt(HwKeyHandle h, {required List<Uint8List> chain, Uint8List? challenge}) {
+  void _adopt(HwKeyHandle h,
+      {required List<Uint8List> chain, Uint8List? challenge}) {
     if (h.pkDRaw.length != 64) {
       throw StateError(
           'Software-no-enroll: malformed P-256 public key (${h.pkDRaw.length}B, want 64).');
@@ -278,61 +452,44 @@ class HwDeviceKey implements DeviceKey {
     return sig;
   }
 
+  /// Seals the 32B SKey seed under the device DEK (AES-256-GCM, PXK2
+  /// envelope). Only ciphertext is ever persisted — the DEK never leaves
+  /// HW-backed secure storage.
   @override
   Future<Uint8List> seal(Uint8List seed32) async {
     requireMobileFace();
     if (seed32.length != 32) {
       throw ArgumentError('seal needs a 32B SKey seed.');
     }
-    final pk = _pkD;
-    if (pk == null) throw StateError('DeviceKey.ensure() first.');
+    if (_pkD == null) throw StateError('DeviceKey.ensure() first.');
     if (_level == AttestationLevel.none) {
       throw StateError(
           'Software-no-enroll: device key is not hardware-backed.');
     }
-    final nonce = Uint8List(12);
-    final rng = Random.secure();
-    for (var i = 0; i < nonce.length; i++) {
-      nonce[i] = rng.nextInt(256);
+    final exists = await _backend.containsKey(alias: alias);
+    if (!exists) throw StateError('restore detected — re-enroll');
+    var dek = await _sealStore.readDek(alias: alias);
+    if (dek == null) {
+      dek = randBytes(32);
+      await _sealStore.writeDek(alias: alias, dek32: dek);
     }
-    final pad = ProxCrypto.sha256Sync([...pk, ...nonce]);
-    final body = Uint8List(32);
-    for (var i = 0; i < 32; i++) {
-      body[i] = seed32[i] ^ pad[i];
-    }
-    final tagFull = ProxCrypto.sha256Sync([...pk, ...nonce, ...body]);
-    final tag = Uint8List.fromList(tagFull.sublist(0, 16));
-    return Uint8List.fromList([...kSealedKeyMagic, ...nonce, ...body, ...tag]);
+    return sealWithDek(dek32: dek, seed32: seed32);
   }
 
+  /// Unseals a PXK2 envelope. Any failure — missing HW key (biometric
+  /// invalidation), missing DEK, tampered envelope — throws
+  /// StateError('restore detected — re-enroll').
   @override
   Future<Uint8List> unseal(Uint8List sealed) async {
     requireMobileFace();
-    const want = 4 + 12 + 32 + 16;
-    if (sealed.length != want) {
-      throw StateError('restore detected — re-enroll');
-    }
-    for (var i = 0; i < kSealedKeyMagic.length; i++) {
-      if (sealed[i] != kSealedKeyMagic[i]) {
-        throw StateError('restore detected — re-enroll');
-      }
-    }
     final exists = await _backend.containsKey(alias: alias);
     if (!exists) throw StateError('restore detected — re-enroll');
-    final pk = _pkD;
-    if (pk == null || _level == AttestationLevel.none) {
+    if (_pkD == null || _level == AttestationLevel.none) {
       throw StateError('restore detected — re-enroll');
     }
-    final nonce = sealed.sublist(4, 16);
-    final body = sealed.sublist(16, 48);
-    final tag = sealed.sublist(48, 64);
-    final expect = ProxCrypto.sha256Sync([...pk, ...nonce, ...body]).sublist(0, 16);
-    for (var i = 0; i < 16; i++) {
-      if (tag[i] != expect[i]) throw StateError('restore detected — re-enroll');
-    }
-    final pad = ProxCrypto.sha256Sync([...pk, ...nonce]);
-    return Uint8List.fromList(
-        [for (var i = 0; i < 32; i++) body[i] ^ pad[i]]);
+    final dek = await _sealStore.readDek(alias: alias);
+    if (dek == null) throw StateError('restore detected — re-enroll');
+    return unsealWithDek(dek32: dek, sealed: sealed);
   }
 
   @override
