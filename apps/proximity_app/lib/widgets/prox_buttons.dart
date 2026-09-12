@@ -284,3 +284,37 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
     return SizedBox(width: double.infinity, child: scaled);
   }
 }
+
+/// Quiet destructive action (End attendance, Discard draft, Remove).
+/// Text-only in statusError — terminal actions never compete as gradient
+/// primary or brand secondary. Same 48dp floor; disabled reads tertiary.
+class ProxDangerButton extends StatelessWidget {
+  final Widget label;
+  final VoidCallback? onPressed;
+
+  const ProxDangerButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final enabled = onPressed != null;
+    return TextButton(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(64, ProxSpacing.minTap),
+        foregroundColor: enabled ? c.statusError : c.contentTertiary,
+      ),
+      onPressed: onPressed,
+      child: DefaultTextStyle(
+        style: ProxType.label(
+          color: enabled ? c.statusError : c.contentTertiary,
+        ).copyWith(fontWeight: FontWeight.w600),
+        softWrap: false,
+        child: label,
+      ),
+    );
+  }
+}
