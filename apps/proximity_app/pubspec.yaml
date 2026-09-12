@@ -76,6 +76,10 @@ dependencies:
   # 14 (PHPicker).
   file_picker: ^12.0.0
   archive: ^4.2.0
+  attested_secure_keys: ^0.1.1
+  firebase_app_check: ^0.3.2+10
+  flutter_security_suite: ^1.1.1
+  tflite_flutter: ^0.12.1
 
 dev_dependencies:
   flutter_test:

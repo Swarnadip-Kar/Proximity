@@ -186,7 +186,7 @@ void main() {
       roll: '',
       seedHex: '',
       pkHex: List.filled(32, 'aa').join(),
-      sealedKeyHex: 'PXK1' + List.filled(32, 'bb').join(),
+      sealedKeyHex: 'PXK1${List.filled(32, 'bb').join()}',
       faceId: 'face-prof',
       enrolledAt: DateTime.utc(2026, 9, 1),
     ));
