@@ -170,6 +170,91 @@ abstract final class ProxRoutes {
       (isMobileOnly(name) && !(mobile ?? canUseFace())) ? myAttendance : null;
 }
 
+/// Canonicalizes a route name: trims whitespace, strips a single leading
+/// slash and trailing slashes so '/welcome', 'welcome' and 'welcome/'
+/// resolve identically. Parameterized segments are preserved.
+/// Pure — unit-testable without widgets.
+String normalizeProxRoute(String route) {
+  var r = route.trim();
+  while (r.startsWith('/')) {
+    r = r.substring(1);
+  }
+  while (r.length > 1 && r.endsWith('/')) {
+    r = r.substring(0, r.length - 1);
+  }
+  return r;
+}
+
+/// Course-segment sanity for parameterized IA nodes: trimmed, non-empty,
+/// no embedded slash, capped length. Rejects whitespace-only, path
+/// traversal attempts and overlong labels before any hosting/history
+/// write. Pure — unit-testable.
+bool isValidCourseSegment(String course) {
+  final c = course.trim();
+  if (c.isEmpty || c.length > 80) return false;
+  if (c.contains('/')) return false;
+  return true;
+}
+
+/// Pure Phase-1 route-guard decisions (V1-V3) adapted to the canonical IA.
+/// Every helper is pure: same inputs → same redirect, no logging, no I/O.
+/// Logging happens only in [_guardedRoute]/[proxOnGenerateRoute].
+/// Guard order everywhere: web → mobile → auth → role → enrollment.
+abstract final class ProxRouteGuard {
+  /// V1 auth gate. Signed-out users land on [ProxRoutes.welcome] (unless
+  /// already there); a signed-in visit to welcome moves forward to
+  /// [ProxRoutes.roles]. Returns null when the route is allowed.
+  static String? authGuard(String route, {required bool signedIn}) {
+    final r = normalizeProxRoute(route);
+    if (!signedIn) {
+      if (r == ProxRoutes.welcome) return null;
+      return ProxRoutes.welcome;
+    }
+    if (r == ProxRoutes.welcome) return ProxRoutes.roles;
+    return null;
+  }
+
+  /// V2 role gate. `prof/courses*` and `live/*` require the prof role —
+  /// signed-out visits fall back to welcome, signed-in visits without the
+  /// role fall back to roles. `enroll/*` require a signed-in account.
+  /// Returns null when the route is allowed.
+  static String? roleGuard(
+    String route, {
+    required Set<String> roles,
+    required bool signedIn,
+  }) {
+    final r = normalizeProxRoute(route);
+    final needsProf = r == ProxRoutes.profCourses ||
+        r.startsWith('${ProxRoutes.profCourses}/') ||
+        r.startsWith('live/');
+    if (needsProf) {
+      if (!signedIn) return ProxRoutes.welcome;
+      if (!roles.contains('prof')) return ProxRoutes.roles;
+      return null;
+    }
+    if (r.startsWith('enroll/') && !signedIn) return ProxRoutes.welcome;
+    return null;
+  }
+
+  /// V3 enrollment gate. `enroll/capture` when already complete moves
+  /// forward to `enroll/result`; `enroll/result` when incomplete falls back
+  /// to `enroll/capture`. `account/face-id` requires enrollment and falls
+  /// back to `enroll/capture`. Completion = stored flag OR terminal flags
+  /// passed explicitly by callers (faceDone/uploaded). Returns null allowed.
+  static String? enrollmentGuard(
+    String route, {
+    required bool enrolled,
+    required bool faceComplete,
+  }) {
+    final r = normalizeProxRoute(route);
+    final done = enrolled || faceComplete;
+    if (r == ProxRoutes.enrollCapture && done) return ProxRoutes.enrollResult;
+    if (r == ProxRoutes.enrollResult && !done) return ProxRoutes.enrollCapture;
+    if (r == ProxRoutes.faceId && !enrolled) return ProxRoutes.enrollCapture;
+    return null;
+  }
+}
+
 /// Navigator observer that logs every route event NAV (pushes, pops,
 /// replaces — named or ad-hoc `MaterialPageRoute`). Unnamed pushes log
 /// their widget type so the pre-migration screens are visible too.
@@ -346,8 +431,9 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
   }
 
   // Prof live: the Take tab hosts the single live screen (it owns
-  // hosting/window/draft orchestration). Any section suffix lands on the
-  // host — there are no standalone section screens.
+  // hosting/window/draft orchestration). Strict shape: exactly
+  // `live/<course>` — any extra suffix, empty course, or invalid segment
+  // is unknown (never silently host a phantom or drop a suffix).
   if (name.startsWith('live/')) {
     final rest = name.substring('live/'.length);
     // Explicit empty handling: `live/` with no course is malformed —
@@ -356,9 +442,14 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
       BleLog.log(ProxLogTags.nav, 'live deep-link missing course — unknown');
       return null;
     }
-    final pathCourse = rest.split('/').first;
-    if (pathCourse.isEmpty) {
-      BleLog.log(ProxLogTags.nav, 'live deep-link missing course — unknown');
+    // Strict: no extra sections — `live/CS101/export` is NOT a host.
+    if (rest.contains('/')) {
+      BleLog.log(ProxLogTags.nav, 'live deep-link extra section — unknown');
+      return null;
+    }
+    final pathCourse = rest.trim();
+    if (!isValidCourseSegment(pathCourse)) {
+      BleLog.log(ProxLogTags.nav, 'live deep-link invalid course — unknown');
       return null;
     }
     // Path segment wins on args conflict (the path is the address);
@@ -382,14 +473,25 @@ Route<dynamic>? proxOnGenerateRoute(RouteSettings settings) {
     final rest = name.substring('prof/courses/'.length);
     // Explicit trailing-slash handling: ignore empty segments so
     // `CS101/` == `CS101` and `CS101/export/` == `CS101/export`.
+    // Strict beyond that: only `<course>` (overview) or
+    // `<course>/export` are valid — anything else is unknown, never a
+    // silent overview for a malformed deep-link.
     final segs = rest.split('/').where((s) => s.isNotEmpty).toList();
     if (segs.isEmpty) {
       BleLog.log(
           ProxLogTags.nav, 'course deep-link missing course — unknown');
       return null;
     }
+    if (segs.length > 2 || (segs.length == 2 && segs.last != 'export')) {
+      BleLog.log(ProxLogTags.nav, 'course deep-link extra section — unknown');
+      return null;
+    }
     // Same prefer-path rule as live/: the path is the address.
-    final pathCourse = segs.first;
+    final pathCourse = segs.first.trim();
+    if (!isValidCourseSegment(pathCourse)) {
+      BleLog.log(ProxLogTags.nav, 'course deep-link invalid course — unknown');
+      return null;
+    }
     final argCourse = args.course;
     if (argCourse.isNotEmpty && argCourse != pathCourse) {
       BleLog.log(ProxLogTags.nav,
