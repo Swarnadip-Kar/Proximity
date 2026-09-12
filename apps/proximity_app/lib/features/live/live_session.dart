@@ -84,7 +84,8 @@ class LiveStatusStrip extends StatelessWidget {
     final denom = waiting > 0 ? waiting : (present > 0 ? present : 0);
     return Row(
       children: [
-        // LIVE/IDLE pill: dot + word in one badge.
+        // LIVE/IDLE pill: transport state on ProximityColors (brand for
+        // live, tertiary for idle) — not the legacy ProxState mapping.
         Container(
           padding: const EdgeInsets.symmetric(
             horizontal: ProxSpacing.sm,
@@ -92,8 +93,7 @@ class LiveStatusStrip extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: live
-                ? ProxStateColors.of(context, ProxState.active)
-                    .withValues(alpha: 0.14)
+                ? c.accentBrand.withValues(alpha: 0.14)
                 : c.contentTertiary.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(ProxRadii.pill),
           ),
@@ -102,9 +102,7 @@ class LiveStatusStrip extends StatelessWidget {
             children: [
               ProxDot(
                 size: 8,
-                color: live
-                    ? ProxStateColors.of(context, ProxState.active)
-                    : ProxStateColors.of(context, ProxState.neutral),
+                color: live ? c.accentBrand : c.contentSecondary,
                 pulse: live,
               ),
               const SizedBox(width: 6),
