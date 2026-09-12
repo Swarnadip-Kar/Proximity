@@ -7,7 +7,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,7 +40,8 @@ import 'package:proximity_storage/storage.dart';
 
 /// No-sign preview flags (simulator UI polish without taps/accounts):
 /// PROX_MODE=student|prof|enroll|take shows that screen directly;
-/// prof/course/take seed demo courses + history.
+/// prof/course/take seed demo courses + history. Debug-only: release
+/// builds ignore the flag (see kDebugMode gates below).
 const _debugMode = String.fromEnvironment('PROX_MODE', defaultValue: 'unset');
 
 Future<DeviceStore> _debugSeededStore() async {
@@ -107,10 +108,13 @@ Future<void> main() async {
   // (Firebase Auth) + identity survive restarts with zero taps.
   // Fail-open: secure storage may be unavailable (e.g. unsigned sim
   // builds) — the app still starts, user simply enrolls.
-  final DeviceStore store =
-      (_debugMode == 'course' || _debugMode == 'take' || _debugMode == 'prof')
-          ? await _debugSeededStore()
-          : SecureDeviceStore();
+  // Debug-only preview seeding: release ignores PROX_MODE entirely.
+  final DeviceStore store = (kDebugMode &&
+          (_debugMode == 'course' ||
+              _debugMode == 'take' ||
+              _debugMode == 'prof'))
+      ? await _debugSeededStore()
+      : SecureDeviceStore();
   StoredEnrollment? stored;
   try {
     stored = await store.readEnrollment();
@@ -136,7 +140,8 @@ Future<void> main() async {
     currentAcct = authService.current;
   } catch (_) {}
   AppMode? initialMode;
-  if (!hasPreviewMode) {
+  // Debug-only preview: release ignores PROX_MODE and always restores.
+  if (!kDebugMode || !hasPreviewMode) {
     final m = modeFromName(savedMode);
     if (m != null) {
       if (currentAcct != null && cachedRole != null) {
