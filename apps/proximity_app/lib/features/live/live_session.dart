@@ -256,10 +256,11 @@ class LiveControlCluster extends StatelessWidget {
                 expanded: false,
               )
             else ...[
-              // Retake resumes the stopped round: same round number,
-              // fresh secrets, marks merge into it (no new intersection
-              // hurdle). Take another round opens a new round instead.
-              ProxPrimaryButton(
+              // Hierarchy (one primary): Take another is the forward path
+              // (primary); Retake is a correction of the stopped round —
+              // same number, fresh secrets, marks merge — so secondary.
+              // Wrap preserved (Column+Expanded overflowed in landscape).
+              ProxSecondaryButton(
                 label: Text('Retake round $windowNo'),
                 onPressed: (!hosting) ? null : onRetake,
                 expanded: false,
