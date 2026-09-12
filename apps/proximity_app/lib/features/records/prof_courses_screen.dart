@@ -13,6 +13,8 @@
 // the shell owns back; the explicit Switch-mode button below is untouched.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +24,7 @@ import 'package:proximity_storage/storage.dart';
 import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
+import '../account/account_common.dart';
 import '../live/live_refresh.dart';
 import '../../main.dart';
 import '../../mode.dart';
@@ -198,7 +201,15 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
         IconButton(
           icon: const Icon(Icons.switch_account),
           tooltip: 'Switch mode',
-          onPressed: () => setMode(ref, AppMode.unset),
+          onPressed: () {
+            // Stale-stack reset first (same as the student Mark tab):
+            // dismiss the root setup-flow + pop the tab to root before
+            // the switch so the previous identity's screens never survive
+            // underneath.
+            prepareAccountTransition(context);
+            if (!mounted) return;
+            unawaited(setMode(ref, AppMode.unset));
+          },
         ),
       ],
       body: Center(
