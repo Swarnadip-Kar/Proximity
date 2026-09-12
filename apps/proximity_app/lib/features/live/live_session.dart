@@ -235,7 +235,11 @@ class LiveControlCluster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Disabled always explains itself: flat buttons alone read as broken.
+    // Stable 2-action cluster (never 1→2→3 stacking): exactly one primary
+    // (Start / Take another / Stop) plus ONE quiet companion — End when
+    // fresh, a More menu (Retake correction + End terminal) after rounds.
+    // Terminal End behind the menu also prevents mid-class mis-taps.
+    // Disabled always explains itself via the caption below.
     final c = ProximityColors.of(context);
     return ProxSwitcher(
       child: Column(
@@ -246,6 +250,7 @@ class LiveControlCluster extends StatelessWidget {
           Wrap(
             spacing: ProxSpacing.sm,
             runSpacing: ProxSpacing.sm,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
           if (live) ...[
             ProxPrimaryButton(
@@ -260,30 +265,23 @@ class LiveControlCluster extends StatelessWidget {
                 onPressed: (!hosting) ? null : onStart,
                 expanded: false,
               )
-            else ...[
-              // Hierarchy (one primary): Take another is the forward path
-              // (primary); Retake is a correction of the stopped round —
-              // same number, fresh secrets, marks merge — so secondary.
-              // Wrap preserved (Column+Expanded overflowed in landscape).
-              ProxSecondaryButton(
-                label: Text('Retake round $windowNo'),
-                onPressed: (!hosting) ? null : onRetake,
-                expanded: false,
-              ),
+            else
               ProxPrimaryButton(
                 label: const Text('Take another round'),
                 onPressed: (!hosting) ? null : onTakeAnother,
                 expanded: false,
               ),
-              ProxDangerButton(
-                label: const Text('End attendance'),
-                onPressed: (!hosting) ? null : onEnd,
-              ),
-            ],
             if (windowNo == 0)
               ProxDangerButton(
                 label: const Text('End attendance'),
                 onPressed: (!hosting) ? null : onEnd,
+              )
+            else
+              _MoreActions(
+                enabled: hosting,
+                windowNo: windowNo,
+                onRetake: onRetake,
+                onEnd: onEnd,
               ),
           ],
         ],
@@ -296,6 +294,107 @@ class LiveControlCluster extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Overflow companion for the idle-after-rounds cluster: Retake (same
+/// number correction, marks merge) + End (terminal). Outlined pill in the
+/// secondary metrics (48dp, button radius, brand border) labeled More;
+/// items keep frozen copy, End in error red. Disabled with the cluster.
+class _MoreActions extends StatelessWidget {
+  final bool enabled;
+  final int windowNo;
+  final VoidCallback onRetake;
+  final VoidCallback onEnd;
+
+  const _MoreActions({
+    required this.enabled,
+    required this.windowNo,
+    required this.onRetake,
+    required this.onEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final fg = enabled ? c.accentBrand : c.contentTertiary;
+    return PopupMenuButton<String>(
+      enabled: enabled,
+      tooltip: 'More actions',
+      offset: const Offset(0, ProxSpacing.minTap),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ProxRadii.cardSpec),
+        side: BorderSide(color: c.divider),
+      ),
+      color: c.surfaceRaised,
+      onSelected: (v) {
+        if (v == 'retake') onRetake();
+        if (v == 'end') onEnd();
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'retake',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.refresh, size: ProxIconSizes.md, color: fg),
+              const SizedBox(width: ProxSpacing.sm),
+              Text(
+                'Retake round $windowNo',
+                style: ProxType.body(color: c.contentPrimary),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'end',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.stop_circle_outlined,
+                size: ProxIconSizes.md,
+                color: c.statusError,
+              ),
+              const SizedBox(width: ProxSpacing.sm),
+              Text(
+                'End attendance',
+                style: ProxType.body(color: c.statusError),
+              ),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
+        padding: const EdgeInsets.symmetric(
+          horizontal: ProxSpacing.lg,
+          vertical: ProxSpacing.md,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: enabled
+                ? c.accentBrand.withValues(alpha: 0.35)
+                : c.contentTertiary.withValues(alpha: 0.3),
+          ),
+          borderRadius: ProxRadii.buttonRadius,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.more_horiz, size: ProxIconSizes.md, color: fg),
+            const SizedBox(width: ProxSpacing.sm),
+            Text(
+              'More',
+              style: ProxType.label(color: fg).copyWith(
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

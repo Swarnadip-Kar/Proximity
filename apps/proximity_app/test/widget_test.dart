@@ -300,6 +300,9 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Take another round'), findsOneWidget);
     // end attendance (no export) → history holds the class record, detail
+    // End lives in the More menu after rounds (stable 2-action cluster).
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).
@@ -752,6 +755,9 @@ void main() {
     final snap2 = await store.readHistory();
     expect(snap2, hasLength(1));
     expect(snap2.first.id, snap1.first.id);
+    // End lives in the More menu after rounds.
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).
@@ -772,9 +778,12 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
-    // Stopped round offers retake (same number, marks merge) + new window.
-    expect(find.text('Retake round 1'), findsOneWidget);
+    // Stopped round offers retake (same number, marks merge) + new window
+    // in the More menu; Take another stays primary.
     expect(find.text('Take another round'), findsOneWidget);
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
+    expect(find.text('Retake round 1'), findsOneWidget);
     await t.tap(find.text('Retake round 1'));
     await t.pumpAndSettle();
     // Server line lives on the Setup sub-tab (real sub-tabs: tap swaps);
@@ -791,6 +800,9 @@ void main() {
     expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
     await t.tap(find.text('Stop'));
+    await t.pumpAndSettle();
+    // Retake still offered in More after the second stop.
+    await t.tap(find.text('More'));
     await t.pumpAndSettle();
     expect(find.text('Retake round 1'), findsOneWidget);
     expect(t.takeException(), isNull);
@@ -920,6 +932,9 @@ void main() {
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(await store.readSession('CS201'), isNotNull);
+    // End lives in the More menu after rounds.
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).

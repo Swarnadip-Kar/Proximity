@@ -130,7 +130,8 @@ void main() {
         findsNothing);
 
     // Inbox: requests only, no roster/add/setup.
-    await t.tap(find.text('Inbox (2)'));
+    // (Label stays 'Inbox'; the count rides the reserved badge slot.)
+    await t.tap(find.text('Inbox'));
     await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
     expect(find.text('M One'), findsOneWidget);
@@ -193,7 +194,7 @@ void main() {
     await t.pumpAndSettle();
 
     // Mid-approve inbox: long-press enters hold-and-tap selection.
-    await t.tap(find.text('Inbox (2)'));
+    await t.tap(find.text('Inbox'));
     await t.pumpAndSettle();
     await t.longPress(find.text('M One'));
     await t.pumpAndSettle();
@@ -204,7 +205,7 @@ void main() {
     await t.tap(find.text('Roster'));
     await t.pumpAndSettle();
     expect(find.textContaining('Waiting area'), findsOneWidget);
-    await t.tap(find.text('Inbox (2)'));
+    await t.tap(find.text('Inbox'));
     await t.pumpAndSettle();
     expect(find.text('Approve 1'), findsOneWidget);
     expect(find.text('Manual requests (2)'), findsOneWidget);
