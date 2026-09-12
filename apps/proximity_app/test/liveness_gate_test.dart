@@ -3,7 +3,10 @@
 //
 // Offline, no native channels: the native gate is exercised only on its
 // fail-closed paths (missing/empty/garbage stills throw before any
-// decode); scoring math is covered via the pure [combineLivenessFeatures].
+// decode/model load); model pre/post-processing is covered via the pure
+// [minifasnetInputFromRgba]/[liveScoreFromProbs] helpers. The vendored
+// weights file itself is pinned by presence + size (never loaded here —
+// the TFLite native lib only exists on device builds).
 import 'dart:io';
 import 'dart:math';
 
@@ -14,9 +17,23 @@ import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 
 void main() {
   group('liveness pipeline tag', () {
-    test('kLivenessVer carries the liveness/ allowlist prefix', () {
+    test('kLivenessVer names the real model + weights hash', () {
       expect(kLivenessVer.startsWith('liveness/'), isTrue);
-      expect(kLivenessVer, contains('minifasnet-v2-se'));
+      expect(kLivenessVer, contains('minifasnet-v2'));
+      // model scale + input size + weights hash8 (mirrors the
+      // face_verification/<pkgVer>+<assetHash8> shape).
+      expect(kLivenessVer, contains('27-80x80'));
+      expect(kLivenessVer, matches(RegExp(r'\+[0-9a-f]{8}$')));
+      // No heuristic tag anywhere: the false pipeline name is gone.
+      expect(kLivenessVer, isNot(contains('heuristic')));
+    });
+
+    test('vendored weights exist at the declared asset path', () {
+      final f = File(kLivenessModelAsset);
+      expect(f.existsSync(), isTrue,
+          reason: '$kLivenessModelAsset must ship (tag pins its hash)');
+      // MiniFASNetV2-27 TFLite is ~1.85MB; a stub/empty file fails here.
+      expect(f.lengthSync(), greaterThan(1000000));
     });
   });
 
@@ -45,37 +62,87 @@ void main() {
     });
   });
 
-  group('combineLivenessFeatures (pure scorer core)', () {
-    test('all-zero features score 0, all-one score 1', () {
-      expect(
-          combineLivenessFeatures(
-              sharpness: 0, chroma: 0, specular: 0),
-          0.0);
-      expect(
-          combineLivenessFeatures(
-              sharpness: 1, chroma: 1, specular: 1),
-          moreOrLessEquals(1.0));
+  group('liveScoreFromProbs (pure post-processing)', () {
+    test('score IS the LIVE class probability (index 1)', () {
+      expect(liveScoreFromProbs([0.05, 0.90, 0.05]),
+          moreOrLessEquals(0.90));
+      expect(liveScoreFromProbs([0.5, 0.0, 0.5]), 0.0);
+      expect(liveScoreFromProbs([0.0, 1.0, 0.0]), 1.0);
     });
 
-    test('weights favour sharpness, then chroma, then specular', () {
-      final s = combineLivenessFeatures(
-          sharpness: 1, chroma: 0, specular: 0);
-      final c = combineLivenessFeatures(
-          sharpness: 0, chroma: 1, specular: 0);
-      final p = combineLivenessFeatures(
-          sharpness: 0, chroma: 0, specular: 1);
-      expect(s, moreOrLessEquals(0.45));
-      expect(c, moreOrLessEquals(0.35));
-      expect(p, moreOrLessEquals(0.20));
-      expect(s, greaterThan(c));
-      expect(c, greaterThan(p));
+    test('spoof-dominant outputs score low (spoof still fails)', () {
+      // Print attack.
+      expect(liveScoreFromProbs([0.93, 0.04, 0.03]), lessThan(0.5));
+      // Replay attack.
+      expect(liveScoreFromProbs([0.03, 0.04, 0.93]), lessThan(0.5));
     });
 
-    test('out-of-range features clamp (never NaN, never >1)', () {
+    test('wrong shape or non-finite input throws (fail-closed)', () {
+      expect(() => liveScoreFromProbs([0.5, 0.5]), throwsArgumentError);
       expect(
-          combineLivenessFeatures(
-              sharpness: 9, chroma: -3, specular: double.nan),
-          inInclusiveRange(0.0, 1.0));
+          () => liveScoreFromProbs([0.3, 0.3, 0.3, 0.1]),
+          throwsArgumentError);
+      expect(() => liveScoreFromProbs([0.5, double.nan, 0.5]),
+          throwsArgumentError);
+      expect(() => liveScoreFromProbs([0.5, double.infinity, 0.0]),
+          throwsArgumentError);
+    });
+  });
+
+  group('minifasnetInputFromRgba (pure pre-processing)', () {
+    test('packs NCHW BGR /255 with the [1,3,80,80] model shape', () {
+      // 4x2 frame: R=255,G=128,B=64,A=255 everywhere.
+      final rgba = Uint8List(4 * 2 * 4);
+      for (var i = 0; i < 4 * 2; i++) {
+        rgba[i * 4] = 255; // R
+        rgba[i * 4 + 1] = 128; // G
+        rgba[i * 4 + 2] = 64; // B
+        rgba[i * 4 + 3] = 255; // A
+      }
+      final input =
+          minifasnetInputFromRgba(rgba: rgba, width: 4, height: 2);
+      expect(input.length, 1);
+      expect(input[0].length, 3);
+      expect(input[0][0].length, kLivenessInputSize);
+      expect(input[0][0][0].length, kLivenessInputSize);
+      // BGR order, /255.
+      expect(input[0][0][0][0], moreOrLessEquals(64 / 255));
+      expect(input[0][1][0][0], moreOrLessEquals(128 / 255));
+      expect(input[0][2][0][0], moreOrLessEquals(1.0));
+    });
+
+    test('centre-square crop drops the side margins of wide frames', () {
+      // 4x2 frame: left 2 cols red, right 2 cols blue.
+      final rgba = Uint8List(4 * 2 * 4);
+      for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 4; x++) {
+          final o = (y * 4 + x) * 4;
+          final left = x < 2;
+          rgba[o] = left ? 255 : 0; // R
+          rgba[o + 1] = 0; // G
+          rgba[o + 2] = left ? 0 : 255; // B
+          rgba[o + 3] = 255; // A
+        }
+      }
+      final input =
+          minifasnetInputFromRgba(rgba: rgba, width: 4, height: 2);
+      // Centre 2x2 square straddles the seam: left half of the crop is
+      // red (B channel 0), right half is blue (B channel 1).
+      final b00 = input[0][0][0][0];
+      final bLast = input[0][0][0][kLivenessInputSize - 1];
+      expect(b00, moreOrLessEquals(0.0));
+      expect(bLast, moreOrLessEquals(1.0));
+    });
+
+    test('size mismatch throws (fail-closed)', () {
+      expect(
+          () => minifasnetInputFromRgba(
+              rgba: Uint8List(10), width: 4, height: 2),
+          throwsArgumentError);
+      expect(
+          () => minifasnetInputFromRgba(
+              rgba: Uint8List(0), width: 0, height: 0),
+          throwsArgumentError);
     });
   });
 

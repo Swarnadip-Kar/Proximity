@@ -1,29 +1,39 @@
-// HeuristicLivenessGate: native (Android/iOS) passive scorer for
+// MiniFASNetLivenessGate: native (Android/iOS) passive scorer for
 // liveness_gate.dart. Split out so the shared interface compiles for web
 // without dart:io (records builds get liveness_gate_stub.dart via the
 // conditional export — same pattern as face_verifier_plugin.dart).
 //
-// Heuristic-v1 (offline, ~1s, no new deps, no license-key SDK): file
-// sanity (missing/empty/tiny/unknown-magic fail closed) + dart:ui decode
-// at 112px + three texture features (Laplacian sharpness, chroma
-// diversity, specular fraction) combined by [combineLivenessFeatures].
-// See liveness_gate.dart header for the honesty contract (cost, not
-// immunity; FAR/FRR unmeasured; ONNX scorer via tflite_flutter later bumps
-// the ver suffix and forces re-face — same API, no caller change).
+// Passive MiniFASNetV2 (offline, ~1s, no license-key SDK): file sanity
+// (missing/empty/tiny/unknown-magic fail closed) + dart:ui decode at 160px
+// + centre-crop/BGR/NCHW packing ([minifasnetInputFromRgba]) + ONE
+// `tflite_flutter` Interpreter invoke on the vendored weights
+// ([kLivenessModelAsset]) + LIVE-class post-processing
+// ([liveScoreFromProbs]). See liveness_gate.dart header for the model
+// contract and the honesty note (centre crop, no detector; single 2.7
+// model, no ensemble; FAR/FRR unmeasured). Every failure — unreadable
+// still, missing asset, interpreter/shape error, timeout — throws
+// StateError (fail-closed); there is NO heuristic fallback, by design.
+//
+// Class-name note: the historical `HeuristicLivenessGate` name is kept so
+// the shared wiring (`RealStudentDriver` default, web stub mirror) keeps
+// compiling without touching other owners' files — the scorer inside is
+// the MiniFASNetV2 model, and [kLivenessVer] names it truthfully.
 library;
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+
+import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../../core/platformx.dart';
 import 'liveness_gate.dart';
 
-/// Native passive gate: real file + real decode, heuristic-v1 score.
-/// Construction is cheap (no model load — heuristic); every method gates
-/// on [requireMobileFace] (L1) before touching the filesystem.
+/// Native passive gate: real file + real decode + real model inference.
+/// Construction is cheap (the interpreter loads lazily on first use and is
+/// shared process-wide); every method gates on [requireMobileFace] (L1)
+/// before touching the filesystem.
 class HeuristicLivenessGate implements LivenessGate {
   /// Upper bound for read+decode+score (marking hot path is ~1s; anything
   /// slower is infrastructure failure and degrades to the rescan-safe
@@ -34,10 +44,63 @@ class HeuristicLivenessGate implements LivenessGate {
     this.budget = const Duration(milliseconds: 1200),
   });
 
+  /// Process-wide interpreter singleton: first [detectPassive] pays the
+  /// asset load, later calls reuse it. A failed load clears the slot so
+  /// the next call retries instead of caching a dead future.
+  static Interpreter? _ready;
+  static Future<Interpreter>? _loading;
+
+  static Future<Interpreter> _interpreter() async {
+    final hit = _ready;
+    if (hit != null) return hit;
+    var pending = _loading;
+    if (pending == null) {
+      pending = _load();
+      _loading = pending;
+    }
+    try {
+      final it = await pending;
+      _ready = it;
+      return it;
+    } catch (_) {
+      _loading = null;
+      rethrow;
+    }
+  }
+
+  static Future<Interpreter> _load() async {
+    try {
+      final it = await Interpreter.fromAsset(kLivenessModelAsset);
+      // Pin the verified contract at load: anything else is a wrong-asset
+      // packaging bug, failed closed here instead of mis-scored later.
+      final inShape = it.getInputTensor(0).shape;
+      final outShape = it.getOutputTensor(0).shape;
+      if (inShape.length != 4 ||
+          inShape[0] != 1 ||
+          inShape[1] != 3 ||
+          inShape[2] != kLivenessInputSize ||
+          inShape[3] != kLivenessInputSize ||
+          outShape.length != 2 ||
+          outShape[0] != 1 ||
+          outShape[1] != 3) {
+        try {
+          it.close();
+        } catch (_) {}
+        throw StateError(
+            'Liveness model has an unexpected shape (in=$inShape, out=$outShape) — reinstall the app and try again.');
+      }
+      return it;
+    } catch (e) {
+      if (e is StateError) rethrow;
+      throw StateError(
+          'Liveness model did not load — reinstall the app and try again ($e)');
+    }
+  }
+
   /// Fail-closed still read BEFORE any decode: empty paths, missing files,
   /// tiny frames and non-image magic throw here as rescan-safe StateErrors
   /// the driver maps to inconclusive (rescan path, burns nothing), never a
-  /// pass. Decode failures below throw the same way.
+  /// pass. Decode/model failures below throw the same way.
   Future<Uint8List> _readStillBytes(String imagePath) async {
     if (imagePath.trim().isEmpty) {
       throw StateError(
@@ -81,14 +144,14 @@ class HeuristicLivenessGate implements LivenessGate {
     }
   }
 
-  /// Decode + feature extraction at 112px (fast: ~17k px). Returns the
-  /// three 0..1 features for [combineLivenessFeatures]. Throws StateError
-  /// when the bytes do not decode (fail-closed, same mapping as above).
-  static Future<({double sharpness, double chroma, double specular})>
-      featuresOf(Uint8List bytes) async {
+  /// Decode to raw RGBA at 160px (fast: ~25k px; the pure packer below
+  /// nearest-neighbours to 80). Throws StateError when the bytes do not
+  /// decode (fail-closed, same mapping as above).
+  static Future<({Uint8List rgba, int width, int height})> _decodeRgba(
+      Uint8List bytes) async {
     late final ui.Image img;
     try {
-      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 112);
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 160);
       img = (await codec.getNextFrame()).image;
     } catch (e) {
       throw StateError(
@@ -100,66 +163,15 @@ class HeuristicLivenessGate implements LivenessGate {
         throw StateError(
             'The liveness still came out blank — recapture in good light, holding still.');
       }
-      final raw =
-          await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final raw = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (raw == null) {
         throw StateError(
             'The liveness still did not decode — recapture in good light, holding still.');
       }
-      final px = raw.buffer.asUint8List();
-      // Luminance grid for the Laplacian; chroma/specular accumulate inline.
-      final lum = Float64List(w * h);
-      var chromaAcc = 0.0;
-      var specCount = 0;
-      var n = 0;
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
-          final o = (y * w + x) * 4;
-          final r = px[o].toDouble();
-          final g = px[o + 1].toDouble();
-          final b = px[o + 2].toDouble();
-          final l = 0.299 * r + 0.587 * g + 0.114 * b;
-          lum[y * w + x] = l;
-          final mx = math.max(r, math.max(g, b));
-          final mn = math.min(r, math.min(g, b));
-          chromaAcc += (mx - mn) / 255.0;
-          if (l > 235) specCount++;
-          n++;
-        }
-      }
-      // Laplacian variance over interior pixels (4-neighbour kernel).
-      var mean = 0.0;
-      var m2 = 0.0;
-      var k = 0;
-      for (var y = 1; y < h - 1; y++) {
-        for (var x = 1; x < w - 1; x++) {
-          final c = lum[y * w + x];
-          final lap = 4 * c -
-              lum[y * w + x - 1] -
-              lum[y * w + x + 1] -
-              lum[(y - 1) * w + x] -
-              lum[(y + 1) * w + x];
-          k++;
-          final delta = lap - mean;
-          mean += delta / k;
-          m2 += delta * (lap - mean);
-        }
-      }
-      // Welford variance (m2/k).
-      final lapVar = k > 0 ? (m2 / k) : 0.0;
-      // Heuristic-v1 normalizations (UNCALIBRATED judgment — see the
-      // interface header; pending ROC + ONNX scorer):
-      //  - natural stills land lapVar ~10..1000+ → log10 maps to ~0.25..1.
-      //  - indoor portraits average chroma spread ~0.05..0.25 → ×4.
-      //  - specular highlights are rare (<2%) → fraction ×50 saturates.
-      final sharpness = ((math.log(lapVar + 1) / math.ln10) - 0.5) / 2.0;
-      final chroma = (chromaAcc / n) * 4.0;
-      final specular = (specCount / n) * 50.0;
-      double c(double v) => v.isNaN ? 0.0 : v.clamp(0.0, 1.0);
       return (
-        sharpness: c(sharpness),
-        chroma: c(chroma),
-        specular: c(specular)
+        rgba: raw.buffer.asUint8List(),
+        width: w,
+        height: h,
       );
     } finally {
       img.dispose();
@@ -170,22 +182,30 @@ class HeuristicLivenessGate implements LivenessGate {
   Future<LivenessResult> detectPassive(String imagePath) async {
     requireMobileFace();
     try {
-      final bytes =
-          await _readStillBytes(imagePath).timeout(budget);
-      final f = await featuresOf(bytes).timeout(budget);
-      final score = combineLivenessFeatures(
-        sharpness: f.sharpness,
-        chroma: f.chroma,
-        specular: f.specular,
-      );
+      final bytes = await _readStillBytes(imagePath).timeout(budget);
+      final frame = await _decodeRgba(bytes).timeout(budget);
+      final input = minifasnetInputFromRgba(
+          rgba: frame.rgba, width: frame.width, height: frame.height);
+      final output = List.generate(1, (_) => List.filled(3, 0.0));
+      final it = await _interpreter().timeout(budget);
+      // Synchronous invoke (MiniFASNetV2 is ~5ms/frame on-device — the
+      // budget above guards read/decode/load; inference itself never
+      // blocks on I/O, so no timeout can pre-empt it, by FFI design).
+      it.run(input, output);
+      final score = liveScoreFromProbs(output.first);
       return LivenessResult(score: score, ver: kLivenessVer);
     } on StateError {
       rethrow;
     } on TimeoutException catch (e) {
-      // Hung read/decode: fail closed as a rescan-safe error (driver maps
-      // to inconclusive, burns nothing), never a hang, never a pass.
+      // Hung read/decode/model: fail closed as a rescan-safe error (driver
+      // maps to inconclusive, burns nothing), never a hang, never a pass.
       throw StateError(
           'Liveness check timed out — adjust light and try again ($e)');
+    } on ArgumentError catch (e) {
+      // Pure pre/post-processing contract breach (never on real frames):
+      // fail closed, same mapping.
+      throw StateError(
+          'Liveness check did not read clearly — adjust light and try again ($e)');
     } catch (e) {
       throw StateError(
           'Liveness check did not read clearly — adjust light and try again ($e)');

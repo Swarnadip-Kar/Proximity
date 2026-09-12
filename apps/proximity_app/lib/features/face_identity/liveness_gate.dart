@@ -14,23 +14,33 @@
 //   marking = PASSIVE only on the single check still (~1s budget, no
 //             prompts — the holder just holds still).
 //
-// Backend: passive MiniFASNetV2-SE family. The pipeline tag [kLivenessVer]
-// pins WHICH scorer produced the score; a scorer swap ships as a new tag
-// and forces re-face via the stale-pipeline check (key kept) — same
-// versioning contract as [kFaceVerifierVer].
-// Heuristic-v1 honesty note: the vendored MiniFASNetV2-SE ONNX weights
-// (~600KB, ~98.2% CelebA-Spoof target) need `tflite_flutter` (pubspec is
-// 1B-owned — requested, not added here), so the native scorer below is an
-// offline texture heuristic (Laplacian sharpness + chroma diversity +
-// specular fraction, pure Dart + dart:ui decode, no network, no
-// license-key SDK). It raises photo/screen-replay cost and FAILS CLOSED
-// on unreadable/unsupported stills, but it is NOT photo-spoof immunity:
-// a sharp print can still pass it. Same honesty contract as the pose
-// gates (cost, not immunity) — see the residual in PROXIMITY_DESIGN.md §4.
-// FAR/FRR for heuristic-v1 are UNMEASURED (no Proximity ROC yet); the
-// face operating point note on face_verifier.dart still applies to the
-// matcher half only. The adversarial drill + 2-phone relay (sec-verify)
-// stay required.
+// Backend: real passive MiniFASNetV2 classifier (sec-liveness PRIMARY
+// rung, audit 2026-09-12 C4 fix). The vendored weights are the
+// `2.7_80x80_MiniFASNetV2` anti-spoof model from minivision-ai's
+// Silent-Face-Anti-Spoofing (Apache-2.0), converted to TFLite
+// (litert-community build), shipped at [kLivenessModelAsset] and run via
+// `tflite_flutter` (see liveness_gate_native.dart). The pipeline tag
+// [kLivenessVer] pins WHICH scorer produced the score (model + weights
+// hash8); a scorer swap ships as a new tag and forces re-face via the
+// stale-pipeline check (key kept) — same versioning contract as
+// [kFaceVerifierVer].
+//
+// Model contract (verified against the vendored file, 2026-09-12):
+//   input  [1,3,80,80] float32 NCHW, BGR order, pixels /255 (face crop).
+//   output [1,3] float32 softmax [spoof-print, LIVE, spoof-replay].
+//   score  output[1] ([kMinifasnetLiveIndex]) via [liveScoreFromProbs].
+// Pre-processing ([minifasnetInputFromRgba]): centre-square crop of the
+// still + nearest-neighbour resize to 80x80 + BGR/255/NCHW packing.
+//
+// Honesty note (residuals, not immunity claims): the gate crops the whole
+// still's centre — it does NOT run a face detector for the 2.7x face-box
+// crop the weights were trained on, and it runs only the primary 2.7-scale
+// model (upstream ensembles a second 4.0-scale model). FAR/FRR are
+// UNMEASURED on Proximity captures (no Proximity ROC yet); the host
+// threshold Tl=0.70 ([kLivenessThreshold], protocol-owned) applies to the
+// OUTPUT. The adversarial drill + 2-phone relay (sec-verify) stay
+// required. The gate FAILS CLOSED on unreadable stills, missing assets,
+// and interpreter errors — never a pass, never a heuristic fallback.
 //
 // L1 mobile gate: [detectPassive] calls [requireMobileFace] first —
 // desktop/web fail closed (records-only stub below throws before any
@@ -38,6 +48,7 @@
 library;
 
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -45,12 +56,26 @@ export 'liveness_gate_native.dart'
     if (dart.library.html) 'liveness_gate_stub.dart';
 
 /// Opaque liveness pipeline tag stored on the ticket and bound into every
-/// Sig_s ticket. Format: `liveness/<model>+<scorer>` (mirrors the
+/// Sig_s ticket. Format: `liveness/<model>+<weightsHash8>` (mirrors the
 /// `face_verification/<pkgVer>+<assetHash8>` shape). The host allowlists on
 /// the `liveness/` prefix; a stricter course pins the full tag. Bumping the
-/// scorer suffix (e.g. `+heuristic-v1` → `+<weightsHash8>` when the ONNX
-/// weights vendor) invalidates old tickets — re-face only, key kept.
-const kLivenessVer = 'liveness/minifasnet-v2-se+heuristic-v1';
+/// tag (new weights) invalidates old tickets — re-face only, key kept.
+///
+/// `4ff758f4` = first 8 hex of the SHA-256 of the vendored TFLite file
+/// (see [kLivenessModelAsset]).
+const kLivenessVer = 'liveness/minifasnet-v2-27-80x80+4ff758f4';
+
+/// Bundled anti-spoof weights (declared via `assets/models/` in pubspec —
+/// no per-file entry needed). MiniFASNetV2 `2.7_80x80`, TFLite, 1.85MB.
+const kLivenessModelAsset =
+    'assets/models/silentface-minifasnetv2-27-80x80.tflite';
+
+/// Model input edge (square): 80x80.
+const kLivenessInputSize = 80;
+
+/// Output index of the LIVE class in the model's [1,3] softmax
+/// ([spoof-print, LIVE, spoof-replay]).
+const kMinifasnetLiveIndex = 1;
 
 /// Active enroll challenges: blink + smile, prompted in shuffled order.
 /// Passive only for marking (no prompts there — single still, ~1s).
@@ -72,20 +97,59 @@ List<LivenessAction> shuffledActiveChallenges({Random? rng}) {
   return list;
 }
 
-/// Pure scorer core (no native calls, unit-tested): maps the three
-/// heuristic-v1 texture features (each already 0..1 normalized by the
-/// platform decoder) to one 0..1 vitality score on the same milli scale as
-/// the face score. Weights are heuristic-v1 judgment (see the file header —
-/// uncalibrated, pending ROC + ONNX scorer); the host threshold Tl=0.70
-/// ([kLivenessThreshold]) applies to the OUTPUT, never to the features.
-double combineLivenessFeatures({
-  required double sharpness,
-  required double chroma,
-  required double specular,
+/// Pure post-processing (no native calls, unit-tested): the model's [1,3]
+/// softmax [spoof-print, LIVE, spoof-replay] maps to one 0..1 vitality
+/// score on the same milli scale as the face score. The score IS the LIVE
+/// class probability ([kMinifasnetLiveIndex]) — no re-weighting, no
+/// calibration fudge. Throws [ArgumentError] on any other shape or
+/// non-finite input (fail-closed at the call-site, never a pass).
+double liveScoreFromProbs(List<double> probs) {
+  if (probs.length != 3 || probs.any((p) => !p.isFinite)) {
+    throw ArgumentError(
+        'MiniFASNet output must be 3 finite softmax probs, got $probs');
+  }
+  return probs[kMinifasnetLiveIndex].clamp(0.0, 1.0);
+}
+
+/// Pure pre-processing (no native calls, unit-tested): packs decoded RGBA
+/// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
+/// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels /255).
+/// The crop is the frame's centre square (see the file header: NOT a
+/// face-detector crop — documented residual), resized to
+/// [kLivenessInputSize] by nearest neighbour. Throws [ArgumentError] on
+/// size mismatches (fail-closed at the call-site).
+List<List<List<List<double>>>> minifasnetInputFromRgba({
+  required Uint8List rgba,
+  required int width,
+  required int height,
 }) {
-  double c(double v) => v.clamp(0.0, 1.0);
-  return (0.45 * c(sharpness) + 0.35 * c(chroma) + 0.20 * c(specular))
-      .clamp(0.0, 1.0);
+  const size = kLivenessInputSize;
+  if (width <= 0 || height <= 0) {
+    throw ArgumentError('Bad frame dims ${width}x$height');
+  }
+  if (rgba.length != width * height * 4) {
+    throw ArgumentError(
+        'RGBA length ${rgba.length} != ${width}x$height frame');
+  }
+  // Centre-square crop box.
+  final edge = width < height ? width : height;
+  final ox = (width - edge) ~/ 2;
+  final oy = (height - edge) ~/ 2;
+  // [c][y][x] accumulator in BGR order.
+  final planes = List.generate(
+      3, (_) => List.generate(size, (_) => List.filled(size, 0.0)));
+  for (var y = 0; y < size; y++) {
+    final sy = oy + (y * edge ~/ size);
+    for (var x = 0; x < size; x++) {
+      final sx = ox + (x * edge ~/ size);
+      final o = (sy * width + sx) * 4;
+      // RGBA bytes → BGR channels, /255.
+      planes[0][y][x] = rgba[o + 2] / 255.0;
+      planes[1][y][x] = rgba[o + 1] / 255.0;
+      planes[2][y][x] = rgba[o] / 255.0;
+    }
+  }
+  return [planes];
 }
 
 /// Result of one passive anti-spoof pass: vitality score + pipeline tag.
@@ -138,7 +202,9 @@ class FakeLivenessGate implements LivenessGate {
 /// fail-closed stub on records builds via the conditional export above —
 /// same pattern as faceVerifierProvider); tests override with
 /// [FakeLivenessGate]. RealStudentDriver defaults to the platform gate so
-/// main.dart needs no new override (2C-owned file, untouched).
+/// main.dart needs no new override (2C-owned file, untouched). The class
+/// keeps its historical name for that shared wiring — the scorer inside is
+/// the MiniFASNetV2 TFLite model above, not a heuristic.
 final livenessGateProvider = Provider<LivenessGate>((ref) {
   throw UnimplementedError('Override in main / tests');
 });

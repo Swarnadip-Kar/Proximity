@@ -11,7 +11,8 @@ import 'liveness_gate.dart';
 
 /// Fail-closed liveness stand-in: construction is harmless (DI never picks
 /// it on web — checkFace blocks records-only devices first), checks refuse
-/// — SK never signs without a holder check.
+/// — SK never signs without a holder check. (Historical class name kept
+/// for the shared wiring; the native scorer is the MiniFASNetV2 model.)
 class HeuristicLivenessGate implements LivenessGate {
   final Duration budget;
 
