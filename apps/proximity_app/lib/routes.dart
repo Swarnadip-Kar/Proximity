@@ -6,21 +6,29 @@
 //
 //   Entry:          welcome · roles · device
 //   Prof setup:     prof/courses · prof/courses/<course> (overview)
-//                   prof/courses/<course>/export (in-tab drill-down only;
+//                   prof/courses/<course>/export (overview + deep-link;
 //                   named session/course deep-links are unsupported)
-//   Prof live:      live/<course> (Take host; any section suffix lands
-//                   on the host — no standalone section screens)
+//   Prof live:      live/<course> exact shape (Take host; extra suffix,
+//                   empty or invalid segment → unknown — never the host;
+//                   no standalone section screens)
 //   Student mark:   (in-tab only — no named routes; the shell lock +
 //                   root-navigator SetupFlowScreen auto-push is the gate)
-//   Enroll:         enroll/capture · enroll/result (the standalone intro
-//                   route is deleted with the legacy bundle entry; the
-//                   serialized SetupFlowScreen is the only enrollment flow
-//                   and embeds the capture/result screens as steps)
+//   Enroll:         enroll/capture · enroll/result (standalone intro
+//                   deleted; SetupFlow embeds capture/result as steps;
+//                   EnrollFlow.openCapture/openResult delegate to
+//                   ProxNav.pushNamed so exact-table guards apply)
+//   Still capture:  face/capture (named still-capture sheet, native-only)
+//   Setup flow:     setup-flow (single ProxRoutes.setupFlow constant;
+//                   shell auto-push on the root navigator)
 //   Records:        records/mine (in-tab drill-down only; named
 //                   course deep-links are unsupported)
-//   Account:         account/face-id (isolated status page; the
-//                   consolidated account page is the tab root in shells)
+//   Account:        account/face-id (isolated status page, requires
+//                   enrollment — else enroll/capture; the consolidated
+//                   account page is the tab root in shells)
 //   Shared:         debug/log (filterable full-screen terminal)
+//
+// Guards run web → mobile → auth → role → enrollment (pure
+// ProxRouteGuard + normalizeProxRoute + isValidCourseSegment; see below).
 //
 // Status: wired. Entry/enroll/debug/records + prof setup builders
 // point at the feature bundle screens; live paths build the Take host

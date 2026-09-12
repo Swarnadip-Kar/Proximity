@@ -125,7 +125,7 @@ String linkedOrgForAccount(SignedAccount acct, LinkedIdentity? linked) {
 }
 
 /// Dismisses the root setup-flow FIRST (product decision): when the
-/// shell auto-pushed `SetupFlowScreen` (route name `setup-flow`) on the
+/// shell auto-pushed `SetupFlowScreen` (route `ProxRoutes.setupFlow`) on the
 /// root navigator is open during an account/mode switch, it is popped
 /// before the switch proceeds — the switch must never land underneath an
 /// open flow holding the previous identity. No-op when no flow is open

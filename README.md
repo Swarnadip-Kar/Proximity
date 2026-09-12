@@ -340,7 +340,8 @@ flutter build ios --no-codesign        # needs iOS platform in Xcode
 flutter build macos --debug
 ```
 
-Simulator UI walkthrough without taps/accounts:
+Simulator UI walkthrough without taps/accounts (debug builds only —
+release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
 `flutter build ios --simulator --dart-define=PROX_MODE=student|prof|enroll|take`
 (`take` opens a live take-attendance screen seeded with demo courses;
 `prof`/`take`/`course` seed demo data via `_debugSeededStore` in
