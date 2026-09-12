@@ -40,7 +40,8 @@ import 'package:proximity_protocol/protocol.dart';
 
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
-import '../features/face_identity/liveness_gate.dart' show kLivenessVer;
+import '../features/face_identity/liveness_gate.dart'
+    show HeuristicLivenessGate, LivenessGate, LivenessResult, kLivenessVer;
 import '../mode.dart';
 import 'auth.dart';
 import 'cloud_sync.dart';
@@ -103,6 +104,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   final DeviceStore _store;
   final FaceVerifier _verifier;
   final DeviceKey _deviceKey;
+  final LivenessGate _liveness;
   // Cloud device binding (null in unit tests → local-only behavior).
   final CloudSync? _cloud;
 
@@ -123,10 +125,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     required DeviceKey deviceKey,
     SignedAccount? preseed,
     CloudSync? cloud,
+    LivenessGate? livenessGate,
   })  : _auth = auth,
         _store = store,
         _verifier = verifier,
         _deviceKey = deviceKey,
+        // Platform gate by default (native MiniFASNet scorer, web
+        // fail-closed stub — same copy idiom as RealStudentDriver) so the
+        // claimed livenessVer is MEASURED on every enroll, never asserted.
+        // Tests inject FakeLivenessGate. main.dart needs no new override.
+        _liveness = livenessGate ?? HeuristicLivenessGate(),
         _cloud = cloud,
         super(EnrollmentState(
             phase: preseed == null
@@ -412,9 +420,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// (centre/left/right/up/down image paths from the continuous capture
   /// session). Each still's angle was already pose-gated at capture (ML Kit
   /// euler windows via the PoseGate — real gates, never instruction-only);
-  /// the plugin owns detection + matching passively. A self-check verify of
-  /// the centre still must match before advancing (fail-closed with
-  /// faceScore 0). Mobile-only: records-only devices fail closed via the
+  /// the centre still is passive-liveness-gated HERE (fail-closed, same
+  /// copy idiom as RealStudentDriver.checkFace — spoof never reaches the
+  /// plugin gallery, so the claimed livenessVer is MEASURED); the plugin
+  /// owns detection + matching passively. A self-check verify of the
+  /// centre still must match before advancing (fail-closed with faceScore
+  /// 0). Mobile-only: records-only devices fail closed via the
   /// verifier (never a mock pass).
   Future<void> enrollFace(List<String> imagePaths) async {
     // Binding point (faceId derives from the account): refuse a draft the
@@ -468,6 +479,39 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 'The ${faceEnrollSlots[i]} still came out blank — recapture just that angle in good light, holding still.');
         return;
       }
+    }
+    // Security §4 passive gate on the centre still BEFORE the gallery
+    // write (same copy idiom as RealStudentDriver.checkFace): a photo or
+    // screen that would match the template must still fail here, so the
+    // livenessVer claimed at Save names a real measurement. Throw /
+    // unreadable → error (rescan, nothing stored); below Tl → error as a
+    // readable non-live still (spoof), gallery untouched either way.
+    LivenessResult live;
+    try {
+      live = await _liveness.detectPassive(imagePaths.first);
+    } on StateError catch (e) {
+      _faceId = null;
+      state = state.copyWith(
+          phase: EnrollPhase.error, faceScore: 0, message: '$e');
+      return;
+    } catch (e) {
+      _faceId = null;
+      state = state.copyWith(
+          phase: EnrollPhase.error,
+          faceScore: 0,
+          message: 'Liveness check failed: $e');
+      return;
+    }
+    if (live.score < kLivenessThreshold) {
+      BleLog.log('SEC',
+          'enroll liveness FAIL score=${live.score.toStringAsFixed(2)}');
+      _faceId = null;
+      state = state.copyWith(
+          phase: EnrollPhase.error,
+          faceScore: 0,
+          message:
+              'This capture did not look live (possible photo or screen) — hold still in good light and recapture.');
+      return;
     }
     try {
       final installId = await getOrCreateInstallId(_store);
@@ -615,8 +659,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           throw StateError(
               'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
         }
-        sealed = await _deviceKey.seal(
-            Uint8List.fromList(ed.seed(kp.privateKey)));
+        // Cheap hygiene (best-effort in Dart — GC copies may linger):
+        // the transient 32B seed copy is zeroed right after sealing so it
+        // never outlives the seal call on the heap.
+        final seedCopy = Uint8List.fromList(ed.seed(kp.privateKey));
+        try {
+          sealed = await _deviceKey.seal(seedCopy);
+        } finally {
+          seedCopy.fillRange(0, seedCopy.length, 0);
+        }
         pkDRaw = _deviceKey.pkD;
         chainDERHex = _deviceKey.chainDERHex;
       } on StateError catch (e) {
@@ -730,10 +781,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   // devices is not yet called pre-claim (audit 2026-09-12)
                   // — enroll-time taint detection is pending work, so ''
                   // here means "unchecked", not "verified clean". The
-                  // livenessVer tag likewise records the pipeline that
-                  // MUST have measured the stills; enroll-time
-                  // detectPassive gating is pending (marking already
-                  // gates). Both flip with the enforcement call-sites.
+                  // livenessVer tag names the pipeline that MEASURED the
+                  // centre still ([enrollFace] gates on it before the
+                  // gallery write — fail-closed, same idiom as marking).
                   attestationChain: chainDERHex,
                   livenessVer: kLivenessVer,
                   integrityFlag: ''),

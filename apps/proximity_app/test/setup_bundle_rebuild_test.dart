@@ -12,6 +12,7 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/features/records/my_attendance_screen.dart';
 import 'package:proximity_app/features/setup/device_identity_screen.dart';
 import 'package:proximity_app/features/setup/device_sections.dart';
@@ -70,7 +71,10 @@ List<Override> _enrollOverrides({
           store: store,
           verifier: FakeFaceVerifier(),
           deviceKey: FakeDeviceKey(),
-          cloud: cloud);
+          cloud: cloud,
+          // enrollFace measures liveness: scripted pass (liveness itself
+          // is pinned in enroll_liveness_gate_test.dart).
+          livenessGate: FakeLivenessGate());
       onCtl(ctl);
       return ctl;
     }),

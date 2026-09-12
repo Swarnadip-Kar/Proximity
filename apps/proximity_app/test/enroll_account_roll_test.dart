@@ -20,6 +20,7 @@ import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/setup/intro_sections.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_protocol/protocol.dart';
 
 const _a =
@@ -34,6 +35,9 @@ EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
       store: store,
       verifier: verifier ?? FakeFaceVerifier(),
       deviceKey: FakeDeviceKey(),
+      // enrollFace measures liveness: scripted pass (liveness itself is
+      // pinned in enroll_liveness_gate_test.dart).
+      livenessGate: FakeLivenessGate(),
     );
 
 Future<EnrollmentController> _signedInWithKey(FakeAuthService auth,

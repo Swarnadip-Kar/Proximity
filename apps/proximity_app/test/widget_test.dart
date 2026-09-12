@@ -15,6 +15,7 @@ import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/core/student_driver.dart';
@@ -83,12 +84,15 @@ ProviderScope testScope(
       if (resolvedMode != null)
         appModeProvider.overrideWith((ref) => resolvedMode),
       enrollmentControllerProvider.overrideWith(
-        (ref) => EnrollmentController(
-          auth: ref.watch(authServiceProvider),
-          store: ref.watch(deviceStoreProvider),
-          verifier: FakeFaceVerifier(),
-          deviceKey: FakeDeviceKey(),
-        ),
+          (ref) => EnrollmentController(
+            auth: ref.watch(authServiceProvider),
+            store: ref.watch(deviceStoreProvider),
+            verifier: FakeFaceVerifier(),
+            deviceKey: FakeDeviceKey(),
+            // enrollFace measures liveness: scripted pass (liveness
+            // itself is pinned in enroll_liveness_gate_test.dart).
+            livenessGate: FakeLivenessGate(),
+          ),
       ),
     ],
     child: home ?? const ProximityApp(),

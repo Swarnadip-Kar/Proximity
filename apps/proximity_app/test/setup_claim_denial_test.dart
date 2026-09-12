@@ -20,6 +20,7 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 
 const _b =
     SignedAccount(email: 'b@univ.edu', displayName: 'B', uid: 'ub');
@@ -54,6 +55,9 @@ Future<EnrollmentController> _readyToSave(
     verifier: FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
     cloud: cloud,
+    // enrollFace measures liveness: scripted pass (liveness itself is
+    // pinned in enroll_liveness_gate_test.dart).
+    livenessGate: FakeLivenessGate(),
   );
   await ctl.signIn();
   ctl.setRoll('B-ROLL');

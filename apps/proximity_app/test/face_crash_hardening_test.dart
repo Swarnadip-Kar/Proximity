@@ -13,6 +13,7 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_ble/ble.dart';
 
 import 'student_driver_test.dart' as helpers;
@@ -57,6 +58,10 @@ EnrollmentController _enrollCtl({
     store: store,
     verifier: verifier,
     deviceKey: FakeDeviceKey(),
+    // enrollFace measures liveness: scripted pass so the (b) cases reach
+    // the verifier throw they pin (liveness itself is pinned in
+    // enroll_liveness_gate_test.dart).
+    livenessGate: FakeLivenessGate(),
   );
   return ctl;
 }

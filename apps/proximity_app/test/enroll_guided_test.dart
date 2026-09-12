@@ -30,6 +30,7 @@ import 'package:proximity_app/features/setup/enroll_result.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/screens/face_capture.dart';
@@ -63,13 +64,18 @@ class _HangingGate implements PoseGate {
 }
 
 Future<EnrollmentController> _keyReady(
-    {FaceVerifier? verifier, InMemoryDeviceStore? store}) async {
+    {FaceVerifier? verifier,
+    InMemoryDeviceStore? store,
+    LivenessGate? livenessGate}) async {
   final ctl = EnrollmentController(
     auth: FakeAuthService(const SignedAccount(
         email: 's@x.in', displayName: 'S', uid: 'u1')),
     store: store ?? InMemoryDeviceStore(),
     verifier: verifier ?? FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    // enrollFace measures liveness: scripted pass unless a test passes its
+    // own gate (liveness itself is pinned in enroll_liveness_gate_test).
+    livenessGate: livenessGate ?? FakeLivenessGate(),
   );
   await ctl.signIn();
   await ctl.generateKey();
@@ -973,6 +979,9 @@ void main() {
         store: InMemoryDeviceStore(),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        // enrollFace measures liveness: scripted pass (liveness itself is
+        // pinned in enroll_liveness_gate_test.dart).
+        livenessGate: FakeLivenessGate(),
       );
       await ctl.signIn();
       return ctl;
