@@ -55,9 +55,26 @@ class RoundTrailPills extends StatelessWidget {
                 color: c.statusMarked.withValues(alpha: 0.4),
               ),
             ),
-            child: Text(
-              '$m ✓',
-              style: ProxType.caption(color: c.statusMarked),
+            // Icon+text (never text glyph alone): check icon carries the
+            // shape, label carries the round detail.
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    m,
+                    style: ProxType.caption(color: c.statusMarked),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.check,
+                  size: 12,
+                  color: c.statusMarked,
+                ),
+              ],
             ),
           ),
       ],
