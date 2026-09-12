@@ -49,26 +49,32 @@ void main() {
     }
   });
 
-  test('studentAvatarColor draws from Foundation tokens only', () {
+  test('studentAvatarColor uses identity hues, never verdict colors', () {
     const dark = ProximityColors.dark();
     const light = ProximityColors.light();
-    final palette = {
-      light.accentBrand,
+    // Verdict set that avatars must avoid (green/yellow/red/orange).
+    final verdictLight = {
       light.statusMarked,
       light.statusLate,
       light.statusReview,
       light.statusError,
     };
-    expect(palette, contains(studentAvatarColor(light, 'Ada Lovelace')));
-    final darkPalette = {
-      dark.accentBrand,
+    final verdictDark = {
       dark.statusMarked,
       dark.statusLate,
       dark.statusReview,
       dark.statusError,
     };
-    expect(
-        darkPalette, contains(studentAvatarColor(dark, 'Ada Lovelace')));
+    final aLight = studentAvatarColor(light, 'Ada Lovelace');
+    final aDark = studentAvatarColor(dark, 'Ada Lovelace');
+    expect(verdictLight, isNot(contains(aLight)));
+    expect(verdictDark, isNot(contains(aDark)));
+    // Stable slots: same name maps to same palette slot on both themes.
+    expect(studentColorIndex('Ada Lovelace'),
+        studentColorIndex('Ada Lovelace'));
+    // Foreground equals base (no verdict on-tint remap).
+    expect(studentAvatarForeground(light, 'Ada Lovelace'), aLight);
+    expect(studentAvatarForeground(dark, 'Ada Lovelace'), aDark);
   });
 
   test('VerdictBadge labels match the frozen verbatim vocabulary', () {

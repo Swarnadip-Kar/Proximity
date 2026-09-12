@@ -68,32 +68,50 @@ int studentColorIndex(String name) {
   return h % 5;
 }
 
-/// Avatar color for a name, drawn from Foundation status/brand tokens only
-/// (dark/light parity, no hardcoded colors). Never face data.
+/// Avatar color for a name — identity-only hues, never verdict colors.
+///
+/// Slots stay stable (`studentColorIndex` unchanged) so existing rows keep
+/// their slot; only the hues change. Deliberately avoids green/yellow/red/
+/// orange (Marked/Late/Error/Review) so an avatar never reads as a verdict
+/// next to the card's real VerdictBadge. Brightness inferred from the
+/// resolved `ProximityColors` surface (dark surface = dark palette).
+/// Never face data.
 Color studentAvatarColor(ProximityColors c, String name) {
-  const palette = <Color Function(ProximityColors)>[
-    _brand,
-    _marked,
-    _late,
-    _review,
-    _error,
-  ];
-  return palette[studentColorIndex(name) % palette.length](c);
+  final dark =
+      ThemeData.estimateBrightnessForColor(c.surfaceBase) ==
+      Brightness.dark;
+  return _identityFor(name, dark);
 }
 
-Color _brand(ProximityColors c) => c.accentBrand;
-Color _marked(ProximityColors c) => c.statusMarked;
-Color _late(ProximityColors c) => c.statusLate;
-Color _review(ProximityColors c) => c.statusReview;
-Color _error(ProximityColors c) => c.statusError;
+/// Identity hues (dark theme): blue / violet / rose / slate / cyan.
+const _identityDark = <Color>[
+  Color(0xFF8FB0FF),
+  Color(0xFFB79CFF),
+  Color(0xFFF49AC1),
+  Color(0xFF94A3B8),
+  Color(0xFF67E8F9),
+];
 
-/// Avatar-initials foreground for a name.
-Color studentAvatarForeground(ProximityColors c, String name) {
-  final base = studentAvatarColor(c, name);
-  if (base == c.statusLate) return c.onTintLate;
-  if (base == c.statusReview) return c.onTintReview;
-  return base;
+/// Identity hues (light theme): darkened mates of [_identityDark] for
+/// contrast on white + 15% tint.
+const _identityLight = <Color>[
+  Color(0xFF3A63E0),
+  Color(0xFF6A4FD9),
+  Color(0xFFB23A72),
+  Color(0xFF5B6270),
+  Color(0xFF0E7C9E),
+];
+
+Color _identityFor(String name, bool dark) {
+  final palette = dark ? _identityDark : _identityLight;
+  return palette[studentColorIndex(name) % palette.length];
 }
+
+/// Avatar-initials foreground for a name: identity hues are drawn dark
+/// enough for both themes, so foreground equals the base (no on-tint
+/// remap needed — that path existed only for verdict-yellow/orange).
+Color studentAvatarForeground(ProximityColors c, String name) =>
+    studentAvatarColor(c, name);
 
 /// Course logo initials (first 2 alphanumerics, upper): `CS201` → `CS`,
 /// `Maths` → `MA`. Pure for unit tests.
@@ -122,11 +140,7 @@ class CourseLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final base = courseAvatarColor(c, course);
-    final fg = base == c.statusLate
-        ? c.onTintLate
-        : base == c.statusReview
-            ? c.onTintReview
-            : base;
+    final fg = base;
     return Container(
       width: size,
       height: size,
