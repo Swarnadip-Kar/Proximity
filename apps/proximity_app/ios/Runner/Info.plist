@@ -14,6 +14,15 @@
 	<string>Proximity needs location permission to scan for nearby Bluetooth classroom beacons on iOS. Your location is never recorded or uploaded.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Proximity discovers live classes and exchanges signed attendance proofs with the professor over the classroom WiFi or hotspot.</string>
+	<!-- §3 hardened storage: Face ID / Touch ID backs the Keychain
+	     biometryCurrentSet access-control flag (see IOSOptions in
+	     lib/core/security/secure_store_options.dart). -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Proximity uses Face ID to unlock your on-device attendance key. Face data never leaves your phone.</string>
+	<!-- Keychain posture (no plist key exists for these — enforced at runtime
+	     via IOSOptions: synchronizable=false, accessibility
+	     first_unlock_this_device_only, i.e. thisDeviceOnly: items never sync
+	     via iCloud and never migrate to a new device via backup/restore). -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

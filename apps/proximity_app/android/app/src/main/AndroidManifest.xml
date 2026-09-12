@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- §3 hardened storage: AndroidOptions.biometric(enforceBiometrics:true)
+         needs the biometric prompt (Class-3 only via strongBiometricOnly). -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <!-- Face enrollment scan (camera preview + on-device face verification plugin). -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- BLE proximity proofs: scan + advertise rotating UUIDs (§5.2). -->
@@ -19,7 +22,9 @@
     <application
         android:label="proximity_app"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"
