@@ -15,14 +15,23 @@ class StoredEnrollment {
   final String email;
   final String name;
   final String roll;
-  /// SKey Ed25519 seed: DKey-sealed ciphertext hex in production (only
-  /// ciphertext at rest — unwrap needs the HW DKey; a backup-restore
-  /// clone fails unwrap → 'restore detected — re-enroll'). Raw seed hex
-  /// in tests / legacy docs (sealedKeyHex empty → raw path).
+  /// Deprecated raw SKey seed hex (security §2 F1 fix: never written).
+  ///
+  /// Parse-compat only: old docs carry a raw seed, new writes are always
+  /// `''` (see `toJson` + `EnrollmentController.upload` sealed-only).
+  /// Readers MUST NOT use this — unwrap via `sealedKeyHex` only.
+  /// No IMEI/serial/phone-ID ever lives here (install UUID only).
+  @Deprecated('Raw seed at rest (F1). Parse-compat only — never write.')
   final String seedHex;
   final String pkHex;
-  /// DKey-sealed SKey envelope hex ('' = unsealed legacy/test path).
+  /// DKey-sealed SKey envelope hex ('' = never-enrolled; sealed-only —
+  /// empty means re-enroll, never a raw fallback).
   final String sealedKeyHex;
+  /// HW attestation chain, leaf-first DER hex (security §2 + §7
+  /// `attestationChain` wire form). `[]` = unbound legacy/test path.
+  /// Never contains IMEI/serial — X.509 certs only, verified offline
+  /// against pinned roots (see `AttestationChain` in protocol).
+  final List<String> chainDERHex;
   /// Opaque face identity: sha256(gmailLower+installId) hex — never raw
   /// Gmail. The plugin store is keyed by this. '' = never enrolled.
   final String faceId;
@@ -48,9 +57,10 @@ class StoredEnrollment {
     required this.email,
     required this.name,
     required this.roll,
-    required this.seedHex,
+    this.seedHex = '',
     required this.pkHex,
     this.sealedKeyHex = '',
+    List<String>? chainDERHex,
     this.faceId = '',
     required this.enrolledAt,
     this.verifierVer = '',
@@ -60,7 +70,8 @@ class StoredEnrollment {
     DateTime? attestedAt,
     DateTime? attestedUntil,
     this.lastFaceRescanAtMillis = 0,
-  })  : attestedAt = attestedAt ??
+  })  : chainDERHex = List.unmodifiable(chainDERHex ?? const <String>[]),
+        attestedAt = attestedAt ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         attestedUntil = attestedUntil ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
@@ -79,9 +90,15 @@ class StoredEnrollment {
         'email': email,
         'name': name,
         'roll': roll,
-        'seedHex': seedHex,
+        // Security §2: never write a raw seed — always '' (parse-compat
+        // read only). Sealed-only: `sealedKeyHex` + `pkDHex` + `chainDERHex`.
+        'seedHex': '',
         'pkHex': pkHex,
         'sealedKeyHex': sealedKeyHex,
+        'chainDERHex': List<String>.of(chainDERHex),
+        // Firestore wire alias (security §7 `attestationChain`): written
+        // alongside for forward-compat with sec-sync claim/sync layers.
+        'attestationChain': List<String>.of(chainDERHex),
         'faceId': faceId,
         'enrolledAt': enrolledAt.toIso8601String(),
         'verifierVer': verifierVer,
@@ -101,13 +118,27 @@ class StoredEnrollment {
     final legacyModel = j['modelVer'] as String? ?? '';
     final hasTemplate =
         (j['templateCsv'] as String?)?.trim().isNotEmpty ?? false;
+    // chainDERHex parse-compat: local `chainDERHex` or Firestore wire
+    // `attestationChain` (security §7), else unbound legacy ([]).
+    List<String> chainFromJson(Map<String, dynamic> j) {
+      final raw = j['chainDERHex'] ?? j['attestationChain'];
+      if (raw is List) {
+        return [
+          for (final e in raw)
+            if (e is String && e.trim().isNotEmpty) e.trim()
+        ];
+      }
+      return const <String>[];
+    }
+
     return StoredEnrollment(
       email: j['email'] as String,
       name: j['name'] as String,
       roll: j['roll'] as String? ?? '',
-      seedHex: j['seedHex'] as String,
+      seedHex: j['seedHex'] as String? ?? '',
       pkHex: j['pkHex'] as String,
       sealedKeyHex: j['sealedKeyHex'] as String? ?? '',
+      chainDERHex: chainFromJson(j),
       faceId: j['faceId'] as String? ?? '',
       enrolledAt: DateTime.parse(j['enrolledAt'] as String),
       verifierVer: j['verifierVer'] as String? ??
