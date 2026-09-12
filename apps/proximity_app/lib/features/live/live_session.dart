@@ -119,12 +119,15 @@ class LiveStatusStrip extends StatelessWidget {
           ),
         ),
         const SizedBox(width: ProxSpacing.sm),
-        // Tabular elapsed clock (no jitter as digits roll).
-        Text(
-          liveElapsedLabel(elapsed),
-          style: ProxType.title(color: ink).copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
-            fontWeight: FontWeight.w700,
+        // Elapsed ticks every second — excluded from semantics so screen
+        // readers announce LIVE/IDLE + counters once, not every tick.
+        ExcludeSemantics(
+          child: Text(
+            liveElapsedLabel(elapsed),
+            style: ProxType.title(color: ink).copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         const Spacer(),
