@@ -120,6 +120,8 @@ class _HangingStudentDriver extends FakeStudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     onStatus(ListenStatus.waiting);
     await release.future;
@@ -142,6 +144,8 @@ class _RoundStudentDriver extends FakeStudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     listens++;
     onStatus(ListenStatus.waiting);
@@ -174,6 +178,8 @@ class _FlakyStudentDriver extends FakeStudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     listens++;
     onStatus(ListenStatus.waiting);
@@ -206,6 +212,8 @@ class _EndedHostDriver extends FakeStudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     listens++;
     return super.listenAndProve(

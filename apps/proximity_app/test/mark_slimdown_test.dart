@@ -102,6 +102,8 @@ class _LateStudentDriver extends FakeStudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     onStatus(ListenStatus.confirming);
     return const MarkedReceipt(
