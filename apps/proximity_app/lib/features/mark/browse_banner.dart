@@ -18,16 +18,22 @@ class BrowseBanner extends StatelessWidget {
   final String text;
   final VoidCallback onDismiss;
 
+  /// Info banners (broadcast-blocked) render a neutral icon; error banners
+  /// (join failures) render statusError. Container chrome shared.
+  final bool isError;
+
   const BrowseBanner({
     super.key,
     required this.icon,
     required this.text,
     required this.onDismiss,
+    this.isError = true,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
+    final tone = isError ? c.statusError : c.contentSecondary;
     return Container(
       padding: const EdgeInsets.all(ProxSpacing.md),
       decoration: BoxDecoration(
@@ -39,7 +45,7 @@ class BrowseBanner extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: c.statusError),
+          Icon(icon, size: 20, color: tone),
           const SizedBox(width: ProxSpacing.sm),
           Expanded(
             child: Text(

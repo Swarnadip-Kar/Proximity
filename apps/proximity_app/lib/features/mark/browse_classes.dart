@@ -274,6 +274,7 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
               text:
                   'Classroom WiFi blocks discovery broadcasts — showing BLE-hinted classes only (hint+probe rung). Stay on the classroom WiFi.',
               onDismiss: () => setState(() => _blockedDismissed = true),
+              isError: false,
             )),
           ],
           if (widget.live.isEmpty)
