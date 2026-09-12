@@ -18,3 +18,6 @@ dependencies:
 dev_dependencies:
   test: ^1.25.0
   lints: ^5.0.0
+  # Test-only P-256 fixtures (genuine ES256 dSig bytes for the §2 chain
+  # gate). Production signs in secure hardware via the app plugin.
+  pointycastle: ^4.0.0

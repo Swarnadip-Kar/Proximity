@@ -37,6 +37,15 @@ class ClassBeacon {
 /// optional so legacy bodies still encode (server applies the legacy
 /// path); bound clients always send them.
 ///
+/// Security §2 (sec-hwkey): HW-bound proofs also carry
+/// `attestationChain` (list<string> DER-hex, leaf-first — the same wire
+/// form as `StoredEnrollment.chainDERHex` / Firestore `attestationChain`)
+/// plus `installId` (the app UUID the enrollment challenge binds:
+/// SHA256(email || installId || pkS)). The professor recomputes the
+/// challenge from (ID, installId, pkS) and pins the chain offline; absent
+/// chain/installId on a FULL/STD claim fails closed as device-unproven
+/// (legacy NONE proofs omit both and take the fallback path).
+///
 /// Local dup path: bound clients also attach `face:{vec}` — ONE base64
 /// int8 mean embedding (684 chars, protocol faceVecEncode) over this SAME
 /// local HTTPS channel. The professor's phone holds it in RAM for the open
@@ -69,6 +78,9 @@ Map<String, dynamic> buildProveBody({
   String livenessVer = '',
   // Security §5 integrity flag ('' | 'integrity-flagged'). Advisory.
   String integrityFlag = '',
+  // Security §2 HW attestation (bound FULL/STD path; omitted on legacy).
+  List<String> attestationChain = const [],
+  String installId = '',
 }) =>
     {
       'ID': id,
@@ -104,4 +116,7 @@ Map<String, dynamic> buildProveBody({
           'ver': livenessVer,
         },
       if (integrityFlag.isNotEmpty) 'integrityFlag': integrityFlag,
+      if (attestationChain.isNotEmpty)
+        'attestationChain': List<String>.of(attestationChain),
+      if (installId.isNotEmpty) 'installId': installId,
     };

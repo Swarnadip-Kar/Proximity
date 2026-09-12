@@ -152,6 +152,17 @@ class ProxServer {
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
 
+  /// Security §4 rollout flip: false during migration (face-bound
+  /// pre-liveness proofs still confirm — see verify.dart), true with the
+  /// liveness-required min_version bump. ONE-LINE flip for the liveness
+  /// rollout — nothing else moves.
+  static const requireLivenessEnforced = false;
+
+  /// Pinned attestation roots for the §2 chain gate (SHA-256 digests of
+  /// trusted root DERs). Defaults to the Google Hardware Attestation roots
+  /// ([defaultPinnedAttestationRoots]); tests inject throwaway pins.
+  final List<Uint8List> pinnedAttestationRoots;
+
   /// Sighting grace: the student's response ADV precedes its POST, but the
   /// host BLE scan delivers sightings seconds later — a POST that is valid
   /// in every way EXCEPT a missing sighting waits this long for the radio
@@ -176,7 +187,10 @@ class ProxServer {
     this.sessionOrg = '',
     this.sessionProfEmail = '',
     this.sessionProfName = '',
-  }) : tally = tally ?? TallyStore() {
+    List<Uint8List>? pinnedRoots,
+  })  : tally = tally ?? TallyStore(),
+        pinnedAttestationRoots =
+            pinnedRoots ?? defaultPinnedAttestationRoots() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
     room = LiveRoom(tally: this.tally, windowNoOf: () => _windowNo);
@@ -612,18 +626,18 @@ class ProxServer {
         pkD = Uint8List(0);
         dSig = Uint8List(0);
       }
-      // Lightweight attestation claims (client-asserted; full X.509 chain
-      // verify is deferred — see file header caveat + residual risks).
+      // Security §2 HW binding (sec-hwkey): `pkD` (64B P-256 x||y) +
+      // `dSig` (64B raw R||S over deviceProvePreimage). The P-256 math
+      // runs below ([verifyDeviceSignature]); X.509 chain SIGNATURE math
+      // is explicitly out of scope (offline pin+challenge gate instead —
+      // see the chain gate after verify) — the residual is stated, never
+      // silent.
       final attMap = body['att'] as Map<String, dynamic>?;
       final attLevel = attestationLevelOf(attMap?['level'] as String? ?? 'NONE');
       final attUntil = attMap?['until'] is num
           ? DateTime.fromMillisecondsSinceEpoch(
               (attMap!['until'] as num).toInt(), isUtc: true)
           : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-      // dSig presence check (raw P-256 verify lives in the platform
-      // verifier — deferred; the ticket+Sig_s crypto below is fully
-      // verified here, and the double-pkD audit flags clones post-hoc).
-      final dSigPresent = pkD.isNotEmpty && dSig.isNotEmpty;
       final ticket = bound
           ? ProxCrypto.faceTicketHash(
               faceScore: ticketScore,
@@ -647,6 +661,45 @@ class ProxServer {
       final stuPk = ed.PublicKey(presentedPk);
 
       final expectedCj = w.challengeFor(j);
+      // Security §2 (sec-hwkey): REAL dSig verification + chain pin
+      // inputs. The enrollment challenge is recomputed from the LAN body
+      // (ID, installId, pkS) — the same canonical the client bound into
+      // the HW key at creation (no server nonce exists offline). `dSig`
+      // verifies over the canonical deviceProvePreimage with the
+      // EXPECTED challenge (a claimed-challenge mismatch already fails as
+      // `bad-challenge` in verify below).
+      final bodyInstallId =
+          (body['installId'] as String? ?? '').trim();
+      AttestationChain? proveChain;
+      try {
+        final rawChain = body['attestationChain'];
+        if (rawChain is List && rawChain.isNotEmpty) {
+          proveChain = AttestationChain.fromHexList(
+              [for (final e in rawChain) '${e ?? ''}']);
+        }
+      } catch (_) {
+        proveChain = null;
+      }
+      final expectedAttChallenge = deviceBindingChallenge(
+        emailLower: id,
+        installId: bodyInstallId,
+        pkS: presentedPk,
+      );
+      var dSigValidReal = false;
+      if (bound && ticket.isNotEmpty) {
+        dSigValidReal = verifyDeviceSignature(
+          pkDRaw64: pkD,
+          preimage: ProxCrypto.deviceProvePreimage(
+            sessionId: w.sessionId,
+            windowId: w.windowId,
+            j: j,
+            challenge: expectedCj,
+            faceTicketHashBytes: ticket,
+            pkS: presentedPk,
+          ),
+          sig64: dSig,
+        );
+      }
       final rid = ProxCrypto.responseToken(expectedCj, id);
       final expectedAirKey = '$kAirTypeResponse:${hexEncode(rid)}';
       final expectedUuid =
@@ -688,7 +741,7 @@ class ProxServer {
             livenessVer: livenessVer,
             attestationLevel: bound ? attLevel : AttestationLevel.none,
             attestedUntil: attUntil,
-            dSigValid: bound && dSigPresent,
+            dSigValid: bound && dSigValidReal,
             seenFaceValidAtMs: _seenFaceStamps,
             priorScores: List.of(_recentScores),
             lastVerifierVer: _lastVerifierVer,
@@ -702,8 +755,9 @@ class ProxServer {
           singleUseOk: singleUse,
           requireBoundTicket: bound,
           // Security §4 migration: face-bound pre-liveness proofs still
-          // confirm until the liveness-required min_version bump flips this.
-          requireLiveness: false,
+          // confirm until the liveness-required min_version bump flips
+          // [requireLivenessEnforced] above.
+          requireLiveness: requireLivenessEnforced,
         );
       }
 
@@ -765,6 +819,33 @@ class ProxServer {
             ),
             sigBind)) {
           outcome = const VerifyOutcome(ProveDecision.invalid, 'bad-bind');
+        }
+      }
+
+      // Security §2 chain gate (sec-hwkey): a confirming FULL/STD proof
+      // must carry a chain that (a) is well-formed with the attestation
+      // OID, (b) embeds the recomputed enrollment challenge, and (c) pins
+      // to the Google roots. Any failure verdicts device-unproven (never
+      // a tier, never a silent presence flag). NONE proofs skip this
+      // (fallback path owns them); legacy unbound proofs never reach it
+      // (their level parses as none).
+      if ((outcome.decision == ProveDecision.confirmed ||
+              outcome.decision == ProveDecision.late) &&
+          attLevel != AttestationLevel.none) {
+        final pin = proveChain == null
+            ? const ChainPinResult(
+                ok: false,
+                reason: 'empty-chain',
+                flags: ['attest-empty-chain'])
+            : verifyAttestationChainPin(
+                chain: proveChain,
+                pinnedRootHashes: pinnedAttestationRoots,
+                expectedChallenge: expectedAttChallenge,
+                level: attLevel,
+              );
+        if (!pin.ok) {
+          outcome = VerifyOutcome(ProveDecision.invalid, 'device-unproven',
+              [...outcome.attestationFlags, ...pin.flags]);
         }
       }
 

@@ -400,6 +400,9 @@ class ProxClient {
   /// deviceProvePreimage with the ticket hash). [faceVecB64] attaches the
   /// LAN-only session vector (`face:{vec}` — RAM-only on the professor
   /// phone, never the cloud); empty means no dup participation.
+  /// Security §2: [attestationChain] (DER-hex, leaf-first, from the stored
+  /// enrollment) + [installId] (challenge binding) ride on HW-bound proofs;
+  /// the professor pins + recomputes offline.
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -425,6 +428,8 @@ class ProxClient {
     double livenessScore = 0.0,
     String livenessVer = '',
     String integrityFlag = '',
+    List<String> attestationChain = const [],
+    String installId = '',
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -455,6 +460,8 @@ class ProxClient {
           livenessScore: livenessScore,
           livenessVer: livenessVer,
           integrityFlag: integrityFlag,
+          attestationChain: attestationChain,
+          installId: installId,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -486,6 +493,8 @@ class ProxClient {
     double livenessScore = 0.0,
     String livenessVer = '',
     String integrityFlag = '',
+    List<String> attestationChain = const [],
+    String installId = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
@@ -533,6 +542,8 @@ class ProxClient {
       livenessScore: livenessScore,
       livenessVer: livenessVer,
       integrityFlag: integrityFlag,
+      attestationChain: attestationChain,
+      installId: installId,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =
