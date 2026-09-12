@@ -86,9 +86,15 @@ abstract final class EnrollNav {
 
   static void finish(BuildContext context) {
     EnrollLog.nav('enroll done — leaving bundle');
-    Navigator.of(context).popUntil((route) =>
-        route.settings.name == null ||
-        !route.settings.name!.startsWith(routePrefix));
+    Navigator.of(context).popUntil((route) {
+      final name = route.settings.name;
+      if (name == null) return true;
+      if (name.startsWith(routePrefix)) return false;
+      // Still-capture sheet (ProxRoutes.faceCapture, literal to avoid a
+      // routes import cycle) is part of the bundle — pop it too.
+      if (name == 'face/capture') return false;
+      return true;
+    });
   }
 }
 

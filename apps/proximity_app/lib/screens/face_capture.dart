@@ -27,6 +27,7 @@ import '../design/tokens.dart';
 import '../features/face_identity/face_blocked.dart';
 import '../features/setup/enroll_capture_sections.dart'
     show displayedPreviewAspect;
+import '../routes.dart';
 
 /// Still-capture seam (navigation plumbing, NOT face math): production
 /// pushes [FaceCaptureScreen] (real camera plugin); widget tests override
@@ -43,6 +44,7 @@ class RealStillCapturer implements StillCapturer {
   Future<List<String>?> capture(BuildContext context,
           {required int captures, required bool autoFire, String? prompt}) =>
       Navigator.of(context).push<List<String>>(MaterialPageRoute(
+          settings: const RouteSettings(name: ProxRoutes.faceCapture),
           builder: (_) => FaceCaptureScreen(
               captures: captures, autoFire: autoFire, prompt: prompt)));
 }
