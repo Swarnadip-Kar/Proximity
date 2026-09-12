@@ -234,54 +234,51 @@ class LiveControlCluster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Action hierarchy (one primary per state): LIVE = Stop only;
-    // IDLE fresh = Start (primary, full-width) + End (quiet trailing);
-    // IDLE after rounds = Take another (primary, forward path) +
-    // Retake (secondary) + End (quiet trailing). End is terminal so it
-    // never competes as a primary; Retake is a correction, not the
-    // forward path.
-    final endQuiet = TextButton(
-      onPressed: (!hosting) ? null : onEnd,
-      child: const Text('End attendance'),
-    );
+    // The single most "alive" moment in the app. Actions fire
+    // immediately; only the visuals transition.
     return ProxSwitcher(
-      child: Column(
+      child: Wrap(
         key: ValueKey<bool>(live),
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
+        spacing: ProxSpacing.sm,
+        runSpacing: ProxSpacing.sm,
         children: [
           if (live) ...[
             ProxPrimaryButton(
               label: const Text('Stop'),
               onPressed: onStop,
-              expanded: true,
+              expanded: false,
             ),
-          ] else if (windowNo == 0) ...[
-            ProxPrimaryButton(
-              label: const Text('Start'),
-              onPressed: (!hosting) ? null : onStart,
-              expanded: true,
-            ),
-            Align(alignment: Alignment.centerRight, child: endQuiet),
           ] else ...[
-            ProxPrimaryButton(
-              label: const Text('Take another round'),
-              onPressed: (!hosting) ? null : onTakeAnother,
-              expanded: true,
-            ),
-            const SizedBox(height: ProxSpacing.sm),
-            Row(
-              children: [
-                Expanded(
-                  child: ProxSecondaryButton(
-                    label: Text('Retake round $windowNo'),
-                    onPressed: (!hosting) ? null : onRetake,
-                    expanded: true,
-                  ),
-                ),
-              ],
-            ),
-            Align(alignment: Alignment.centerRight, child: endQuiet),
+            if (windowNo == 0)
+              ProxPrimaryButton(
+                label: const Text('Start'),
+                onPressed: (!hosting) ? null : onStart,
+                expanded: false,
+              )
+            else ...[
+              // Retake resumes the stopped round: same round number,
+              // fresh secrets, marks merge into it (no new intersection
+              // hurdle). Take another round opens a new round instead.
+              ProxPrimaryButton(
+                label: Text('Retake round $windowNo'),
+                onPressed: (!hosting) ? null : onRetake,
+                expanded: false,
+              ),
+              ProxPrimaryButton(
+                label: const Text('Take another round'),
+                onPressed: (!hosting) ? null : onTakeAnother,
+                expanded: false,
+              ),
+              ProxSecondaryButton(
+                label: const Text('End attendance'),
+                onPressed: (!hosting) ? null : onEnd,
+              ),
+            ],
+            if (windowNo == 0)
+              ProxSecondaryButton(
+                label: const Text('End attendance'),
+                onPressed: (!hosting) ? null : onEnd,
+              ),
           ],
         ],
       ),

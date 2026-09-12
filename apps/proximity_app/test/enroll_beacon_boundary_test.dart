@@ -26,6 +26,7 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
+import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
@@ -66,6 +67,11 @@ Widget _captureHarness({required EnrollmentController ctl}) =>
       child: MaterialApp(
         // App theme: the shared two-oval overlay reads ProximityColors.
         theme: proxLightTheme(),
+        // Named-route table: EnrollFlow.openResult goes via
+        // ProxNav.pushNamed, so the harness must resolve enroll/* names.
+        routes: buildProxRoutes(),
+        onGenerateRoute: proxOnGenerateRoute,
+        onUnknownRoute: proxOnUnknownRoute,
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
