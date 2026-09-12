@@ -24,6 +24,7 @@ import '../../core/cloud_sync.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
+import '../../routes.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
@@ -93,7 +94,10 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
   void _openDeviceIdentity() {
     BleLog.log('NAV', 'entry open device & identity');
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const DeviceIdentityScreen()),
+      MaterialPageRoute(
+        settings: const RouteSettings(name: ProxRoutes.device),
+        builder: (_) => const DeviceIdentityScreen(),
+      ),
     );
   }
 

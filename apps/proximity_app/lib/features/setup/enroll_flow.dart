@@ -21,8 +21,7 @@
 // stepper only, never push/pop; scope absent → the pushes/pops below.
 import 'package:flutter/material.dart';
 
-import 'enroll_capture.dart';
-import 'enroll_result.dart';
+import '../../routes.dart';
 import 'enroll_widgets.dart';
 
 abstract final class EnrollFlow {
@@ -43,16 +42,13 @@ abstract final class EnrollFlow {
   }
 
   /// Intro → Capture (key must exist; the button gates it).
+  /// Delegates to [ProxNav.pushNamed] so the exact-table [_guardedRoute]
+  /// guards apply (web/mobile redirects); single-flight flags preserved.
   static Future<void> openCapture(BuildContext context) {
     if (_captureOpen) return Future.value();
     _captureOpen = true;
     try {
-      final future = Navigator.of(context).push(
-        MaterialPageRoute(
-          settings: const RouteSettings(name: captureRoute),
-          builder: (_) => const EnrollCaptureScreen(),
-        ),
-      );
+      final future = ProxNav.pushNamed(context, ProxRoutes.enrollCapture);
       return future.whenComplete(() => _captureOpen = false);
     } catch (_) {
       _captureOpen = false;
@@ -61,16 +57,13 @@ abstract final class EnrollFlow {
   }
 
   /// Capture → Result (5/5 validated; the button gates it).
+  /// Delegates to [ProxNav.pushNamed] so the exact-table [_guardedRoute]
+  /// guards apply; single-flight flags preserved.
   static Future<void> openResult(BuildContext context) {
     if (_resultOpen) return Future.value();
     _resultOpen = true;
     try {
-      final future = Navigator.of(context).push(
-        MaterialPageRoute(
-          settings: const RouteSettings(name: resultRoute),
-          builder: (_) => const EnrollResultScreen(),
-        ),
-      );
+      final future = ProxNav.pushNamed(context, ProxRoutes.enrollResult);
       return future.whenComplete(() => _resultOpen = false);
     } catch (_) {
       _resultOpen = false;

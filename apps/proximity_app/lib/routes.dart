@@ -107,6 +107,16 @@ abstract final class ProxRoutes {
   static const enrollCapture = 'enroll/capture';
   static const enrollResult = 'enroll/result';
 
+  // Still-capture sheet (RealStillCapturer — marking + enrollment angles).
+  // Named so EnrollNav.finish pops it with the bundle; native-only so the
+  // web records build redirects instead of landing on a dead camera.
+  static const faceCapture = 'face/capture';
+
+  // Serialized setup flow (shell auto-push on the root navigator when the
+  // current account is unenrolled; see shells _maybePushFlow and
+  // account_common dismissSetupFlowFirst — one constant, not two literals).
+  static const setupFlow = 'setup-flow';
+
   // Records.
   static const myAttendance = 'records/mine';
 
@@ -135,6 +145,7 @@ abstract final class ProxRoutes {
   static bool isNativeOnly(String name) =>
       name == enrollCapture ||
       name == enrollResult ||
+      name == faceCapture ||
       name.startsWith('live/');
 
   /// Web records-only guard: the fallback deep-link for native-only paths

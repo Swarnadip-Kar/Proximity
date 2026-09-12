@@ -823,7 +823,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       root
           .push(proxSharedAxisRoute(
             context,
-            name: 'setup-flow',
+            name: ProxRoutes.setupFlow,
             child: SetupFlowScreen(
               onFirstBack: () async {
                 if (!mounted) return;

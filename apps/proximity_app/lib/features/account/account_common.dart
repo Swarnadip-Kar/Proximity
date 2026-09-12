@@ -16,6 +16,7 @@ import '../../core/device_store.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../mode.dart';
+import '../../routes.dart';
 import '../entry/entry_flow.dart';
 
 /// Label + value row. Values truncate (never wrap a card open); full IDs
@@ -131,8 +132,8 @@ String linkedOrgForAccount(SignedAccount acct, LinkedIdentity? linked) {
 /// (plain tab roots, landing, widget tests). Never throws.
 void dismissSetupFlowFirst(BuildContext context) {
   try {
-    Navigator.of(context, rootNavigator: true).popUntil(
-        (route) => route.isFirst || route.settings.name != 'setup-flow');
+    Navigator.of(context, rootNavigator: true).popUntil((route) =>
+        route.isFirst || route.settings.name != ProxRoutes.setupFlow);
   } catch (_) {}
 }
 
