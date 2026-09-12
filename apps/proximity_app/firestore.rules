@@ -208,6 +208,22 @@ service cloud.firestore {
            -60 * 60 * 1000);
     }
 
+    // Security §7 additive fields (Spark-free type locks, migration-safe:
+    // absent = legacy, present must be correctly typed). attestationChain
+    // is X.509 DER hex only (never IMEI/serial — enforced by clients
+    // sending certs; rules lock the container type, offline verifiers
+    // check the content vs pinned roots). integrityFlag is closed to the
+    // two known values; new flags ship with a rules deploy + min_version
+    // bump together, never silently.
+    function validSecurityFields() {
+      return (!('attestationChain' in request.resource.data) ||
+          request.resource.data.attestationChain is list) &&
+        (!('livenessVer' in request.resource.data) ||
+          request.resource.data.livenessVer is string) &&
+        (!('integrityFlag' in request.resource.data) ||
+          request.resource.data.integrityFlag == '' ||
+          request.resource.data.integrityFlag == 'integrity-flagged');
+    }
     match /studentDevices/{id} {
       // Doc id IS the lowercased Gmail (client writes it so): the owner can
       // always get their own binding — including the first check when no
@@ -218,7 +234,8 @@ service cloud.firestore {
         && id == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
-        && incomingStampsFresh();
+        && incomingStampsFresh()
+        && validSecurityFields();
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 30-day cooldown (server-enforced: clients cannot
       // bypass it, even with a hand-built write) UNLESS the stored lastSeen
@@ -238,7 +255,8 @@ service cloud.firestore {
         && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed() ||
             isLostPhone())
         && incomingStampsFresh()
-        && storedMoveKeptOrFresh();
+        && storedMoveKeptOrFresh()
+        && validSecurityFields();
       // Owner-lazy six-month purge (no backend): the owner deletes their own
       // binding past 180d-stale lastSeen (server-time-gated, undated docs
       // deny). This REPLACES the old never-delete posture for exactly this
