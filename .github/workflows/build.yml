@@ -32,6 +32,18 @@ jobs:
           cache: true
       - run: flutter analyze
       - run: flutter test
+      - name: design-token guard (no raw hex / checkbox drift)
+        run: |
+          echo "--- Color(0x outside lib/design ---"
+          if grep -rn "Color(0x" lib/screens lib/features lib/widgets --include="*.dart" | grep -v "Colors.transparent" | grep -v "Colors.white" | grep -v "face_capture.dart" | grep -v "marked_wash.dart"; then
+            echo "Raw hex outside lib/design — move onto ProximityColors/ProxIdentity."
+            exit 1
+          fi
+          echo "--- Checkbox outside session_edit (per-round exception only) ---"
+          if grep -rn "Checkbox" lib/screens lib/features lib/widgets --include="*.dart" | grep -v "session_edit_screen.dart" | grep -v "selection semantics"; then
+            echo "Checkbox outside session_edit — use hold-and-tap SelectionScope."
+            exit 1
+          fi
       - name: protocol + transport + ble unit tests
         run: |
           for p in protocol transport ble; do

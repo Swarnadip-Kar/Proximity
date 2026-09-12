@@ -1085,3 +1085,27 @@ abstract final class ProxIconSizes {
   static const double xl = 32;
   static const double hero = 48;
 }
+
+/// Identity avatar hues — the only raw-hex palette outside
+/// `ProximityColors` itself. Decorative only (initials discs), never
+/// verdicts: deliberately avoids green/yellow/red/orange so an avatar
+/// never reads as Marked/Late/Error/Review next to a VerdictBadge.
+/// Slots stable via `studentColorIndex`; dark/light mates keep contrast
+/// on the 15% tint disc.
+abstract final class ProxIdentity {
+  static const dark = <Color>[
+    Color(0xFF8FB0FF), // blue
+    Color(0xFFB79CFF), // violet
+    Color(0xFFF49AC1), // rose
+    Color(0xFF94A3B8), // slate
+    Color(0xFF67E8F9), // cyan
+  ];
+
+  static const light = <Color>[
+    Color(0xFF3A63E0),
+    Color(0xFF6A4FD9),
+    Color(0xFFB23A72),
+    Color(0xFF5B6270),
+    Color(0xFF0E7C9E),
+  ];
+}

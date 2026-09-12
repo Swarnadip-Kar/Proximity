@@ -83,27 +83,8 @@ Color studentAvatarColor(ProximityColors c, String name) {
   return _identityFor(name, dark);
 }
 
-/// Identity hues (dark theme): blue / violet / rose / slate / cyan.
-const _identityDark = <Color>[
-  Color(0xFF8FB0FF),
-  Color(0xFFB79CFF),
-  Color(0xFFF49AC1),
-  Color(0xFF94A3B8),
-  Color(0xFF67E8F9),
-];
-
-/// Identity hues (light theme): darkened mates of [_identityDark] for
-/// contrast on white + 15% tint.
-const _identityLight = <Color>[
-  Color(0xFF3A63E0),
-  Color(0xFF6A4FD9),
-  Color(0xFFB23A72),
-  Color(0xFF5B6270),
-  Color(0xFF0E7C9E),
-];
-
 Color _identityFor(String name, bool dark) {
-  final palette = dark ? _identityDark : _identityLight;
+  final palette = dark ? ProxIdentity.dark : ProxIdentity.light;
   return palette[studentColorIndex(name) % palette.length];
 }
 
