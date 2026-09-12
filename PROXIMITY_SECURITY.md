@@ -106,7 +106,9 @@ firebase_app_check: ^0.4.7
 flutter_security_suite: ^latest
 flutter_face_liveness: ^latest
 face_anti_spoofing_detector: ^0.0.5
-package_info_plus: ^8.0.0
+package_info_plus: ^10.2.1 # (was ^8: win32 ^5→^6 split with fss ^11)
+share_plus: ^13.3.0 # (was ^12: same win32 split)
+file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
 tflite_flutter: ^0.11.0 # only if vendoring MiniFASNet
 ```
 
@@ -114,7 +116,11 @@ tflite_flutter: ^0.11.0 # only if vendoring MiniFASNet
 
 **Tests:** protocol goldens (old sigs must fail on extended preimage); `evaluateDeviceProof` chain-pinning units; SE migration test; `LivenessGate` fake (spoof→`faceFailed`); `IntegrityGate` fake (rooted enroll blocks, marking flags); `force_update` fake (stale→barrier); `rules-drill` emulator for new fields; 2-phone relay + adversarial drill (forwarded code, VPN, lent phone, photo spoof, wormhole).
 
-**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart.
+**Verification log (2026-09-12, `Security-Enhancement`):** suites green — protocol 138, transport 51, storage 12, ble 35, app 983 (`flutter test`, incl. new `liveness_attestation`, `secure_store_options`, `force_update`, `integrity_gate`, `liveness_gate` cases). Live rules drill 8/8 vs Firestore emulator (`apps/proximity_app/rules-drill/sec-drill.mjs`, `@firebase/rules-unit-testing`): valid claim allows; `attestationChain:string`, `integrityFlag:'evil'`, `livenessVer:number` deny; same-device `integrity-flagged` update allows; legacy field-less claim allows; `app_config` unauth get allows, list denies. Drill needs JDK 21 for firebase-tools (system Temurin 17 rejected — portable JDK via `api.adoptium.net/v3/binary/latest/21/ga/mac/aarch64/jdk/hotspot/normal/eclipse`, point `JAVA_HOME` at it; 200 MB, deleted after the run, re-fetch to re-drill).
+
+**`requireLiveness` migration (shipped default `false`):** liveness-carrying proofs are always gated; pre-liveness face-bound proofs still confirm (no liveness claimed) so live marking + old builds keep working while liveness clients roll out. Flip to `true` (server `requireLiveness`) together with the liveness-required `min_version` bump + `unknown-liveness-verifier` allowlist deploy — then pre-liveness fails `liveness-unbound`, never a silent downgrade. Post-rollout test pins the closed behavior; migration test pins the open default.
+
+**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; during the `requireLiveness:false` window a photo-spoof passes the liveness gate by absence (face/ticket/radio gates still apply) — bounded by the min_version flip.
 
 ---
 
