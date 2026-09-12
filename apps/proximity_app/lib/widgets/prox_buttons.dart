@@ -83,16 +83,10 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final enabled = widget.onPressed != null;
-
-    final gradient = enabled
-        ? c.gradientBrand
-        : LinearGradient(
-            colors: c.gradientBrand.colors
-                .map((color) => color.withValues(alpha: 0.4))
-                .toList(),
-            begin: c.gradientBrand.begin,
-            end: c.gradientBrand.end,
-          );
+    // Disabled is flat (never a faded gradient): a washed gradient still
+    // reads as actionable and fails contrast. Flat overlay + tertiary
+    // foreground reads inert on both themes.
+    final foreground = enabled ? Colors.white : c.contentTertiary;
 
     // ROOT CAUSE of the desktop flicker (hover + exit): hover changed
     // BoxShadow GEOMETRY (blur 12→20, spread −2→0) on enter AND exit.
@@ -108,7 +102,8 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
       child: Container(
         constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
         decoration: BoxDecoration(
-          gradient: gradient,
+          color: enabled ? null : c.surfaceOverlay,
+          gradient: enabled ? c.gradientBrand : null,
           borderRadius: ProxRadii.buttonRadius,
           boxShadow: enabled
               ? [
@@ -149,8 +144,8 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
                   children: [
                     if (widget.icon != null) ...[
                       IconTheme(
-                        data: const IconThemeData(
-                          color: Colors.white,
+                        data: IconThemeData(
+                          color: foreground,
                           size: ProxIconSizes.md,
                         ),
                         child: widget.icon!,
@@ -158,7 +153,7 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
                       const SizedBox(width: ProxSpacing.sm),
                     ],
                     DefaultTextStyle(
-                      style: ProxType.label(color: Colors.white).copyWith(
+                      style: ProxType.label(color: foreground).copyWith(
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
                       ),
