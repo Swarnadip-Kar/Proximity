@@ -38,7 +38,7 @@ import '../../design/tokens.dart';
 import '../../widgets/clock.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/fallback_button.dart';
-import '../../widgets/student_card.dart' show studentInitials;
+import '../../widgets/student_card.dart' show ProxAvatar;
 import 'browse_banner.dart';
 import 'browse_empty.dart';
 import 'browse_list.dart';
@@ -344,64 +344,7 @@ class _BrowseAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
-    final url = photoUrl.trim();
-    if (name.trim().isEmpty && url.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    Widget initials() => Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: c.accentBrand.withValues(alpha: 0.12),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            studentInitials(name),
-            style: ProxType.title(color: c.accentBrand),
-            overflow: TextOverflow.clip,
-            maxLines: 1,
-          ),
-        );
-
-    final face = url.isEmpty
-        ? initials()
-        : ClipOval(
-            child: Image.network(
-              url,
-              width: 56,
-              height: 56,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => initials(),
-              frameBuilder: (context, child, frame, _) {
-                if (frame == null) return initials();
-                return child;
-              },
-            ),
-          );
-
-    return Container(
-      key: const ValueKey('browse-avatar-ring'),
-      width: 64,
-      height: 64,
-      // Identity ring only: gradient border, no glow. Glow is reserved
-      // for live scanning signals (radar empty state, presence ring);
-      // an always-on avatar glow diluted that meaning.
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: c.gradientBrand,
-      ),
-      padding: const EdgeInsets.all(3),
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: c.surfaceBase,
-        ),
-        padding: const EdgeInsets.all(2),
-        child: face,
-      ),
-    );
+    // Thin alias over the shared component — one avatar assembly left.
+    return ProxAvatar(name: name, photoUrl: photoUrl, size: 56);
   }
 }
