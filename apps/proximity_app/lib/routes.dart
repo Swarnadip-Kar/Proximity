@@ -347,8 +347,7 @@ class ProxRoutePlaceholder extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ProxEmptyState(message: title, icon: Icons.route_outlined),
-          ProxSyncNote(detail),
+          ProxErrorState(headline: title, message: detail),
         ],
       ),
     );
