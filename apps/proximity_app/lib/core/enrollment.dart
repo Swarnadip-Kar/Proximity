@@ -40,6 +40,7 @@ import 'package:proximity_protocol/protocol.dart';
 
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
+import '../features/face_identity/liveness_gate.dart' show kLivenessVer;
 import '../mode.dart';
 import 'auth.dart';
 import 'cloud_sync.dart';
@@ -722,7 +723,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                       .millisecondsSinceEpoch,
                   attestedUntilMillis: _deviceKey.attestedUntil
                       .toUtc()
-                      .millisecondsSinceEpoch),
+                      .millisecondsSinceEpoch,
+                  // Security §7: HW chain (leaf-first DER hex) + liveness
+                  // pipeline tag. integrityFlag stays '' here — enroll
+                  // hard-blocks tainted devices before this claim, so a
+                  // filed claim is clean-enrolled by construction.
+                  attestationChain: chainDERHex,
+                  livenessVer: kLivenessVer,
+                  integrityFlag: ''),
               installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
