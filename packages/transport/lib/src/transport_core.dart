@@ -64,6 +64,11 @@ Map<String, dynamic> buildProveBody({
   String attestationLevel = 'NONE', // DKey attestation claim (bound path)
   int attestedUntilMs = 0, // attestation window end (bound path)
   String faceVecB64 = '', // LAN-only session vector (local dup path)
+  // Security §4 liveness ticket (classifier output only, no images).
+  double livenessScore = 0.0,
+  String livenessVer = '',
+  // Security §5 integrity flag ('' | 'integrity-flagged'). Advisory.
+  String integrityFlag = '',
 }) =>
     {
       'ID': id,
@@ -93,4 +98,10 @@ Map<String, dynamic> buildProveBody({
           'level': attestationLevel,
           'until': attestedUntilMs,
         },
+      if (livenessVer.isNotEmpty || livenessScore != 0.0)
+        'liveness': {
+          'score': livenessScore,
+          'ver': livenessVer,
+        },
+      if (integrityFlag.isNotEmpty) 'integrityFlag': integrityFlag,
     };

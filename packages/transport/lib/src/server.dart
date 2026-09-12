@@ -571,7 +571,24 @@ class ProxServer {
       final ticketStampMs =
           (faceMap?['faceValidAt'] as num?)?.toInt() ?? 0;
       final verifierVer = faceMap?['verifierVer'] as String? ?? '';
-      final bound = verifierVer.isNotEmpty || ticketStampMs != 0;
+      // Security §4 liveness ticket: `liveness:{score,ver}` (classifier
+      // output only, no images). Absent/0.0/'' = pre-liveness client.
+      final liveMap = body['liveness'] as Map<String, dynamic>?;
+      final livenessScore =
+          (liveMap?['score'] as num?)?.toDouble() ?? 0.0;
+      final livenessVer = liveMap?['ver'] as String? ?? '';
+      // Security §5 integrity flag: `integrityFlag` top-level or inside
+      // `att` (both accepted; top-level wins). '' = clean/legacy,
+      // 'integrity-flagged' rides the outcome flags (never auto-absent).
+      final integrityFlag = (body['integrityFlag'] as String? ??
+              (body['att'] as Map<String, dynamic>?)?['integrityFlag']
+                  as String? ??
+              '')
+          .trim();
+      final bound = verifierVer.isNotEmpty ||
+          ticketStampMs != 0 ||
+          livenessVer.isNotEmpty ||
+          livenessScore != 0.0;
       final ticketScore =
           (faceMap?['score'] as num?)?.toDouble() ?? faceScore;
       // Local dup vector (`face:{vec}` — base64 int8 mean embedding). Parse
@@ -611,7 +628,9 @@ class ProxServer {
           ? ProxCrypto.faceTicketHash(
               faceScore: ticketScore,
               faceValidAtMs: ticketStampMs,
-              verifierVer: verifierVer)
+              verifierVer: verifierVer,
+              livenessScore: livenessScore,
+              livenessVer: livenessVer)
           : Uint8List(0);
 
       // Rosterless (offline-local phase): the student presents its device
@@ -665,6 +684,8 @@ class ProxServer {
             faceValidAtMs: ticketStampMs,
             pkD: pkD,
             faceTicketHashBytes: ticket,
+            livenessScore: livenessScore,
+            livenessVer: livenessVer,
             attestationLevel: bound ? attLevel : AttestationLevel.none,
             attestedUntil: attUntil,
             dSigValid: bound && dSigPresent,
@@ -680,6 +701,9 @@ class ProxServer {
           freshWindow: w.isFresh(j, t),
           singleUseOk: singleUse,
           requireBoundTicket: bound,
+          // Security §4 migration: face-bound pre-liveness proofs still
+          // confirm until the liveness-required min_version bump flips this.
+          requireLiveness: false,
         );
       }
 
@@ -817,7 +841,12 @@ class ProxServer {
       // Tracks 2+3: feed the anomaly context (bounded) and surface flags
       // alongside the verdict. The signed ACK is unchanged; flags ride in
       // `flags` + the onProve reason suffix for the host log.
-      final flags = outcome.attestationFlags;
+      // Security §5: client-asserted `integrity-flagged` rides alongside
+      // (never a verdict change offline — professor-visible flag only).
+      final flags = [
+        ...outcome.attestationFlags,
+        if (integrityFlag == 'integrity-flagged') 'integrity-flagged',
+      ];
       if (bound) {
         _seenFaceStamps.add(ticketStampMs);
         _recentScores.add(ticketScore);

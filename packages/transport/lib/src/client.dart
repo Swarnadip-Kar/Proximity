@@ -422,6 +422,9 @@ class ProxClient {
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
     String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -449,6 +452,9 @@ class ProxClient {
           attestationLevel: attestationLevel,
           attestedUntilMs: attestedUntilMs,
           faceVecB64: faceVecB64,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
+          integrityFlag: integrityFlag,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -477,20 +483,28 @@ class ProxClient {
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
     String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
     // pin-check below + the server's tlsFp comparison both gate on it.
     final tlsFp = desc.tlsFp;
-    // Bound ticket (Tracks 2+3): stamp + tag + device binding. Legacy
-    // callers leave verifierVer empty → legacy body, legacy server path.
-    final bound = verifierVer.isNotEmpty;
+    // Bound ticket (Tracks 2+3 + security §4 liveness): stamp + tag +
+    // device binding + liveness. Legacy callers leave verifierVer/
+    // livenessVer empty → legacy body, legacy server path.
+    final bound = verifierVer.isNotEmpty ||
+        livenessVer.isNotEmpty ||
+        livenessScore != 0.0;
     final stampMs = faceValidAtMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     final ticket = bound
         ? ProxCrypto.faceTicketHash(
             faceScore: faceScore,
             faceValidAtMs: stampMs,
-            verifierVer: verifierVer)
+            verifierVer: verifierVer,
+            livenessScore: livenessScore,
+            livenessVer: livenessVer)
         : null;
     final dSig = (bound && dSigFor != null && ticket != null)
         ? await dSigFor(ticket, j)
@@ -516,6 +530,9 @@ class ProxClient {
       attestationLevel: attestationLevel,
       attestedUntilMs: attestedUntilMs,
       faceVecB64: faceVecB64,
+      livenessScore: livenessScore,
+      livenessVer: livenessVer,
+      integrityFlag: integrityFlag,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =
