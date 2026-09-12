@@ -1164,6 +1164,11 @@ void main() {
       String vec = '',
       String verifierVer = '',
       int? faceValidAtMs,
+      // Security §4 post-rollout: bound proofs must carry a gated liveness
+      // ticket (score >= Tl + allowlisted ver) or fail `liveness-unbound`.
+      // Legacy (default 0.0/'') callers stay on the unbound path.
+      double livenessScore = 0.0,
+      String livenessVer = '',
     }) =>
         client.prove(
           desc: desc,
@@ -1184,6 +1189,8 @@ void main() {
             faceScore: 0.9,
             faceValidAtMs: faceValidAtMs ?? 0,
             verifierVer: verifierVer,
+            livenessScore: livenessScore,
+            livenessVer: livenessVer,
           ),
           sigBindFor: (fp, j) => ProxCrypto.sign(
               key.privateKey,
@@ -1195,6 +1202,8 @@ void main() {
           faceVecB64: vec,
           verifierVer: verifierVer,
           faceValidAtMs: faceValidAtMs,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
         );
 
     test('pair flags on second prove; both marked; wire verdict clean',
@@ -1381,20 +1390,25 @@ void main() {
         final vec = faceVecEncode(tvec(5));
         // Same BYTES, different pipeline tags (both allowlisted, mutually
         // incomparable) → no token, both plant.
-        // Bound signatures (explicit fresh stamp, matching ticket).
+        // Bound signatures (explicit fresh stamp, matching ticket +
+        // post-rollout liveness ticket, allowlisted ver).
         final stamp = DateTime.now().toUtc().millisecondsSinceEpoch;
         await proveAs(client, desc, cj,
             key: ka,
             email: 'a@x.in',
             vec: vec,
             verifierVer: 'face_verification/pipe-A',
-            faceValidAtMs: stamp);
+            faceValidAtMs: stamp,
+            livenessScore: 0.9,
+            livenessVer: 'liveness/test-pipe+a1b2c3d4');
         final rb = await proveAs(client, desc, cj,
             key: kb,
             email: 'b@x.in',
             vec: vec,
             verifierVer: 'face_verification/pipe-B',
-            faceValidAtMs: stamp);
+            faceValidAtMs: stamp,
+            livenessScore: 0.9,
+            livenessVer: 'liveness/test-pipe+a1b2c3d4');
         expect(rb.decision, ProveDecision.confirmed);
         expect(log.any((l) => l.contains('dupface')), isFalse);
         expect(server.faceVectorCount, 2);

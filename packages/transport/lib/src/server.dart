@@ -152,11 +152,17 @@ class ProxServer {
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
 
-  /// Security §4 rollout flip: false during migration (face-bound
-  /// pre-liveness proofs still confirm — see verify.dart), true with the
-  /// liveness-required min_version bump. ONE-LINE flip for the liveness
-  /// rollout — nothing else moves.
-  static const requireLivenessEnforced = false;
+  /// Security §4 rollout flip: TRUE since the liveness rollout completed
+  /// (MiniFASNetV2 model vendored + enrollment gated — sec-liveness): every
+  /// bound proof must carry a gated liveness ticket (score >= Tl +
+  /// allowlisted livenessVer), or it fails closed as `liveness-unbound`
+  /// (never a silent downgrade to face-only). Legacy UNBOUND proofs (no
+  /// ticket at all — old mixed-fleet stragglers) still take the legacy
+  /// path; pre-liveness BOUND proofs fail closed with an actionable
+  /// reason. Pairs with the liveness-required min_version bump
+  /// (app_config/min_version 0.2.0 + force:true — stale builds hit the
+  /// ForceUpdate barrier instead of cryptic rejects).
+  static const requireLivenessEnforced = true;
 
   /// Pinned attestation roots for the §2 chain gate (SHA-256 digests of
   /// trusted root DERs). Defaults to the Google Hardware Attestation roots
@@ -774,9 +780,9 @@ class ProxServer {
           freshWindow: w.isFresh(j, t),
           singleUseOk: singleUse,
           requireBoundTicket: bound,
-          // Security §4 migration: face-bound pre-liveness proofs still
-          // confirm until the liveness-required min_version bump flips
-          // [requireLivenessEnforced] above.
+          // Security §4 enforcement: the liveness rollout is done, so
+          // face-bound pre-liveness proofs fail closed (`liveness-unbound`
+          // with actionable copy) via [requireLivenessEnforced] above.
           requireLiveness: requireLivenessEnforced,
         );
       }

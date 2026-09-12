@@ -17,6 +17,9 @@ import 'package:test/test.dart';
 const _email = 'student@example.com';
 const _installId = 'inst-test-1';
 const _verifierVer = 'face_verification/test+deadbeef';
+// Allowlisted liveness pipeline tag (prefix `liveness/` — see
+// kLivenessVerPrefix); mirrors the vendored MiniFASNetV2 pin shape.
+const _liveVer = 'liveness/minifasnet-v2-test+a1b2c3d4';
 
 SecureRandom _rand([int salt = 5]) {
   final r = SecureRandom('Fortuna');
@@ -105,6 +108,11 @@ Future<ProveResult> _proveHw({
   // Security §5: the verdict hash the HW key signs (server recomputes the
   // identical bound preimage). '' simulates a pre-binding client.
   String integrityHash = '00000000',
+  // Security §4: liveness ticket (score >= Tl + allowlisted ver) — the
+  // server enforces it post-rollout. Neutral (0.0/'') simulates a
+  // pre-liveness client (fails closed `liveness-unbound`).
+  double livenessScore = 0.92,
+  String livenessVer = _liveVer,
 }) {
   final peerW = ProxCrypto.peerAlias(_pk32(stu.publicKey), desc.windowId);
   final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -129,6 +137,8 @@ Future<ProveResult> _proveHw({
       faceValidAtMs: stampMs,
       verifierVer: _verifierVer,
       pkD: pkD,
+      livenessScore: livenessScore,
+      livenessVer: livenessVer,
     ),
     sigBindFor: (fp, jj) => ProxCrypto.sign(
         stu.privateKey,
@@ -139,6 +149,8 @@ Future<ProveResult> _proveHw({
             tlsFingerprint: fp)),
     faceValidAtMs: stampMs,
     verifierVer: _verifierVer,
+    livenessScore: livenessScore,
+    livenessVer: livenessVer,
     pkD: pkD,
     // The closure signs with the hash the client hands it (the same
     // value the body carries — claim/sign consistency by construction).
@@ -165,12 +177,56 @@ Future<ProveResult> _proveHw({
 }
 
 void main() {
-  test('migration default: liveness not yet enforced (one-line flip later)',
-      () {
-    // Pinned so the rollout flip (requireLivenessEnforced = true) plus
-    // the liveness min_version bump cannot land silently — flip the const
-    // AND update the bound proofs to carry liveness tickets.
-    expect(ProxServer.requireLivenessEnforced, isFalse);
+  test('liveness enforced post-rollout (flip + min_version bump)', () {
+    // Pinned so the enforcement can never be silently reverted: the
+    // liveness rollout is DONE (model vendored + enrollment gated), so
+    // pre-liveness bound proofs fail closed and old builds are floored by
+    // app_config/min_version 0.2.0 + force:true (ForceUpdate barrier with
+    // actionable copy, never cryptic rejects).
+    expect(ProxServer.requireLivenessEnforced, isTrue);
+  });
+
+  test('pre-liveness HW proof fails closed liveness-unbound', () async {
+    // Security §4 post-rollout contract: a genuine HW proof (valid dSig +
+    // pinned chain) WITHOUT a liveness ticket still fails — never a silent
+    // downgrade to face-only. Old clients see the actionable reason and
+    // the ForceUpdate floor (0.2.0/force:true) keeps them out earlier.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final device = _p256Key();
+    final enrollChallenge = deviceBindingChallenge(
+        emailLower: _email,
+        installId: _installId,
+        pkS: _pk32(stu.publicKey));
+    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final server = await _makeHwServer(
+      prof: prof,
+      pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
+    );
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = server.window!.challengeFor(0);
+      final desc = await client.fetchWindow(cj);
+      final res = await _proveHw(
+        client: client,
+        desc: desc,
+        cj: cj,
+        j: 0,
+        stu: stu,
+        pkD: device.pkD,
+        dKey: device.d,
+        chainHex: chainHex,
+        installId: _installId,
+        livenessScore: 0.0,
+        livenessVer: '',
+      );
+      expect(res.decision, ProveDecision.invalid);
+      expect(res.reason, 'liveness-unbound');
+      expect(server.tally.presentCount, 0);
+    } finally {
+      client.close();
+      await server.stop();
+    }
   });
 
   test('HW FULL proof with genuine dSig + pinned chain confirms', () async {
@@ -384,7 +440,11 @@ void main() {
           faceValidAtMs: stampMs,
           verifierVer: _verifierVer,
           pkD: device.pkD,
+          livenessScore: 0.92,
+          livenessVer: _liveVer,
         ),
+        livenessScore: 0.92,
+        livenessVer: _liveVer,
         sigBindFor: (fp, jj) => ProxCrypto.sign(
             stu.privateKey,
             bindPreimage(
