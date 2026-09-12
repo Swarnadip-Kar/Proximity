@@ -862,19 +862,22 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   }) async {
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      // Key decode inside try: a corrupt seed (or a clone that fails
-      // unwrap) fails as a terminal error receipt, never an uncaught
-      // throw mislabeled by outer handlers.
+      // Sealed-only key decode (security §2): a corrupt envelope (or a
+      // clone that fails unwrap) fails as a terminal error receipt, never
+      // an uncaught throw mislabeled by outer handlers. Empty sealed means
+      // unsealed legacy — re-enroll on hardware, never a raw-seed fallback.
       final ed.PrivateKey sk;
       try {
-        if (stored.sealedKeyHex.isNotEmpty) {
-          await _deviceKey.ensure();
-          final seed =
-              await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
-          sk = ed.newKeyFromSeed(seed);
-        } else {
-          sk = ed.newKeyFromSeed(hexDecode(stored.seedHex));
+        if (stored.sealedKeyHex.isEmpty) {
+          BleLog.log('SEC', 'prove refused: unsealed enrollment — re-enroll');
+          return const MarkedReceipt(
+              detail: 'restore detected — re-enroll',
+              result: StudentResult.error);
         }
+        await _deviceKey.ensure();
+        final seed =
+            await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
+        sk = ed.newKeyFromSeed(seed);
       } on StateError catch (e) {
         if ('$e'.contains('restore detected')) {
           BleLog.log('SEC', 'SKey unwrap failed: backup-restore clone?');
