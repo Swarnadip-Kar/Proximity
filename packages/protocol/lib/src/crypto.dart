@@ -4,3 +4,4 @@ library;
 
 export 'crypto/primitives.dart';
 export 'crypto/preimages.dart';
+export 'crypto/hardware_verify.dart';

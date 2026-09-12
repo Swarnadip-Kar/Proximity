@@ -292,6 +292,34 @@ class ChainPinResult {
       {required this.ok, required this.reason, this.flags = const []});
 }
 
+/// Pinned Google Hardware Attestation Root CAs (security §2: the professor
+/// verifies the chain offline against these pins — no network, no backend).
+///
+/// SHA-256 over the root CERTIFICATE DER (the exact bytes
+/// [verifyAttestationChainPin] hashes). Public trust anchors, not secrets —
+/// published at
+/// https://developer.android.com/privacy-and-security/security-key-attestation#root_certificate
+/// (pins computed 2026-09-12 from the page's PEM roots):
+/// - RSA root, serial f92009e853b6b045, valid to 2042-03-15.
+/// - EC root ("Key Attestation CA11"), valid 2025-07-17 → 2035-07-15;
+///   starts signing device chains 2026-02-01.
+/// Legacy roots (2016/2019/2021) are deliberately omitted: the 2016 root
+/// expired May 2026 and pre-2021 devices chaining to it fail closed as
+/// `unknown-root` (manual path) rather than silently trusting an expired
+/// anchor. iOS App Attest chains pin Apple roots instead — callers pass
+/// their own [pinnedRootHashes]; these defaults are the Android set.
+const String kGoogleHwAttestationRootRsaSha256Hex =
+    'df1d9307e9905467bd87f3a596da5269525f81971c7a0ea0a9c364746b1271a7';
+const String kGoogleHwAttestationRootEcSha256Hex =
+    '6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0';
+
+/// Default pinned roots for Android key-attestation chains (see above).
+/// Returns fresh copies (callers must not mutate the pins).
+List<Uint8List> defaultPinnedAttestationRoots() => [
+      hexDecode(kGoogleHwAttestationRootRsaSha256Hex),
+      hexDecode(kGoogleHwAttestationRootEcSha256Hex),
+    ];
+
 /// Offline chain-vs-pinned-roots check (security §2-last-para, pure half).
 ///
 /// Checks, in order (fail-closed, first failure wins):

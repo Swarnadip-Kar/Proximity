@@ -9,6 +9,13 @@ environment:
 dependencies:
   ed25519_edwards: ^0.3.1
   crypto: ^3.0.6
+  # P-256 ES256 verify (professor checks the HW dSig offline) + AES-GCM
+  # sealed envelopes (app HW key wraps the SKey seed). Pure-Dart, no
+  # platform code — protocol stays offline-verifiable everywhere.
+  # (`cryptography` preferred in principle, but its pure-Dart backend does
+  # not implement ECDSA — key generation/sign/verify throw
+  # UnimplementedError off Flutter — so pointycastle carries both.)
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   test: ^1.25.0
