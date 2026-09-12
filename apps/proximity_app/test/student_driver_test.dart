@@ -6,6 +6,7 @@ import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
@@ -52,12 +53,14 @@ RealStudentDriver testDriver(
         {required InMemoryDeviceStore store,
         FakeFaceVerifier? verifier,
         FakeDeviceKey? deviceKey,
+        LivenessGate? livenessGate,
         required ProxBleEngine engine}) =>
     RealStudentDriver(
       store: store,
       verifier: verifier ?? mockVerifier(),
       deviceKey: deviceKey ?? FakeDeviceKey(),
       engine: engine,
+      livenessGate: livenessGate ?? FakeLivenessGate(),
     );
 
 void main() {
@@ -67,6 +70,7 @@ void main() {
       verifier: mockVerifier(),
       deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
     final res = await d.checkFace('still.jpg');
     expect(res.match, FaceMatch.pass);
@@ -83,6 +87,7 @@ void main() {
       verifier: mockVerifier(),
       deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
     final res = await d.checkFace('still.jpg');
     expect(res.match, FaceMatch.inconclusive);
@@ -95,6 +100,7 @@ void main() {
       verifier: mockVerifier(),
       deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
     // Even a perfect probe scores nothing: incomparable embeddings must
     // not produce a pass OR burn a mismatch attempt.
@@ -1025,6 +1031,7 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
         verifier: mockVerifier(),
         deviceKey: deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
       // checkFace still passes (faceId matches) — the clone fails at SIGN
       // time, when the sealed SKey refuses to unwrap.
@@ -1074,6 +1081,7 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
       verifier: mockVerifier(match: false),
       deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
     final res = await d.checkFace('attacker-still.jpg');
     expect(res.match, FaceMatch.mismatch);

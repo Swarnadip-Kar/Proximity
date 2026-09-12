@@ -18,6 +18,14 @@
 // (isAndroid||isIOS via platformx) — desktop/web fail closed through
 // [UnavailableFaceVerifier] (wired by DI, never the plugin).
 //
+// Liveness ordering (security §4, F4 fix): this verifier is a PASSIVE
+// matcher only — it never judges vitality. Callers (StudentDriver.checkFace)
+// MUST run LivenessGate.detectPassive on the still BEFORE verify(): a
+// below-threshold liveness fails as mismatch without ever reaching the
+// matcher, and only a gated pass carries (livenessScore, livenessVer) into
+// the extended Sig_s ticket. Calling verify() without a prior liveness
+// gate is a contract violation (photo-spoof would match).
+//
 // Score semantics (plugin reality, documented not hidden): the plugin's
 // verify API returns the matched id (or null), not a distance. A match is
 // therefore carried at exactly the decision [threshold] — the honest
@@ -25,7 +33,14 @@
 // (score>=T). The exact-1.000-repeat anomaly flag can never false-fire on
 // these (it keys on >=1.0). Calibration note: FAR~0.01%/FRR<2% at the
 // 0.70 default is the plugin's published operating point, not a
-// Proximity-measured ROC — see residual risks.
+// Proximity-measured ROC — see residual risks. System operating point WITH
+// the §4 liveness gate (heuristic-v1 scorer, Tl=0.70): UNMEASURED — no
+// Proximity FAR/FRR ROC exists yet for the combined matcher+liveness
+// decision (spoof FAR is strictly lower than face-only — a print must now
+// also clear the vitality gate — but the FRR cost of the heuristic on
+// genuine dim/blurry stills is unquantified). MiniFASNetV2-SE ONNX scorer
+// (~98.2% CelebA-Spoof target) + adversarial drill stay required
+// (sec-verify); never quote the plugin numbers as system numbers.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';

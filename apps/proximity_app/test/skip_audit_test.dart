@@ -30,6 +30,7 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/routes.dart';
 import 'package:proximity_ble/ble.dart';
@@ -46,12 +47,14 @@ const _identity = LinkedIdentity(name: 'S', gmail: _email, roll: '1');
 RealStudentDriver _driver(
         {required InMemoryDeviceStore store,
         FaceVerifier? verifier,
-        FakeDeviceKey? deviceKey}) =>
+        FakeDeviceKey? deviceKey,
+        LivenessGate? livenessGate}) =>
     RealStudentDriver(
       store: store,
       verifier: verifier ?? FakeFaceVerifier(),
       deviceKey: deviceKey ?? FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: livenessGate ?? FakeLivenessGate(),
     );
 
 void main() {

@@ -20,6 +20,7 @@ import 'package:proximity_transport/transport.dart';
 
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
+import '../features/face_identity/liveness_gate.dart';
 import '../mode.dart';
 import 'device_store.dart';
 import 'platformx.dart';
@@ -44,8 +45,18 @@ class FaceCheckResult {
   final int faceValidAtMs;
   /// Pipeline tag bound into Sig_s. '' unless [match] is pass.
   final String verifierVer;
+  /// Passive liveness score bound into Sig_s via the extended ticket.
+  /// 0 unless [match] is pass (the gate runs before the matcher, so a
+  /// pass always carries a real gated score — never a hardcoded constant).
+  final double livenessScore;
+  /// Liveness pipeline tag bound into Sig_s. '' unless [match] is pass.
+  final String livenessVer;
   const FaceCheckResult(this.match,
-      [this.score = 0, this.faceValidAtMs = 0, this.verifierVer = '']);
+      [this.score = 0,
+      this.faceValidAtMs = 0,
+      this.verifierVer = '',
+      this.livenessScore = 0,
+      this.livenessVer = '']);
 }
 
 class MarkedReceipt {
@@ -147,6 +158,9 @@ abstract class StudentDriver {
   /// never sees a countdown. Never marks without radio + signed ACK.
   /// [faceValidAtMs]/[verifierVer] bind the face ticket into Sig_s (+pkD);
   /// absent (0/'') → legacy unbound proof (tests only, never production).
+  /// [livenessScore]/[livenessVer] bind the §4 liveness ticket: explicit
+  /// values win, else the checkFace cache on stamp equality, else legacy
+  /// (0.0/'') — migration-confirm now, fail-closed post-rollout.
   Future<MarkedReceipt> listenAndProve({
     required ClassBeacon target,
     required LinkedIdentity identity,
@@ -154,6 +168,8 @@ abstract class StudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   });
 
   /// Waiting-room LAN probe: reachable + windowOpen without radio.
@@ -215,19 +231,41 @@ class _TryNext implements Exception {
   String toString() => why;
 }
 
+/// Internal liveness cache: stamped by [RealStudentDriver.checkFace] on
+/// pass, consumed by [RealStudentDriver.listenAndProve]/[_prove] — same
+/// pattern as the [_faceGate] SK-use stamp. Lets the face screen stay on
+/// its current call shape (score/stamp/verifierVer): the liveness ticket
+/// resolves from the just-completed check via stamp equality, so no UI
+/// file changes to thread it. Keyed by [faceValidAtMs] so a stale cache
+/// from an older session can never authorize a newer listen (0/legacy
+/// stamps never hit). Explicit listenAndProve liveness args always win.
+class _LivenessStamp {
+  final int faceValidAtMs;
+  final double score;
+  final String ver;
+  const _LivenessStamp(
+      {required this.faceValidAtMs, required this.score, required this.ver});
+}
+
 class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   final FaceVerifier _verifier;
   final DeviceKey _deviceKey;
   final ProxBleEngine _engine;
+  final LivenessGate _liveness;
   RealStudentDriver({
     required DeviceStore store,
     required FaceVerifier verifier,
     required DeviceKey deviceKey,
     required ProxBleEngine engine,
+    LivenessGate? livenessGate,
   })  : _store = store,
         _verifier = verifier,
         _deviceKey = deviceKey,
-        _engine = engine;
+        _engine = engine,
+        // Platform gate by default (native heuristic, web fail-closed
+        // stub) so no new DI override is needed in main (2C-owned).
+        // Tests inject FakeLivenessGate.
+        _liveness = livenessGate ?? HeuristicLivenessGate();
 
   /// Dead-air bound per wait: 45s of no new challenge, then one cheap
   /// window probe decides "round ended" vs "still open". Tests shrink it.
@@ -237,6 +275,29 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// Guards the idle-5-minutes-on-waiting-screen edge — signing without a
   /// fresh holder check is refused before anything touches the network.
   final FaceGate _faceGate = FaceGate();
+
+  /// Liveness ticket cache (see [_LivenessStamp]): the last checkFace
+  /// pass's (stamp, score, ver). Consumed by [listenAndProve]/[_prove].
+  _LivenessStamp? _lastLiveness;
+
+  /// Resolves the liveness ticket for one listen: explicit args win, else
+  /// the checkFace cache on stamp equality, else legacy (0.0/'') — which
+  /// the server still confirms during migration (requireLiveness:false)
+  /// and fails closed post-rollout. Never throws.
+  ({double score, String ver}) _resolveLiveness({
+    double? livenessScore,
+    String? livenessVer,
+    required int faceValidAtMs,
+  }) {
+    if (livenessScore != null && livenessVer != null) {
+      return (score: livenessScore, ver: livenessVer);
+    }
+    final c = _lastLiveness;
+    if (c != null && faceValidAtMs != 0 && c.faceValidAtMs == faceValidAtMs) {
+      return (score: c.score, ver: c.ver);
+    }
+    return (score: 0.0, ver: '');
+  }
 
   /// Quiet slice inside [silenceCap]: a platform scan can die silently
   /// while reporting active (observed live: zero sightings for minutes
@@ -297,6 +358,24 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           'face check: stale face ${stored.verifierVer} vs $currentVer — re-face, never match');
       return const FaceCheckResult(FaceMatch.staleTemplate);
     }
+    // Security §4 passive liveness BEFORE the matcher (marking =
+    // passive only, ~1s, no prompts): a photo/screen that would match the
+    // template must still fail here. Throw/unreadable → inconclusive
+    // (rescan, burns nothing); below-threshold → mismatch (a readable
+    // still of a non-live holder consumes one attempt, same as matching
+    // somebody else — never auto-present, SK never signs).
+    LivenessResult live;
+    try {
+      live = await _liveness.detectPassive(imagePath);
+    } catch (e) {
+      BleLog.log('SEC', 'liveness check ERROR: $e');
+      return const FaceCheckResult(FaceMatch.inconclusive);
+    }
+    if (live.score < kLivenessThreshold) {
+      BleLog.log('SEC',
+          'liveness check FAIL score=${live.score.toStringAsFixed(2)}');
+      return const FaceCheckResult(FaceMatch.mismatch);
+    }
     try {
       final res = await _verifier.verify(stored.faceId, imagePath);
       if (res.match) {
@@ -304,12 +383,22 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         // Stamp the SK-use gate: the private key signs ONLY within a
         // fresh face window (kFaceValidWindow). _prove enforces it —
         // idling past expiry on the waiting screen can never sign.
+        // livenessPass is the REAL gated score above (always >= Tl here —
+        // the early return is load-bearing, not redundant), never a
+        // hardcoded true: a transplanted pass without liveness fails.
         _faceGate.evaluate(
-            score: res.score, livenessPass: true, now: DateTime.now().toUtc());
+            score: res.score,
+            livenessPass: live.score >= kLivenessThreshold,
+            now: DateTime.now().toUtc());
+        // Stamp the liveness ticket cache for listenAndProve/_prove (same
+        // pattern as _faceGate): the extended ticket binds this exact
+        // (score, ver) pair.
+        _lastLiveness = _LivenessStamp(
+            faceValidAtMs: stampMs, score: live.score, ver: live.ver);
         BleLog.log('SEC',
-            'face check pass score=${res.score.toStringAsFixed(2)}');
+            'face check pass score=${res.score.toStringAsFixed(2)} liveness=${live.score.toStringAsFixed(2)}');
         return FaceCheckResult(FaceMatch.pass, res.score, stampMs,
-            _verifier.verifierVer);
+            _verifier.verifierVer, live.score, live.ver);
       }
       BleLog.log('SEC', 'face check FAIL');
       return FaceCheckResult(FaceMatch.mismatch, res.score);
@@ -475,6 +564,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     // L1 domain gate: records-only devices never listen-and-prove —
     // guidance, nothing signed.
@@ -490,6 +581,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           detail: 'Already proving — wait for the current round',
           result: StudentResult.error);
     }
+    // Security §4: resolve the liveness ticket ONCE per listen (explicit
+    // args win, else the checkFace cache on stamp equality, else legacy).
+    // Every rotation in this listen proves the same ticket — a mid-listen
+    // liveness change cannot smuggle a weaker ticket into a later j.
+    final live = _resolveLiveness(
+        livenessScore: livenessScore,
+        livenessVer: livenessVer,
+        faceValidAtMs: faceValidAtMs);
     _listening = true;
     try {
       return await _listenAndProveInner(
@@ -498,7 +597,9 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           faceScore: faceScore,
           onStatus: onStatus,
           faceValidAtMs: faceValidAtMs,
-          verifierVer: verifierVer);
+          verifierVer: verifierVer,
+          livenessScore: live.score,
+          livenessVer: live.ver);
     } finally {
       _listening = false;
     }
@@ -511,6 +612,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
   }) async {
     final stored = await _store.readEnrollment();
     if (stored == null ||
@@ -530,10 +633,20 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // screen matched just before calling): stamp the SK-use gate now, so
     // _prove can time-bound marathon listens — a face pass older than
     // kFaceValidWindow refuses to sign and the student re-scans instead
-    // of marking on a stale check.
+    // of marking on a stale check. livenessPass is the listen's REAL
+    // ticket state: a CLAIMED ticket must clear Tl (weak/clamped scores
+    // never arm the key); an UNCLAIMED legacy ticket (0.0/'', no checkFace
+    // cache — direct-listen tests + pre-liveness callers) arms exactly as
+    // before during migration (the host still confirms face-bound while
+    // requireLiveness is false). Post-rollout those callers must carry
+    // liveness — the host fails them liveness-unbound regardless.
     if (faceScore >= kFaceThreshold) {
+      final livenessOk = (livenessScore == 0.0 && livenessVer.isEmpty) ||
+          livenessScore >= kLivenessThreshold;
       _faceGate.evaluate(
-          score: faceScore, livenessPass: true, now: DateTime.now().toUtc());
+          score: faceScore,
+          livenessPass: livenessOk,
+          now: DateTime.now().toUtc());
     }
     // No round clock: the window stays open until the professor stops it,
     // so a slow prover (face retries, weak corner signal) simply proves a
@@ -586,6 +699,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           faceScore: faceScore,
           faceValidAtMs: faceValidAtMs,
           verifierVer: verifierVer,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
           challenge: cj,
           stored: stored,
           onStatus: onStatus,
@@ -722,6 +837,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// POST carries pkD + dSig (DKey over deviceProvePreimage) + lightweight
   /// attestation claims. Legacy unbound proofs (tests only) still encode
   /// when no ticket is present.
+  /// Security §4: the ticket is the EXTENDED face+liveness form
+  /// (score||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8 —
+  /// sec-protocol 1A): Sig_s AND dSig bind the same hash, so the liveness
+  /// classifier output is transplant-proof. The transport client derives
+  /// the identical ticket from the same inputs for dSig/the `liveness:{}`
+  /// body (single source: the resolved listen ticket passed down here).
   /// Local dup path: the POST also carries the LAN-only session vector
   /// (`face:{vec}` — one base64 int8 mean embedding for the professor
   /// phone's in-memory compare, RAM-only, never the cloud). Fail-soft:
@@ -733,6 +854,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     required double faceScore,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
     required Uint8List challenge,
     required StoredEnrollment stored,
     required void Function(ListenStatus s) onStatus,
@@ -773,12 +896,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           pkD = Uint8List(0);
         }
       }
-      final bound = verifierVer.isNotEmpty;
+      final bound = verifierVer.isNotEmpty ||
+          livenessVer.isNotEmpty ||
+          livenessScore != 0.0;
       final ticket = bound
           ? ProxCrypto.faceTicketHash(
               faceScore: faceScore,
               faceValidAtMs: faceValidAtMs,
-              verifierVer: verifierVer)
+              verifierVer: verifierVer,
+              livenessScore: livenessScore,
+              livenessVer: livenessVer)
           : Uint8List(0);
       // Verifies Sig_p against the RADIO-heard challenge: fake professors
       // fail here before anything is signed. Only a genuine signature
@@ -898,8 +1025,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           pkD: pkD,
           // Legacy (unbound) proofs pass null so BOTH sides derive the
           // neutral ticket identically; bound proofs pass the explicit
-          // ticket they signed.
+          // EXTENDED (liveness-bound) ticket they signed.
           faceTicketHashBytes: bound ? ticket : null,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
         ),
         sigBindFor: (fp, jj) => ProxCrypto.sign(
             sk,
@@ -911,6 +1040,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         faceValidAtMs: bound ? faceValidAtMs : null,
         verifierVer: verifierVer,
         faceVecB64: faceVecB64,
+        // Security §4: the same liveness pair the ticket above binds —
+        // the transport derives the identical extended ticket for dSig +
+        // the `liveness:{}` body (no images leave the device, only the
+        // classifier output). Legacy (0.0/'') omits the body map.
+        livenessScore: livenessScore,
+        livenessVer: livenessVer,
         pkD: pkD.isNotEmpty ? pkD : null,
         dSigFor: bound
             ? (t, jj) async => _deviceKey.sign(
@@ -1016,7 +1151,10 @@ class FakeStudentDriver implements StudentDriver {
 
   @override
   Future<FaceCheckResult> checkFace(String imagePath) async =>
-      const FaceCheckResult(FaceMatch.pass, 0.95);
+      // Scripted happy path carries a liveness ticket like a real pass
+      // (stamp 1ms + live tag) so widget tests exercise the bound shape.
+      const FaceCheckResult(
+          FaceMatch.pass, 0.95, 1, kFaceVerifierVer, 0.95, kLivenessVer);
 
   @override
   Future<WindowProbe> probeWindow(ClassBeacon target,
@@ -1060,6 +1198,10 @@ class FakeStudentDriver implements StudentDriver {
     required void Function(ListenStatus s) onStatus,
     int faceValidAtMs = 0,
     String verifierVer = '',
+    // Compile-compat with the abstract §4 liveness ticket (owned by
+    // sec-liveness): the fake confirms without inspecting the ticket.
+    double? livenessScore,
+    String? livenessVer,
   }) async {
     onStatus(ListenStatus.confirming);
     return MarkedReceipt(detail: ackDetail, result: StudentResult.marked);
