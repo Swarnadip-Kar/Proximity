@@ -227,9 +227,20 @@ class WaitingRoomView extends StatelessWidget {
                   RoundTrailPills(marks: roundMarks),
                 ],
                 const SizedBox(height: ProxSpacing.lg),
-                TextButton(
-                  style: TextButton.styleFrom(
+                // Hierarchy: manual request is the fallback path
+                // (outlined pill, brand border), Cancel is quiet text.
+                // Callbacks unchanged — direct POST + teardown.
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
                     minimumSize: const Size(64, ProxSpacing.minTap),
+                    foregroundColor: c.accentBrand,
+                    side: BorderSide(
+                      color: c.accentBrand.withValues(alpha: 0.4),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(ProxRadii.pill),
+                    ),
                   ),
                   onPressed: onRequestManual,
                   child: const Text('Request manual attendance'),
@@ -237,6 +248,7 @@ class WaitingRoomView extends StatelessWidget {
                 TextButton(
                   style: TextButton.styleFrom(
                     minimumSize: const Size(64, ProxSpacing.minTap),
+                    foregroundColor: c.contentSecondary,
                   ),
                   onPressed: onCancel,
                   child: const Text('Cancel'),
