@@ -72,7 +72,21 @@ class _LiveSubNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     return SegmentedButton<int>(
+      style: SegmentedButton.styleFrom(
+        minimumSize: const Size(64, ProxSpacing.minTap),
+        textStyle: ProxType.label(color: c.contentPrimary).copyWith(
+          fontWeight: FontWeight.w600,
+        ),
+        foregroundColor: c.contentSecondary,
+        selectedForegroundColor: c.accentBrand,
+        selectedBackgroundColor: c.accentBrand.withValues(alpha: 0.12),
+        side: BorderSide(color: c.divider),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ProxRadii.pill),
+        ),
+      ),
       segments: [
         const ButtonSegment(value: 0, label: Text('Roster')),
         ButtonSegment(
