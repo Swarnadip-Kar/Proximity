@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -58,6 +59,19 @@ Future<InMemoryDeviceStore> enrolledStore({
 
 FakeFaceVerifier mockVerifier({bool match = true, double score = 0.85}) =>
     FakeFaceVerifier(match: match, score: score);
+
+/// Counting fake integrity probe (§5 resolution tests): records how often
+/// the driver consulted the gate instead of reusing a cache.
+class _CountingProbe implements IntegrityProbe {
+  final IntegritySignals signals;
+  int calls = 0;
+  _CountingProbe(this.signals);
+  @override
+  Future<IntegritySignals> check() async {
+    calls++;
+    return signals;
+  }
+}
 
 RealStudentDriver testDriver(
         {required InMemoryDeviceStore store,
@@ -1132,6 +1146,158 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
     debugDefaultTargetPlatformOverride = null;
     expect(res.result, StudentResult.error);
     expect(res.detail, contains('mobile app'));
+  });
+
+  group('§5 integrity verdict in prove', () {
+    test('default listen consults the pre-prove gate (never blocks)',
+        () async {
+      // No explicit verdict: the driver probes fresh via
+      // entryMarkingIntegrity (never the cached startup verdict). A
+      // tainted verdict must NOT refuse — it rides to the professor.
+      final probe = _CountingProbe(const IntegritySignals(hooked: true));
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      try {
+        final d = RealStudentDriver(
+          store: await enrolledStore(),
+          verifier: mockVerifier(),
+          deviceKey: FakeDeviceKey(),
+          engine: ProxBleEngine(radio: FakeBleRadio()),
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        // No server answers (dead air + refused probe): the listen ends
+        // noSignal — the assertion is that the gate was consulted first.
+        final res = await d.listenAndProve(
+          target: _beacon,
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: 1.0,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.noSignal);
+        expect(probe.calls, 1);
+        final wantHash = IntegrityGate.verdictHashOf(
+            rooted: false,
+            hooked: true,
+            tampered: false,
+            emulator: false,
+            debug: false);
+        expect(
+            BleLog.history.any((e) =>
+                e.tag == 'SEC' &&
+                e.msg.contains('prove integrity $wantHash') &&
+                e.msg.contains('integrity-flagged')),
+            isTrue);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    test('explicit verdict wins without probing', () async {
+      final probe = _CountingProbe(const IntegritySignals());
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      try {
+        final d = RealStudentDriver(
+          store: await enrolledStore(),
+          verifier: mockVerifier(),
+          deviceKey: FakeDeviceKey(),
+          engine: ProxBleEngine(radio: FakeBleRadio()),
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        final res = await d.listenAndProve(
+          target: _beacon,
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: 1.0,
+          onStatus: (_) {},
+          integrityFlag: 'custom-flag',
+          integrityHash: 'deadbeef',
+        );
+        expect(res.result, StudentResult.noSignal);
+        expect(probe.calls, 0);
+        expect(
+            BleLog.history.any((e) =>
+                e.tag == 'SEC' &&
+                e.msg.contains('prove integrity deadbeef (custom-flag)')),
+            isTrue);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    test('tainted verdict rides to the professor as flagged (never absent)',
+        () async {
+      // Full legacy-unbound prove against a real local server: the hooked
+      // verdict's flag must arrive in the receipt flags while the verdict
+      // still confirms (marking never blocks offline).
+      final prof = ProxCrypto.generateEdKeypair();
+      final probe = _CountingProbe(const IntegritySignals(hooked: true));
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      final server = ProxServer(
+        classLabel: 't',
+        profSk: prof.privateKey,
+        profPk: prof.publicKey,
+        sightings: (
+                {required peerW,
+                required expectedAirKey,
+                required expectedUuid}) =>
+            const RadioSighting(rssiDbm: -55, hop: 0),
+      );
+      await server.start(port: 0);
+      try {
+        server.openWindow(
+          WindowParams(
+            sessionId: randBytes(16),
+            windowId: randBytes(6),
+            secret: randBytes(32),
+            t0: DateTime.now().toUtc(),
+            classLabel: 't',
+          ),
+          1,
+        );
+        final engine = ProxBleEngine(radio: FakeBleRadio());
+        final d = RealStudentDriver(
+          store: await enrolledStore(),
+          verifier: mockVerifier(),
+          deviceKey: FakeDeviceKey(),
+          engine: engine,
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        Future.delayed(const Duration(seconds: 3), () {
+          final w = server.window!;
+          final cj = w.challengeFor(w.jForTime(DateTime.now().toUtc()));
+          engine.handleSighting(BleSighting(
+            type: kAirTypeChallenge,
+            token8: cj,
+            ipHost: '127.0.0.1',
+            ipPort: server.port,
+            rssiDbm: -60,
+            at: DateTime.now().toUtc(),
+          ));
+        });
+        final res = await d.listenAndProve(
+          target: ClassBeacon(
+            classLabel: 't',
+            host: '127.0.0.1',
+            port: server.port,
+            rssiDbm: 0,
+            displayCode: 'X',
+          ),
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: 0.9,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.marked);
+        expect(res.attestationFlags, contains('integrity-flagged'));
+        expect(server.tally.presentCount, 1);
+      } finally {
+        await server.stop();
+        IntegrityGate.probe = prev;
+      }
+    });
   });
 
   test('engine nextChallenge resolves injected sightings', () async {

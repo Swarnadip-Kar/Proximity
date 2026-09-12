@@ -141,7 +141,9 @@ class ProxClient {
     int? faceValidAtMs,
     String verifierVer = '',
     Uint8List? pkD,
-    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
     // LAN-only session vector (`face:{vec}` — mirror of client.dart;

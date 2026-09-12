@@ -68,6 +68,8 @@ class _CountingLatencyDriver extends FakeStudentDriver {
     String verifierVer = '',
     double? livenessScore,
     String? livenessVer,
+    String? integrityFlag,
+    String? integrityHash,
   }) async {
     listens++;
     onStatus(ListenStatus.waiting);

@@ -140,7 +140,9 @@ Future<ProveResult> _proveHw({
     faceValidAtMs: stampMs,
     verifierVer: _verifierVer,
     pkD: pkD,
-    dSigFor: (ticket, jj) async => _p256Sign(
+    // The closure signs with the hash the client hands it (the same
+    // value the body carries — claim/sign consistency by construction).
+    dSigFor: (ticket, jj, h) async => _p256Sign(
         dKey,
         ProxCrypto.deviceProvePreimage(
           sessionId: desc.sessionId,
@@ -149,7 +151,7 @@ Future<ProveResult> _proveHw({
           challenge: cj,
           faceTicketHashBytes: ticket,
           pkS: _pk32(stu.publicKey),
-          integrityHash: integrityHash,
+          integrityHash: h,
         )),
     integrityHash: integrityHash,
     attestationLevel: attestationLevel,
@@ -394,7 +396,7 @@ void main() {
         verifierVer: _verifierVer,
         pkD: device.pkD,
         // Signed over hash A …
-        dSigFor: (ticket, jj) async => _p256Sign(
+        dSigFor: (ticket, jj, _) async => _p256Sign(
             device.d,
             ProxCrypto.deviceProvePreimage(
               sessionId: desc.sessionId,

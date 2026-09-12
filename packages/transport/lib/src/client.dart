@@ -397,7 +397,10 @@ class ProxClient {
   /// [verifierVer] emit the `face:{score,faceValidAt,verifierVer}` ticket
   /// (Sig_s binds them — no images/embeddings leave the device); [pkD] +
   /// [dSigFor] emit the device binding (`pkD` hex + `dSig` over
-  /// deviceProvePreimage with the ticket hash). [faceVecB64] attaches the
+  /// deviceProvePreimage with the ticket hash). [dSigFor] receives the
+  /// ticket, the sub-epoch, and the §5 [integrityHash] — the closure MUST
+  /// sign the canonical preimage WITH that hash (server recomputes the
+  /// identical bytes; mismatch fails closed). [faceVecB64] attaches the
   /// LAN-only session vector (`face:{vec}` — RAM-only on the professor
   /// phone, never the cloud); empty means no dup participation.
   /// Security §2: [attestationChain] (DER-hex, leaf-first, from the stored
@@ -426,7 +429,9 @@ class ProxClient {
     int? faceValidAtMs,
     String verifierVer = '',
     Uint8List? pkD,
-    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
     String faceVecB64 = '',
@@ -493,7 +498,9 @@ class ProxClient {
     int? faceValidAtMs,
     String verifierVer = '',
     Uint8List? pkD,
-    Future<Uint8List> Function(Uint8List faceTicketHashBytes, int j)? dSigFor,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
     String attestationLevel = 'NONE',
     int attestedUntilMs = 0,
     String faceVecB64 = '',
@@ -523,8 +530,11 @@ class ProxClient {
             livenessScore: livenessScore,
             livenessVer: livenessVer)
         : null;
+    // Security §5: the closure signs with the SAME hash the body carries
+    // (server recomputes the identical bound preimage — claim/sign
+    // mismatch fails dSig verify, never a silent downgrade).
     final dSig = (bound && dSigFor != null && ticket != null)
-        ? await dSigFor(ticket, j)
+        ? await dSigFor(ticket, j, integrityHash)
         : null;
     final body = jsonEncode(buildProveBody(
       id: studentId,

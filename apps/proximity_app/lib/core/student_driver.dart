@@ -18,6 +18,7 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 
+import '../features/entry/entry_flow.dart';
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart';
@@ -161,6 +162,10 @@ abstract class StudentDriver {
   /// [livenessScore]/[livenessVer] bind the §4 liveness ticket: explicit
   /// values win, else the checkFace cache on stamp equality, else legacy
   /// (0.0/'') — migration-confirm now, fail-closed post-rollout.
+  /// [integrityFlag]/[integrityHash] carry the §5 verdict: explicit values
+  /// win, else one fresh [entryMarkingIntegrity] probe per listen (never
+  /// the cached startup verdict). The flag rides advisory; the hash is
+  /// SIGNED into dSig. Marking NEVER blocks on either.
   Future<MarkedReceipt> listenAndProve({
     required ClassBeacon target,
     required LinkedIdentity identity,
@@ -170,6 +175,8 @@ abstract class StudentDriver {
     String verifierVer = '',
     double? livenessScore,
     String? livenessVer,
+    String? integrityFlag,
+    String? integrityHash,
   });
 
   /// Waiting-room LAN probe: reachable + windowOpen without radio.
@@ -566,6 +573,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     String verifierVer = '',
     double? livenessScore,
     String? livenessVer,
+    String? integrityFlag,
+    String? integrityHash,
   }) async {
     // L1 domain gate: records-only devices never listen-and-prove —
     // guidance, nothing signed.
@@ -589,6 +598,17 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         livenessScore: livenessScore,
         livenessVer: livenessVer,
         faceValidAtMs: faceValidAtMs);
+    // Security §5: resolve the integrity verdict ONCE per listen
+    // (explicit args win, else one fresh pre-prove probe — never the
+    // cached startup verdict). Every rotation in this listen claims the
+    // same verdict, so the flag and the SIGNED hash cannot diverge
+    // mid-listen. NEVER blocks: tainted verdicts ride to the professor
+    // as `integrity-flagged` (flag advisory, hash in dSig), never as an
+    // offline refusal.
+    final integ = await _resolveIntegrity(
+        integrityFlag: integrityFlag, integrityHash: integrityHash);
+    BleLog.log('SEC',
+        'prove integrity ${integ.hash}${integ.flag.isEmpty ? '' : ' (${integ.flag})'}');
     _listening = true;
     try {
       return await _listenAndProveInner(
@@ -599,9 +619,34 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           faceValidAtMs: faceValidAtMs,
           verifierVer: verifierVer,
           livenessScore: live.score,
-          livenessVer: live.ver);
+          livenessVer: live.ver,
+          integrityFlag: integ.flag,
+          integrityHash: integ.hash);
     } finally {
       _listening = false;
+    }
+  }
+
+  /// Security §5 verdict resolution for one listen: explicit args win,
+  /// else a fresh [entryMarkingIntegrity] probe (never throws by contract;
+  /// belt-and-braces fallback proves clean so marking stays
+  /// offline-capable). Partial explicit values fall back per field.
+  Future<({String flag, String hash})> _resolveIntegrity({
+    String? integrityFlag,
+    String? integrityHash,
+  }) async {
+    if (integrityFlag != null && integrityHash != null) {
+      return (flag: integrityFlag, hash: integrityHash);
+    }
+    try {
+      final verdict = await entryMarkingIntegrity();
+      return (
+        flag: integrityFlag ?? verdict.flagForMarking,
+        hash: integrityHash ?? verdict.hash,
+      );
+    } catch (_) {
+      BleLog.log('SEC', 'marking integrity resolve failed — proving clean');
+      return (flag: integrityFlag ?? '', hash: integrityHash ?? '');
     }
   }
 
@@ -614,6 +659,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     String verifierVer = '',
     double livenessScore = 0.0,
     String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
   }) async {
     final stored = await _store.readEnrollment();
     if (stored == null ||
@@ -701,6 +748,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           verifierVer: verifierVer,
           livenessScore: livenessScore,
           livenessVer: livenessVer,
+          integrityFlag: integrityFlag,
+          integrityHash: integrityHash,
           challenge: cj,
           stored: stored,
           onStatus: onStatus,
@@ -837,6 +886,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// POST carries pkD + dSig (DKey over deviceProvePreimage) + lightweight
   /// attestation claims. Legacy unbound proofs (tests only) still encode
   /// when no ticket is present.
+  /// Security §5: the POST also carries the integrity verdict —
+  /// `integrityFlag` (advisory) + `integrityHash` (SIGNED into dSig, so the
+  /// claimed verdict is the signed verdict). Both resolve once per listen
+  /// (see [listenAndProve]); marking never blocks on either.
   /// Security §4: the ticket is the EXTENDED face+liveness form
   /// (score||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8 —
   /// sec-protocol 1A): Sig_s AND dSig bind the same hash, so the liveness
@@ -856,6 +909,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     String verifierVer = '',
     double livenessScore = 0.0,
     String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
     required Uint8List challenge,
     required StoredEnrollment stored,
     required void Function(ListenStatus s) onStatus,
@@ -1055,16 +1110,23 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         // classifier output). Legacy (0.0/'') omits the body map.
         livenessScore: livenessScore,
         livenessVer: livenessVer,
+        // Security §5: the advisory flag rides every proof; the hash rides
+        // the body AND the SIGNED dSig preimage (the closure signs with the
+        // hash the transport hands it — the same value the body carries —
+        // so claim/sign mismatch fails closed server-side).
+        integrityFlag: integrityFlag,
+        integrityHash: integrityHash,
         pkD: pkD.isNotEmpty ? pkD : null,
         dSigFor: bound
-            ? (t, jj) async => _deviceKey.sign(
+            ? (t, jj, h) async => _deviceKey.sign(
                 ProxCrypto.deviceProvePreimage(
                     sessionId: desc.sessionId,
                     windowId: desc.windowId,
                     j: jj,
                     challenge: challenge,
                     faceTicketHashBytes: t,
-                    pkS: pk32))
+                    pkS: pk32,
+                    integrityHash: h))
             : null,
         attestationLevel: stored.attestationLevel,
         attestedUntilMs:
@@ -1213,6 +1275,10 @@ class FakeStudentDriver implements StudentDriver {
     // sec-liveness): the fake confirms without inspecting the ticket.
     double? livenessScore,
     String? livenessVer,
+    // Compile-compat with the abstract §5 integrity verdict (owned by
+    // sec-gates): the fake confirms without inspecting the verdict.
+    String? integrityFlag,
+    String? integrityHash,
   }) async {
     onStatus(ListenStatus.confirming);
     return MarkedReceipt(detail: ackDetail, result: StudentResult.marked);
