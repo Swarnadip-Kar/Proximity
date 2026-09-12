@@ -16,7 +16,13 @@ import 'package:flutter/material.dart';
 import '../../design/tokens.dart';
 import '../../widgets/host_preview_card.dart';
 import '../../widgets/prox_motion.dart';
-import '../../widgets/verdict_badge.dart';
+
+/// Connection pill for the waiting room (not a verdict).
+///
+/// Connected is transport state, not attendance — it must not reuse the
+/// green Marked badge. Connected reads accentBrand with a pulsing dot;
+/// Not connected reads contentSecondary static. Icon+text always carry
+/// meaning; color never acts alone.
 
 /// Per-round trail as pill chips (`R1 ✓ · R2 ✗` style glanceables carrying
 /// the host's full verbatim trail strings, e.g. `R1 · KQ7 · 10:04:12`).
@@ -55,6 +61,55 @@ class RoundTrailPills extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _ConnectionBadge extends StatelessWidget {
+  final bool connected;
+
+  const _ConnectionBadge({super.key, required this.connected});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final color = connected ? c.accentBrand : c.contentSecondary;
+    final label = connected ? 'Connected' : 'Not connected';
+    return Semantics(
+      label: label,
+      child: AnimatedContainer(
+        duration: ProxDurations.small,
+        curve: ProxCurves.standard,
+        padding: const EdgeInsets.symmetric(
+          horizontal: ProxSpacing.md,
+          vertical: ProxSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(ProxRadii.pill),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration:
+                  BoxDecoration(shape: BoxShape.circle, color: color),
+            ),
+            const SizedBox(width: ProxSpacing.xs),
+            Flexible(
+              child: Text(
+                label,
+                style: ProxType.label(color: color),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -116,16 +171,9 @@ class WaitingRoomView extends StatelessWidget {
                 _PresenceRing(connected: connected),
                 const SizedBox(height: ProxSpacing.lg),
                 ProxSwitcher(
-                  child: VerdictBadge(
+                  child: _ConnectionBadge(
                     key: ValueKey<bool>(connected),
-                    // Present idiom: Connected reads the global present
-                    // (marked/green) status language; Not connected stays
-                    // the waiting/grey treatment. Visual props only — the
-                    // `connected` drive + verbatim copy are untouched.
-                    status: connected
-                        ? ProxStatus.marked
-                        : ProxStatus.waiting,
-                    label: connected ? 'Connected' : 'Not connected',
+                    connected: connected,
                   ),
                 ),
                 const SizedBox(height: ProxSpacing.md),
