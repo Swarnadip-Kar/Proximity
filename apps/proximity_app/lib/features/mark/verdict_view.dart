@@ -227,11 +227,7 @@ class MarkVerdictView extends StatelessWidget {
                   ),
                 ),
               const SizedBox(height: ProxSpacing.md),
-              ProxPrimaryButton(
-                label: const Text('Try again'),
-                onPressed: onBack,
-                expanded: false,
-              ),
+              VerdictBackToClasses(onBack: onBack),
               const SizedBox(height: ProxSpacing.xs),
               VerdictManualFallback(onRequest: onManualInstead),
             ],
