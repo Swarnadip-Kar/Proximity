@@ -785,5 +785,27 @@ void main() {
               faceTicketHashBytes: t2,
               pkS: pkS)));
     });
+
+    test('deviceProvePreimage binds integrityHash (no silent downgrade)',
+        () {
+      // Security §5: the verdict hash is part of the SIGNED dSig bytes —
+      // clean-device and tainted-device preimages differ, and a pre-binding
+      // (hash-less) preimage never equals a bound one.
+      final sess = randBytes(16), wid = randBytes(6);
+      final cj = randBytes(8);
+      final t = randBytes(8);
+      final pkS = randBytes(32);
+      Uint8List pre(String h) => ProxCrypto.deviceProvePreimage(
+          sessionId: sess,
+          windowId: wid,
+          j: 1,
+          challenge: cj,
+          faceTicketHashBytes: t,
+          pkS: pkS,
+          integrityHash: h);
+      expect(pre('00000000'), equals(pre('00000000')));
+      expect(pre('00000000'), isNot(pre('deadbeef')));
+      expect(pre(''), isNot(pre('00000000')));
+    });
   });
 }

@@ -28,7 +28,11 @@
 //              silent downgrade.
 //   Sig_ack  = Sign(SK_p, sessionID || windowID || j || ID_utf8 || decision_u8 || serverTimeMs_BE64)
 //   Sig_d    = Sign(DKey_P256, sessionID || windowID || j || C_j ||
-//                     faceTicketHash8 || pkS32)
+//                     faceTicketHash8 || pkS32 || integrityHashUtf8)
+//              (security §5: the 8-hex verdict hash rides the SIGNED dSig
+//              preimage, so a clean-device dSig can never be transplanted
+//              onto a tainted prove, nor a pre-binding dSig onto a bound
+//              proof — old preimages omit the trailing field and fail.)
 //
 // class stays contiguous here on purpose — Dart cannot split one class's
 // statics across files without delegation indirection, which would add
@@ -341,17 +345,28 @@ class ProxCrypto {
           sig);
 
   /// Sig_d (device-key) preimage: sessionID || windowID || j32 || C_j ||
-  /// faceTicketHash8 || pkS32. Signed by DKey (P-256 HW: StrongBox→TEE /
-  /// Secure Enclave; `none` stub on desktop/web). The P-256 verify itself
-  /// lives in the platform adapter (app layer) — this canonical preimage
-  /// is the shared contract both sides sign/verify against.
+  /// faceTicketHash8 || pkS32 || integrityHashUtf8. Signed by DKey (P-256
+  /// HW: StrongBox→TEE / Secure Enclave; `none` stub on desktop/web). The
+  /// P-256 verify itself lives in the platform adapter (app layer) — this
+  /// canonical preimage is the shared contract both sides sign/verify
+  /// against.
   ///
   /// Security §4: [faceTicketHashBytes] MUST be the extended 5-field ticket
   /// (score||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8).
   /// Changing the liveness score/ver changes the ticket, which changes this
   /// preimage — dSig is transplant-proof across liveness outputs. Old
   /// 3-field tickets produce a different preimage and fail dSig verify
-  /// (no silent downgrade). Layout bytes here are unchanged on purpose.
+  /// (no silent downgrade).
+  ///
+  /// Security §5: [integrityHash] is the 8-hex verdict hash
+  /// (`IntegrityGate.verdictHashOf`, app layer) bound into dSig, so the
+  /// device-integrity verdict a prove CLAIMED is the one the HW key
+  /// SIGNED — a clean-device dSig can never be transplanted onto a
+  /// tainted prove. The trailing field defaults to '' only so pre-binding
+  /// call sites still compile; the transport server requires a non-empty
+  /// hash on every dSig-gated (FULL/STD) proof, and a pre-binding dSig
+  /// (no trailing field) never equals a bound preimage — it fails dSig
+  /// verify, never a silent downgrade.
   static Uint8List deviceProvePreimage({
     required Uint8List sessionId,
     required Uint8List windowId,
@@ -359,6 +374,7 @@ class ProxCrypto {
     required Uint8List challenge,
     required Uint8List faceTicketHashBytes,
     required Uint8List pkS,
+    String integrityHash = '',
   }) =>
       concat([
         sessionId,
@@ -367,6 +383,7 @@ class ProxCrypto {
         challenge,
         faceTicketHashBytes,
         pkS,
+        utf8.encode(integrityHash),
       ]);
 
   /// Sig_ack preimage: sessionID || windowID || j32 || ID || decision || serverMsBE64.
