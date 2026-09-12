@@ -92,6 +92,12 @@ Widget _captureHarness(
       child: MaterialApp(
         // App theme: the shared two-oval overlay reads ProximityColors.
         theme: proxLightTheme(),
+        // Named-route table: EnrollFlow.openResult (capture → result
+        // auto-advance) goes through ProxNav.pushNamed, so the harness
+        // must resolve enroll/* names like production does.
+        routes: buildProxRoutes(),
+        onGenerateRoute: proxOnGenerateRoute,
+        onUnknownRoute: proxOnUnknownRoute,
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
@@ -697,12 +703,16 @@ void main() {
     testWidgets('EnrollFlow.openResult double-call pushes one result',
         (t) async {
       // Static single-flight: the second synchronous call is dropped.
+      // Named-route table required: openResult goes via ProxNav.pushNamed.
       final ctl = await _keyReady();
       late BuildContext ctx;
       await t.pumpWidget(ProviderScope(
         overrides: [enrollmentControllerProvider.overrideWith((ref) => ctl)],
         child: MaterialApp(
           theme: proxLightTheme(),
+          routes: buildProxRoutes(),
+          onGenerateRoute: proxOnGenerateRoute,
+          onUnknownRoute: proxOnUnknownRoute,
           home: Builder(builder: (c) {
             ctx = c;
             return const Text('home');
@@ -726,6 +736,7 @@ void main() {
     testWidgets('EnrollFlow.openCapture double-call pushes one capture',
         (t) async {
       // Static single-flight: the second synchronous call is dropped.
+      // Named-route table required: openCapture goes via ProxNav.pushNamed.
       final ctl = await _keyReady();
       late BuildContext ctx;
       await t.pumpWidget(ProviderScope(
@@ -737,6 +748,9 @@ void main() {
         ],
         child: MaterialApp(
           theme: proxLightTheme(),
+          routes: buildProxRoutes(),
+          onGenerateRoute: proxOnGenerateRoute,
+          onUnknownRoute: proxOnUnknownRoute,
           home: Builder(builder: (c) {
             ctx = c;
             return const Text('home');
