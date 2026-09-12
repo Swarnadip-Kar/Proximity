@@ -142,17 +142,27 @@ abstract final class ProxSpacing {
   static const double minTap = 48;
 }
 
-/// Corner radii. One family everywhere: cards [card], buttons [button],
-/// chips/badges [chip], terminal [terminal].
+/// Corner radii. Canonical: cards [cardSpec] 16, buttons [button] 12,
+/// pills [pill] 999, sheets [sheet] 24 top, terminal [terminal] 10.
+/// Legacy [card] 14 survives for inputs only; legacy [chip] is an alias
+/// of [pill] — new code uses [pill]/[cardSpec].
 abstract final class ProxRadii {
   static const double md = 12;
+
+  /// Legacy input radius (14). Inputs only; cards use [cardSpec].
   static const double card = 14;
   static const double button = 12;
+
+  /// Legacy alias of [pill]. New code uses [pill].
+  @Deprecated('Use pill')
   static const double chip = 999;
   static const double terminal = 10;
 
   static BorderRadius get buttonRadius => BorderRadius.circular(button);
-  static BorderRadius get chipRadius => BorderRadius.circular(chip);
+
+  /// Legacy alias getter. New code uses [pillRadius].
+  @Deprecated('Use pillRadius')
+  static BorderRadius get chipRadius => BorderRadius.circular(pill);
 
   // --- Redesign §2.3 spec radii (Foundation addition, frozen-legacy rule
   // as in [ProxSpacing]: `card` stays 14 until section migrations; new code
@@ -163,9 +173,10 @@ abstract final class ProxRadii {
   /// Spec bottom-sheet radius (§2.3): 24, top corners only.
   static const double sheet = 24;
 
-  /// Spec pill radius (§2.3): 999. Same value as [chip]; named for the
-  /// spec vocabulary so downstream sections read spec names.
+  /// Spec pill radius (§2.3): 999. Canonical pill name; [chip] aliases it.
   static const double pill = 999;
+
+  static BorderRadius get pillRadius => BorderRadius.circular(pill);
 
   static BorderRadius get cardSpecRadius => BorderRadius.circular(cardSpec);
 
