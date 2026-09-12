@@ -1941,6 +1941,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           StudentPhase.listening => ProvingView(
               status: listenStatus,
               driftBanner: _driftBanner(),
+              onLeave: _cancelToBrowsing,
             ),
           // Terminal verdicts (composition lives in `verdict_section.dart`):
           // every verdict back runs the SAME `_cancelToBrowsing` teardown

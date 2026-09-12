@@ -30,10 +30,14 @@ class ProvingView extends StatelessWidget {
   /// clocks agree): shown honestly instead of verdicting late silently.
   final String? driftBanner;
 
+  /// Quiet exit during the 45s silence window — same teardown as Cancel.
+  final VoidCallback? onLeave;
+
   const ProvingView({
     super.key,
     required this.status,
     this.driftBanner,
+    this.onLeave,
   });
 
   @override
@@ -65,6 +69,17 @@ class ProvingView extends StatelessWidget {
                   textAlign: TextAlign.center,
                 ),
               ),
+              if (onLeave != null) ...[
+                const SizedBox(height: ProxSpacing.lg),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(64, ProxSpacing.minTap),
+                    foregroundColor: c.contentSecondary,
+                  ),
+                  onPressed: onLeave,
+                  child: const Text('Leave'),
+                ),
+              ],
             ],
           ),
         ),
