@@ -43,6 +43,18 @@ class StudentDeviceDoc {
   final String attestationLevel;
   final int attestedAtMillis;
   final int attestedUntilMillis;
+  // --- Security §7 additive claim (offline device binding hardening).
+  // Defaults keep every existing constructor compiling; enrollment stamps
+  // them when HW/liveness/integrity agents provide values. No verdict
+  // logic keys on these yet (claim verdict unchanged) — they ride the
+  // binding for offline professor verification + post-hoc audit.
+  /// HW attestation chain, leaf-first DER hex (security §2). [] = unbound.
+  /// Never IMEI/serial — X.509 certs only, verified offline vs pinned roots.
+  final List<String> attestationChain;
+  /// Liveness pipeline tag (`liveness/...`, security §4). '' = pre-liveness.
+  final String livenessVer;
+  /// Integrity flag at enroll (`''` | `'integrity-flagged'`, §5). Advisory.
+  final String integrityFlag;
   const StudentDeviceDoc(
       {required this.email,
       required this.uid,
@@ -61,7 +73,10 @@ class StudentDeviceDoc {
       this.pkDHex = '',
       this.attestationLevel = 'NONE',
       this.attestedAtMillis = 0,
-      this.attestedUntilMillis = 0});
+      this.attestedUntilMillis = 0,
+      this.attestationChain = const [],
+      this.livenessVer = '',
+      this.integrityFlag = ''});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.

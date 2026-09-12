@@ -89,7 +89,10 @@ class FakeCloudSync implements CloudSync {
             pkDHex: doc.pkDHex,
             attestationLevel: doc.attestationLevel,
             attestedAtMillis: doc.attestedAtMillis,
-            attestedUntilMillis: doc.attestedUntilMillis);
+            attestedUntilMillis: doc.attestedUntilMillis,
+            attestationChain: List<String>.of(doc.attestationChain),
+            livenessVer: doc.livenessVer,
+            integrityFlag: doc.integrityFlag);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -147,6 +150,9 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: binding.attestationLevel,
       attestedAtMillis: binding.attestedAtMillis,
       attestedUntilMillis: binding.attestedUntilMillis,
+      attestationChain: List<String>.of(binding.attestationChain),
+      livenessVer: binding.livenessVer,
+      integrityFlag: binding.integrityFlag,
     );
     final row = dir[key];
     if (row != null) {
@@ -237,6 +243,9 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: doc.attestationLevel,
       attestedAtMillis: doc.attestedAtMillis,
       attestedUntilMillis: doc.attestedUntilMillis,
+      attestationChain: List<String>.of(doc.attestationChain),
+      livenessVer: doc.livenessVer,
+      integrityFlag: doc.integrityFlag,
     );
     installs[installId] = key;
     dir[key] =
@@ -280,6 +289,9 @@ class FakeCloudSync implements CloudSync {
       attestationLevel: binding.attestationLevel,
       attestedAtMillis: binding.attestedAtMillis,
       attestedUntilMillis: binding.attestedUntilMillis,
+      attestationChain: List<String>.of(binding.attestationChain),
+      livenessVer: binding.livenessVer,
+      integrityFlag: binding.integrityFlag,
     );
     return true;
   }

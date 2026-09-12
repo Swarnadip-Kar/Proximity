@@ -366,6 +366,12 @@ class FirestoreCloudSync implements CloudSync {
         attestedAtMillis: (d?['attestedAtMillis'] as num?)?.toInt() ?? 0,
         attestedUntilMillis:
             (d?['attestedUntilMillis'] as num?)?.toInt() ?? 0,
+        attestationChain: [
+          for (final e in (d?['attestationChain'] as List? ?? const []))
+            if (e is String && e.trim().isNotEmpty) e.trim()
+        ],
+        livenessVer: d?['livenessVer'] as String? ?? '',
+        integrityFlag: d?['integrityFlag'] as String? ?? '',
       );
 
   @override
@@ -426,6 +432,10 @@ class FirestoreCloudSync implements CloudSync {
           'attestationLevel': doc.attestationLevel,
           'attestedAtMillis': doc.attestedAtMillis,
           'attestedUntilMillis': doc.attestedUntilMillis,
+          // Security §7 additive (offline verify + audit; no verdict change).
+          'attestationChain': List<String>.of(doc.attestationChain),
+          'livenessVer': doc.livenessVer,
+          'integrityFlag': doc.integrityFlag,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {
@@ -681,6 +691,10 @@ class FirestoreCloudSync implements CloudSync {
           'attestationLevel': binding.attestationLevel,
           'attestedAtMillis': binding.attestedAtMillis,
           'attestedUntilMillis': binding.attestedUntilMillis,
+          'attestationChain':
+              List<String>.of(binding.attestationChain),
+          'livenessVer': binding.livenessVer,
+          'integrityFlag': binding.integrityFlag,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(_db.collection('studentDirectory').doc(key), {
