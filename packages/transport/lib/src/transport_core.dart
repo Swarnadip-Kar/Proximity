@@ -33,9 +33,18 @@ class ClassBeacon {
 /// Tracks 2+3: the face ticket rides as `face:{score,faceValidAt,
 /// verifierVer}` (millis UTC + pipeline tag — no images/embeddings leave
 /// the device) with Sig_s binding pkD+ticketHash; device binding rides as
-/// `pkD` (hex) + `dSig` (hex over deviceProvePreimage). All four are
-/// optional so legacy bodies still encode (server applies the legacy
-/// path); bound clients always send them.
+/// `pkD` (hex) + `dSig` (hex over deviceProvePreimage, integrity-bound —
+/// see `integrityHash`). All four are optional so legacy bodies still
+/// encode (server applies the legacy path); bound clients always send
+/// them.
+///
+/// Security §5 integrity binding: `integrityFlag` ('' |
+/// `'integrity-flagged'`, advisory — the professor flags, never
+/// auto-absent) rides alongside `integrityHash` (the 8-hex verdict hash
+/// the HW key SIGNED inside dSig). The server recomputes the dSig
+/// preimage with the claimed hash and requires it well-formed on every
+/// dSig-gated (FULL/STD) proof — pre-binding clients omit it and fail
+/// closed as device-unproven, never a silent downgrade.
 ///
 /// Security §2 (sec-hwkey): HW-bound proofs also carry
 /// `attestationChain` (list<string> DER-hex, leaf-first — the same wire
@@ -78,6 +87,9 @@ Map<String, dynamic> buildProveBody({
   String livenessVer = '',
   // Security §5 integrity flag ('' | 'integrity-flagged'). Advisory.
   String integrityFlag = '',
+  // Security §5 verdict hash (8-hex) bound into the SIGNED dSig preimage.
+  // Empty = pre-binding client (server fails those closed on HW tiers).
+  String integrityHash = '',
   // Security §2 HW attestation (bound FULL/STD path; omitted on legacy).
   List<String> attestationChain = const [],
   String installId = '',
@@ -116,6 +128,7 @@ Map<String, dynamic> buildProveBody({
           'ver': livenessVer,
         },
       if (integrityFlag.isNotEmpty) 'integrityFlag': integrityFlag,
+      if (integrityHash.isNotEmpty) 'integrityHash': integrityHash,
       if (attestationChain.isNotEmpty)
         'attestationChain': List<String>.of(attestationChain),
       if (installId.isNotEmpty) 'installId': installId,

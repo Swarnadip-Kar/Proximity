@@ -102,6 +102,9 @@ Future<ProveResult> _proveHw({
   required String installId,
   String attestationLevel = 'FULL',
   double face = 0.85,
+  // Security §5: the verdict hash the HW key signs (server recomputes the
+  // identical bound preimage). '' simulates a pre-binding client.
+  String integrityHash = '00000000',
 }) {
   final peerW = ProxCrypto.peerAlias(_pk32(stu.publicKey), desc.windowId);
   final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -146,7 +149,9 @@ Future<ProveResult> _proveHw({
           challenge: cj,
           faceTicketHashBytes: ticket,
           pkS: _pk32(stu.publicKey),
+          integrityHash: integrityHash,
         )),
+    integrityHash: integrityHash,
     attestationLevel: attestationLevel,
     attestedUntilMs: DateTime.now()
         .toUtc()
@@ -281,6 +286,134 @@ void main() {
         dKey: forger.d,
         chainHex: chainHex,
         installId: _installId,
+      );
+      expect(res.decision, ProveDecision.invalid);
+      expect(res.reason, 'device-unproven');
+      expect(server.tally.presentCount, 0);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('pre-binding HW proof (no integrityHash) fails closed', () async {
+    // Security §5, no silent downgrade: a genuine dSig over the hash-less
+    // preimage is rejected as device-unproven once the server requires the
+    // bound form — old clients fail closed, never confirm unbound.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final device = _p256Key();
+    final enrollChallenge = deviceBindingChallenge(
+        emailLower: _email,
+        installId: _installId,
+        pkS: _pk32(stu.publicKey));
+    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final server = await _makeHwServer(
+      prof: prof,
+      pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
+    );
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = server.window!.challengeFor(0);
+      final desc = await client.fetchWindow(cj);
+      final res = await _proveHw(
+        client: client,
+        desc: desc,
+        cj: cj,
+        j: 0,
+        stu: stu,
+        pkD: device.pkD,
+        dKey: device.d,
+        chainHex: chainHex,
+        installId: _installId,
+        integrityHash: '',
+      );
+      expect(res.decision, ProveDecision.invalid);
+      expect(res.reason, 'device-unproven');
+      expect(server.tally.presentCount, 0);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('transplanted integrityHash (claim/sign mismatch) fails closed',
+      () async {
+    // The body claims hash B but the HW key signed hash A: the recomputed
+    // preimage differs, so dSig verify fails — a clean-device dSig can
+    // never be transplanted onto a tainted prove.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final device = _p256Key();
+    final enrollChallenge = deviceBindingChallenge(
+        emailLower: _email,
+        installId: _installId,
+        pkS: _pk32(stu.publicKey));
+    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final server = await _makeHwServer(
+      prof: prof,
+      pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
+    );
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = server.window!.challengeFor(0);
+      final desc = await client.fetchWindow(cj);
+      final peerW = ProxCrypto.peerAlias(_pk32(stu.publicKey), desc.windowId);
+      final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      const face = 0.85;
+      final res = await client.prove(
+        desc: desc,
+        studentId: _email,
+        challenge: cj,
+        j: 0,
+        faceScore: face,
+        peerW: peerW,
+        pkS: _pk32(stu.publicKey),
+        name: 'Student One',
+        roll: '12342210',
+        sigSFor: (c, jj) => ProxCrypto.signStudentProve(
+          studentSk: stu.privateKey,
+          sessionId: desc.sessionId,
+          windowId: desc.windowId,
+          j: jj,
+          challenge: c,
+          studentId: _email,
+          faceScore: face,
+          faceValidAtMs: stampMs,
+          verifierVer: _verifierVer,
+          pkD: device.pkD,
+        ),
+        sigBindFor: (fp, jj) => ProxCrypto.sign(
+            stu.privateKey,
+            bindPreimage(
+                sessionId: desc.sessionId,
+                windowId: desc.windowId,
+                j: jj,
+                tlsFingerprint: fp)),
+        faceValidAtMs: stampMs,
+        verifierVer: _verifierVer,
+        pkD: device.pkD,
+        // Signed over hash A …
+        dSigFor: (ticket, jj) async => _p256Sign(
+            device.d,
+            ProxCrypto.deviceProvePreimage(
+              sessionId: desc.sessionId,
+              windowId: desc.windowId,
+              j: jj,
+              challenge: cj,
+              faceTicketHashBytes: ticket,
+              pkS: _pk32(stu.publicKey),
+              integrityHash: 'aaaaaaaa',
+            )),
+        attestationLevel: 'FULL',
+        attestedUntilMs: DateTime.now()
+            .toUtc()
+            .add(kDeviceAttestedValidity)
+            .millisecondsSinceEpoch,
+        attestationChain: chainHex,
+        installId: _installId,
+        // … but the body claims hash B.
+        integrityHash: 'bbbbbbbb',
       );
       expect(res.decision, ProveDecision.invalid);
       expect(res.reason, 'device-unproven');

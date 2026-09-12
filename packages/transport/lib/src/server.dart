@@ -685,20 +685,40 @@ class ProxServer {
         installId: bodyInstallId,
         pkS: presentedPk,
       );
+      // Security §5 integrity binding (sec-gates): `integrityHash` is the
+      // 8-hex verdict hash the HW key SIGNED inside dSig. The preimage is
+      // recomputed with the CLAIMED hash, so a transplanted dSig (wrong
+      // hash, or a pre-binding dSig with no trailing field) fails verify.
+      // dSig-gated (FULL/STD: pkD+dSig present) proofs additionally REQUIRE
+      // a well-formed hash — pre-binding clients omit it and fail closed
+      // here as device-unproven, never a silent downgrade to the hash-less
+      // preimage. NONE proofs skip dSig gating (the fallback path owns
+      // them); their advisory `integrity-flagged` flag still rides the
+      // outcome flags below.
+      final integrityHash =
+          ((body['integrityHash'] as String?) ?? '').trim().toLowerCase();
+      final integrityHashOk =
+          RegExp(r'^[0-9a-f]{8}$').hasMatch(integrityHash);
+      final hwClaimed = pkD.isNotEmpty && dSig.isNotEmpty;
       var dSigValidReal = false;
       if (bound && ticket.isNotEmpty) {
-        dSigValidReal = verifyDeviceSignature(
-          pkDRaw64: pkD,
-          preimage: ProxCrypto.deviceProvePreimage(
-            sessionId: w.sessionId,
-            windowId: w.windowId,
-            j: j,
-            challenge: expectedCj,
-            faceTicketHashBytes: ticket,
-            pkS: presentedPk,
-          ),
-          sig64: dSig,
-        );
+        if (hwClaimed && !integrityHashOk) {
+          dSigValidReal = false;
+        } else {
+          dSigValidReal = verifyDeviceSignature(
+            pkDRaw64: pkD,
+            preimage: ProxCrypto.deviceProvePreimage(
+              sessionId: w.sessionId,
+              windowId: w.windowId,
+              j: j,
+              challenge: expectedCj,
+              faceTicketHashBytes: ticket,
+              pkS: presentedPk,
+              integrityHash: integrityHashOk ? integrityHash : '',
+            ),
+            sig64: dSig,
+          );
+        }
       }
       final rid = ProxCrypto.responseToken(expectedCj, id);
       final expectedAirKey = '$kAirTypeResponse:${hexEncode(rid)}';

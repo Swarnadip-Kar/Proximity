@@ -403,6 +403,11 @@ class ProxClient {
   /// Security §2: [attestationChain] (DER-hex, leaf-first, from the stored
   /// enrollment) + [installId] (challenge binding) ride on HW-bound proofs;
   /// the professor pins + recomputes offline.
+  /// Security §5: [integrityHash] (8-hex verdict hash) is bound into the
+  /// SIGNED dSig preimage (via [dSigFor]'s ticket) and carried in the body
+  /// so the professor recomputes the identical preimage — pre-binding
+  /// clients omit it and fail closed on HW tiers (never a silent
+  /// downgrade). [integrityFlag] stays advisory alongside.
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -428,6 +433,7 @@ class ProxClient {
     double livenessScore = 0.0,
     String livenessVer = '',
     String integrityFlag = '',
+    String integrityHash = '',
     List<String> attestationChain = const [],
     String installId = '',
   }) async {
@@ -460,6 +466,7 @@ class ProxClient {
           livenessScore: livenessScore,
           livenessVer: livenessVer,
           integrityFlag: integrityFlag,
+          integrityHash: integrityHash,
           attestationChain: attestationChain,
           installId: installId,
         ).timeout(const Duration(seconds: 14));
@@ -493,6 +500,7 @@ class ProxClient {
     double livenessScore = 0.0,
     String livenessVer = '',
     String integrityFlag = '',
+    String integrityHash = '',
     List<String> attestationChain = const [],
     String installId = '',
   }) async {
@@ -542,6 +550,7 @@ class ProxClient {
       livenessScore: livenessScore,
       livenessVer: livenessVer,
       integrityFlag: integrityFlag,
+      integrityHash: integrityHash,
       attestationChain: attestationChain,
       installId: installId,
     ));
