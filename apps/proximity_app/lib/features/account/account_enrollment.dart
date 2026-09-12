@@ -220,6 +220,7 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
               seedHex: stored.seedHex,
               pkHex: stored.pkHex,
               sealedKeyHex: stored.sealedKeyHex,
+              chainDERHex: stored.chainDERHex,
               faceId: stored.faceId,
               enrolledAt: stored.enrolledAt,
               verifierVer: stored.verifierVer,

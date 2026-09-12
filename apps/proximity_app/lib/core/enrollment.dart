@@ -725,9 +725,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                       .toUtc()
                       .millisecondsSinceEpoch,
                   // Security §7: HW chain (leaf-first DER hex) + liveness
-                  // pipeline tag. integrityFlag stays '' here — enroll
-                  // hard-blocks tainted devices before this claim, so a
-                  // filed claim is clean-enrolled by construction.
+                  // pipeline tag. integrityFlag stays '' (clean): the
+                  // entry integrity gate that would TAINT this on rooted
+                  // devices is not yet called pre-claim (audit 2026-09-12)
+                  // — enroll-time taint detection is pending work, so ''
+                  // here means "unchecked", not "verified clean". The
+                  // livenessVer tag likewise records the pipeline that
+                  // MUST have measured the stills; enroll-time
+                  // detectPassive gating is pending (marking already
+                  // gates). Both flip with the enforcement call-sites.
                   attestationChain: chainDERHex,
                   livenessVer: kLivenessVer,
                   integrityFlag: ''),

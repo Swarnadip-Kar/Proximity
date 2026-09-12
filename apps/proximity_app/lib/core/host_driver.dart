@@ -397,8 +397,13 @@ class RealHostDriver implements HostDriver {
     try {
       manual = await _store.readHostName();
     } catch (_) {}
-    if (stored == null) {
-      // No device key: ephemeral lecture identity (never uploaded).
+    if (stored == null || stored.seedHex.trim().isEmpty) {
+      // No device key (never enrolled) or sealed-only enrollment
+      // (security §2: raw seedHex is never written anymore): ephemeral
+      // lecture identity (never uploaded). Students verify the per-window
+      // Cert_p + Sig_p fresh each session, so a rotating professor key is
+      // functionally identical here — and unsealing the SKey would need a
+      // biometric HW gate on the hosting hot path.
       final kp = ProxCrypto.generateEdKeypair();
       _profKeys = kp;
       _profName = manual;
