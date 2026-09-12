@@ -116,34 +116,46 @@ and compat-barrel removal are open product decisions for a later pass.
 
 Canonical names live in `ProxRoutes` (`lib/routes.dart`); deep-link args
 in `ProxRouteArgs` (course/session ids + section hint — never record
-objects). Guards in `ProxRoutes.isNativeOnly` / `webGuardRedirect`
-(web records builds redirect native-only deep-links to `records/mine`;
-screens keep their own banners + hidden actions as the second gate).
-Preview flags (`PROX_MODE`, `mode.dart`) and `MaterialApp.home` still
-drive launch — the table covers entry/records deep-links; live/mark/
-enroll render in-tab in their hosts (no named routes for those).
+objects). Route names are normalized via `normalizeProxRoute`
+(leading/trailing slashes trimmed). Guards run web → mobile → auth →
+role → enrollment: `ProxRoutes.isNativeOnly` / `webGuardRedirect`
+(web records builds redirect native-only deep-links to `records/mine`);
+`ProxRoutes.isMobileOnly` / `mobileGuardRedirect` (`enroll/*` only —
+desktop CAN host `live/*`, never enroll); pure `ProxRouteGuard`
+auth/role/enrollment decisions (`lib/routes.dart`, covered by
+`test/route_guards_current_test.dart`); screens keep their own
+banners + hidden actions as the second gate. Parameterized shapes are
+strict: `live/<course>` exact (extra suffix, empty or invalid segment
+→ unknown) and `prof/courses/<course>[/export]` only (anything else →
+unknown, never a silent overview/host). `EnrollFlow.openCapture/openResult`
+delegate to `ProxNav.pushNamed` so exact-table guards apply.
+Preview flags (`PROX_MODE`, `mode.dart`, debug-only — release ignores
+the flag) and `MaterialApp.home` still drive launch.
 
 ```
 welcome · roles · device                        → entry bundle
 prof/courses · prof/courses/<course>            → prof setup (overview;
                                                   in-tab identities, also
                                                   deep-linkable)
-prof/courses/<course>/sessions/<id>[ /edit]     → session detail (read) / edit
-                                                  (in-tab identities)
 prof/courses/<course>/export                    → export center (in-tab
                                                   identity, also deep-linkable)
-live/<course> (+ /roster /inbox /add            → prof live (one host screen;
-  /setup /recover)                                section suffixes land on the
-                                                  host — no standalone section
-                                                  screens)
-mark/* (browse/waiting/face/proving/            → student mark (one
-  verdict/manual phases, in-tab only —            continuation; no named
-  no named routes)                                mark routes)
+session detail/edit, records drill-down         → in-tab pushes only (named
+                                                  deep-links unsupported → unknown)
+live/<course> (exact shape — extra               → prof live (one host screen;
+  suffix is unknown, never the host)              no standalone section screens)
+mark/*                                          → student mark (one
+                                                  continuation; in-tab only —
+                                                  no named mark routes)
 enroll/capture · enroll/result                    → SetupFlow steps (same names
-                                                  EnrollFlow pushes; standalone
-                                                  enroll/intro deleted — SetupFlow
-                                                  is the only enrollment flow)
-records/mine · records/mine/<course>            → records (in-tab identities)
+                                                  EnrollFlow pushes via ProxNav;
+                                                  standalone enroll/intro deleted)
+face/capture · setup-flow                       → named still-capture sheet
+                                                  (native-only) + serialized
+                                                  setup flow (single constant)
+records/mine                                    → records (in-tab drill-down only;
+                                                  named course deep-links unsupported)
+account/face-id                                 → isolated status page (requires
+                                                  enrollment, else enroll/capture)
 debug/log                                       → filterable system log
 ```
 
