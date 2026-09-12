@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Security §3: enrollment secrets must never leave this device via backup.
+     allowBackup=false + fullBackupContent=false already disable backup on
+     API <= 30; on API 31+ the OS reads dataExtractionRules instead, so both
+     the cloud-backup and the device-transfer (D2D) sections must exclude the
+     flutter_secure_storage prefs file (default name "FlutterSecureStorage",
+     i.e. shared_prefs/FlutterSecureStorage.xml — the enrollment doc under
+     key prox.enrollment.v1 + install id live inside it). Keystore keys are
+     never backed up by the OS regardless. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+    </device-transfer>
+</data-extraction-rules>
