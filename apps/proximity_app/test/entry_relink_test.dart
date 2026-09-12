@@ -17,7 +17,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_app/core/app_config/force_update.dart';
 import 'package:proximity_app/core/device_store.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -77,6 +79,15 @@ ProviderContainer _container(
 
 /// Captures the mounted WidgetRef the entry helpers take (WidgetRef, not
 /// Ref — so a bare ProviderContainer is not enough).
+/// Fixed-verdict integrity probe (H3 gate tests): the register paths must
+/// consult the gate instead of deciding on their own.
+class _TaintedProbe implements IntegrityProbe {
+  final IntegritySignals signals;
+  _TaintedProbe(this.signals);
+  @override
+  Future<IntegritySignals> check() async => signals;
+}
+
 Future<WidgetRef> _pumpRef(WidgetTester t, ProviderContainer container) async {
   late WidgetRef ref;
   await t.pumpWidget(UncontrolledProviderScope(
@@ -261,6 +272,93 @@ void main() {
       await t.pump();
       expect(find.text('Contacting server…'), findsOneWidget);
     });
+
+  group('entry H3 gates (register paths)', () {
+    const acct = SignedAccount(
+        email: _email,
+        displayName: 'Test User',
+        uid: 'test-uid',
+        org: 'example.com');
+
+    // Hermetic §6 floor (the live checkNow has no deadline-safe answer in
+    // the widget harness — unmocked platform channels never reply there).
+    Future<ForceUpdateResult> freshFloor() async => const ForceUpdateResult(
+          checked: true,
+          updateRequired: false,
+          currentVersion: '0.2.0',
+          config: ForceUpdateConfig(minVersion: '0.2.0', force: true),
+        );
+
+    ProviderContainer onlineContainer({required InMemoryDeviceStore store}) {
+      final c = _container(
+        store: store,
+        account: acct,
+        cloud: FakeCloudSync(available: true, online: true),
+      );
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    testWidgets('pre-enroll gate blocks rooted register before cloud writes',
+        (t) async {
+      // H3 enroll path: a privileged device refuses with actionable copy
+      // BEFORE the device-claim gate or any cloud write runs.
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe =
+          _TaintedProbe(const IntegritySignals(rooted: true));
+      try {
+        final store = InMemoryDeviceStore();
+        final container = onlineContainer(store: store);
+        final ref = await _pumpRef(t, container);
+        await expectLater(
+          entryRegisterStudent(ref, () => true, acct,
+              checkNow: freshFloor),
+          throwsA(isA<StateError>().having(
+              (e) => e.message, 'message', contains('root'))),
+        );
+        // Refused entry writes nothing and goes nowhere.
+        expect(container.read(appModeProvider), AppMode.unset);
+        expect(await store.readRole(), isNull);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    testWidgets('clean device registers (gates pass through)', (t) async {
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = _TaintedProbe(const IntegritySignals());
+      try {
+        final store = InMemoryDeviceStore();
+        final container = onlineContainer(store: store);
+        final ref = await _pumpRef(t, container);
+        await entryRegisterStudent(ref, () => true, acct,
+            checkNow: freshFloor);
+        expect(container.read(appModeProvider), AppMode.student);
+        expect(roleSet((await store.readRole()) ?? {}), contains('student'));
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    testWidgets('pre-host gate never blocks (advisory, offline-capable)',
+        (t) async {
+      // Even a TAINTED verdict must not refuse professor registration —
+      // hosting stays offline-capable; the finding rides the SEC log.
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe =
+          _TaintedProbe(const IntegritySignals(hooked: true));
+      try {
+        final store = InMemoryDeviceStore();
+        final container = onlineContainer(store: store);
+        final ref = await _pumpRef(t, container);
+        await entryRegisterProf(ref, () => true, acct, 'Test User',
+            checkNow: freshFloor);
+        expect(container.read(appModeProvider), AppMode.prof);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+  });
 
     testWidgets('resume stays quiet when idle', (t) async {
       await t.pumpWidget(MaterialApp(

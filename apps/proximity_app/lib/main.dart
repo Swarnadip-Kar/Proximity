@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'firebase_options.dart';
+import 'core/app_config/force_update.dart';
 import 'core/security/integrity.dart';
 import 'core/auth.dart';
 import 'core/ble_radio.dart';
@@ -261,7 +262,12 @@ Future<void> main() async {
   // opt-in above (background→foreground works because resume re-asserts).
   // Re-assert once the first frame is on screen — by then the first build
   // has recorded _lastResolvedBrightness, so icon contrast stays correct.
-  WidgetsBinding.instance.addPostFrameCallback((_) => _reassertEdgeToEdge());
+  // Same frame also arms the entry ForceUpdate barrier (needs the built
+  // MaterialApp's context; fire-and-forget, never blocks startup).
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    _reassertEdgeToEdge();
+    unawaited(_forceUpdateEntryBarrier());
+  });
 }
 
 class ProximityApp extends ConsumerStatefulWidget {
@@ -278,6 +284,43 @@ Brightness? _lastChromeNavBrightness;
 /// Last app-resolved brightness (theme choice, not platform), reused when
 /// re-asserting chrome after OS/plugin resets (resume, metrics change).
 Brightness? _lastResolvedBrightness;
+
+/// Entry-startup ForceUpdate barrier (§6, H3 call-site): a verified-stale
+/// build gets the non-dismissible update dialog instead of cryptic
+/// downstream rejects (`bad-sig` / `liveness-unbound` on a pinned-APK
+/// bypass attempt). Unchecked (offline, missing floor doc, unreadable
+/// build) NEVER blocks — marking stays offline-capable. Runs post-frame
+/// so [_forceUpdateNavKey] has a context; only a verified-fresh recheck
+/// dismisses (fail-closed, owned by [ForceUpdate.showBarrier]). The
+/// Firestore read here runs AFTER App Check activation above (main
+/// ordering) — enforcement must still wait for the 0.2.0 rollout (see
+/// the IntegrityAppCheck timing note).
+final GlobalKey<NavigatorState> _forceUpdateNavKey =
+    GlobalKey<NavigatorState>();
+
+Future<void> _forceUpdateEntryBarrier() async {
+  ForceUpdateResult res;
+  try {
+    // Bounded: a blackhole network must never stall startup — past the
+    // budget the barrier simply never appears (unchecked ≈ offline).
+    res = await ForceUpdate.checkNow()
+        .timeout(const Duration(seconds: 10));
+  } catch (_) {
+    return; // checkNow never throws by contract; belt-and-braces.
+  }
+  if (!res.checked || !res.updateRequired) return;
+  final ctx = _forceUpdateNavKey.currentContext;
+  if (ctx == null) return;
+  BleLog.log('SEC',
+      'entry barrier: stale ${res.currentVersion.isEmpty ? 'unknown' : res.currentVersion} — update required');
+  try {
+    // ctx comes from the app-level GlobalKey (null-checked above, no
+    // widget `mounted` to consult); showBarrier's own Recheck path guards
+    // ctx.mounted — the lint below is a false positive here.
+    // ignore: use_build_context_synchronously
+    await ForceUpdate.showBarrier(ctx, res);
+  } catch (_) {}
+}
 
 /// Re-assert edge-to-edge after events that reset window flags: permission
 /// sheets, camera/ML plugin activities, recent-apps return, keyboard
@@ -442,6 +485,8 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
     _syncSystemChrome(resolvedBrightness);
     return MaterialApp(
       title: 'Proximity',
+      // Entry ForceUpdate barrier target (see _forceUpdateEntryBarrier).
+      navigatorKey: _forceUpdateNavKey,
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       // Phase 1 visual identity: one theme from the design tokens —

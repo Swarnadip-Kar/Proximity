@@ -4,6 +4,7 @@
 // debug-only signals; App Check activation never throws).
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/app_config/force_update.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
 
@@ -232,6 +233,53 @@ void main() {
       final verdict = await entryIntegrityStartup();
       expect(probe.calls, callsAfterCheck);
       expect(verdict.hash, IntegrityGate.lastVerdict!.hash);
+    });
+  });
+
+  group('entryRequireFreshBuild (§6 floor, H3)', () {
+    ForceUpdateResult fresh() => const ForceUpdateResult(
+          checked: true,
+          updateRequired: false,
+          currentVersion: '0.2.0',
+          config: ForceUpdateConfig(minVersion: '0.2.0', force: true),
+        );
+    ForceUpdateResult stale() => const ForceUpdateResult(
+          checked: true,
+          updateRequired: true,
+          currentVersion: '0.1.0',
+          config: ForceUpdateConfig(
+              minVersion: '0.2.0',
+              force: true,
+              message: 'Update to continue.'),
+        );
+    ForceUpdateResult unchecked() => const ForceUpdateResult(
+          checked: false,
+          updateRequired: false,
+          currentVersion: '0.1.0',
+        );
+
+    test('verified-fresh passes', () async {
+      await entryRequireFreshBuild(checkNow: () async => fresh());
+    });
+
+    test('verified-stale throws with update copy', () async {
+      expect(
+        entryRequireFreshBuild(checkNow: () async => stale()),
+        throwsA(isA<StateError>().having(
+            (e) => e.message, 'message', contains('too old'))),
+      );
+    });
+
+    test('unchecked (offline/missing floor) never throws', () async {
+      // Offline marking preserved: only a VERIFIED floor blocks.
+      await entryRequireFreshBuild(checkNow: () async => unchecked());
+    });
+
+    test('live checkNow degrades to unchecked in tests (never throws)',
+        () async {
+      // No platform plugins in unit tests: the real checkNow converts to
+      // unchecked instead of throwing.
+      await entryRequireFreshBuild();
     });
   });
 

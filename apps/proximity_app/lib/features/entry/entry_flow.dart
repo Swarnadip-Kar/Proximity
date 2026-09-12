@@ -23,6 +23,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 
+import '../../core/app_config/force_update.dart';
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
@@ -234,12 +235,22 @@ Future<Map<String, String>?> entryRoleFor(
 /// - enroll HARD-BLOCKS privileged/hooked/tampered/emulator: the helper
 ///   throws StateError with actionable copy (UI surfaces `message`).
 /// - host/prove NEVER block offline: they return the fresh verdict; the
-///   prove path binds `verdict.hash` into dSig (wiring owned by
-///   sec-sync/sec-hwkey) and the professor flags `integrity-flagged`
-///   (never auto-absent offline).
+///   prove path binds `verdict.hash` into dSig (see student_driver — the
+///   hash is SIGNED, the flag rides advisory) and the professor flags
+///   `integrity-flagged` (never auto-absent offline).
 /// - startup reuses main.dart's cached snapshot; sensitive ops always
 ///   re-probe fresh (no stale-cache decisions).
 /// - Spark-free: no network, no quota — pure local probe + hash.
+///
+/// H3 call-sites (all in this file — the gates have no other callers):
+/// - pre-enroll: [entryRegisterStudent] runs [entryRequireFreshBuild] +
+///   [entryRequireEnrollIntegrity] before the device-claim gate.
+/// - pre-host: [entryRegisterProf] + the prof branch of
+///   [entryContinueWithRole] run [entryRequireFreshBuild] +
+///   [entryHostIntegrity] (advisory — hosting stays offline-capable).
+/// - pre-prove: the student driver resolves [entryMarkingIntegrity] once
+///   per listen (see student_driver.dart).
+/// - entry startup: main.dart shows the ForceUpdate barrier post-frame.
 
 /// Startup verdict: main.dart's cached [IntegrityGate.lastVerdict] when
 /// present, else one fresh [IntegrityOp.startup] probe. Never throws.
@@ -336,6 +347,42 @@ Future<IntegrityVerdict> entryMarkingIntegrity() async {
   }
 }
 
+/// Pre-host/pre-enroll version floor (§6 ForceUpdate, H3 call-site).
+/// Verified-stale + `force: true` throws StateError with update copy (UI
+/// surfaces `message`, same as every other entry refusal). Unchecked
+/// (offline, missing floor doc, unreadable build, or a hung read past
+/// [timeout]) NEVER throws — marking stays offline-capable; only a
+/// verified floor blocks. The timeout also bounds blackhole networks (the
+/// Firestore `.get()` inside checkNow has no deadline of its own) and the
+/// widget-test harness (unmocked platform channels there never answer).
+/// Injectable [checkNow] for tests (production uses [ForceUpdate.checkNow],
+/// which reads AFTER App Check activation — see main.dart ordering).
+Future<void> entryRequireFreshBuild({
+  Future<ForceUpdateResult> Function()? checkNow,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  ForceUpdateResult res;
+  try {
+    final pending =
+        checkNow != null ? checkNow() : ForceUpdate.checkNow();
+    res = await pending.timeout(timeout);
+  } catch (_) {
+    // checkNow never throws by contract — timeouts, channel failures and
+    // belt-and-braces all land here as "unverified, keep going".
+    return;
+  }
+  if (res.checked && res.updateRequired) {
+    final floor = res.config?.minVersion.trim() ?? '';
+    BleLog.log('SEC',
+        'stale build ${res.currentVersion.isEmpty ? 'unknown' : res.currentVersion}'
+        '${floor.isEmpty ? '' : ' < $floor'} — update required');
+    throw StateError(
+        'This version of Proximity is too old to continue safely'
+        '${floor.isEmpty ? '' : ' (needs $floor)'} — '
+        'update the app, then try again.');
+  }
+}
+
 /// "Professor (Name) + Student" label for the identity header.
 String entryHeldLabel(Map<String, String> role) {
   final set = roleSet(role);
@@ -366,7 +413,8 @@ Future<void> entryMergeProfCloud(
 /// Register the signed-in Gmail as professor. Merge semantics: a Gmail
 /// that already holds the student role keeps it.
 Future<void> entryRegisterProf(WidgetRef ref, EntryMounted isMounted,
-    SignedAccount acct, String displayName) async {
+    SignedAccount acct, String displayName,
+    {Future<ForceUpdateResult> Function()? checkNow}) async {
   final email = acct.email.toLowerCase();
   BleLog.log('NAV', 'entry register prof $email');
   final cloud = ref.read(cloudSyncProvider);
@@ -378,6 +426,11 @@ Future<void> entryRegisterProf(WidgetRef ref, EntryMounted isMounted,
     throw StateError(
         'You appear offline — professor registration needs internet once (to create your cloud backup). You can Continue offline below and register later.');
   }
+  // H3 gates: stale builds refuse with update copy before spending cloud
+  // calls; the host verdict is advisory (hosting stays offline-capable —
+  // the finding rides the SEC log, never a refusal).
+  await entryRequireFreshBuild(checkNow: checkNow);
+  await entryHostIntegrity();
   await cloud.setRole(RoleDoc(
       uid: uid,
       email: email,
@@ -488,7 +541,8 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
 /// already holds the professor role keeps it. Enrollment (face + ID)
 /// happens in the student home when needed.
 Future<void> entryRegisterStudent(
-    WidgetRef ref, EntryMounted isMounted, SignedAccount acct) async {
+    WidgetRef ref, EntryMounted isMounted, SignedAccount acct,
+    {Future<ForceUpdateResult> Function()? checkNow}) async {
   final email = acct.email.toLowerCase();
   BleLog.log('NAV', 'entry register student $email');
   final cloud = ref.read(cloudSyncProvider);
@@ -498,6 +552,12 @@ Future<void> entryRegisterStudent(
     throw StateError(
         'Student registration needs internet (one enrolled device per Gmail is checked online). Connect and try again.');
   }
+  // H3 gates: stale builds refuse with update copy first; privileged /
+  // hooked / tampered / emulator devices cannot enroll (StateError carries
+  // the actionable copy — debug alone passes). Records-only builds report
+  // clean (no device trust there — the L1 face gate still owns them).
+  await entryRequireFreshBuild(checkNow: checkNow);
+  await entryRequireEnrollIntegrity();
   // Early device check (same verdict the enroll claim enforces): a Gmail
   // held by another device, or an install enrolled as another Gmail,
   // refuses here with the retry date / next step.
@@ -579,7 +639,8 @@ Future<void> entryStampLastMode(WidgetRef ref, EntryMounted isMounted,
 /// (merge/touch), so aborting mid-flight retries cleanly.
 Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
     SignedAccount acct, Map<String, String> role, String which,
-    {Duration operationTimeout = const Duration(seconds: 25)}) async {
+    {Duration operationTimeout = const Duration(seconds: 25),
+    Future<ForceUpdateResult> Function()? checkNow}) async {
   BleLog.log(
       'NAV', 'entry continue $which ${acct.email.toLowerCase()}');
   // Silent-pickup path (no fresh sign-in ran): restore the
@@ -590,6 +651,11 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
     await relinkLinkedIdentity(ref, acct);
   }
   if (which == 'prof') {
+    // H3 pre-host gates: stale builds refuse with update copy (offline →
+    // unchecked → passes, so offline professors stay local-only); the host
+    // verdict is advisory and never throws.
+    await entryRequireFreshBuild(checkNow: checkNow);
+    await entryHostIntegrity();
     final profUid = (role['uid'] ?? '').trim();
     unawaited(entryMergeProfCloud(
         ref,
