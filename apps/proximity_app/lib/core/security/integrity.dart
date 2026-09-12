@@ -28,26 +28,35 @@
 //     professor flags `integrity-flagged` (never auto-absent offline).
 //     Spark-free: no Functions, no TTL, no extra quota.
 //
-// Native backends (NOT imported here — pubspec owned by 1B `sec-store-config`):
-//   REQUIRED (request via 1B, do not edit pubspec here):
-//     firebase_app_check: ^0.4.7
-//     flutter_security_suite: ^latest
-//   Once 1B lands them, [PlatformIntegrityProbe] delegates per signal:
-//     rooted   → SecuritySuite.isRooted / isJailBroken
-//     hooked   → Frida port/maps scan + Xposed/module check + hook detect
-//     tampered → tamper SHA-256 check + installer/package verify
-//     emulator → emulator check (+ FLAG_SECURE set on Android windows)
-//     debug    → debugger / debug-mode check
-//   App Check providers: AndroidPlayIntegrityProvider, Apple AppAttest /
-//   DeviceCheck provider. Console enforcement is a console toggle (no rules
-//   syntax on Spark) — steps live in the commit body + [IntegrityAppCheck].
-//   Until then the default probe below is conservative (fail-open signals,
-//   fail-closed enforcement at the gate): unknown → false, so offline
-//   marking is never broken by a missing plugin.
+// Native backends (deps landed — pubspec owned outside this file, do NOT
+// edit it here):
+//     firebase_app_check: ^0.3.2+10 (exact 0.3.x enum API — see
+//       [IntegrityAppCheck]; do NOT assume 0.4.x provider classes)
+//     flutter_security_suite: ^1.1.1 ([SecureBankKit.runSecurityCheck] →
+//       [SecurityStatus]; the per-signal mapping lives on
+//       [PlatformIntegrityProbe])
+// Signal mapping (flutter_security_suite 1.1.1):
+//     rooted   → SecurityStatus.isRooted (RootBeer/su + jailbreak reads)
+//     hooked   → SecurityStatus.isRuntimeHooked (Frida/Xposed/
+//                instrumentation + attached debugger per the
+//                runtime-protection contract)
+//     tampered → SecurityStatus.isTampered || !isAppIntegrityValid
+//                (SHA-256 re-sign/tamper + installer/package verify)
+//     emulator → SecurityStatus.isEmulator
+//     debug    → kDebugMode (pure Dart observed — the suite exposes no
+//                separate debugger bit; debug alone never blocks enroll)
+// Contract unchanged: fail-OPEN probe (unknown ⇒ clean, so a missing or
+// hung plugin can never brick offline marking) + fail-CLOSED gate
+// (tainted verdicts hard-block enroll, flag marking).
 library;
 
+import 'dart:async';
+
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kDebugMode, kIsWeb, TargetPlatform;
+import 'package:flutter/services.dart';
+import 'package:flutter_security_suite/flutter_security_suite.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -77,22 +86,68 @@ abstract class IntegrityProbe {
   Future<IntegritySignals> check();
 }
 
-/// Conservative default probe (no native deps — green before 1B lands the
-/// plugins). Reports only what pure Dart knows honestly:
-///   debug = kDebugMode (observed, never an enroll block on its own).
-/// Everything else is false (unknown ⇒ clean) so a missing native plugin
-/// can never brick offline marking. The native probe overrides [check]
-/// with the real RootBeer/Frida/emulator/tamper reads once available.
+/// Production probe: one fresh [SecureBankKit.runSecurityCheck] per call,
+/// mapped onto the §5 signals (see file doc). Records-only builds
+/// (desktop/web — never enroll, never prove) skip the native plugin and
+/// report only the honest Dart signal, so a missing plugin can neither
+/// taint nor brick them. An absent/hung channel degrades to the same
+/// debug-only signals — fail-OPEN probe, fail-CLOSED gate (see
+/// [IntegrityGate]): unknown ⇒ clean, so offline marking is never broken
+/// by the plugin; tainted ⇒ enroll hard-blocks and marking flags.
+/// A PRESENT plugin's per-check errors stay fail-SECURE per signal (the
+/// suite's own contract: an unverifiable root/tamper read taints rather
+/// than clears) — only a wholly absent channel fails open (see the ping).
 class PlatformIntegrityProbe implements IntegrityProbe {
   const PlatformIntegrityProbe();
 
+  /// Native read budget: a hung channel must never stall startup or a
+  /// sensitive op — past this the probe degrades to debug-only (clean).
+  static const probeBudget = Duration(seconds: 8);
+
+  /// Suite method channel (pinned to flutter_security_suite 1.1.1 —
+  /// `platform/method_channel_security.dart`: `com.securebankkit/security`,
+  /// `feature#action` naming). Re-declared here (not imported) because the
+  /// package exports only the facade, not the channel.
+  static const MethodChannel _suiteChannel =
+      MethodChannel('com.securebankkit/security');
+
   @override
   Future<IntegritySignals> check() async {
-    // TODO(1B sec-store-config): after adding
-    //   flutter_security_suite: ^latest
-    // delegate each signal to SecuritySuite (root/jailbreak, Frida+Xposed,
-    // tamper SHA-256, emulator, debugger) instead of the constants below.
-    return IntegritySignals(debug: kDebugMode);
+    // Records-only builds hold no device trust (fail-closed upstream via
+    // requireMobileFace, not here): skip the plugin entirely.
+    if (kIsWeb ||
+        !(defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS)) {
+      return IntegritySignals(debug: kDebugMode);
+    }
+    try {
+      // Presence ping: the suite's use cases swallow channel errors into
+      // fail-SECURE defaults (rooted/tampered read true on error), which
+      // is correct for a PRESENT plugin but indistinguishable from an
+      // ABSENT one — and an absent channel (stale install that never
+      // re-registered the plugin, test harness) must fail OPEN, never
+      // taint every verdict. One cheap read proves the native side
+      // answers; anything else (missing plugin, hang) degrades clean.
+      await _suiteChannel
+          .invokeMethod<bool>('emulator#isEmulator')
+          .timeout(probeBudget);
+      final status = await SecureBankKit.initialize(
+        enableRootDetection: true,
+        enableAppIntegrity: true,
+        enableEmulatorDetection: true,
+        enableTamperDetection: true,
+        enableRuntimeProtection: true,
+      ).runSecurityCheck().timeout(probeBudget);
+      return IntegritySignals(
+        rooted: status.isRooted,
+        hooked: status.isRuntimeHooked,
+        tampered: status.isTampered || !status.isAppIntegrityValid,
+        emulator: status.isEmulator,
+        debug: kDebugMode,
+      );
+    } catch (_) {
+      return IntegritySignals(debug: kDebugMode);
+    }
   }
 }
 
@@ -261,39 +316,46 @@ class IntegrityGate {
           defaultTargetPlatform == TargetPlatform.iOS);
 }
 
-/// Firebase App Check wiring (PROXIMITY_SECURITY.md §5).
-///
-/// REAL activation (lands with 1B's `firebase_app_check: ^0.4.7` — do NOT
-/// add the dep here):
+/// Firebase App Check wiring (PROXIMITY_SECURITY.md §5) — REAL activation
+/// on the exact 0.3.x API (firebase_app_check ^0.3.2+10 — enum providers,
+/// NOT 0.4.x provider classes):
 /// ```dart
-/// import 'package:firebase_app_check/firebase_app_check.dart';
 /// await FirebaseAppCheck.instance.activate(
-///   androidProvider: AndroidPlayIntegrityProvider(),
-///   appleProvider: AppleAppAttestProvider(), // DeviceCheck fallback on <iOS14
+///   androidProvider: AndroidProvider.playIntegrity,
+///   appleProvider: AppleProvider.deviceCheck,
 /// );
 /// ```
-/// Must run BEFORE the first Firestore read (see main.dart wiring).
+/// Must run BEFORE the first Firestore read (main.dart calls this before
+/// ForceUpdate.checkNow and every provider read). Apple uses DeviceCheck
+/// (App Attest needs iOS 14+ plus entitlements per flavor — escalate per
+/// release once the floor is 14+; DeviceCheck is the safe default).
 /// Console enforcement is a console toggle (no rules syntax on Spark):
-/// Play Integrity DEVICE→STRONG + App Attest, then Enforce Firestore.
-/// Full click path ships in the commit body. Until 1B lands the dep this
-/// is a documented no-op that logs once — App Check absence never blocks
-/// offline marking (defense in depth, never the sole gate: HW dSig still
+/// register Play Integrity + DeviceCheck apps, set Play DEVICE→STRONG,
+/// THEN Enforce on Firestore — only after the 0.2.0 floor has rolled out
+/// (enforcing earlier bricks legit installs that cannot attest yet; see
+/// commit body for the timing). App Check absence never blocks offline
+/// marking (defense in depth, never the sole gate: HW dSig still
 /// required).
 class IntegrityAppCheck {
   IntegrityAppCheck._();
 
-  static bool _logged = false;
+  static bool _activated = false;
 
   /// Best-effort activation hook called from main.dart before Firestore.
-  /// Never throws.
+  /// Never throws (uninitialized Firebase, unsupported platform, missing
+  /// provider all degrade to a log line — marking stays offline-capable).
   static Future<void> ensureActivated() async {
-    // TODO(1B sec-store-config): replace with the real
-    // FirebaseAppCheck.instance.activate(...) snippet above once
-    // firebase_app_check ^0.4.7 is in pubspec.yaml.
-    if (!_logged) {
-      _logged = true;
+    if (_activated) return;
+    try {
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: AndroidProvider.playIntegrity,
+        appleProvider: AppleProvider.deviceCheck,
+      );
+      _activated = true;
+      BleLog.log('SEC', 'AppCheck activated (PlayIntegrity/DeviceCheck)');
+    } catch (e) {
       BleLog.log('SEC',
-          'AppCheck pending 1B dep (firebase_app_check ^0.4.7: PlayIntegrity/AppAttest) — enforcement via console; marking stays offline-capable');
+          'AppCheck activation skipped ($e) — marking stays offline-capable');
     }
   }
 }

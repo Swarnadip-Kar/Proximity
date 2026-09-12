@@ -1,7 +1,8 @@
 // 2C: IntegrityGate verdict / enroll-block / marking-flag units (+ entry
-// pre-enroll/prove helpers). Pure Dart + injectable fake probe — no
-// firebase_app_check / flutter_security_suite needed (1B owns those deps;
-// the default probe stays conservative until they land).
+// pre-enroll/prove helpers). Fake-probe units stay hermetic; the closing
+// group pins the REAL backends' fail-open contract (missing plugin →
+// debug-only signals; App Check activation never throws).
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
@@ -231,6 +232,35 @@ void main() {
       final verdict = await entryIntegrityStartup();
       expect(probe.calls, callsAfterCheck);
       expect(verdict.hash, IntegrityGate.lastVerdict!.hash);
+    });
+  });
+
+  group('real backends (fail-open, never throw)', () {
+    test('PlatformIntegrityProbe degrades to debug-only without a plugin',
+        () async {
+      // Unit tests have no native plugin: the MethodChannel read must fail
+      // OPEN (clean signals + observed debug), never throw, never taint —
+      // the same posture as a records-only build or a hung channel.
+      const probe = PlatformIntegrityProbe();
+      final signals = await probe.check();
+      expect(signals.rooted, isFalse);
+      expect(signals.hooked, isFalse);
+      expect(signals.tampered, isFalse);
+      expect(signals.emulator, isFalse);
+      expect(signals.debug, kDebugMode);
+    });
+
+    test('performCheck with the real probe never throws', () async {
+      final verdict = await IntegrityGate.performCheck();
+      expect(verdict.hash, hasLength(8));
+      expect(IntegrityGate.lastVerdict, isNotNull);
+    });
+
+    test('IntegrityAppCheck.ensureActivated never throws', () async {
+      // No Firebase app in unit tests: activation degrades to a log line —
+      // App Check absence never blocks offline marking.
+      await IntegrityAppCheck.ensureActivated();
+      await IntegrityAppCheck.ensureActivated();
     });
   });
 }
