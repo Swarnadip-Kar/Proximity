@@ -853,11 +853,13 @@ void main() {
     }
   });
 
-test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
+test('bound e2e: FULL attestation without a chain fails device-unproven',
       timeout: const Timeout(Duration(minutes: 2)), () async {
-    // Tracks 2+3 happy path over the real server: checkFace stamps the
-    // ticket, listenAndProve binds pkD+ticketHash into Sig_s and posts
-    // pkD + dSig + attestation claims; the host confirms clean.
+    // Security §2 chain gate: a FULL claim with no attestationChain fails
+    // closed as device-unproven (never a tier, never silent presence).
+    // The positive FULL+chain path is covered by transport hw_prove_test
+    // (pinned throwaway roots + crafted chain); NONE still takes the
+    // fallback-flag path below.
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
     final stuPk = ed.public(ed.newKeyFromSeed(seed));
@@ -922,8 +924,8 @@ test('bound e2e: ticket + dSig + FULL attestation marks (no flags)',
         verifierVer: check.verifierVer,
         onStatus: (_) {},
       );
-      expect(res.result, StudentResult.marked);
-      expect(server.tally.presentCount, 1);
+      expect(res.result, StudentResult.error);
+      expect(server.tally.presentCount, 0);
       expect(stuPk.bytes.length, 32); // live key presented, not the stub
     } finally {
       await server.stop();

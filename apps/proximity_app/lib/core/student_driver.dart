@@ -1004,6 +1004,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       } catch (e) {
         BleLog.log('SEC', 'session vector unavailable ($e) — proving bare');
       }
+      // Security §2: the HW attestation chain (DER-hex, leaf-first) rides
+      // the bound proof so the professor pins it offline; the installId
+      // lets the professor recompute the enrollment challenge
+      // (SHA256(email || installId || pkS)). Both are app UUIDs/cert bytes
+      // already shared with the professor via Firestore — never IMEI.
+      final installId = await _store.readInstallId() ?? '';
       final res = await client.prove(
         desc: desc,
         studentId: identity.gmail.toLowerCase(),
@@ -1063,6 +1069,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         attestationLevel: stored.attestationLevel,
         attestedUntilMs:
             stored.attestedUntil.toUtc().millisecondsSinceEpoch,
+        attestationChain: stored.chainDERHex,
+        installId: installId,
       );
       if (res.flags.isNotEmpty) {
         BleLog.log('SEC', 'host attestation flags: ${res.flags.join(',')}');
