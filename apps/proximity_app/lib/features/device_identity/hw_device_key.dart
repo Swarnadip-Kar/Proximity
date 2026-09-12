@@ -185,6 +185,7 @@ class HwDeviceKey implements DeviceKey {
 
   /// Attestation chain as DER-hex (leaf-first — the `StoredEnrollment`
   /// + Firestore `attestationChain` wire form).
+  @override
   List<String> get chainDERHex =>
       [for (final c in _chainDER) hexEncode(c)];
 
@@ -211,6 +212,7 @@ class HwDeviceKey implements DeviceKey {
   /// `SHA256(email || installId || pkS)` as the attestation challenge and
   /// caching the chain. Idempotent per enrollment (same inputs → same
   /// challenge; a new key replaces the old under [alias]).
+  @override
   Future<void> bindEnrollment({
     required String email,
     required String installId,

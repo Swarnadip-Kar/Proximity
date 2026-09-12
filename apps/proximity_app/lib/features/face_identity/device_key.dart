@@ -20,22 +20,22 @@
 // SoftwareDeviceKey below is level `none` for exactly this reason, which
 // is why its proofs carry the fallback flag rather than a tier).
 //
-// What this file IS: the narrow Dart interface + sealed-SKey envelope
-// bookkeeping + software/fake backends (level `none`: no HW tier claimed —
-// live proofs confirm via the flagged `device-none-fallback`, never as
-// FULL/STD).
-// What it is NOT (deferred, noted as residual risk): the Kotlin/Swift HW
-// keystore/Enclave backend that would produce genuinely hardware-bound
-// keys. Deliberately absent: any server re-check — the project carries
-// no billing-gated backend, so attestation levels are self-asserted by
-// the enrolling client and checked for consistency (never proof) by
-// offline verifiers. See PROXIMITY_DESIGN.md §3.4 for the trust model
-// this implies.
+// What this file IS: the narrow Dart interface + [UnavailableDeviceKey]
+// (desktop/web fail-closed) + test-only [SoftwareDeviceKey]/[FakeDeviceKey]
+// (level `none`). Production HW lives in
+// `features/device_identity/hw_device_key.dart` ([HwDeviceKey]: P-256,
+// StrongBox→TEE / Secure Enclave, ES256, challenge-bound, sealed-only).
+// Deliberately absent: any server re-check — the project carries
+// no billing-gated backend, so attestation levels are client-presented and
+// checked offline (chain-vs-pinned-roots + challenge match, never trust on
+// claim alone) by verifiers. See PROXIMITY_DESIGN.md §3.4 for the trust
+// model this implies.
 library;
 
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -76,6 +76,21 @@ abstract class DeviceKey {
   /// Best-effort online heartbeat: rolls [attestedUntil] to now+90d when
   /// this device still holds the binding. Returns true when rolled.
   Future<bool> heartbeat({DateTime? now});
+
+  /// HW attestation chain as DER-hex (leaf-first, security §2 + §7 wire
+  /// form). Default `[]` (unbound legacy/test path) — [HwDeviceKey]
+  /// overrides with the OS attestation chain cached at bind time.
+  List<String> get chainDERHex => const [];
+
+  /// Binds one enrollment to HW (embeds the M1-gap challenge at key
+  /// creation). Default calls [ensure] (software/fake path) — HW
+  /// backends override to generate with the challenge.
+  Future<void> bindEnrollment({
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) =>
+      ensure();
 }
 
 /// Fail-closed stub for desktop/web (L3 DI wires this wherever
@@ -116,14 +131,34 @@ class UnavailableDeviceKey implements DeviceKey {
 
   @override
   Future<bool> heartbeat({DateTime? now}) async => false;
+
+  @override
+  List<String> get chainDERHex => const [];
+
+  @override
+  Future<void> bindEnrollment({
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) async =>
+      throw _blocked();
 }
 
-/// Software fallback (production until the HW keystore lands + tests):
-/// Ed25519 stand-in keypair, XOR envelope (NOT AES-GCM — documented,
-/// never HW-grade), level `none` (no tier claimed — live proofs confirm
-/// via the flagged `device-none-fallback`). Lets the full
-/// enroll→seal→prove→verify loop run without secure hardware.
+/// TEST-ONLY software stand-in (security §2: never production).
+///
+/// Ed25519 keypair + XOR envelope (NOT AES-GCM — documented, never
+/// HW-grade), level `none` (no tier claimed). Production enroll/prove
+/// fail closed on it (`Software-no-enroll` / sealed-only re-enroll);
+/// unit/widget tests use it (or [FakeDeviceKey]) to drive the
+/// enroll→seal→prove→verify loop without secure hardware. The constructor
+/// asserts `kDebugMode`; [ensure] additionally throws outside debug so a
+/// release build can never silently enroll software.
 class SoftwareDeviceKey implements DeviceKey {
+  SoftwareDeviceKey() {
+    assert(kDebugMode,
+        'SoftwareDeviceKey is test-only — production uses HwDeviceKey.');
+  }
+
   ed.KeyPair? _keys;
   DateTime _attestedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   DateTime _attestedUntil =
@@ -131,6 +166,10 @@ class SoftwareDeviceKey implements DeviceKey {
 
   @override
   Future<void> ensure() async {
+    if (!kDebugMode) {
+      throw StateError(
+          'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave (HwDeviceKey).');
+    }
     if (_keys != null) return;
     _keys = ProxCrypto.generateEdKeypair();
     final now = DateTime.now().toUtc();
@@ -199,6 +238,17 @@ class SoftwareDeviceKey implements DeviceKey {
         ((now ?? DateTime.now()).toUtc()).add(kDeviceAttestedValidity);
     return true;
   }
+
+  @override
+  List<String> get chainDERHex => const [];
+
+  @override
+  Future<void> bindEnrollment({
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) async =>
+      ensure();
 }
 
 /// Test fake: scripted pkD/level/window, clone simulation via [dropKey]
@@ -217,11 +267,13 @@ class FakeDeviceKey implements DeviceKey {
     this.attestLevel = AttestationLevel.full,
     DateTime? attestedAt,
     DateTime? attestedUntil,
+    List<String>? chainDERHex,
   })  : pkDBytes = pkD ?? Uint8List.fromList(List.filled(32, 7)),
         attestedAtValue =
             attestedAt ?? DateTime.utc(2026, 9, 1),
         attestedUntilValue =
-            attestedUntil ?? DateTime.utc(2026, 12, 1);
+            attestedUntil ?? DateTime.utc(2026, 12, 1),
+        chainDERHexValue = List<String>.unmodifiable(chainDERHex ?? const []);
 
   /// Simulates a backup-restore clone: the new install holds ciphertext
   /// its fresh key cannot open.
@@ -271,6 +323,21 @@ class FakeDeviceKey implements DeviceKey {
         ((now ?? DateTime.now()).toUtc()).add(kDeviceAttestedValidity);
     return true;
   }
+
+  /// Scripted attestation chain (DER-hex, leaf-first). `[]` by default —
+  /// tests proving chain persistence pass a chain here.
+  List<String> chainDERHexValue = const [];
+
+  @override
+  List<String> get chainDERHex => List<String>.unmodifiable(chainDERHexValue);
+
+  @override
+  Future<void> bindEnrollment({
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) async =>
+      ensure();
 }
 
 final deviceKeyProvider = Provider<DeviceKey>((ref) {
