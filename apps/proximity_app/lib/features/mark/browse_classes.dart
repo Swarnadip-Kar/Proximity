@@ -385,10 +385,12 @@ class _BrowseAvatar extends StatelessWidget {
       key: const ValueKey('browse-avatar-ring'),
       width: 64,
       height: 64,
+      // Identity ring only: gradient border, no glow. Glow is reserved
+      // for live scanning signals (radar empty state, presence ring);
+      // an always-on avatar glow diluted that meaning.
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: c.gradientBrand,
-        boxShadow: [c.glowLive.toShadow()],
       ),
       padding: const EdgeInsets.all(3),
       child: Container(
