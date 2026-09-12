@@ -271,7 +271,8 @@ void main() {
       expect(out.reason, 'ok');
     });
 
-    test('pre-liveness bound ticket fails liveness-unbound', () {
+    test('pre-liveness bound ticket fails liveness-unbound (post-rollout)',
+        () {
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       // Signed WITHOUT liveness (neutral defaults) — the old bound shape.
@@ -312,9 +313,57 @@ void main() {
         revoked: false,
         freshWindow: true,
         singleUseOk: true,
+        // Post-rollout + min_version bump: liveness mandatory.
+        requireLiveness: true,
       );
       expect(out.decision, ProveDecision.invalid);
       expect(out.reason, 'liveness-unbound');
+    });
+
+    test('pre-liveness bound ticket confirms during migration (default)',
+        () {
+      final s = _setup(1);
+      final now = DateTime.now().toUtc();
+      final ticket = ProxCrypto.faceTicketHash(
+        faceScore: 0.85,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+      );
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: s.stu.privateKey,
+        sessionId: s.sess,
+        windowId: s.wid,
+        j: 1,
+        challenge: s.cj,
+        studentId: 'a@x.in',
+        faceScore: 0.85,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+        faceTicketHashBytes: ticket,
+      );
+      final out = verifyProve(
+        req: _liveReq(
+            id: 'a@x.in',
+            wid: s.wid,
+            j: 1,
+            cj: s.cj,
+            sigS: sig,
+            score: 0.85,
+            faceValidAt: now,
+            ticket: ticket,
+            now: now,
+            livenessScore: 0.0,
+            livenessVer: ''),
+        expectedCj: s.cj,
+        sessionId: s.sess,
+        windowIdExpected: s.wid,
+        studentPk: s.stu.publicKey,
+        revoked: false,
+        freshWindow: true,
+        singleUseOk: true,
+      );
+      expect(out.decision, ProveDecision.confirmed);
+      expect(out.reason, 'ok');
     });
 
     test('unknown liveness pipeline fails closed', () {

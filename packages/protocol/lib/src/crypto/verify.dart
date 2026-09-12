@@ -180,9 +180,11 @@ class VerifyOutcome {
 ///   liveness gate (`>= kLivenessThreshold` + liveness allowlist) applies,
 ///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner),
 ///   and attestation anomaly flags ride on the outcome. Legacy and
-///   pre-liveness tickets fail closed here (`face-unbound` /
-///   `unknown-verifier` / `liveness-unbound` / `unknown-liveness-verifier` /
-///   `liveness-below-threshold`), never auto-present.
+///   pre-liveness tickets fail closed here once [requireLiveness] flips
+///   (`face-unbound` / `unknown-verifier` / `liveness-unbound` /
+///   `unknown-liveness-verifier` / `liveness-below-threshold`), never
+///   auto-present. During migration ([requireLiveness] false) face-bound
+///   proofs without liveness still confirm (no liveness claimed).
 /// - bound with level NONE (graceful fallback — HW keys don't ship, so
 ///   production `SoftwareDeviceKey` is always NONE): the ticket-bound Sig_s,
 ///   face threshold/window, allowlists (face + liveness), liveness threshold
@@ -201,6 +203,13 @@ VerifyOutcome verifyProve({
   required bool singleUseOk, // (ID,j) unseen
   DateTime? nowOverride,
   bool requireBoundTicket = false,
+  // Security §4 migration: false (default) accepts pre-liveness
+  // face-bound proofs without a liveness gate — live marking + existing
+  // tests keep working while sec-liveness wires the client. Proofs that
+  // DO carry liveness fields are always gated. Flip to true with the
+  // liveness-required min_version bump (then pre-liveness fails
+  // `liveness-unbound`, never a silent downgrade).
+  bool requireLiveness = false,
 }) {
   final now = (nowOverride ?? req.now).toUtc();
   if (!bytesEqual(req.windowId, windowIdExpected)) {
@@ -289,26 +298,29 @@ VerifyOutcome verifyProve({
       return VerifyOutcome(ProveDecision.invalid, reason, flags());
     }
     // Security §4 liveness gate: the extended ticket binds
-    // (livenessScore, livenessVer); the host requires a present,
-    // allowlisted liveness pipeline AND a score >= Tl. Pre-liveness
-    // tickets (0.0/'') fail as `liveness-unbound` — never a silent
-    // downgrade to face-only. Unknown pipelines fail as
-    // `unknown-liveness-verifier`; weak scores fail as
-    // `liveness-below-threshold`. Applies on BOTH the NONE fallback and
-    // the FULL/STD tier paths (photo-spoof must fail even without HW).
-    final livenessAllowed = req.livenessAllowlist
-        .any((p) => req.livenessVer.startsWith(p));
-    if (req.livenessVer.isEmpty || req.livenessScore == 0.0) {
-      return VerifyOutcome(
-          ProveDecision.invalid, 'liveness-unbound', flags());
-    }
-    if (!livenessAllowed) {
-      return VerifyOutcome(
-          ProveDecision.invalid, 'unknown-liveness-verifier', flags());
-    }
-    if (req.livenessScore < kLivenessThreshold) {
-      return VerifyOutcome(
-          ProveDecision.invalid, 'liveness-below-threshold', flags());
+    // (livenessScore, livenessVer). Proofs CARRYING liveness are always
+    // gated (allowlisted pipeline + score >= Tl) on BOTH the NONE fallback
+    // and FULL/STD paths. Pre-liveness proofs (0.0/'') gate only when
+    // [requireLiveness] is true (post-rollout + min_version bump → fail
+    // `liveness-unbound`, never a silent downgrade); during migration they
+    // confirm as face-bound (no liveness claimed, no liveness flag).
+    final carriesLiveness =
+        req.livenessVer.isNotEmpty || req.livenessScore != 0.0;
+    if (carriesLiveness || requireLiveness) {
+      final livenessAllowed = req.livenessAllowlist
+          .any((p) => req.livenessVer.startsWith(p));
+      if (req.livenessVer.isEmpty || req.livenessScore == 0.0) {
+        return VerifyOutcome(
+            ProveDecision.invalid, 'liveness-unbound', flags());
+      }
+      if (!livenessAllowed) {
+        return VerifyOutcome(
+            ProveDecision.invalid, 'unknown-liveness-verifier', flags());
+      }
+      if (req.livenessScore < kLivenessThreshold) {
+        return VerifyOutcome(
+            ProveDecision.invalid, 'liveness-below-threshold', flags());
+      }
     }
     // Graceful NONE fallback: HW keys don't ship, so production is
     // always level NONE (`SoftwareDeviceKey`). A bound-NONE proof verifies
