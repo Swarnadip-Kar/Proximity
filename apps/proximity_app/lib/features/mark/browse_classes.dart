@@ -261,7 +261,9 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
               child: Text(
                 'Join the same network as your professor and keep Bluetooth on. '
                 'If your class is not visible, ask the professor to announce the IP '
-                'verbally and enter it with “Enter IP manually”.',
+                'verbally and enter it with “Enter IP manually”. '
+                'Bars show how recently the class was heard: 3 = open now, '
+                '2 = heard momentarily, 1 = listed from history.',
                 // Same size as the previous ladder line (bodySmall).
                 style: ProxType.caption(color: c.contentSecondary),
               ),
