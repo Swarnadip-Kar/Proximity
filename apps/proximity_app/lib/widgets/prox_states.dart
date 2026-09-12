@@ -328,10 +328,79 @@ class _ProxEmptyStateState extends State<ProxEmptyState> {
   }
 }
 
+/// Full-page error state: error icon disc + headline + message + optional
+/// retry. Empty states stay neutral ([ProxEmptyState]); inline field errors
+/// stay inline ([ProxErrorNote], [BrowseBanner]). This is for dead-ends
+/// (unknown route, failed load with no data).
+class ProxErrorState extends StatelessWidget {
+  final String headline;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const ProxErrorState({
+    super.key,
+    required this.headline,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: ProxSpacing.xxl),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.statusError.withValues(alpha: 0.08),
+              border: Border.all(
+                color: c.statusError.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Icon(
+              Icons.error_outline,
+              size: ProxIconSizes.lg,
+              color: c.statusError,
+            ),
+          ),
+          const SizedBox(height: ProxSpacing.md),
+          Text(
+            headline,
+            textAlign: TextAlign.center,
+            style: ProxType.title(color: c.contentPrimary),
+          ),
+          const SizedBox(height: ProxSpacing.xs),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: ProxType.body(color: c.contentSecondary),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: ProxSpacing.lg),
+            TextButton(
+              onPressed: onAction,
+              child: Text(
+                actionLabel!,
+                style: ProxType.label(color: c.accentBrand),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Quiet one-line sync/offline note (grey, centered). Replaces the
 /// scattered `Text(color: Colors.grey)` copies.
-class ProxSyncNote extends StatelessWidget {
-  final String message;
+class ProxSyncNote extends StatelessWidget {  final String message;
   const ProxSyncNote(this.message, {super.key});
 
   @override
