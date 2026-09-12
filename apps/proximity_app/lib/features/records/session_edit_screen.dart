@@ -433,18 +433,28 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
     );
   }
 
-  /// One person's per-window checkboxes. Extracted so the staggered list
-  /// above stays readable; logic unchanged (tri-state header + per-round
-  /// fixes + remove).
+  /// One person's per-window correction. Intentional exception to the
+  /// hold-and-tap rule: this is per-round correction (Round 1 vs Round 2),
+  /// not bulk selection — bulk delete lives in the course overview list.
+  /// Styled to tokens (brand active, pill-tinted rows); logic unchanged
+  /// (tri-state header + per-round fixes + remove).
   Widget _personTile(String email) {
+    final c = ProximityColors.of(context);
     return ExpansionTile(
       dense: true,
       leading: Checkbox(
         value: _isPresent(email),
         tristate: true,
+        activeColor: c.accentBrand,
+        checkColor: Colors.white,
+        side: BorderSide(color: c.divider),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
+        visualDensity: VisualDensity.compact,
         // Tri-state: all rounds / some rounds / none — tapping
         // sets or clears every round at once; per-round fixes
-        // use the checkboxes inside. View-only on web.
+        // use the switches inside. View-only on web.
         onChanged:
             widget.readOnly ? null : (v) => _toggle(email, v ?? false),
       ),
@@ -454,7 +464,7 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
       trailing: widget.readOnly
           ? null
           : IconButton(
-              icon: const Icon(Icons.delete_outline),
+              icon: Icon(Icons.delete_outline, color: c.contentSecondary),
               tooltip: 'Remove',
               onPressed: () => _remove(email),
             ),
@@ -462,6 +472,13 @@ class _SessionEditScreenState extends ConsumerState<SessionEditScreen> {
         for (var i = 0; i < _windows.length; i++)
           CheckboxListTile(
             dense: true,
+            activeColor: c.accentBrand,
+            checkColor: Colors.white,
+            side: BorderSide(color: c.divider),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(ProxRadii.card),
+            ),
+            visualDensity: VisualDensity.compact,
             value: _windows[i][email] == true,
             onChanged: widget.readOnly
                 ? null
