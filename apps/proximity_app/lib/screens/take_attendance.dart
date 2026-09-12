@@ -1168,7 +1168,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   // the dedicated roster screen, identical wiring. No
                   // inbox/add/setup composition here.
                   SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
                     child: LiveRosterBody(
                       waitingRows: waitingRows,
                       groups: _driver?.dupGroups ?? const {},
@@ -1181,7 +1181,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   // 1 — Inbox only: pending manual requests. Wrappers bump
                   // the history-refresh tick (decisions upsert history).
                   SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
                     child: ManualInboxSection(
                       pending: manualPending,
                       onApproveOne: (email) => _approveOne(email)
@@ -1198,7 +1198,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   // submit's error propagation (`whenComplete` rethrows)
                   // and bumps the tick (adds upsert history).
                   SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
                     child: DirectAddSection(
                       course: widget.courseName,
                       sessionId: _recordId ?? '',
@@ -1220,7 +1220,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                   // 3 — Setup only: name/IP/discovery before Start, plus
                   // a live student-view preview (same shared card).
                   SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       mainAxisSize: MainAxisSize.min,
