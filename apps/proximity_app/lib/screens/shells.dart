@@ -51,7 +51,7 @@ import '../widgets/clock.dart';
 import '../widgets/prox_buttons.dart';
 import '../widgets/prox_cards.dart';
 import '../widgets/prox_glass.dart';
-import '../widgets/student_card.dart' show CourseLogo;
+import '../widgets/student_card.dart' show ProxAvatar;
 import '../widgets/web_banner.dart';
 import 'take_attendance.dart';
 import 'package:proximity_storage/storage.dart';
@@ -1160,9 +1160,18 @@ class _LiveRoot extends ConsumerStatefulWidget {
 class _LiveRootState extends ConsumerState<_LiveRoot> {
   late Future<List<dynamic>> _courses;
 
-  Future<List<dynamic>> _loadLive() {
+  Future<List<dynamic>> _loadLive() async {
+    // Courses + per-course photo opt-ins (Gmail disc iff the toggle is on;
+    // account photo read at build so sign-in/out refreshes discs). History
+    // intentionally NOT loaded here: per-course last-hosted lives on the
+    // Courses picker subtitle — the live list shows today only, once.
     final store = ref.read(deviceStoreProvider);
-    return Future.wait([store.readCourses(), store.readHistory()]);
+    final courses = await store.readCourses();
+    final share = <String, bool>{};
+    for (final course in courses) {
+      share[course.name] = await store.readShowProfPhoto(course.name);
+    }
+    return [courses, share];
   }
 
   @override
@@ -1172,30 +1181,16 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
   }
 
   /// Re-read the course catalog (same source the Courses tab writes via
-  /// `store.addCourse`) + the history read the Courses picker already uses
-  /// for its last-date labels (read-only reuse, no new query/semantics).
-  /// Called by the shell on every Live-tab select: the keep-alive pager +
-  /// per-tab Navigator keeps this state alive, so the initState snapshot
-  /// alone would stay stale forever and hide Courses-tab registrations.
+  /// `store.addCourse`) + per-course photo opt-ins. Called by the shell on
+  /// every Live-tab select: the keep-alive pager + per-tab Navigator keeps
+  /// this state alive, so the initState snapshot alone would stay stale
+  /// forever and hide Courses-tab registrations.
   /// No filtering — empty state shows only when the catalog is truly empty.
   void refresh() {
     if (!mounted) return;
     setState(() {
       _courses = _loadLive();
     });
-  }
-
-  /// Newest history dateIso for [course], same membership + newest-first
-  /// rule as the Courses picker (`courseId` match, legacy empty-courseId
-  /// falls back to class-label match). Null when never hosted.
-  String? _lastDateFor(String course, List<ClassRecord> history) {
-    final sessions = history
-        .where((r) =>
-            r.courseId == course ||
-            (r.courseId.isEmpty && r.classLabel == course))
-        .toList()
-      ..sort((a, b) => b.dateIso.compareTo(a.dateIso));
-    return sessions.isEmpty ? null : sessions.first.dateIso;
   }
 
   @override
@@ -1243,9 +1238,14 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
           final courses = data.isNotEmpty && data[0] is List<Course>
               ? data[0] as List<Course>
               : const <Course>[];
-          final history = data.length >= 2 && data[1] is List<ClassRecord>
-              ? data[1] as List<ClassRecord>
-              : const <ClassRecord>[];
+          final share = data.length >= 2 && data[1] is Map<String, bool>
+              ? data[1] as Map<String, bool>
+              : const <String, bool>{};
+          // Gated Gmail photo for course discs: per-course opt-in + the
+          // signed-in account photo (same gating as the take header).
+          final accountPhoto =
+              ref.watch(accountProvider).valueOrNull?.photoUrl?.trim() ??
+                  '';
           if (courses.isEmpty) {
             return Center(
               child: SingleChildScrollView(
@@ -1275,10 +1275,10 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
             );
           }
           // presentation only): today line reuses the frozen take-header
-          // format; each row reuses the frozen Courses-picker date format
-          // (`lastDateLabel`) read-only from history, with an honest
-          // `Not hosted yet` state when absent. Host entry only (no
-          // management, no session counts): radio + host subtitle + Host.
+          // format. Host entry only (no management, no session counts):
+          // radio + host subtitle + Host. Per-course last-hosted is NOT
+          // repeated here — it lives on the Courses picker subtitle, so
+          // the date appears once (top), not twice.
           final c = ProximityColors.of(context);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1316,17 +1316,13 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
                   itemCount: courses.length,
                   itemBuilder: (context, i) {
                     final name = courses[i].name;
-                    final lastDate = _lastDateFor(name, history);
-                    // Frozen picker format for the date half; honest
-                    // empty state otherwise. §10.1: the date line never
-                    // ellipsizes (wraps); ellipsis lives only on the
-                    // non-date host line below.
-                    final dateLine = lastDate == null
-                        ? 'Not hosted yet'
-                        : 'Last hosted ${lastDateLabel(lastDate)}';
+                    final photo = (share[name] ?? false) && accountPhoto.isNotEmpty
+                        ? accountPhoto
+                        : '';
                     // Host entry as a shared card (same shell as the
-                    // Courses-tab pickers): course logo disc + name + date
-                    // + host line + Host action. Push + log + route name.
+                    // Courses-tab pickers): course disc (gated Gmail photo
+                    // or CS-style initials) + name + host line + Host
+                    // action. Push + log + route name.
                     // (Raw ListTile hover/focus paints a stock rectangle
                     // here — the design-system card replaces it.)
                     return Padding(
@@ -1344,7 +1340,7 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            CourseLogo(course: name),
+                            ProxAvatar.course(course: name, photoUrl: photo),
                             const SizedBox(width: ProxSpacing.md),
                             Expanded(
                               child: Column(
@@ -1361,15 +1357,9 @@ class _LiveRootState extends ConsumerState<_LiveRoot> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    dateLine,
+                                    'Tap to host live session',
                                     style: ProxType.caption(
                                         color: c.contentSecondary),
-                                    softWrap: true,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.visible,
-                                  ),
-                                  const Text(
-                                    'Tap to host live session',
                                     overflow: TextOverflow.ellipsis,
                                     maxLines: 1,
                                   ),

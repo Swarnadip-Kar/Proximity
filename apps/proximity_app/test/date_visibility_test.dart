@@ -4,10 +4,10 @@
 //    prominent wrapping line (never ellipsized); status badge +
 //    rounds/label/org secondary below (ellipsis only there). Pinned at
 //    360dp-narrow + 130% text scale with longest labels.
-// 2. Live tab root: per-course last-hosted date (frozen `lastDateLabel`,
-//    read-only from history, honest `Not hosted yet` when absent) + today's
-//    date header (frozen `fullDateOf(todayIso())`, same as the take header).
-//    Take-screen header itself untouched (pinned unchanged here).
+// 2. Live tab root: today's date header (frozen `fullDateOf(todayIso())`,
+//    same as the take header) exactly once; per-course last-hosted is NOT
+//    repeated here — it lives on the Courses picker subtitle. Take-screen
+//    header itself untouched (pinned unchanged here).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -158,7 +158,8 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('Live rows show last-hosted + today dates', (t) async {
+  testWidgets('Live rows show today once, no per-course date repeat',
+      (t) async {
     final store = InMemoryDeviceStore();
     await store.addCourse('CS201');
     await store.addCourse('CS202');
@@ -174,13 +175,12 @@ void main() {
     ));
     await t.pumpWidget(_profShell(store));
     await _settle(t);
-    // Today's header, frozen take-header format.
+    // Today's header, frozen take-header format — exactly once.
     expect(find.text(fullDateOf(todayIso())), findsOneWidget);
-    // Per-course last-hosted, frozen picker format; honest empty state.
-    expect(
-        find.text('Last hosted ${lastDateLabel('2026-09-04')}'),
-        findsOneWidget);
-    expect(find.text('Not hosted yet'), findsOneWidget);
+    // Per-course last-hosted lives on the Courses picker subtitle, not
+    // here: no repeated date lines, no stale empty states.
+    expect(find.textContaining('Last hosted'), findsNothing);
+    expect(find.text('Not hosted yet'), findsNothing);
     // Host-only preserved: verbatim host line stays, no session counts.
     expect(find.text('Tap to host live session'), findsNWidgets(2));
     expect(find.textContaining('sessions ·'), findsNothing);
