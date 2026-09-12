@@ -129,7 +129,11 @@ class LiveStatusStrip extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        PresentTicker(present: present, total: denom),
+        // Bounded: triple-digit counts ellipsize instead of pushing the
+        // strip past 360dp.
+        Flexible(
+          child: PresentTicker(present: present, total: denom),
+        ),
       ],
     );
   }

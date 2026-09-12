@@ -13,10 +13,16 @@ class PresentTicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = Text('$present/$total present',
+    // Single-line + ellipsis: the strip Row bounds this via Flexible, so
+    // triple-digit counts shrink text instead of overflowing 360dp.
+    final label = Text(
+        '$present/$total present',
         key: ValueKey<int>(present),
         style: proxTabular(
-            context, Theme.of(context).textTheme.headlineSmall));
+            context, Theme.of(context).textTheme.headlineSmall),
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
+        softWrap: false);
     if (ProxMotion.reduced(context)) return label;
     return AnimatedSwitcher(
       duration: ProxDurations.medium,

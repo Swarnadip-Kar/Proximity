@@ -108,16 +108,21 @@ void main() {
     await t.pumpAndSettle();
 
     // One state-preserving switch, one scroll per tab (no shared scroll):
-    // all four tab scrolls stay mounted (4 with offstage included) while
-    // only the active tab's scroll is visible (1 with the default
+    // all four tab scrolls stay mounted (5 scrolls with offstage included:
+    // 4 tabs + the sub-nav's own horizontal overflow guard) while only the
+    // active tab's scroll + sub-nav are visible (2 with the default
     // offstage-skipping finder). Which tab is visible is asserted per-tab
     // below.
     expect(find.byType(IndexedStack), findsOneWidget);
     expect(
       find.byType(SingleChildScrollView, skipOffstage: false),
-      findsNWidgets(4),
+      findsNWidgets(5),
     );
-    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('live-subnav-scroll')),
+      findsOneWidget,
+    );
+    expect(find.byType(SingleChildScrollView), findsNWidgets(2));
 
     // Default = Roster (product-owner order, index 0): roster-only.
     expect(find.textContaining('Waiting area (1)'), findsOneWidget);
@@ -220,6 +225,31 @@ void main() {
     );
     expect(t.widget<EditableText>(editable).controller.text, 'a@univ.edu');
     expect(t.takeException(), isNull);
+  });
+
+  testWidgets('sub-nav + inbox settle at 360x640 with count badge',
+      (t) async {
+    // Regression: the Inbox count badge widened the 4-segment sub-nav past
+    // 360dp and the inbox tab overflowed. Sub-nav scrolls instead now.
+    t.view.physicalSize = const Size(360, 640);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.reset);
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    final host = await _seededDriver();
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    await t.tap(find.text('Inbox'));
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    expect(find.text('Manual requests (2)'), findsOneWidget);
   });
 
   testWidgets('date header visible in IDLE and LIVE states', (t) async {

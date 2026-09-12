@@ -59,12 +59,16 @@ export '../features/live/draft_recovery.dart'
 /// segment SWAPS the content below via the host's IndexedStack — each
 /// sub-tab shows ONLY its view (no shared scroll, no intersection);
 /// inactive views stay mounted so their state survives switches.
-class _LiveSubNav extends StatelessWidget {
+///
+/// Scrolls horizontally on narrow/large-text layouts (count badge +
+/// 130% type no longer overflow 360dp); fills full width otherwise.
+class LiveSubNav extends StatelessWidget {
   final int selected;
   final int inboxCount;
   final ValueChanged<int> onSelect;
 
-  const _LiveSubNav({
+  const LiveSubNav({
+    super.key,
     required this.selected,
     required this.inboxCount,
     required this.onSelect,
@@ -73,8 +77,14 @@ class _LiveSubNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    return SegmentedButton<int>(
-      style: SegmentedButton.styleFrom(
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        key: const ValueKey('live-subnav-scroll'),
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: constraints.maxWidth),
+          child: SegmentedButton<int>(
+            style: SegmentedButton.styleFrom(
         minimumSize: const Size(64, ProxSpacing.minTap),
         textStyle: ProxType.label(color: c.contentPrimary).copyWith(
           fontWeight: FontWeight.w600,
@@ -136,6 +146,9 @@ class _LiveSubNav extends StatelessWidget {
         if (s.isEmpty) return;
         onSelect(s.first);
       },
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1197,7 +1210,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(
                   ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
-              child: _LiveSubNav(
+              child: LiveSubNav(
                 selected: _section,
                 inboxCount: manualPending.length,
                 onSelect: _selectSection,
