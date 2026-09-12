@@ -585,8 +585,8 @@ authoritative for which screens exist.
    Back navigation autosaves the draft; recent drafts snapshot to history
    AND resume live (same record, zero taps); older drafts ask
    "Recover old session?" (Recover continues, Save & fresh archives first).
-5. Mid-lecture tap **Take another round** for window #2 (fresh `S_w`), or **Retake round N** (same number, marks merge).
-6. Tap **End attendance**. Export lives on the course page (per-session CSV, date-range matrix). Saved sessions stay editable (per-round checkboxes, partial/absent quick lists, unified manual-add).
+5. Mid-lecture tap **Take another round** for window #2 (fresh `S_w`), **Resume round N** (same number, marks merge, timer continues), or **Discard round N** (warning popup; dropping the last round fully resets the visit — no record, no draft).
+6. Tap **End attendance**. Export lives on the course page (per-session CSV) and My courses (Export All Data → one zipped file per course). Saved sessions stay editable (per-round checkboxes, partial/absent quick lists, unified manual-add).
 
 Present rule (default): `Present = pass every window taken`, else `Partial`/`Absent`. Lenient any-window mode per export call.
 
