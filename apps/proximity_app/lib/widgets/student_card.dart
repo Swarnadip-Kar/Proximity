@@ -143,6 +143,86 @@ class CourseLogo extends StatelessWidget {
   }
 }
 
+/// Shared identity avatar: photo first (account metadata, never face
+/// data), initials disc fallback on ProxIdentity hues. Optional gradient
+/// ring (identity accent, never glow — glow is reserved for live
+/// scanning). Replaces browse/header one-off avatar assemblies.
+class ProxAvatar extends StatelessWidget {
+  final String name;
+  final String photoUrl;
+  final double size;
+  final bool withRing;
+
+  const ProxAvatar({
+    super.key,
+    required this.name,
+    this.photoUrl = '',
+    this.size = 56,
+    this.withRing = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    final url = photoUrl.trim();
+    Widget initials() {
+      final base = studentAvatarColor(c, name);
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: base.withValues(alpha: 0.12),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          studentInitials(name),
+          style: ProxType.title(color: base),
+          overflow: TextOverflow.clip,
+          maxLines: 1,
+        ),
+      );
+    }
+
+    final face = url.isEmpty
+        ? initials()
+        : ClipOval(
+            child: Image.network(
+              url,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => initials(),
+              frameBuilder: (context, child, frame, _) {
+                if (frame == null) return initials();
+                return child;
+              },
+            ),
+          );
+    if (name.trim().isEmpty && url.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    if (!withRing) return face;
+    return Container(
+      width: size + 8,
+      height: size + 8,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: c.gradientBrand,
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c.surfaceBase,
+        ),
+        padding: const EdgeInsets.all(2),
+        child: face,
+      ),
+    );
+  }
+}
+
 /// Attendance ring avatar: the ONE ring + face assembly shared by the
 /// course list cards and the course detail header (same box, same avatar,
 /// same ring ratio — never drift apart again).
