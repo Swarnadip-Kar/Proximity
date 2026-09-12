@@ -6,10 +6,12 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../security/secure_store_options.dart';
 import 'record_helpers.dart';
 import 'store_base.dart';
 import '../../export_location.dart' show exportDirPrefsKey;
@@ -26,8 +28,22 @@ class SecureDeviceStore implements DeviceStore {
   static const _kLastHost = 'prox.lasthost.v1';
   static const _kOrgBackfill = 'prox.orgBackfill.v1';
   final FlutterSecureStorage _secure;
+  // Hardened at-rest posture (PROXIMITY_SECURITY.md §3, F3): biometric-bound
+  // AES-GCM on Android, this-device-only unsynced Keychain on iOS. Never
+  // revert to `const FlutterSecureStorage()` defaults — the default
+  // AndroidOptions allow device-credential fallback and the default
+  // IOSOptions are syncable/migratable.
   SecureDeviceStore({FlutterSecureStorage? secure})
-      : _secure = secure ?? const FlutterSecureStorage();
+      : _secure = secure ??
+            const FlutterSecureStorage(
+              aOptions: SecureStoreOptions.aOpts,
+              iOptions: SecureStoreOptions.iOpts,
+            );
+
+  /// Test-only view of the wired storage (lets tests assert the hardened
+  /// options are actually passed, not just that the constants exist).
+  @visibleForTesting
+  FlutterSecureStorage get debugSecureStorageForTest => _secure;
 
   /// Single SharedPreferences acquisition point (was 34 inline copies).
   Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
