@@ -1,8 +1,7 @@
 //
-// Production mapping (platform shell, one implementer with the trust
-// interface): Android StrongBox→TEE / iOS Secure Enclave once the
-// keystore/Enclave track lands. SKey Ed25519 is KEPT (protocol
-// untouched) but sealed to DKey (AES-GCM on HW, envelope here —
+// Production mapping: Android StrongBox→TEE / iOS Secure Enclave via
+// [HwDeviceKey] (attested_secure_keys backend — the provider default on
+// mobile below). SKey Ed25519 is KEPT (protocol untouched) but sealed to DKey (AES-GCM on HW, envelope here —
 // ciphertext only at rest). Extended claim carries
 // {pkS,pkD,installId,attestationLevel,self-asserted,attestedAt,
 // attestedUntil=+90d}; /prove adds pkD + dSig=Sign(DKey, session||
@@ -22,7 +21,8 @@
 //
 // What this file IS: the narrow Dart interface + [UnavailableDeviceKey]
 // (desktop/web fail-closed) + test-only [SoftwareDeviceKey]/[FakeDeviceKey]
-// (level `none`). Production HW lives in
+// (level `none`) + the [deviceKeyProvider] default (HW on mobile,
+// fail-closed stub otherwise). Production HW lives in
 // `features/device_identity/hw_device_key.dart` ([HwDeviceKey]: P-256,
 // StrongBox→TEE / Secure Enclave, ES256, challenge-bound, sealed-only).
 // Deliberately absent: any server re-check — the project carries
@@ -40,6 +40,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_protocol/protocol.dart';
 
 import '../../core/platformx.dart';
+import '../device_identity/hw_device_key.dart';
 
 /// Sealed-SKey envelope magic (versioned so a format change fails closed
 /// instead of decrypting garbage into a signing key).
@@ -341,5 +342,18 @@ class FakeDeviceKey implements DeviceKey {
 }
 
 final deviceKeyProvider = Provider<DeviceKey>((ref) {
-  throw UnimplementedError('Override in main / tests');
+  // Production default (main.dart still overrides explicitly per launch;
+  // tests inject SoftwareDeviceKey/FakeDeviceKey): the HW device key on
+  // mobile (StrongBox→TEE / Secure Enclave via [AttestedSecureKeysBackend]),
+  // fail-closed stub on records-only targets. Constructing the backend is
+  // side-effect-free (no keystore touch until ensure/bind); desktop/web
+  // never reach it (records-only branch below, plus the mobile gate inside
+  // [HwDeviceKey] itself).
+  if (canUseFace()) {
+    return HwDeviceKey(
+      backend: AttestedSecureKeysBackend(),
+      sealStore: const FlutterSealStore(),
+    );
+  }
+  return const UnavailableDeviceKey();
 });
