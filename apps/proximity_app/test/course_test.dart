@@ -47,6 +47,27 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
+  testWidgets('courses export-all dock', (t) async {
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
+    await t.pumpAndSettle();
+    // Floating dock like Review & export; enabled while any course has
+    // sessions. Tap not exercised — the platform share sheet has no test
+    // fake.
+    expect(find.text('Export All Data'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  test('export-all naming: per-course entries + fleet zip', () {
+    expect(exportAllEntryName('CS201'), 'attendance_CS201_all.csv');
+    expect(
+      exportAllZipName('prof@univ.edu', DateTime.utc(2026, 9, 12, 10, 30, 5)),
+      'prof@univ.edu_Attendance_record_20260912T103005Z.zip',
+    );
+  });
+
   testWidgets('courses empty state + register', (t) async {
     await t.pumpWidget(helpers.testScope(
         store: InMemoryDeviceStore(),
@@ -54,6 +75,7 @@ void main() {
             theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.textContaining('No courses yet'), findsOneWidget);
+    expect(find.text('Export All Data'), findsNothing);
     await t.tap(find.text('Register new course'));
     await t.pumpAndSettle();
     await t.enterText(
@@ -101,11 +123,22 @@ void main() {
     expect(find.byTooltip('Retake attendance'), findsNothing);
     expect(find.byType(Checkbox), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
-    // Tight title: short weekday + DD-MM-YYYY; roomy subtitle: full date.
-    expect(find.textContaining('Thu, 03-09-2026'), findsOneWidget);
+    // Main line: day, date and time (roomy); present (green) over
+    // absent (red) badges beside it; no tight label anywhere here.
     expect(
-        find.textContaining('Thursday, 03-09-2026'), findsOneWidget);
+        find.textContaining('Thu, 03-09-26'), findsOneWidget);
+    expect(find.textContaining('Thu, 03-09-2026'), findsNothing);
     expect(find.textContaining('2026-09-03'), findsNothing);
+    // Attendance % top-right; rounds line carries the counts
+    // (absent red · partial yellow · present green) left of nothing —
+    // rounds left, counts right.
+    expect(find.text('0%'), findsOneWidget);
+    expect(find.textContaining('2 rounds'), findsOneWidget);
+    // Compact counts: ✓ present, `N partial` word, ✗ absent.
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.textContaining('1 partial'), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.text('Total Classes: 1'), findsOneWidget);
     // Review & export opens the export center (per-session CSV + matrix).
     await t.tap(find.text('Review & export'));
     await t.pumpAndSettle();
@@ -125,22 +158,19 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('export center: date-range matrix reachable', (t) async {
+  testWidgets('export center: shared date-only rows + range entry',
+      (t) async {
     await t.pumpWidget(helpers.testScope(
         store: await seeded(),
         home: MaterialApp(
             theme: proxLightTheme(),
             home: const ExportCenterScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
+    // Floating range entry is back; rows reuse the shared session card
+    // with date-only titles (no avatar, no course name).
     expect(find.text('Export date range'), findsOneWidget);
-    expect(find.textContaining('Thu, 03-09-2026'), findsOneWidget);
-    await t.tap(find.text('Export date range'));
-    await t.pumpAndSettle();
-    // Date-range picker opens as a dialog; dismiss back to the center.
-    expect(find.byType(Dialog), findsWidgets);
-    await t.binding.handlePopRoute();
-    await t.pumpAndSettle();
-    expect(find.text('Export date range'), findsOneWidget);
+    expect(find.textContaining('Thu, 03-09-26'), findsOneWidget);
+    expect(find.textContaining('CS201 ·'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -153,7 +183,7 @@ void main() {
             home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
     // Hold-and-tap enters selection mode (no checkboxes in this tab).
-    await t.longPress(find.textContaining('Thu, 03-09-2026'));
+    await t.longPress(find.textContaining('Thu, 03-09-26'));
     await t.pumpAndSettle();
     expect(find.text('Delete 1'), findsOneWidget);
     expect(find.text('Select all'), findsOneWidget);

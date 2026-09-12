@@ -98,6 +98,14 @@ class LiveSetupSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Same header as every other Live tab (exact Add-tab contract:
+        // ProxSectionHeader with gradient accent bar + 17px title, zero
+        // padding). Worded `Session setup` so the exact-match `Setup`
+        // sub-nav finder keeps resolving to the tab alone.
+        const ProxSectionHeader(
+          title: 'Session setup',
+          padding: EdgeInsets.zero,
+        ),
         if (!hosting && serverError == null) ...[
           const SizedBox(height: ProxSpacing.sm),
           Text(

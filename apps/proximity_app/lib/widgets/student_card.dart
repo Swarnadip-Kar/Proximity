@@ -78,8 +78,7 @@ int studentColorIndex(String name) {
 /// Never face data.
 Color studentAvatarColor(ProximityColors c, String name) {
   final dark =
-      ThemeData.estimateBrightnessForColor(c.surfaceBase) ==
-      Brightness.dark;
+      ThemeData.estimateBrightnessForColor(c.surfaceBase) == Brightness.dark;
   return _identityFor(name, dark);
 }
 
@@ -189,9 +188,8 @@ class ProxAvatar extends StatelessWidget {
           )
         : ProxType.title(color: studentAvatarColor(c, name));
     Widget initials() {
-      final base = isCourse
-          ? courseAvatarColor(c, name)
-          : studentAvatarColor(c, name);
+      final base =
+          isCourse ? courseAvatarColor(c, name) : studentAvatarColor(c, name);
       return Container(
         width: size,
         height: size,
@@ -349,8 +347,10 @@ class StudentCard extends StatefulWidget {
   /// Null hides the line — every other card is unchanged.
   final String? subtitle2;
 
-  /// Status slot (§4.2), right-aligned on line 1. Null hides the slot.
-  final VerdictBadge? status;
+  /// Status slot (§4.2), right-aligned on line 1. Usually one
+  /// [VerdictBadge]; the course-overview session rows pass a stacked
+  /// present/absent badge column instead. Null hides the slot.
+  final Widget? status;
 
   /// Round trail (line 3, pill chips). Empty hides the line.
   final List<RoundTick> roundTrail;
@@ -372,9 +372,35 @@ class StudentCard extends StatefulWidget {
   /// Rendered via [Image.network] with initials fallback on error/offline.
   final String? photoUrl;
 
+  /// Avatar identity override: avatar color + initials derive from this
+  /// instead of [name]. The course-overview session rows show the session
+  /// date as [name] but keep the course disc (CS, not date initials).
+  /// Null (every other caller) keeps the legacy name-derived avatar.
+  final String? avatarName;
+
+  /// Full-width subtitle-line replacement. The course-overview session
+  /// rows slot their evenly-spaced rounds/present/partial/absent row
+  /// here (rounds included — `subtitle` stays null). Null (every other
+  /// caller) renders the classic single subtitle text.
+  final Widget? subtitleTrailing;
+
+  /// Full-width footer below the main row (inside card padding). The
+  /// course-overview session rows slot their attendance share bar here.
+  /// Null (every other caller) renders the classic row only.
+  final Widget? footer;
+
+  /// Card internal padding override. Null (every other caller) keeps the
+  /// spec padding ([ProxLayout.cardPadding] all round). The overview
+  /// session rows slim the top only.
+  final EdgeInsetsGeometry? padding;
+
   /// Avatar disc diameter (default 40 — rosters, waiting lists, records).
   /// Mark browse class tiles pass 56.
   final double avatarSize;
+
+  /// False hides the avatar disc (the export page shows date-only rows).
+  /// True (every other caller) keeps the classic avatar.
+  final bool showAvatar;
 
   const StudentCard({
     super.key,
@@ -388,7 +414,12 @@ class StudentCard extends StatefulWidget {
     this.onSelectionChanged,
     this.onTap,
     this.photoUrl,
+    this.avatarName,
+    this.subtitleTrailing,
+    this.footer,
+    this.padding,
     this.avatarSize = 40,
+    this.showAvatar = true,
   });
 
   @override
@@ -419,8 +450,7 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
   }
 
   void _syncRing() {
-    final want =
-        (widget.selected || widget.selectionMode) &&
+    final want = (widget.selected || widget.selectionMode) &&
         !ProxMotion.reduced(context);
     if (want && _ringTimer == null) {
       _ringTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
@@ -468,8 +498,9 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final avatarColor = studentAvatarColor(c, widget.name);
-    final avatarFg = studentAvatarForeground(c, widget.name);
+    final avatarLabel = widget.avatarName ?? widget.name;
+    final avatarColor = studentAvatarColor(c, avatarLabel);
+    final avatarFg = studentAvatarForeground(c, avatarLabel);
     final ringOn = widget.selected || _pressed;
 
     // No-shadow-geometry hover rule (see ProxCard): hover never touches
@@ -482,71 +513,84 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
         boxShadow: [ProxShadows.rest(context)],
       ),
       child: AnimatedContainer(
-      duration: ProxDurations.micro,
-      curve: ProxCurves.standard,
-      constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
-      padding: EdgeInsets.all(ProxLayout.cardPadding(context)),
-      decoration: BoxDecoration(
-        color: widget.selected
-            ? c.surfaceOverlay
-            : _hovering
-                ? c.accentBrand.withValues(alpha: 0.03)
-                : c.surfaceRaised,
-        borderRadius: ProxRadii.cardSpecRadius,
-        border: Border.all(
+        duration: ProxDurations.micro,
+        curve: ProxCurves.standard,
+        constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
+        padding:
+            widget.padding ?? EdgeInsets.all(ProxLayout.cardPadding(context)),
+        decoration: BoxDecoration(
           color: widget.selected
-              ? c.accentBrand.withValues(alpha: 0.5)
+              ? c.surfaceOverlay
               : _hovering
-                  ? c.accentBrand.withValues(alpha: 0.12)
-                  : c.divider,
+                  ? c.accentBrand.withValues(alpha: 0.03)
+                  : c.surfaceRaised,
+          borderRadius: ProxRadii.cardSpecRadius,
+          border: Border.all(
+            color: widget.selected
+                ? c.accentBrand.withValues(alpha: 0.5)
+                : _hovering
+                    ? c.accentBrand.withValues(alpha: 0.12)
+                    : c.divider,
+          ),
         ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Avatar with gradient ring on selection. Only the ring sweep
-          // rotates (SweepGradient angles in the plain inner Container);
-          // the logo/photo child is never Transform.rotated, so it stays
-          // still. The angles MUST NOT live in AnimatedContainer's
-          // decoration: every 120ms tick would restart its implicit
-          // BoxDecoration animation and pumpAndSettle would never settle.
-          // NOTE: padding animates 0 ↔ 2.5, so the curve must NOT overshoot
-          // (easeOutBack dips below 0 → AnimatedContainer asserts
-          // padding.isNonNegative). Keep the spring for scale only.
-          AnimatedContainer(
-            duration: ProxDurations.small,
-            curve: ProxCurves.standard,
-            width: widget.avatarSize,
-            height: widget.avatarSize,
-            padding: EdgeInsets.all(ringOn ? 2.5 : 0),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: ringOn
-                  ? Colors.transparent
-                  : avatarColor.withValues(alpha: 0.15),
-            ),
-            child: ringOn
-                ? Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: SweepGradient(
-                        startAngle: _ringAngle,
-                        endAngle: _ringAngle + 6.283,
-                        colors: [
-                          c.accentBrand,
-                          avatarColor,
-                          c.accentBrand,
-                        ],
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(1),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.surfaceRaised,
-                      ),
-                      child: _CardAvatar(
-                        name: widget.name,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Avatar with gradient ring on selection. Only the ring sweep
+            // rotates (SweepGradient angles in the plain inner Container);
+            // the logo/photo child is never Transform.rotated, so it stays
+            // still. The angles MUST NOT live in AnimatedContainer's
+            // decoration: every 120ms tick would restart its implicit
+            // BoxDecoration animation and pumpAndSettle would never settle.
+            // NOTE: padding animates 0 ↔ 2.5, so the curve must NOT overshoot
+            // (easeOutBack dips below 0 → AnimatedContainer asserts
+            // padding.isNonNegative). Keep the spring for scale only.
+            if (widget.showAvatar)
+              AnimatedContainer(
+                duration: ProxDurations.small,
+                curve: ProxCurves.standard,
+                width: widget.avatarSize,
+                height: widget.avatarSize,
+                padding: EdgeInsets.all(ringOn ? 2.5 : 0),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: ringOn
+                      ? Colors.transparent
+                      : avatarColor.withValues(alpha: 0.15),
+                ),
+                child: ringOn
+                    ? Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: SweepGradient(
+                            startAngle: _ringAngle,
+                            endAngle: _ringAngle + 6.283,
+                            colors: [
+                              c.accentBrand,
+                              avatarColor,
+                              c.accentBrand,
+                            ],
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(1),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: c.surfaceRaised,
+                          ),
+                          child: _CardAvatar(
+                            name: avatarLabel,
+                            photoUrl: widget.photoUrl,
+                            ringOn: ringOn,
+                            avatarColor: avatarColor,
+                            avatarFg: avatarFg,
+                            c: c,
+                            size: widget.avatarSize,
+                          ),
+                        ),
+                      )
+                    : _CardAvatar(
+                        name: avatarLabel,
                         photoUrl: widget.photoUrl,
                         ringOn: ringOn,
                         avatarColor: avatarColor,
@@ -554,75 +598,73 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                         c: c,
                         size: widget.avatarSize,
                       ),
-                    ),
-                  )
-                : _CardAvatar(
-                    name: widget.name,
-                    photoUrl: widget.photoUrl,
-                    ringOn: ringOn,
-                    avatarColor: avatarColor,
-                    avatarFg: avatarFg,
-                    c: c,
-                    size: widget.avatarSize,
-                  ),
-          ),
-          const SizedBox(width: ProxSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.name,
-                        style: ProxType.body(color: c.contentPrimary),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ),
-                    if (widget.status != null) ...[
-                      const SizedBox(width: ProxSpacing.sm),
-                      widget.status!,
-                    ],
-                  ],
-                ),
-                if (widget.subtitle != null && widget.subtitle!.isNotEmpty) ...[
-                  const SizedBox(width: 0, height: 2),
-                  Text(
-                    widget.subtitle!,
-                    style: ProxType.caption(color: c.contentSecondary),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ],
-                if (widget.subtitle2 != null &&
-                    widget.subtitle2!.isNotEmpty) ...[
-                  const SizedBox(width: 0, height: 2),
-                  Text(
-                    widget.subtitle2!,
-                    style: ProxType.caption(color: c.contentSecondary),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ],
-                if (widget.roundTrail.isNotEmpty) ...[
-                  const SizedBox(height: ProxSpacing.xs),
-                  Wrap(
-                    spacing: ProxSpacing.sm,
-                    runSpacing: ProxSpacing.xs,
+              ),
+            if (widget.showAvatar) const SizedBox(width: ProxSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      for (final tick in widget.roundTrail)
-                        _RoundChip(tick: tick),
+                      Expanded(
+                        child: Text(
+                          widget.name,
+                          style: ProxType.body(color: c.contentPrimary),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                      if (widget.status != null) ...[
+                        const SizedBox(width: ProxSpacing.sm),
+                        widget.status!,
+                      ],
                     ],
                   ),
+                  if ((widget.subtitle != null &&
+                          widget.subtitle!.isNotEmpty) ||
+                      widget.subtitleTrailing != null) ...[
+                    const SizedBox(width: 0, height: 2),
+                    widget.subtitleTrailing ??
+                        Text(
+                          widget.subtitle!,
+                          style: ProxType.caption(color: c.contentSecondary),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                  ],
+                  if (widget.subtitle2 != null &&
+                      widget.subtitle2!.isNotEmpty) ...[
+                    const SizedBox(width: 0, height: 2),
+                    Text(
+                      widget.subtitle2!,
+                      style: ProxType.caption(color: c.contentSecondary),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ],
+                  if (widget.roundTrail.isNotEmpty) ...[
+                    const SizedBox(height: ProxSpacing.xs),
+                    Wrap(
+                      spacing: ProxSpacing.sm,
+                      runSpacing: ProxSpacing.xs,
+                      children: [
+                        for (final tick in widget.roundTrail)
+                          _RoundChip(tick: tick),
+                      ],
+                    ),
+                  ],
+                  // Footer (attendance share bar on session rows): full
+                  // content-column width, below trail/text.
+                  if (widget.footer != null) ...[
+                    const SizedBox(height: ProxSpacing.sm),
+                    widget.footer!,
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
         ),
       ),
     );
@@ -646,10 +688,10 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
           onTap: _handleTap,
           onLongPressStart: _handleLongPressStart,
           onLongPressEnd: _handleLongPressEnd,
-          onSecondaryTap: widget.onSelectionChanged == null ||
-                  !isDesktopSelection
-              ? null
-              : _handleSecondaryTap,
+          onSecondaryTap:
+              widget.onSelectionChanged == null || !isDesktopSelection
+                  ? null
+                  : _handleSecondaryTap,
           child: scaled,
         ),
       ),
@@ -691,8 +733,8 @@ class _CardAvatar extends StatelessWidget {
           child: Text(
             studentInitials(name),
             // Same disc-initials proportion as CourseLogo (size * 0.34).
-            style: ProxType.label(color: avatarFg)
-                .copyWith(fontSize: size * 0.34),
+            style:
+                ProxType.label(color: avatarFg).copyWith(fontSize: size * 0.34),
             overflow: TextOverflow.clip,
           ),
         );

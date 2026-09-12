@@ -83,10 +83,18 @@ class FaceCheckView extends StatelessWidget {
 
   /// Displayed video-box aspect (width / height) of the frame behind this
   /// surface. The overlay derives its oval/comet from this box, never the
-  /// full Stack size. Null (placeholder — the only on-device state, since
-  /// the live feed lives in the still-capture modal) keeps the full-size
-  /// fallback.
+  /// full Stack size. Null placeholder (the only on-device state, since
+  /// the live feed lives in the still-capture modal) assumes
+  /// [placeholderPreviewAspect] — the portrait sensor box — so the guide
+  /// matches enrollment size instead of ballooning to fullscreen.
   final double? previewAspectRatio;
+
+  /// Assumed video-box aspect for the placeholder (no feed to measure):
+  /// portrait 3/4, the displayed ratio of the classic 4:3 front sensor
+  /// (see `displayedPreviewAspect`) and the phone case across the overlay
+  /// geometry suites. Keeps the placeholder guide the same size as the
+  /// enrollment guide on the same phone.
+  static const double placeholderPreviewAspect = 3 / 4;
 
   /// The preview surface (a future live feed would pass its frame widget
   /// here). ALWAYS rendered bare as a DIRECT Stack child — no Container/
@@ -142,6 +150,11 @@ class FaceCheckView extends StatelessWidget {
     final aspect = previewAspectRatio;
     final knownAspect =
         aspect != null && aspect.isFinite && aspect > 0;
+    // Placeholder (no feed): assume the portrait sensor box so the oval
+    // renders at enrollment size. An explicitly provided frame without a
+    // ratio keeps the legacy full-size fallback, untouched.
+    final effectiveAspect =
+        knownAspect ? aspect : (preview == null ? placeholderPreviewAspect : null);
     // Landscape re-seat (short-height landscape phones only): the
     // bottom-overlay Scan button would sit on top of the overlay prompt
     // when the body is ~300px tall (measured overlap at 740x360/844x390
@@ -169,7 +182,7 @@ class FaceCheckView extends StatelessWidget {
               signal: signal,
               statusLine:
                   faceNotice.isNotEmpty ? faceNotice : faceCheckPrompt,
-              previewAspectRatio: knownAspect ? aspect : null,
+              previewAspectRatio: effectiveAspect,
               showProgress: false,
               showBeacon: false,
             ),

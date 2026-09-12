@@ -3,6 +3,7 @@
 library;
 
 import 'dart:js_interop';
+import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
 
@@ -26,6 +27,27 @@ Future<String> saveTextFile(String filename, String content,
   final safe = sanitizeFilename(filename);
   final blob = web.Blob([content.toJS].toJS,
       web.BlobPropertyBag(type: 'text/csv'));
+  final url = web.URL.createObjectURL(blob);
+  final anchor = web.HTMLAnchorElement()
+    ..href = url
+    ..download = safe;
+  web.document.body!.append(anchor);
+  anchor.click();
+  anchor.remove();
+  web.URL.revokeObjectURL(url);
+  return safe;
+}
+
+/// Bytes twin of [saveTextFile] (zip archives): same browser-download
+/// contract, `application/zip` blob type.
+Future<String> saveBytesFile(String filename, List<int> bytes,
+    {String? directory}) async {
+  // ignore: unused_element_parameter — signature parity with the io
+  // build; the browser manages the destination.
+  final _ = directory;
+  final safe = sanitizeFilename(filename);
+  final blob = web.Blob([Uint8List.fromList(bytes).toJS].toJS,
+      web.BlobPropertyBag(type: 'application/zip'));
   final url = web.URL.createObjectURL(blob);
   final anchor = web.HTMLAnchorElement()
     ..href = url

@@ -56,6 +56,11 @@ class ProxPrimaryButton extends StatefulWidget {
   final bool expanded;
   final Key? buttonKey;
 
+  /// Compact density (token-based): keeps the 48dp tap floor but trims
+  /// internal padding (xl/md → lg/sm). Opt-in per placement — default
+  /// stays the roomy standard so existing screens are untouched.
+  final bool compact;
+
   const ProxPrimaryButton({
     super.key,
     required this.label,
@@ -63,6 +68,7 @@ class ProxPrimaryButton extends StatefulWidget {
     this.icon,
     this.expanded = true,
     this.buttonKey,
+    this.compact = false,
   });
 
   @override
@@ -127,9 +133,10 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
             splashColor: Colors.white.withValues(alpha: 0.1),
             highlightColor: Colors.white.withValues(alpha: 0.05),
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: ProxSpacing.xl,
-                vertical: ProxSpacing.md,
+              padding: EdgeInsets.symmetric(
+                horizontal:
+                    widget.compact ? ProxSpacing.lg : ProxSpacing.xl,
+                vertical: widget.compact ? ProxSpacing.sm : ProxSpacing.md,
               ),
               // FittedBox scales down only when the label+icon exceed the
               // available width (e.g. long "Continue as Professor offline"
@@ -178,11 +185,22 @@ class _ProxPrimaryButtonState extends State<ProxPrimaryButton>
 /// Secondary action (Cancel, Back, Save to device). Same shape/rhythm as
 /// primary, ghost treatment — transparent with brand border, subtle tint
 /// on hover.
+///
+/// [tone] re-tints the ghost in a sanctioned status color (same shape,
+/// same rhythm — only the hue changes). `ProxStatus.marked` green marks
+/// confirm-into-roster actions like "Add & mark present"; null keeps the
+/// default brand. Never a raw color — always a design-system token.
 class ProxSecondaryButton extends StatefulWidget {
   final Widget label;
   final VoidCallback? onPressed;
   final Widget? icon;
   final bool expanded;
+
+  /// Compact density (token-based, same contract as primary).
+  final bool compact;
+
+  /// Optional status-color tone for the ghost treatment.
+  final ProxStatus? tone;
 
   const ProxSecondaryButton({
     super.key,
@@ -190,6 +208,8 @@ class ProxSecondaryButton extends StatefulWidget {
     required this.onPressed,
     this.icon,
     this.expanded = false,
+    this.compact = false,
+    this.tone,
   });
 
   @override
@@ -210,6 +230,10 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final enabled = widget.onPressed != null;
+    // Status tone (null = brand default). Same ghost, sanctioned hue.
+    final tone = widget.tone == null
+        ? c.accentBrand
+        : ProxIcons.statusColor(context, widget.tone!);
 
     // Ghost hover animates solid tint/border fills only (no blur), so it
     // is flicker-free by construction; grace exit matches the cards.
@@ -222,12 +246,12 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
         constraints: const BoxConstraints(minHeight: ProxSpacing.minTap),
         decoration: BoxDecoration(
           color: _hovering && enabled
-              ? c.accentBrand.withValues(alpha: 0.06)
+              ? tone.withValues(alpha: 0.06)
               : Colors.transparent,
           borderRadius: ProxRadii.buttonRadius,
           border: Border.all(
             color: enabled
-                ? c.accentBrand.withValues(alpha: _hovering ? 0.6 : 0.35)
+                ? tone.withValues(alpha: _hovering ? 0.6 : 0.35)
                 : c.contentTertiary.withValues(alpha: 0.3),
           ),
         ),
@@ -236,12 +260,14 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
           child: InkWell(
             onTap: widget.onPressed,
             borderRadius: ProxRadii.buttonRadius,
-            splashColor: c.accentBrand.withValues(alpha: 0.08),
-            highlightColor: c.accentBrand.withValues(alpha: 0.04),
+            splashColor: tone.withValues(alpha: 0.08),
+            highlightColor: tone.withValues(alpha: 0.04),
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: ProxSpacing.xl,
-                vertical: ProxSpacing.md,
+              padding: EdgeInsets.symmetric(
+                horizontal:
+                    widget.compact ? ProxSpacing.lg : ProxSpacing.xl,
+                vertical:
+                    widget.compact ? ProxSpacing.sm : ProxSpacing.md,
               ),
               child: FittedBox(
                 fit: BoxFit.scaleDown,
@@ -253,7 +279,7 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
                     if (widget.icon != null) ...[
                       IconTheme(
                         data: IconThemeData(
-                          color: enabled ? c.accentBrand : c.contentTertiary,
+                          color: enabled ? tone : c.contentTertiary,
                           size: ProxIconSizes.md,
                         ),
                         child: widget.icon!,
@@ -262,7 +288,7 @@ class _ProxSecondaryButtonState extends State<ProxSecondaryButton>
                     ],
                     DefaultTextStyle(
                       style: ProxType.label(
-                        color: enabled ? c.accentBrand : c.contentTertiary,
+                        color: enabled ? tone : c.contentTertiary,
                       ).copyWith(
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.2,

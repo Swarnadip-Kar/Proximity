@@ -1,5 +1,5 @@
-// CSV export header schema: `Prof Name` / `Class Name` / `Prof Email`
-// top rows, body bytes unchanged.
+// CSV export header schema: ONE `<prof>,<class>,<email>` top line,
+// body bytes unchanged.
 //
 // Covers the shared builder used by every CSV export entry point
 // (per-session preview, combined/selected matrix, date-range matrix,
@@ -13,7 +13,7 @@ import 'package:proximity_app/features/records/export_center_screen.dart'
 import 'package:proximity_storage/storage.dart';
 
 void main() {
-  test('exportHeader prepends Prof Name/Class Name/Prof Email rows', () {
+  test('exportHeader prepends one prof,class,email line', () {
     const body = 'Name,ID Number,Email,Status\nA,1,a@x.in,Present\n';
     final csv = exportHeader(
       body,
@@ -23,9 +23,7 @@ void main() {
     );
     expect(
       csv,
-      'Prof Name,Dr Ada\n'
-      'Class Name,CS201\n'
-      'Prof Email,ada@univ.edu\n'
+      'Dr Ada,CS201,ada@univ.edu\n'
       'Name,ID Number,Email,Status\n'
       'A,1,a@x.in,Present\n',
     );
@@ -66,10 +64,9 @@ void main() {
     expect(body, 'Name,ID Number,Email,Status\nA,1,a@x.in,Present\n');
     final csv = exportHeader(body,
         profName: 'Prof', className: r.classLabel, profEmail: 'p@univ.edu');
-    expect(csv.startsWith('Prof Name,Prof\nClass Name,CS201\nProf Email,p@univ.edu\n'),
-        isTrue);
-    // Body after the 3 header lines is byte-identical.
-    final stripped = csv.split('\n').skip(3).join('\n');
+    expect(csv.startsWith('Prof,CS201,p@univ.edu\n'), isTrue);
+    // Body after the single header line is byte-identical.
+    final stripped = csv.split('\n').skip(1).join('\n');
     expect(stripped, body);
   });
 
@@ -108,7 +105,7 @@ void main() {
     );
     final csv = exportHeader(body,
         profName: 'Prof', className: 'CS201', profEmail: 'p@univ.edu');
-    final stripped = csv.split('\n').skip(3).join('\n');
+    final stripped = csv.split('\n').skip(1).join('\n');
     expect(stripped, body);
   });
 
@@ -121,7 +118,7 @@ void main() {
       className: 'CS201',
       profEmail: 'p@univ.edu',
     );
-    expect(csv.startsWith('Prof Name,Last, First\n'), isTrue);
+    expect(csv.startsWith('Last, First,CS201,p@univ.edu\n'), isTrue);
   });
 
   test('empty prof identity emits empty fields (no legacy fallback)', () {
@@ -133,7 +130,7 @@ void main() {
     );
     expect(
       csv,
-      'Prof Name,\nClass Name,CS201\nProf Email,\nName,ID Number,Email,Status\n',
+      ',CS201,\nName,ID Number,Email,Status\n',
     );
   });
 }

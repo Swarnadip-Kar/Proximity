@@ -220,13 +220,13 @@ class _ManualInboxBodyState extends ConsumerState<_ManualInboxBody> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          'Manual requests (${pending.length})',
-          style: ProxType.title(color: c.contentPrimary),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
+        // Same header as every other Live tab (exact Add-tab contract:
+        // ProxSectionHeader with gradient accent bar + 17px title, zero
+        // padding).
+        ProxSectionHeader(
+          title: 'Manual requests (${pending.length})',
+          padding: EdgeInsets.zero,
         ),
-        const SizedBox(height: ProxSpacing.sm),
         if (pending.isEmpty)
           const ProxEmptyLine('No manual requests.')
         else ...[

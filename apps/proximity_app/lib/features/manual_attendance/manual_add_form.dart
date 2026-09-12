@@ -130,22 +130,27 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
                       _dir.pickHit(h, widget.isPresent, _fill),
                 ),
               ),
+            // The directory note lives here once (the per-field
+            // `Searches the online student directory` helpers are gone —
+            // three copies wasted a line each). Breathing room: sm below
+            // the section header, md between this line and the fields.
+            const SizedBox(height: ProxSpacing.sm),
             Text(
               'Type to search the online directory — tap a card to fill:',
               style: ProxType.caption(color: c.contentSecondary),
               overflow: TextOverflow.ellipsis,
               maxLines: 2,
             ),
-            const SizedBox(height: ProxSpacing.xs),
+            const SizedBox(height: ProxSpacing.md),
             TextField(
               key: ValueKey('$p-roll'),
               controller: _rollCtrl,
               onChanged: (_) => _scheduleSearch(),
-              decoration: const InputDecoration(
+              style: proxCompactFieldStyle(context),
+              decoration: proxCompactFieldDecoration(
                 labelText: 'ID Number (required)',
-                prefixIcon: Icon(Icons.badge_outlined),
-                suffixIcon: Icon(Icons.cloud_outlined),
-                helperText: 'Searches the online student directory',
+                prefixIcon: const Icon(Icons.badge_outlined),
+                suffixIcon: const Icon(Icons.cloud_outlined),
               ),
             ),
             const SizedBox(height: ProxSpacing.sm),
@@ -153,11 +158,11 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
               key: ValueKey('$p-name'),
               controller: _nameCtrl,
               onChanged: (_) => _scheduleSearch(),
-              decoration: const InputDecoration(
+              style: proxCompactFieldStyle(context),
+              decoration: proxCompactFieldDecoration(
                 labelText: 'Student name (fills from ID when online)',
-                prefixIcon: Icon(Icons.person_outline),
-                suffixIcon: Icon(Icons.cloud_outlined),
-                helperText: 'Searches the online student directory',
+                prefixIcon: const Icon(Icons.person_outline),
+                suffixIcon: const Icon(Icons.cloud_outlined),
               ),
             ),
             const SizedBox(height: ProxSpacing.sm),
@@ -165,11 +170,11 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
               key: ValueKey('$p-email'),
               controller: _emailCtrl,
               onChanged: (_) => _scheduleSearch(),
-              decoration: const InputDecoration(
+              style: proxCompactFieldStyle(context),
+              decoration: proxCompactFieldDecoration(
                 labelText: 'Student email (fills from ID when online)',
-                prefixIcon: Icon(Icons.email_outlined),
-                suffixIcon: Icon(Icons.cloud_outlined),
-                helperText: 'Searches the online student directory',
+                prefixIcon: const Icon(Icons.email_outlined),
+                suffixIcon: const Icon(Icons.cloud_outlined),
               ),
               keyboardType: TextInputType.emailAddress,
             ),
@@ -220,10 +225,13 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
                   style: ProxType.caption(color: c.contentSecondary),
                 ),
               ),
-            const SizedBox(height: ProxSpacing.xs),
+            // Equal rhythm: sm like every field gap above (was xs, which
+            // pinched the button closer than the fields).
+            const SizedBox(height: ProxSpacing.sm),
             Align(
               alignment: Alignment.centerLeft,
               child: ProxSecondaryButton(
+                tone: ProxStatus.marked,
                 icon: _dir.busy
                     ? const SizedBox(
                         width: 14,

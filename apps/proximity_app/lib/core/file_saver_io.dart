@@ -48,6 +48,24 @@ Future<String> saveTextFile(String filename, String content,
   return file.path;
 }
 
+/// Bytes twin of [saveTextFile] (zip archives): same directory
+/// resolution, same sanitizer, same returned path.
+Future<String> saveBytesFile(String filename, List<int> bytes,
+    {String? directory}) async {
+  final stored = await _storedExportDir();
+  final dirPath = await resolveExportDir(
+    customDir: normalizeExportDir(directory) ?? stored,
+    getDownloadsPath: () async => (await getDownloadsDirectory())?.path,
+    getDocumentsPath: () async =>
+        (await getApplicationDocumentsDirectory()).path,
+  );
+  final safe = sanitizeFilename(filename);
+  await Directory(dirPath).create(recursive: true);
+  final file = File('$dirPath/$safe');
+  await file.writeAsBytes(bytes);
+  return file.path;
+}
+
 /// Best-effort read of the stored per-device default. Never throws —
 /// unreadable prefs just mean "no custom location".
 Future<String?> _storedExportDir() async {

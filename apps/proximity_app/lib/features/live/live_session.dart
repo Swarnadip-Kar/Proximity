@@ -119,6 +119,7 @@ class LiveStatusStrip extends StatelessWidget {
         const SizedBox(width: ProxSpacing.sm),
         // Elapsed ticks every second — excluded from semantics so screen
         // readers announce LIVE/IDLE + counters once, not every tick.
+        // Fixed-width mm:ss (5 chars) so it never competes with the count.
         ExcludeSemantics(
           child: Text(
             liveElapsedLabel(elapsed),
@@ -126,13 +127,24 @@ class LiveStatusStrip extends StatelessWidget {
               fontFeatures: const [FontFeature.tabularFigures()],
               fontWeight: FontWeight.w700,
             ),
+            overflow: TextOverflow.clip,
+            maxLines: 1,
+            softWrap: false,
           ),
         ),
-        const Spacer(),
-        // Bounded: triple-digit counts ellipsize instead of pushing the
-        // strip past 360dp.
-        Flexible(
-          child: PresentTicker(present: present, total: denom),
+        const SizedBox(width: ProxSpacing.sm),
+        // Count never clips: Expanded reserves the remaining width, right-
+        // aligned, and scales the ticker down instead of ellipsizing the
+        // "n/m present" text off on narrow screens.
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: PresentTicker(present: present, total: denom),
+            ),
+          ),
         ),
       ],
     );
@@ -191,8 +203,7 @@ class LiveSessionMeta extends StatelessWidget {
             windowsTaken <= 1
                 ? 'Window 1 · $present present / $denom waiting'
                 : 'Windows 1–$windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
-            key: ValueKey<String>(
-                '$windowsTaken-$windowNo-$present-$denom'),
+            key: ValueKey<String>('$windowsTaken-$windowNo-$present-$denom'),
             style: ProxType.caption(color: ink),
             overflow: TextOverflow.ellipsis,
             maxLines: 2,
@@ -256,40 +267,40 @@ class LiveControlCluster extends StatelessWidget {
             runSpacing: ProxSpacing.sm,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-          if (live) ...[
-            ProxPrimaryButton(
-              label: const Text('Stop'),
-              onPressed: onStop,
-              expanded: false,
-            ),
-          ] else ...[
-            if (windowNo == 0)
-              ProxPrimaryButton(
-                label: const Text('Start'),
-                onPressed: (!hosting) ? null : onStart,
-                expanded: false,
-              )
-            else
-              ProxPrimaryButton(
-                label: const Text('Take another round'),
-                onPressed: (!hosting) ? null : onTakeAnother,
-                expanded: false,
-              ),
-            if (windowNo == 0)
-              ProxDangerButton(
-                label: const Text('End attendance'),
-                onPressed: (!hosting) ? null : onEnd,
-              )
-            else
-              _MoreActions(
-                enabled: hosting,
-                windowNo: windowNo,
-                onRetake: onRetake,
-                onEnd: onEnd,
-              ),
-          ],
-        ],
-        ),
+              if (live) ...[
+                ProxPrimaryButton(
+                  label: const Text('Stop'),
+                  onPressed: onStop,
+                  expanded: false,
+                ),
+              ] else ...[
+                if (windowNo == 0)
+                  ProxPrimaryButton(
+                    label: const Text('Start'),
+                    onPressed: (!hosting) ? null : onStart,
+                    expanded: false,
+                  )
+                else
+                  ProxPrimaryButton(
+                    label: const Text('Take another round'),
+                    onPressed: (!hosting) ? null : onTakeAnother,
+                    expanded: false,
+                  ),
+                if (windowNo == 0)
+                  ProxDangerButton(
+                    label: const Text('End attendance'),
+                    onPressed: (!hosting) ? null : onEnd,
+                  )
+                else
+                  _MoreActions(
+                    enabled: hosting,
+                    windowNo: windowNo,
+                    onRetake: onRetake,
+                    onEnd: onEnd,
+                  ),
+              ],
+            ],
+          ),
           if (!live && !hosting) ...[
             const SizedBox(height: ProxSpacing.xs),
             Text(
@@ -568,6 +579,148 @@ class LiveSessionHeader extends StatelessWidget {
             onTakeAnother: onTakeAnother,
             onStop: onStop,
             onEnd: onEnd,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Floating bottom controls (prof live): docked just above the shell nav
+/// bar, replacing the old fixed top control-cluster card. Same vocabulary
+/// + enablement, new placement — thumb-reachable, never covering the roster.
+///
+/// States (copy frozen):
+/// - live: slim [LiveStatusStrip] + full-width `Stop` (primary).
+/// - idle, windowNo == 0: full-width `Start` (primary).
+/// - idle, windowNo > 0: 2x2 grid — `Discard round N` + `End attendance`
+///   on top, `Resume round N` + `Take another round` below, four equal
+///   corners. Resume re-opens the same round (marks merge); discard
+///   drops it behind a confirm popup.
+/// Disabled always explains itself via the caption below (same copy as the
+/// old cluster). Sheet chrome per §2.5: flat `surfaceRaised`, `divider`
+/// border, `elevationSheet` shadow — never a gradient fill.
+class LiveFloatingControls extends StatelessWidget {
+  final bool live;
+  final bool hosting;
+  final int windowNo;
+  final Duration elapsed;
+  final int present;
+  final int waiting;
+
+  final VoidCallback onStart;
+  final VoidCallback onResume;
+  final VoidCallback onDiscard;
+  final VoidCallback onTakeAnother;
+  final VoidCallback onStop;
+  final VoidCallback onEnd;
+
+  const LiveFloatingControls({
+    super.key,
+    required this.live,
+    required this.hosting,
+    required this.windowNo,
+    required this.elapsed,
+    required this.present,
+    required this.waiting,
+    required this.onStart,
+    required this.onResume,
+    required this.onDiscard,
+    required this.onTakeAnother,
+    required this.onStop,
+    required this.onEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surfaceRaised,
+        borderRadius: ProxRadii.cardSpecRadius,
+        border: Border.all(color: c.divider),
+        boxShadow: [c.elevationSheet],
+      ),
+      padding: const EdgeInsets.all(ProxSpacing.sm),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ProxSizeGlide(
+            stateKey: live
+                ? 'live'
+                : (windowNo == 0 ? 'fresh' : 'round-$windowNo'),
+            child: ProxSwitcher(
+              child: Column(
+                key: ValueKey<String>(live
+                    ? 'live'
+                    : (windowNo == 0 ? 'fresh' : 'round-$windowNo')),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (live) ...[
+                    ProxPrimaryButton(
+                      label: const Text('Stop'),
+                      onPressed: onStop,
+                      compact: true,
+                    ),
+                  ] else if (windowNo == 0) ...[
+                    ProxPrimaryButton(
+                      label: const Text('Start'),
+                      onPressed: (!hosting) ? null : onStart,
+                      compact: true,
+                    ),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ProxDangerButton(
+                            label: Text('Discard round $windowNo'),
+                            onPressed: (!hosting) ? null : onDiscard,
+                          ),
+                        ),
+                        const SizedBox(width: ProxSpacing.xs),
+                        Expanded(
+                          child: ProxDangerButton(
+                            label: const Text('End attendance'),
+                            onPressed: (!hosting) ? null : onEnd,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: ProxSpacing.xs),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ProxSecondaryButton(
+                            label: Text('Resume round $windowNo'),
+                            onPressed: (!hosting) ? null : onResume,
+                            expanded: true,
+                            compact: true,
+                          ),
+                        ),
+                        const SizedBox(width: ProxSpacing.xs),
+                        Expanded(
+                          child: ProxPrimaryButton(
+                            label: const Text('Take another round'),
+                            onPressed: (!hosting) ? null : onTakeAnother,
+                            expanded: true,
+                            compact: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (!live && !hosting) ...[
+                    const SizedBox(height: ProxSpacing.xs),
+                    Text(
+                      'Hosting offline — actions resume when the server starts.',
+                      style: ProxType.caption(color: c.contentSecondary),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ],
       ),

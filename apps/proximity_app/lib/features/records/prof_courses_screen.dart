@@ -14,14 +14,20 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:archive/archive.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../core/auth.dart';
 import '../../core/device_store.dart';
+import '../../core/file_saver.dart';
 import '../../core/sync_hook.dart';
 import '../../design/tokens.dart';
 import '../account/account_common.dart';
@@ -40,6 +46,20 @@ import '../../widgets/student_card.dart' show CourseLogo;
 import '../../widgets/sync_badge.dart';
 import '../../widgets/web_banner.dart';
 import 'course_overview_screen.dart';
+import 'export_center_screen.dart' show exportHeader;
+
+/// Per-course entry name inside the export-all zip: same convention as
+/// the per-course exports (`attendance_<course>_all.csv`).
+String exportAllEntryName(String course) => 'attendance_${course}_all.csv';
+
+/// Fleet zip name: `<profEmail>_Attendance_record_<yyyymmddTHHMMSSZ>`.
+/// Pure (timestamp injected) so tests pin it without clocks.
+String exportAllZipName(String profEmail, DateTime nowUtc) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  final stamp =
+      '${nowUtc.year}${two(nowUtc.month)}${two(nowUtc.day)}T${two(nowUtc.hour)}${two(nowUtc.minute)}${two(nowUtc.second)}Z';
+  return '${profEmail}_Attendance_record_$stamp.zip';
+}
 
 class ProfCoursesScreen extends ConsumerStatefulWidget {
   const ProfCoursesScreen({super.key});
@@ -150,6 +170,115 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
     }
   }
 
+  /// Exports every course with sessions: one matrix CSV per course
+  /// (same [buildDateRangeMatrix] + [exportHeader] bytes as the
+  /// per-course flows), zipped into a single archive — one file per
+  /// course, properly named like the per-course exports. A Close/Save/
+  /// Share dialog (same contract as the single-course preview) confirms
+  /// before anything leaves the device. Courses without sessions are
+  /// skipped.
+  Future<void> _exportAll(
+      List<_CourseRow> rows, List<ClassRecord> history) async {
+    final acct = ref.read(accountProvider).valueOrNull;
+    final profName = (acct?.displayName ?? '').trim();
+    final profEmail = (acct?.email ?? '').trim();
+    final archive = Archive();
+    var count = 0;
+    for (final row in rows) {
+      final sessions = history
+          .where((r) =>
+              r.courseId == row.name ||
+              (r.courseId.isEmpty && r.classLabel == row.name))
+          .toList()
+        ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
+      if (sessions.isEmpty) continue;
+      final csv = exportHeader(
+        buildDateRangeMatrix(sessions),
+        profName: profName,
+        className: row.name,
+        profEmail: profEmail,
+      );
+      final entryName = exportAllEntryName(row.name);
+      archive.addFile(ArchiveFile(
+          entryName, utf8.encode(csv).length, utf8.encode(csv)));
+      count++;
+    }
+    if (count == 0 || !mounted) return;
+    final zipName = exportAllZipName(profEmail, DateTime.now().toUtc());
+    final zipBytes = ZipEncoder().encode(archive);
+    // Captured pre-dialog: async Save/SnackBar must not reach across
+    // gaps via State.context.
+    final messenger = ScaffoldMessenger.of(context);
+    BleLog.log('NAV', 'courses → export all ($count courses → $zipName)');
+    if (!mounted) return;
+    final lines = <String>[
+      for (final f in archive.files) '• ${f.name}',
+    ];
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Export All Data'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+              '$count course${count == 1 ? '' : 's'} · one file each:\n${lines.join('\n')}'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+          SizedBox(
+            width: double.infinity,
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.save_alt),
+                    label: const Text('Save'),
+                    onPressed: () async {
+                      Navigator.of(dialogContext).pop();
+                      try {
+                        final path =
+                            await saveBytesFile(zipName, zipBytes);
+                        messenger.showSnackBar(SnackBar(
+                            content: Text('Saved to device: $path')));
+                      } catch (e) {
+                        messenger.showSnackBar(
+                            SnackBar(content: Text('Save failed: $e')));
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: ProxSpacing.sm),
+                Expanded(
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.ios_share),
+                    label: const Text('Share'),
+                    onPressed: () async {
+                      Navigator.of(dialogContext).pop();
+                      await SharePlus.instance.share(
+                        ShareParams(
+                          files: [
+                            XFile.fromData(
+                              Uint8List.fromList(zipBytes),
+                              name: zipName,
+                              mimeType: 'application/zip',
+                            ),
+                          ],
+                          subject: 'Attendance — all courses',
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _openLog() {
     BleLog.log('NAV', 'courses → system log');
     showLogDrawer(context);
@@ -227,104 +356,131 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                   ? data[1] as List<ClassRecord>
                   : const <ClassRecord>[];
               final rows = _rows(courses, history);
-              return ListView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: ProxSpacing.screenMargin,
-                  vertical: ProxSpacing.lg,
-                ),
+              // Floating Export docked above the shell nav bar (same
+              // chrome + placement as Review & export on the course
+              // page). List bottom padding keeps the last card clear.
+              return Stack(
                 children: [
-                  const ClockHeader(),
-                  const WebRecordsBanner(),
-                  if (_syncMsg != null) ProxSyncNote(_syncMsg!),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: UnsyncedBadge(),
-                  ),
-                  if (linked != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: ProxSpacing.xs),
-                      child: Text(
-                        'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
-                        style: ProxType.caption(color: c.contentSecondary),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(
+                      ProxSpacing.screenMargin,
+                      ProxSpacing.lg,
+                      ProxSpacing.screenMargin,
+                      104,
                     ),
-                  const SizedBox(height: ProxSpacing.sm),
-                  // Course catalog edits are native-only (records view on web).
-                  if (!kIsWeb)
-                    ProxPrimaryButton(
-                      icon: const Icon(Icons.add),
-                      label: const Text('Register new course'),
-                      onPressed: _register,
-                    ),
-                  if (!kIsWeb) const SizedBox(height: ProxSpacing.sm),
-                  if (snap.connectionState == ConnectionState.waiting)
-                    const ProxShimmerHost(
-                      child: Column(
-                        children: [
-                          ProxShimmerCard(lines: 2),
-                          SizedBox(height: ProxSpacing.sm),
-                          ProxShimmerCard(lines: 2),
-                          SizedBox(height: ProxSpacing.sm),
-                          ProxShimmerCard(lines: 2),
-                        ],
+                    children: [
+                      const ClockHeader(),
+                      const WebRecordsBanner(),
+                      if (_syncMsg != null) ProxSyncNote(_syncMsg!),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: UnsyncedBadge(),
                       ),
-                    )
-                  else if (rows.isEmpty)
-                    ProxEmptyState(
-                      message: kIsWeb
-                          ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
-                          : 'No courses yet. Register your first course to start taking attendance.',
-                      // Sub-action CTA: same sheet as the button above.
-                      actionLabel: kIsWeb ? null : 'Register course',
-                      onAction: kIsWeb ? null : _register,
-                    )
-                  else
-                    // Staggered entrance: each card fades/slides in 40ms
-                    // apart (capped), giving the catalog a settled landing.
-                    for (var i = 0; i < rows.length; i++)
-                      ProxFadeSlideIn(
-                        delay: Duration(
-                          milliseconds: (i *
-                                  ProxDurations.staggerStep.inMilliseconds)
-                              .clamp(
-                                  0,
-                                  ProxDurations
-                                      .staggerCap.inMilliseconds),
+                      if (linked != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: ProxSpacing.xs),
+                          child: Text(
+                            'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
+                            style: ProxType.caption(color: c.contentSecondary),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
                         ),
-                        child: Padding(
-                          padding:
-                              const EdgeInsets.only(bottom: ProxSpacing.sm),
-                          child: _PickerCard(
-                            title: rows[i].name,
-                            subtitle:
-                                '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}',
-                            sessionCount: rows[i].sessions,
-                            onTap: () {
-                              BleLog.log(
-                                  'NAV', 'courses → overview ${rows[i].name}');
-                              Navigator.of(context)
-                                  .push(MaterialPageRoute(
-                                      settings: RouteSettings(
-                                          name: CourseOverviewScreen.routeName(
-                                              rows[i].name)),
-                                      builder: (_) => CourseOverviewScreen(
-                                          courseName: rows[i].name)))
-                                  .then((_) {
-                                if (mounted) setState(() {});
-                              });
-                            },
+                      const SizedBox(height: ProxSpacing.sm),
+                      // Course catalog edits are native-only (records view on web).
+                      if (!kIsWeb)
+                        ProxPrimaryButton(
+                          icon: const Icon(Icons.add),
+                          label: const Text('Register new course'),
+                          onPressed: _register,
+                        ),
+                      if (!kIsWeb) const SizedBox(height: ProxSpacing.sm),
+                      if (snap.connectionState == ConnectionState.waiting)
+                        const ProxShimmerHost(
+                          child: Column(
+                            children: [
+                              ProxShimmerCard(lines: 2),
+                              SizedBox(height: ProxSpacing.sm),
+                              ProxShimmerCard(lines: 2),
+                              SizedBox(height: ProxSpacing.sm),
+                              ProxShimmerCard(lines: 2),
+                            ],
+                          ),
+                        )
+                      else if (rows.isEmpty)
+                        ProxEmptyState(
+                          message: kIsWeb
+                              ? 'No synced courses yet. Courses appear here once cloud sync brings them.'
+                              : 'No courses yet. Register your first course to start taking attendance.',
+                          // Sub-action CTA: same sheet as the button above.
+                          actionLabel: kIsWeb ? null : 'Register course',
+                          onAction: kIsWeb ? null : _register,
+                        )
+                      else
+                        // Staggered entrance: each card fades/slides in 40ms
+                        // apart (capped), giving the catalog a settled landing.
+                        for (var i = 0; i < rows.length; i++)
+                          ProxFadeSlideIn(
+                            delay: Duration(
+                              milliseconds: (i *
+                                      ProxDurations.staggerStep.inMilliseconds)
+                                  .clamp(0,
+                                      ProxDurations.staggerCap.inMilliseconds),
+                            ),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.only(bottom: ProxSpacing.sm),
+                              child: _PickerCard(
+                                title: rows[i].name,
+                                subtitle:
+                                    '${rows[i].sessions} sessions · ${_lastDateLabel(rows[i].lastDate)}',
+                                sessionCount: rows[i].sessions,
+                                onTap: () {
+                                  BleLog.log('NAV',
+                                      'courses → overview ${rows[i].name}');
+                                  Navigator.of(context)
+                                      .push(MaterialPageRoute(
+                                          settings: RouteSettings(
+                                              name: CourseOverviewScreen
+                                                  .routeName(rows[i].name)),
+                                          builder: (_) => CourseOverviewScreen(
+                                              courseName: rows[i].name)))
+                                      .then((_) {
+                                    if (mounted) setState(() {});
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                      DetailsExpander(
+                        title: 'Details',
+                        child: Text(
+                          'Pull-merge converges other devices on open. Newest writes win per session.',
+                          style: ProxType.caption(color: c.contentSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (rows.isNotEmpty)
+                    Positioned(
+                      left: ProxSpacing.lg,
+                      right: ProxSpacing.lg,
+                      bottom: ProxSpacing.sm,
+                      child: SafeArea(
+                        top: false,
+                        child: ProxFloatingAction(
+                          child: ProxPrimaryButton(
+                            icon: const Icon(Icons.ios_share),
+                            label: const Text('Export All Data'),
+                            onPressed: rows.any((r) => r.sessions > 0)
+                                ? () => _exportAll(rows, history)
+                                : null,
+                            expanded: true,
+                            compact: true,
                           ),
                         ),
                       ),
-                  DetailsExpander(
-                    title: 'Details',
-                    child: Text(
-                      'Pull-merge converges other devices on open. Newest writes win per session.',
-                      style: ProxType.caption(color: c.contentSecondary),
                     ),
-                  ),
                 ],
               );
             },

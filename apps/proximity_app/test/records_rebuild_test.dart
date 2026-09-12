@@ -105,10 +105,12 @@ void main() {
               SessionDetailScreen(record: record, courseSessions: [record]),
         )));
     await t.pumpAndSettle();
-    // Highlighted badge carries the present total; the caption keeps the
-    // listed/partial detail alongside it.
-    expect(find.text('2 present'), findsOneWidget);
-    expect(find.text('3 listed'), findsOneWidget);
+    // Centered verdict row: Present / Partial / Absent badges with real
+    // counts, windows caption below.
+    expect(find.text('Present 2'), findsOneWidget);
+    expect(find.text('Partial 0'), findsOneWidget);
+    expect(find.text('Absent 1'), findsOneWidget);
+    expect(find.text('1 round'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -171,13 +173,12 @@ void main() {
     expect(find.byType(Checkbox), findsNothing);
     expect(find.textContaining('LIVE'), findsNothing);
     expect(find.text('Review & export'), findsOneWidget);
-    expect(find.textContaining('Partial (1)'), findsOneWidget);
-    // Present total rides the badge idiom (marked status, static):
-    // 0 confirmed present + 1 partial share one badge so no info is lost.
-    expect(find.text('0 present · Partial (1)'), findsOneWidget);
-    expect(find.text('Total Students: 0'), findsOneWidget);
+    // Counts line: rounds + icon counts (✓ ✗) + `N partial` word.
+    expect(find.textContaining('1 partial'), findsOneWidget);
+    expect(find.text('0%'), findsOneWidget);
+    expect(find.text('Total students: 0'), findsOneWidget);
     // Tap still opens the session detail.
-    await t.tap(find.textContaining('Thu, 03-09-2026'));
+    await t.tap(find.textContaining('Thu, 03-09-26'));
     await t.pumpAndSettle();
     expect(find.text('Session'), findsOneWidget);
     // Navigation identity (records packet): the auto-id session shares the
@@ -190,7 +191,7 @@ void main() {
     await t.pageBack();
     await t.pumpAndSettle();
     // Hold-and-tap selects; Cancel exits selection mode.
-    await t.longPress(find.textContaining('Thu, 03-09-2026'));
+    await t.longPress(find.textContaining('Thu, 03-09-26'));
     await t.pumpAndSettle();
     expect(find.text('Delete 1'), findsOneWidget);
     await t.tap(find.byTooltip('Cancel'));
@@ -218,7 +219,7 @@ void main() {
         home: const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
     // Hold selects one date: same toolbar hosts Export + Delete.
-    await t.longPress(find.textContaining('Thu, 03-09-2026'));
+    await t.longPress(find.textContaining('Thu, 03-09-26'));
     await t.pumpAndSettle();
     expect(find.text('Export 1'), findsOneWidget);
     expect(find.text('Delete 1'), findsOneWidget);
@@ -272,12 +273,12 @@ void main() {
         cloud: FakeCloudSync(),
         home: const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    // Exact badge text (distinct from the longer subtitle line) proves
-    // the count rides the VerdictBadge idiom, not a new pill widget.
-    expect(find.text('2 present'), findsOneWidget);
-    expect(find.text('1 present'), findsOneWidget);
+    // Attendance % per row (union roster {a,b,c} = 3: 2/3 and 1/3);
+    // the share bars below carry the counts.
+    expect(find.text('67%'), findsOneWidget);
+    expect(find.text('33%'), findsOneWidget);
     // Union of confirmed-present across sessions: {a,b,c} = 3.
-    expect(find.text('Total Students: 3'), findsOneWidget);
+    expect(find.text('Total students: 3'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -307,8 +308,8 @@ void main() {
         cloud: FakeCloudSync(),
         home: const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    expect(find.text('Total Students: 3'), findsOneWidget);
-    expect(find.text('Total Students: 4'), findsNothing);
+    expect(find.text('Total students: 3'), findsOneWidget);
+    expect(find.text('Total students: 4'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -320,7 +321,7 @@ void main() {
         cloud: FakeCloudSync(),
         home: const CourseOverviewScreen(courseName: 'CS201')));
     await t.pumpAndSettle();
-    expect(find.text('Total Students: 0'), findsOneWidget);
+    expect(find.text('Total students: 0'), findsOneWidget);
     expect(find.text('No sessions yet for this course.'), findsOneWidget);
     expect(t.takeException(), isNull);
   });

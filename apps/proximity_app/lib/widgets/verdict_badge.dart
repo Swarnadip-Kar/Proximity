@@ -58,6 +58,7 @@ class VerdictBadge extends StatefulWidget {
         ProxStatus.review => 'Needs review',
         ProxStatus.waiting => 'Waiting',
         ProxStatus.pending => 'Pending',
+        ProxStatus.absent => 'Absent',
       };
 
   @override

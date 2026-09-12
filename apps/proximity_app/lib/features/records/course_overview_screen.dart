@@ -28,7 +28,6 @@ import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../core/sync_hook.dart';
-import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/clock.dart';
@@ -43,9 +42,9 @@ import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/selection_controller.dart';
 import '../../widgets/selection_toolbar.dart';
+import 'session_row_card.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/sync_badge.dart';
-import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
 import '../live/live_refresh.dart';
 import 'export_center_screen.dart';
@@ -167,8 +166,7 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
           const SizedBox(height: ProxSpacing.lg),
           ProxPrimaryButton(
             label: const Text('Save'),
-            onPressed: () =>
-                Navigator.of(ctx).pop(_renameCtrl.text.trim()),
+            onPressed: () => Navigator.of(ctx).pop(_renameCtrl.text.trim()),
           ),
           const SizedBox(height: ProxSpacing.sm),
           Center(
@@ -185,8 +183,8 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     }
     if (!mounted) return;
     final store = ref.read(deviceStoreProvider);
-    final ok = await syncEngine.renameCourseLocal(
-        store, widget.courseName, picked);
+    final ok =
+        await syncEngine.renameCourseLocal(store, widget.courseName, picked);
     if (!mounted) return;
     if (ok) {
       // Renaming migrates local history AND re-queues every touched record:
@@ -348,18 +346,6 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
   String _sessionLabel(ClassRecord r) =>
       sessionTightLabel(r.classLabel, r.dateIso, r.timestampIso);
 
-  /// Roomy subtitle line: full weekday, date and year.
-  String _sessionDateLine(ClassRecord r) =>
-      sessionRoomyLine(r.dateIso, r.timestampIso);
-
-  /// Partial marker for the session row (multi-round sessions only):
-  /// "Partial (2)". The full per-student list lives in the session
-  /// detail, where the professor can mark them present.
-  String _partialMarker(ClassRecord r) {
-    final n = partialCountOf(r.windows, r.allEmails);
-    return n == 0 ? '' : 'Partial ($n)';
-  }
-
   /// Tap opens the read-only session detail (edit/export branch from there).
   Future<void> _openSession(List<ClassRecord> sessions, String id) async {
     ClassRecord? target;
@@ -374,8 +360,8 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
           settings: RouteSettings(
-              name: SessionDetailScreen.routeName(
-                  widget.courseName, target.id)),
+              name:
+                  SessionDetailScreen.routeName(widget.courseName, target.id)),
           builder: (_) =>
               SessionDetailScreen(record: target!, courseSessions: sessions)),
     );
@@ -441,8 +427,6 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
                   onDeleteCourse:
                       sessions.isEmpty ? null : () => _deleteCourse(sessions),
                   sessionLabel: _sessionLabel,
-                  sessionDateLine: _sessionDateLine,
-                  partialMarker: _partialMarker,
                 ),
               );
             },
@@ -476,7 +460,7 @@ class _CourseIdentityHeader extends StatelessWidget {
     final avatar = ProxAvatar.course(
       course: courseName,
       photoUrl: sharePhoto ? photoUrl : '',
-      size: 44,
+      size: 32,
     );
     return Row(
       children: [
@@ -519,8 +503,6 @@ class _OverviewBody extends ConsumerStatefulWidget {
   final Future<void> Function(Set<String>) onExportSessions;
   final VoidCallback? onDeleteCourse;
   final String Function(ClassRecord) sessionLabel;
-  final String Function(ClassRecord) sessionDateLine;
-  final String Function(ClassRecord) partialMarker;
 
   const _OverviewBody({
     required this.courseName,
@@ -539,8 +521,6 @@ class _OverviewBody extends ConsumerStatefulWidget {
     required this.onExportSessions,
     required this.onDeleteCourse,
     required this.sessionLabel,
-    required this.sessionDateLine,
-    required this.partialMarker,
   });
 
   @override
@@ -581,220 +561,237 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
     final onDeleteSessions = widget.onDeleteSessions;
     final onExportSessions = widget.onExportSessions;
     final onDeleteCourse = widget.onDeleteCourse;
-    final sessionLabel = widget.sessionLabel;
-    final sessionDateLine = widget.sessionDateLine;
-    final partialMarker = widget.partialMarker;
-    return Column(
+    // Floating Review & export docked above the shell nav bar (same
+    // pattern as the Live tab). Hidden while the selection toolbar owns
+    // the bottom edge. List bottom padding keeps Delete course clear of
+    // the dock.
+    return Stack(
       children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: ProxSpacing.screenMargin,
-              vertical: ProxSpacing.lg,
-            ),
-            children: [
-              const ClockHeader(),
-              const WebRecordsBanner(),
-              if (syncing)
-                const ProxLoadingRow(label: 'Syncing with cloud…')
-              else if (syncMsg != null)
-                ProxSyncNote(syncMsg),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: UnsyncedBadge(),
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              // Course identity: my Gmail photo when the setup toggle is
-              // on for this course, else the course logo disc — same
-              // avatar language as pickers and roster cards.
-              _CourseIdentityHeader(
-                courseName: widget.courseName,
-                sharePhoto: widget.sharePhoto,
-                photoUrl: ref
-                        .watch(accountProvider)
-                        .valueOrNull
-                        ?.photoUrl ??
-                    '',
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.ios_share),
-                label: const Text('Review & export'),
-                onPressed: sessions.isEmpty ? null : onOpenExport,
-                expanded: true,
-              ),
-              const SizedBox(height: ProxSpacing.sm),
-              Row(
+        Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  ProxSpacing.screenMargin,
+                  ProxSpacing.lg,
+                  ProxSpacing.screenMargin,
+                  104,
+                ),
                 children: [
-                  Expanded(
-                    child: Text(
-                      '$rosterCount people · ${sessions.length} sessions',
-                      style: proxTabular(
-                          context, ProxType.label(color: c.contentPrimary)),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
+                  const ClockHeader(),
+                  const WebRecordsBanner(),
+                  if (syncing)
+                    const ProxLoadingRow(label: 'Syncing with cloud…')
+                  else if (syncMsg != null)
+                    ProxSyncNote(syncMsg),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: UnsyncedBadge(),
                   ),
-                  // Mouse-first entry (desktop only): arms selection mode
-                  // so left-clicks toggle; Done disarms + clears. Renders
-                  // nothing on touch devices.
-                  SelectionModeToggle(
-                    selecting: effective,
-                    onSelect: () => setState(() => _armed = true),
-                    onDone: () {
-                      controller.clear();
-                      _disarm();
-                    },
+                  const SizedBox(height: ProxSpacing.sm),
+                  // Course identity: my Gmail photo when the setup toggle is
+                  // on for this course, else the course logo disc — same
+                  // avatar language as pickers and roster cards.
+                  _CourseIdentityHeader(
+                    courseName: widget.courseName,
+                    sharePhoto: widget.sharePhoto,
+                    photoUrl:
+                        ref.watch(accountProvider).valueOrNull?.photoUrl ?? '',
                   ),
-                ],
-              ),
-              // Unique-attendee total (union of confirmed-present emails
-              // across sessions, not a sum), highlighted in the status
-              // badge idiom — same component as the per-session present
-              // badges below. Renders even when empty (0) so the count
-              // stays honest.
-              Align(
-                alignment: Alignment.centerLeft,
-                child: VerdictBadge(
-                  status: ProxStatus.marked,
-                  label: 'Total Students: $totalStudents',
-                ),
-              ),
-              DetailsExpander(
-                title: 'Details',
-                child: Text(
-                  'The roster unions everyone seen in any session. Newcomers appear absent in earlier sessions, matching exports.',
-                  style: ProxType.caption(color: c.contentSecondary),
-                ),
-              ),
-              if (notice != null) ...[
-                const SizedBox(height: ProxSpacing.sm),
-                ProxErrorNote(notice),
-              ],
-              const SizedBox(height: ProxSpacing.sm),
-              if (loading)
-                const ProxShimmerHost(
-                  child: Column(
+                  const SizedBox(height: ProxSpacing.md),
+                  // Review & export lives in the floating dock below now —
+                  // sessions header follows the identity block directly.
+                  Row(
                     children: [
-                      ProxShimmerRow(),
-                      SizedBox(height: ProxSpacing.sm),
-                      ProxShimmerRow(),
-                      SizedBox(height: ProxSpacing.sm),
-                      ProxShimmerRow(),
+                      Expanded(
+                        child: ProxSectionHeader(
+                          title: 'Total Classes: ${sessions.length}',
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
+                      // Mouse-first entry (desktop only): arms selection mode
+                      // so left-clicks toggle; Done disarms + clears. Renders
+                      // nothing on touch devices.
+                      SelectionModeToggle(
+                        selecting: effective,
+                        onSelect: () => setState(() => _armed = true),
+                        onDone: () {
+                          controller.clear();
+                          _disarm();
+                        },
+                      ),
                     ],
                   ),
-                )
-              else if (sessions.isEmpty)
-                const ProxEmptyState(
-                  message: 'No sessions yet for this course.',
-                )
-              else ...[
-                // One-time hold-to-select hint (§9): once per install,
-                // hidden while selecting. Web builds have no multi-delete
-                // selection, so the mark stays a native affordance.
-                if (!kIsWeb)
-                  SelectionCoachMark(
-                    listType: SelectionCoachMarks.sessions,
-                    selecting: effective,
+                  const SizedBox(height: ProxSpacing.sm),
+                  // Total line (no badge/highlight): the same gradient-bar
+                  // section header as the roster Attendance header — unique
+                  // attendees present in ≥1 session (union, not a sum).
+                  // Renders even when empty (0) so the count stays honest.
+                  // Details drops below it.
+                  ProxSectionHeader(
+                    title: 'Total students: $totalStudents',
+                    padding: EdgeInsets.zero,
                   ),
-                for (final r in sessions)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: StudentCard(
-                            name: sessionLabel(r),
-                            subtitle:
-                                '${sessionDateLine(r)} · ${r.presentCount} present · ${r.windowCount} window${r.windowCount == 1 ? '' : 's'}',
-                            // Highlighted present total via the badge idiom:
-                            // marked = Present with a custom "$n present"
-                            // label (same VerdictBadge component, no new
-                            // pills). Static one-shot pop only — never the
-                            // periodic pending pulse — so rows stay
-                            // settle-safe. Partial text rides the same badge
-                            // when present so no info is lost.
-                            status: VerdictBadge(
-                              status: ProxStatus.marked,
-                              label: partialMarker(r).isEmpty
-                                  ? '${r.presentCount} present'
-                                  : '${r.presentCount} present · ${partialMarker(r)}',
-                            ),
-                            selectionMode: effective,
-                            selected: controller.isSelected(r.id),
-                            // No multi-delete selection on web records builds.
-                            onSelectionChanged: kIsWeb
-                                ? null
-                                : (select) {
-                                    if (select) {
-                                      controller.select(r.id);
-                                    } else {
-                                      controller.deselect(r.id);
-                                    }
-                                  },
-                            onTap: () => onOpenSession(r.id),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.ios_share),
-                          tooltip: 'Export CSV',
-                          onPressed: onOpenExport,
-                        ),
-                      ],
+                  const SizedBox(height: ProxSpacing.xs),
+                  DetailsExpander(
+                    title: 'Details',
+                    child: Text(
+                      'The roster unions everyone seen in any session. Newcomers appear absent in earlier sessions, matching exports.',
+                      style: ProxType.caption(color: c.contentSecondary),
                     ),
                   ),
-              ],
-              if (!kIsWeb && hasData) ...[
-                const SizedBox(height: ProxSpacing.sm),
-                ProxSecondaryButton(
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Delete course'),
-                  onPressed: onDeleteCourse,
-                  expanded: true,
+                  if (notice != null) ...[
+                    const SizedBox(height: ProxSpacing.sm),
+                    ProxErrorNote(notice),
+                  ],
+                  const SizedBox(height: ProxSpacing.sm),
+                  if (loading)
+                    const ProxShimmerHost(
+                      child: Column(
+                        children: [
+                          ProxShimmerRow(),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerRow(),
+                          SizedBox(height: ProxSpacing.sm),
+                          ProxShimmerRow(),
+                        ],
+                      ),
+                    )
+                  else if (sessions.isEmpty)
+                    const ProxEmptyState(
+                      message: 'No sessions yet for this course.',
+                    )
+                  else ...[
+                    // One-time hold-to-select hint (§9): once per install,
+                    // hidden while selecting. Web builds have no multi-delete
+                    // selection, so the mark stays a native affordance.
+                    if (!kIsWeb)
+                      SelectionCoachMark(
+                        listType: SelectionCoachMarks.sessions,
+                        selecting: effective,
+                      ),
+                    for (final r in sessions)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                        // Shared row card (same module as the export
+                        // center): date main line, % top-right, counts
+                        // row, share bar. Segments: confirmed present
+                        // (green), partial (yellow), truly absent (red) =
+                        // roster union minus both (newcomers read absent
+                        // in earlier sessions, matching exports).
+                        child: Builder(
+                          builder: (context) {
+                            final partial =
+                                partialCountOf(r.windows, r.allEmails);
+                            final absent =
+                                (rosterCount - r.presentCount - partial)
+                                    .clamp(0, 1 << 30);
+                            return SessionRowCard(
+                              courseName: widget.courseName,
+                              title: sessionShortLine(r),
+                              windows: r.windowCount,
+                              present: r.presentCount,
+                              partial: partial,
+                              absent: absent,
+                              selectionMode: effective,
+                              selected: controller.isSelected(r.id),
+                              // No multi-delete selection on web records builds.
+                              onSelectionChanged: kIsWeb
+                                  ? null
+                                  : (select) {
+                                      if (select) {
+                                        controller.select(r.id);
+                                      } else {
+                                        controller.deselect(r.id);
+                                      }
+                                    },
+                              onTap: () => onOpenSession(r.id),
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                  if (!kIsWeb && hasData) ...[
+                    const SizedBox(height: ProxSpacing.sm),
+                    // Terminal red, same idiom as End attendance.
+                    SizedBox(
+                      width: double.infinity,
+                      child: ProxDangerButton(
+                        label: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.delete_outline, size: 18),
+                            SizedBox(width: ProxSpacing.sm),
+                            Text('Delete course'),
+                          ],
+                        ),
+                        onPressed: onDeleteCourse,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SelectionToolbar(
+              visible: selecting,
+              selectedCount: count,
+              totalCount: sessions.length,
+              actions: [
+                // Same hold-and-tap selection as Delete: export the held
+                // dates as one combined matrix (Close + Save + Share).
+                // Selection stays armed for delete/re-export.
+                SelectionToolbarAction(
+                  label: 'Export $count',
+                  onPressed: count == 0
+                      ? null
+                      : () async {
+                          await onExportSessions(controller.selectedIds);
+                        },
+                ),
+                SelectionToolbarAction(
+                  label: 'Delete $count',
+                  onPressed: count == 0
+                      ? null
+                      : () async {
+                          final ids = controller.selectedIds;
+                          final deleted = await onDeleteSessions(ids);
+                          if (deleted) controller.clear();
+                          // A delete that empties the list also drops the
+                          // desktop arm.
+                          if (_armed && !controller.selecting) _disarm();
+                        },
                 ),
               ],
-            ],
-          ),
-        ),
-        SelectionToolbar(
-          visible: selecting,
-          selectedCount: count,
-          totalCount: sessions.length,
-          actions: [
-            // Same hold-and-tap selection as Delete: export the held
-            // dates as one combined matrix (Close + Save + Share).
-            // Selection stays armed for delete/re-export.
-            SelectionToolbarAction(
-              label: 'Export $count',
-              onPressed: count == 0
-                  ? null
-                  : () async {
-                      await onExportSessions(controller.selectedIds);
-                    },
-            ),
-            SelectionToolbarAction(
-              label: 'Delete $count',
-              onPressed: count == 0
-                  ? null
-                  : () async {
-                      final ids = controller.selectedIds;
-                      final deleted = await onDeleteSessions(ids);
-                      if (deleted) controller.clear();
-                      // A delete that empties the list also drops the
-                      // desktop arm.
-                      if (_armed && !controller.selecting) _disarm();
-                    },
+              onSelectAll: () =>
+                  controller.selectAll(sessions.map((s) => s.id)),
+              // Toolbar Cancel exits selection mode entirely (clears the
+              // desktop arm too); the toolbar contract itself is unchanged.
+              onCancel: () {
+                controller.clear();
+                _disarm();
+              },
             ),
           ],
-          onSelectAll: () => controller.selectAll(sessions.map((s) => s.id)),
-          // Toolbar Cancel exits selection mode entirely (clears the
-          // desktop arm too); the toolbar contract itself is unchanged.
-          onCancel: () {
-            controller.clear();
-            _disarm();
-          },
         ),
+        if (!selecting)
+          Positioned(
+            left: ProxSpacing.lg,
+            right: ProxSpacing.lg,
+            bottom: ProxSpacing.sm,
+            child: SafeArea(
+              top: false,
+              child: ProxFloatingAction(
+                child: ProxPrimaryButton(
+                  icon: const Icon(Icons.ios_share),
+                  label: const Text('Review & export'),
+                  onPressed: sessions.isEmpty ? null : onOpenExport,
+                  expanded: true,
+                  compact: true,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }

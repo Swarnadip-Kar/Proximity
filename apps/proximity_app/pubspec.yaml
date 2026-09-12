@@ -64,6 +64,7 @@ dependencies:
   web: ^1.0.0
   connectivity_plus: ^7.3.1
   file_picker: ^11.0.3
+  archive: ^4.2.0
 
 dev_dependencies:
   flutter_test:

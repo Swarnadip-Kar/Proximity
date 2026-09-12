@@ -35,6 +35,26 @@ void main() {
       expect(t.presentCount, 1);
     });
 
+    test('discardWindow drops the round, keeps people, recomputes', () {
+      final t = TallyStore();
+      t.noteWindow(1);
+      t.noteWindow(2);
+      t.mark('a@x.in', 'A', 1);
+      t.mark('a@x.in', 'A', 2);
+      t.mark('b@x.in', 'B', 1);
+      t.ensure('w@x.in', 'W');
+      t.discardWindow(2);
+      expect(t.windowNos, [1]);
+      // a and b both confirmed via round 1 now; w (waiting/manual,
+      // never marked) survives with empty wins.
+      expect(t.presentCount, 2);
+      expect(t.nameMap(), contains('w@x.in'));
+      expect(t.presentAny.map((r) => r.email), containsAll(['a@x.in', 'b@x.in']));
+      // Unknown rounds are a no-op.
+      t.discardWindow(9);
+      expect(t.windowNos, [1]);
+    });
+
     test('restore preserves sparse window numbers (never renumbers)', () {
       final t = TallyStore();
       t.restore(

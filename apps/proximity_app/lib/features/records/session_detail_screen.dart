@@ -27,6 +27,7 @@ import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
 import 'export_center_screen.dart';
 import 'session_edit_screen.dart';
+import 'session_row_card.dart';
 
 class SessionDetailScreen extends ConsumerStatefulWidget {
   final ClassRecord record;
@@ -136,7 +137,8 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
     final persons = _persons;
     final present = persons.where(_isPresent).length;
     final partials = _partialCount();
-    final time = shortTimeOf(_record.timestampIso);
+    final absent = (persons.length - present - partials).clamp(0, 1 << 30);
+    final windows = _record.windows.length;
     return AdaptiveScaffold(
       title: 'Session',
       actions: [
@@ -157,29 +159,53 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
             ),
             children: [
               Text(
-                '${_record.classLabel} · ${fullDateOf(_record.dateIso)}'
-                '${time.isEmpty ? '' : ' · $time'}',
+                _record.classLabel,
+                textAlign: TextAlign.center,
                 style: ProxType.title(color: c.contentPrimary),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 2,
               ),
               const SizedBox(height: ProxSpacing.xs),
-              // Present total highlighted in the status badge idiom (same
-              // component as the session rows); the caption below keeps
-              // the listed/partial detail.
-              Align(
-                alignment: Alignment.centerLeft,
-                child: VerdictBadge(
-                  status: ProxStatus.marked,
-                  label: '$present present',
-                ),
+              Text(
+                sessionRoomyLine(_record.dateIso, _record.timestampIso),
+                textAlign: TextAlign.center,
+                style: ProxType.body(color: c.contentSecondary),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+              const SizedBox(height: ProxSpacing.md),
+              // Same green/yellow/red share bar as the session rows.
+              SessionShareBar(
+                present: present,
+                partial: partials,
+                absent: absent,
+              ),
+              const SizedBox(height: ProxSpacing.sm),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: ProxSpacing.sm,
+                runSpacing: ProxSpacing.xs,
+                children: [
+                  VerdictBadge(
+                    status: ProxStatus.marked,
+                    label: 'Present $present',
+                  ),
+                  VerdictBadge(
+                    status: ProxStatus.late,
+                    label: 'Partial $partials',
+                  ),
+                  VerdictBadge(
+                    status: ProxStatus.absent,
+                    label: 'Absent $absent',
+                  ),
+                ],
               ),
               const SizedBox(height: ProxSpacing.xs),
               Text(
-                '${persons.length} listed'
-                '${partials > 0 ? ' · Partial ($partials)' : ''}',
+                '$windows round${windows == 1 ? '' : 's'}',
+                textAlign: TextAlign.center,
                 style: proxTabular(
-                    context, ProxType.label(color: c.contentSecondary)),
+                    context, ProxType.caption(color: c.contentSecondary)),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
               ),
@@ -206,6 +232,7 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 title: 'Attendance',
                 padding: EdgeInsets.zero,
               ),
+              const SizedBox(height: ProxSpacing.md),
               if (persons.isEmpty)
                 const ProxEmptyState(message: 'Nobody listed in this session.')
               else

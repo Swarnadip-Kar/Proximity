@@ -29,17 +29,18 @@ import '../../widgets/clock.dart';
 import '../../widgets/csv_preview.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/log_drawer.dart';
+import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_shimmer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/selection_controller.dart';
 import '../../widgets/selection_toolbar.dart';
-import '../../widgets/student_card.dart';
 import '../../widgets/web_banner.dart';
+import 'session_row_card.dart';
 
-/// Export header for CSV previews: three metadata rows —
-/// `Prof Name,<name>`, `Class Name,<class>`, `Prof Email,<email>` —
-/// followed by the body CSV unchanged. Values come from the host
+/// Export header for CSV previews: ONE metadata line —
+/// `<prof>,<class>,<email>` — followed by the body CSV unchanged
+/// (header row, then entries). Values come from the host
 /// identity/account at export time (account displayName/email) and the
 /// threaded course/class label; no new plumbing or transport fields.
 /// Escaping/quoting is identical to the old org line and body (raw
@@ -50,7 +51,7 @@ String exportHeader(String csv,
         {required String profName,
         required String className,
         required String profEmail}) =>
-    'Prof Name,$profName\nClass Name,$className\nProf Email,$profEmail\n$csv';
+    '$profName,$className,$profEmail\n$csv';
 
 class ExportCenterScreen extends ConsumerStatefulWidget {
   final String courseName;
@@ -69,8 +70,7 @@ class ExportCenterScreen extends ConsumerStatefulWidget {
 class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
   String? _rangeError;
 
-  List<ClassRecord> _sessions(
-      List<ClassRecord> history, String myOrg) {
+  List<ClassRecord> _sessions(List<ClassRecord> history, String myOrg) {
     final out = history
         .where((r) =>
             (r.courseId == widget.courseName ||
@@ -83,8 +83,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     return out;
   }
 
-  /// Export header for CSV previews: `Prof Name` / `Class Name` /
-  /// `Prof Email` top rows (see [exportHeader]).
+  /// Export header for CSV previews: one `<prof>,<class>,<email>`
+  /// top line (see [exportHeader]).
   /// Top-level (not on the private State) so the course overview's
   /// selected-dates export shares the exact builder.
   static String withExportHeader(String csv,
@@ -95,8 +95,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
           profName: profName, className: className, profEmail: profEmail);
 
   /// Tight title: short weekday + day/month, time when known.
-  String _sessionLabel(ClassRecord r) => sessionTightLabel(
-      r.classLabel, r.dateIso, r.timestampIso);
+  String _sessionLabel(ClassRecord r) =>
+      sessionTightLabel(r.classLabel, r.dateIso, r.timestampIso);
 
   Future<void> _saveCsv(String csv, String filename) async {
     BleLog.log('NAV', 'export: save $filename');
@@ -164,10 +164,9 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       context,
       title: '${widget.courseName} · $label',
       csv: csv,
-      onSave: () => _saveCsv(
-          csv, 'attendance_${widget.courseName}_selected.csv'),
-      onShare: () =>
-          _shareCsv(csv, 'Attendance ${widget.courseName} ($label)'),
+      onSave: () =>
+          _saveCsv(csv, 'attendance_${widget.courseName}_selected.csv'),
+      onShare: () => _shareCsv(csv, 'Attendance ${widget.courseName} ($label)'),
     );
   }
 
@@ -183,18 +182,16 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    final inRange =
-        sessionsInRange(sessions, dateIsoOf(picked.start), dateIsoOf(picked.end));
+    final startIso = dateIsoOf(picked.start);
+    final endIso = dateIsoOf(picked.end);
+    final inRange = sessionsInRange(sessions, startIso, endIso);
     final rangeLabel =
-        '${shortDayDateOf(dateIsoOf(picked.start))} … ${shortDayDateOf(dateIsoOf(picked.end))}';
+        '${shortDayDateOf(startIso)} … ${shortDayDateOf(endIso)}';
     if (inRange.isEmpty) {
-      setState(
-          () => _rangeError = 'No classes took place in $rangeLabel.');
+      setState(() => _rangeError = 'No classes took place in $rangeLabel.');
       return;
     }
     setState(() => _rangeError = null);
-    // Matrix: rows keyed by email, P = intersection-present else A;
-    // same-day repeats disambiguate with HH:mm in the header.
     final acct = ref.read(accountProvider).valueOrNull;
     final csv = withExportHeader(
       buildDateRangeMatrix(inRange),
@@ -205,10 +202,8 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     await _showCsvDialog(
       title: '${widget.courseName} · $rangeLabel',
       csv: csv,
-      filename:
-          'attendance_${widget.courseName}_${dateIsoOf(picked.start)}_${dateIsoOf(picked.end)}.csv',
-      subject:
-          'Attendance ${widget.courseName} ${dateIsoOf(picked.start)}-${dateIsoOf(picked.end)}',
+      filename: 'attendance_${widget.courseName}_${startIso}_$endIso.csv',
+      subject: 'Attendance ${widget.courseName} $startIso-$endIso',
     );
   }
 
@@ -245,12 +240,11 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
                   courseName: widget.courseName,
                   sessions: sessions,
                   loading: snap.connectionState == ConnectionState.waiting,
+                  onPreviewSession: _exportSession,
+                  onExportSelected: (ids) => _exportSelected(sessions, ids),
+                  sessionLabel: _sessionLabel,
                   rangeError: _rangeError,
                   onExportRange: () => _exportRange(sessions),
-                  onPreviewSession: _exportSession,
-                  onExportSelected: (ids) =>
-                      _exportSelected(sessions, ids),
-                  sessionLabel: _sessionLabel,
                 ),
               );
             },
@@ -270,21 +264,21 @@ class _ExportBody extends ConsumerWidget {
   final String courseName;
   final List<ClassRecord> sessions;
   final bool loading;
-  final String? rangeError;
-  final VoidCallback onExportRange;
   final ValueChanged<ClassRecord> onPreviewSession;
   final Future<void> Function(Set<String>) onExportSelected;
   final String Function(ClassRecord) sessionLabel;
+  final String? rangeError;
+  final Future<void> Function() onExportRange;
 
   const _ExportBody({
     required this.courseName,
     required this.sessions,
     required this.loading,
-    required this.rangeError,
-    required this.onExportRange,
     required this.onPreviewSession,
     required this.onExportSelected,
     required this.sessionLabel,
+    required this.rangeError,
+    required this.onExportRange,
   });
 
   @override
@@ -295,28 +289,26 @@ class _ExportBody extends ConsumerWidget {
     // Tap-to-select is native-only; web keeps tap-to-preview.
     final tapSelect = !kIsWeb;
     final selecting = controller.selecting && !kIsWeb;
-    return Column(
+    final rangeErr = rangeError;
+    // Floating Export date range docked above the nav bar (same pattern
+    // as the course overview's floating Review & export dock). Hidden
+    // while the selection toolbar owns the bottom edge. List bottom
+    // padding keeps content clear of the dock.
+    return Stack(
       children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: ProxSpacing.screenMargin,
-              vertical: ProxSpacing.lg,
-            ),
+        Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  ProxSpacing.screenMargin,
+                  ProxSpacing.lg,
+                  ProxSpacing.screenMargin,
+                  104,
+                ),
             children: [
               const ClockHeader(),
               const WebRecordsBanner(),
-              const SizedBox(height: ProxSpacing.sm),
-              ProxSecondaryButton(
-                icon: const Icon(Icons.calendar_month),
-                label: const Text('Export date range'),
-                onPressed: sessions.isEmpty ? null : onExportRange,
-                expanded: true,
-              ),
-              if (rangeError != null) ...[
-                const SizedBox(height: ProxSpacing.sm),
-                ProxErrorNote(rangeError!),
-              ],
               const SizedBox(height: ProxSpacing.sm),
               Text(
                 '${sessions.length} sessions',
@@ -343,6 +335,10 @@ class _ExportBody extends ConsumerWidget {
                   maxLines: 1,
                 ),
               ],
+              if (rangeErr != null) ...[
+                const SizedBox(height: ProxSpacing.sm),
+                ProxErrorNote(rangeErr),
+              ],
               const SizedBox(height: ProxSpacing.sm),
               if (loading)
                 const ProxShimmerHost(
@@ -363,41 +359,54 @@ class _ExportBody extends ConsumerWidget {
               else
                 for (final session in sessions)
                   Padding(
-                    padding:
-                        const EdgeInsets.only(bottom: ProxSpacing.sm),
+                    padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
-                          child: tapSelect
-                              ? StudentCard(
-                                  name: sessionLabel(session),
-                                  subtitle:
-                                      '${fullDateOf(session.dateIso)} · ${session.presentCount} present · ${session.windowCount} window${session.windowCount == 1 ? '' : 's'}',
-                                  selectionMode: true,
-                                  selected:
-                                      controller.isSelected(session.id),
-                                  onSelectionChanged: (select) {
-                                    if (select) {
-                                      controller.select(session.id);
-                                    } else {
-                                      controller.deselect(session.id);
-                                    }
-                                  },
-                                )
-                              : StudentCard(
-                                  name: sessionLabel(session),
-                                  subtitle:
-                                      '${fullDateOf(session.dateIso)} · ${session.presentCount} present · ${session.windowCount} window${session.windowCount == 1 ? '' : 's'}',
-                                  onTap: () =>
-                                      onPreviewSession(session),
-                                ),
+                          child: Builder(
+                            builder: (context) {
+                              // Same shared row card as the course
+                              // overview: callers differ only in title
+                              // + tap behavior, never in card chrome.
+                              final partial = partialCountOf(
+                                  session.windows, session.allEmails);
+                              final union = courseRoster(sessions).length;
+                              final absent =
+                                  (union - session.presentCount - partial)
+                                      .clamp(0, 1 << 30);
+                              // Date-only rows: no avatar, no course
+                              // name — same shared card otherwise.
+                              return SessionRowCard(
+                                courseName: courseName,
+                                showAvatar: false,
+                                title: sessionShortLine(session),
+                                windows: session.windowCount,
+                                present: session.presentCount,
+                                partial: partial,
+                                absent: absent,
+                                selectionMode: tapSelect,
+                                selected: controller.isSelected(session.id),
+                                onSelectionChanged: tapSelect
+                                    ? (select) {
+                                        if (select) {
+                                          controller.select(session.id);
+                                        } else {
+                                          controller.deselect(session.id);
+                                        }
+                                      }
+                                    : null,
+                                onTap: tapSelect
+                                    ? null
+                                    : () => onPreviewSession(session),
+                              );
+                            },
+                          ),
                         ),
                         IconButton(
                           icon: const Icon(Icons.ios_share),
                           tooltip: 'Export CSV',
-                          onPressed: () =>
-                              onPreviewSession(session),
+                          onPressed: () => onPreviewSession(session),
                         ),
                       ],
                     ),
@@ -405,28 +414,46 @@ class _ExportBody extends ConsumerWidget {
             ],
           ),
         ),
-        SelectionToolbar(
-          visible: selecting,
-          selectedCount: count,
-          totalCount: sessions.length,
-          actions: [
-            SelectionToolbarAction(
-              label: 'Export $count',
-              onPressed: count == 0
-                  ? null
-                  : () async {
-                      await onExportSelected(
-                          controller.selectedIds);
-                    },
+            SelectionToolbar(
+              visible: selecting,
+              selectedCount: count,
+              totalCount: sessions.length,
+              actions: [
+                SelectionToolbarAction(
+                  label: 'Export $count',
+                  onPressed: count == 0
+                      ? null
+                      : () async {
+                          await onExportSelected(controller.selectedIds);
+                        },
+                ),
+              ],
+              onSelectAll: () =>
+                  controller.selectAll(sessions.map((s) => s.id)),
+              onCancel: controller.clear,
             ),
           ],
-          onSelectAll: () =>
-              controller.selectAll(sessions.map((s) => s.id)),
-          onCancel: controller.clear,
         ),
+        if (!selecting)
+          Positioned(
+            left: ProxSpacing.lg,
+            right: ProxSpacing.lg,
+            bottom: ProxSpacing.sm,
+            child: SafeArea(
+              top: false,
+              child: ProxFloatingAction(
+                child: ProxPrimaryButton(
+                  icon: const Icon(Icons.calendar_month),
+                  label: const Text('Export date range'),
+                  onPressed:
+                      sessions.isEmpty ? null : () => onExportRange(),
+                  expanded: true,
+                  compact: true,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
 }
-
-

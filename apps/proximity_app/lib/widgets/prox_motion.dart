@@ -182,6 +182,71 @@ class ProxSwitcher extends StatelessWidget {
   }
 }
 
+/// Size-glide for state swaps with different heights (the Live dock:
+/// 1 button ↔ 4-button grid). Replays a bottom-pinned grow on every
+/// [stateKey] change while the inner content cross-fades — the dock
+/// unfolds instead of snapping. One-shot per key change only: unrelated
+/// parent rebuilds (elapsed ticks) never restart it, so pumpAndSettle
+/// always observes idle. Reduced motion renders the child directly.
+class ProxSizeGlide extends StatefulWidget {
+  final Object stateKey;
+  final Widget child;
+  final Duration duration;
+
+  const ProxSizeGlide({
+    super.key,
+    required this.stateKey,
+    required this.child,
+    this.duration = ProxDurations.medium,
+  });
+
+  @override
+  State<ProxSizeGlide> createState() => _ProxSizeGlideState();
+}
+
+class _ProxSizeGlideState extends State<ProxSizeGlide>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: widget.duration);
+    _c.forward();
+  }
+
+  @override
+  void didUpdateWidget(ProxSizeGlide old) {
+    super.didUpdateWidget(old);
+    if (old.duration != widget.duration) {
+      _c.duration = widget.duration;
+    }
+    if (old.stateKey != widget.stateKey) {
+      _c.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ProxMotion.reduced(context)) return widget.child;
+    return ClipRect(
+      child: SizeTransition(
+        sizeFactor:
+            CurvedAnimation(parent: _c, curve: ProxCurves.standard),
+        // Bottom-pinned: bottom-docked content unfolds upward.
+        alignment: Alignment.bottomCenter,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 /// Hero entrance: scale from 0.8 + fade (no rotation anywhere).
 /// Used for welcome hero, verdict badges, and course page headers.
 /// 600ms with emphasized curve for a premium reveal.

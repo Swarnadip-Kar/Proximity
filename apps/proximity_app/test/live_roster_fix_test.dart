@@ -78,8 +78,8 @@ void main() {
 
     // Roster-only content is all here.
     expect(find.textContaining('Waiting area (1)'), findsOneWidget);
-    expect(find.textContaining('Present — all rounds (1)'), findsOneWidget);
-    expect(find.textContaining('Partial — some rounds'), findsOneWidget);
+    expect(find.textContaining('Present 1'), findsOneWidget);
+    expect(find.textContaining('Partial'), findsOneWidget);
     expect(find.textContaining('duplicate face'), findsOneWidget);
     expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
 
@@ -188,7 +188,8 @@ void main() {
     final partials =
         tally.presentAny.where((r) => r.email == 'b@univ.edu').toList();
 
-    // Present section: header + intersection rows only.
+    // Present section: intersection rows only (the Attendance summary
+    // header lives in MarkedRosterSection, not here).
     await t.pumpWidget(_themed(PresentSection(
       present: tally.confirmedCount,
       windowsTaken: tally.windowCount,
@@ -196,17 +197,17 @@ void main() {
       windowNos: tally.windowNos,
     )));
     await t.pumpAndSettle();
-    expect(find.textContaining('Present — all rounds (1)'), findsOneWidget);
+    expect(find.text('Attendance'), findsNothing);
     expect(find.textContaining('a@univ.edu'), findsOneWidget);
     expect(find.textContaining('b@univ.edu'), findsNothing);
 
-    // Partial section: header + partial rows only.
+    // Partial section: partial rows only (no header here either).
     await t.pumpWidget(_themed(PartialSection(
       partialRows: partials,
       windowNos: tally.windowNos,
     )));
     await t.pumpAndSettle();
-    expect(find.textContaining('Partial — some rounds (1)'), findsOneWidget);
+    expect(find.text('Attendance'), findsNothing);
     expect(find.textContaining('b@univ.edu'), findsOneWidget);
 
     // Partial section empty renders nothing.
@@ -226,12 +227,14 @@ void main() {
     await t.enterText(find.byKey(const ValueKey('prof-search')), 'a@univ');
     expect(seen, 'a@univ');
 
-    // MarkedRosterSection still composes search + present + partial.
+    // MarkedRosterSection composes search + one-line Attendance summary
+    // (Attendance + Present + Partial) + present + partial rows.
     await t.pumpWidget(_themed(MarkedRosterSection(tally: tally)));
     await t.pumpAndSettle();
     expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
-    expect(find.textContaining('Present — all rounds (1)'), findsOneWidget);
-    expect(find.textContaining('Partial — some rounds (1)'), findsOneWidget);
+    expect(find.text('Attendance'), findsOneWidget);
+    expect(find.text('Present 1'), findsOneWidget);
+    expect(find.textContaining('Partial'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 }

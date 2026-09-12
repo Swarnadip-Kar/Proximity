@@ -884,6 +884,11 @@ enum ProxStatus {
   review,
   waiting,
   pending,
+
+  /// Absent from a session (attendance domain): red like the other
+  /// fail-closed states, person-off shape. Used by the course-overview
+  /// session rows (`M absent` next to the green present badge).
+  absent,
 }
 
 /// Iconography, redesign §2.4: ONE icon set (Material outlined by default,
@@ -908,6 +913,8 @@ abstract final class ProxIcons {
         ProxStatus.noSignal =>
           active ? Icons.wifi_off : Icons.wifi_off_outlined,
         ProxStatus.review => active ? Icons.flag : Icons.flag_outlined,
+        ProxStatus.absent =>
+          active ? Icons.person_off : Icons.person_off_outlined,
         ProxStatus.waiting ||
         ProxStatus.pending =>
           active ? Icons.circle : Icons.circle_outlined,
@@ -922,7 +929,8 @@ abstract final class ProxIcons {
       ProxStatus.marked => c.statusMarked,
       ProxStatus.late => c.statusLate,
       ProxStatus.review || ProxStatus.pending => c.statusReview,
-      ProxStatus.wrongOrg || ProxStatus.noSignal => c.statusError,
+      ProxStatus.wrongOrg || ProxStatus.noSignal || ProxStatus.absent =>
+        c.statusError,
       ProxStatus.waiting => c.contentSecondary,
     };
   }

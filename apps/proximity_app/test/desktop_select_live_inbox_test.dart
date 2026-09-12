@@ -174,7 +174,7 @@ void main() {
       expect(find.text('Done'), findsOneWidget);
       // Plain left-click toggles the session row while armed (no detail
       // navigation — the tap selects instead).
-      await t.tap(find.textContaining('Thu, 03-09-2026'));
+      await t.tap(find.textContaining('Thu, 03-09-26'));
       await t.pumpAndSettle();
       expect(find.text('Delete 1'), findsOneWidget);
       expect(find.text('Select all'), findsOneWidget);

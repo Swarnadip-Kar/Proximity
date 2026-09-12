@@ -40,6 +40,7 @@ import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/verdict_badge.dart';
+import '../records/session_row_card.dart';
 
 /// Round-tick pills for one student (per-round R1/R2 trail).
 List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
@@ -148,37 +149,18 @@ class WaitingListSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          children: [
-            // Breathing presence halo: the waiting area is live. The dot
-            // itself stays static — ProxDot(pulse:true) runs a continuous
-            // implicit animation that pumpAndSettle can never outlast
-            // (same reason roster badges are static). The halo steps on a
-            // settle-safe timer instead.
-            ProxPulseGlow(
-              color: ProxStateColors.of(context, ProxState.waiting),
-              blurRadius: 12,
-              child: ProxDot(
-                color: ProxStateColors.of(context, ProxState.waiting),
-              ),
-            ),
-            const SizedBox(width: ProxSpacing.sm),
-            Expanded(
-              child: Text(
-                'Waiting area (${waitingRows.length})',
-                style: ProxType.title(color: c.contentPrimary),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
-            ),
-          ],
+        // Same header as every other Live tab (exact Add-tab contract:
+        // gradient accent bar + 17px title, zero padding — see
+        // ProxSectionHeader). The old live-dot row is gone; liveness
+        // already reads from the slim status strip above the sub-nav.
+        ProxSectionHeader(
+          title: 'Waiting area (${waitingRows.length})',
+          padding: EdgeInsets.zero,
         ),
-        const SizedBox(height: ProxSpacing.sm),
         if (waitingRows.isEmpty)
           const ProxEmptyLine('No students in the waiting area yet.')
         else
@@ -210,10 +192,13 @@ class WaitingListSection extends StatelessWidget {
   }
 }
 
-/// Thin roster-only composer: waiting + dup flags + marked (search +
-/// present + partial). Manual inbox + direct add never compose here —
-/// they are their own sections behind the sub-nav (the inbox/add screens
-/// composing the `features/manual_attendance/` module).
+/// Roster composer: dup flags + marked (search + present + partial), with
+/// the waiting area optionally composed on top. The Take host renders
+/// waiting on its own sub-nav tab, so it passes [includeWaiting] false —
+/// direct pumps (tests, previews) keep the legacy combined layout via the
+/// default true. Manual inbox + direct add never compose here — they are
+/// their own sections behind the sub-nav (the inbox/add screens composing
+/// the `features/manual_attendance/` module).
 class LiveRosterBody extends StatelessWidget {
   final List<WaitingRow> waitingRows;
 
@@ -231,6 +216,14 @@ class LiveRosterBody extends StatelessWidget {
   /// Professor eject sink (null = read-only roster, no swipe affordance).
   final Future<bool> Function(String email)? onRemoveStudent;
 
+  /// False renders marked-only (Take host Roster tab — waiting lives on
+  /// its own tab). True keeps the legacy waiting + marked stack.
+  final bool includeWaiting;
+
+  /// Class-strength ceiling for the absent count (history union, loaded
+  /// by the host screen). Null keeps the legacy tally-size ceiling.
+  final int? rosterTotal;
+
   const LiveRosterBody({
     super.key,
     required this.waitingRows,
@@ -239,6 +232,8 @@ class LiveRosterBody extends StatelessWidget {
     required this.onResolve,
     required this.tally,
     this.onRemoveStudent,
+    this.includeWaiting = true,
+    this.rosterTotal,
   });
 
   @override
@@ -247,16 +242,21 @@ class LiveRosterBody extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        WaitingListSection(
-            waitingRows: waitingRows, onRemove: onRemoveStudent),
-        const SizedBox(height: ProxSpacing.sm),
+        if (includeWaiting) ...[
+          WaitingListSection(
+              waitingRows: waitingRows, onRemove: onRemoveStudent),
+          const SizedBox(height: ProxSpacing.sm),
+        ],
         DupFlagSection(
           groups: groups,
           names: names,
           onResolve: onResolve,
         ),
         const SizedBox(height: ProxSpacing.sm),
-        MarkedRosterSection(tally: tally, onRemove: onRemoveStudent),
+        MarkedRosterSection(
+            tally: tally,
+            onRemove: onRemoveStudent,
+            rosterTotal: rosterTotal),
       ],
     );
   }
@@ -274,9 +274,10 @@ class RosterSearchField extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextField(
       key: const ValueKey('prof-search'),
-      decoration: const InputDecoration(
+      style: proxCompactFieldStyle(context),
+      decoration: proxCompactFieldDecoration(
           labelText: 'Search by name, ID, or email',
-          prefixIcon: Icon(Icons.search)),
+          prefixIcon: const Icon(Icons.search)),
       onChanged: onChanged,
     );
   }
@@ -305,18 +306,10 @@ class PresentSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
-          style: ProxType.title(color: c.contentPrimary),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 2,
-        ),
-        const SizedBox(height: ProxSpacing.sm),
         if (confirmedRows.isEmpty)
           const ProxEmptyLine(
               'Nobody present in every round yet — partials stay listed below.')
@@ -375,18 +368,10 @@ class PartialSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (partialRows.isEmpty) return const SizedBox.shrink();
-    final c = ProximityColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SizedBox(height: ProxSpacing.xs),
-        Text(
-          'Partial — some rounds (${partialRows.length})',
-          style: ProxType.title(color: c.contentPrimary),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-        ),
         const SizedBox(height: ProxSpacing.sm),
         // Same StudentCard contract as waiting/inbox (name-or-email
         // title + volunteered Gmail photo, initials fallback).
@@ -412,6 +397,78 @@ class PartialSection extends StatelessWidget {
   }
 }
 
+/// Attendance summary: `Attendance` title + `Present n` (green, marked)
+/// + `Partial m` (yellow, late) + `Absent k` (red, absent) badges, then
+/// the same tri-color share bar as the session cards. Same `VerdictBadge`
+/// + `SessionShareBar` components as the records rows — no new pills, no
+/// raw colors, no copy-paste. Counts come from the already-filtered
+/// intersection gate above (search narrows present; partials hide under
+/// search, count reads 0).
+class _AttendanceSummary extends StatelessWidget {
+  final int present;
+  final int partial;
+  final int absent;
+
+  const _AttendanceSummary({
+    required this.present,
+    required this.partial,
+    required this.absent,
+  });
+
+  /// One badge cell: equal third of the row, scales down instead of
+  /// wrapping — the trio always fits one line (same contract as the
+  /// session-card counts row).
+  Widget _cell(VerdictBadge badge) => Expanded(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: badge,
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    // Header copies the Add-tab contract exactly (ProxSectionHeader:
+    // gradient accent bar + 17px title, zero padding); badges + bar sit
+    // below it, mirroring the session-card stack minus course/date.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const ProxSectionHeader(
+          title: 'Attendance',
+          padding: EdgeInsets.zero,
+        ),
+        const SizedBox(height: ProxSpacing.xs),
+        Row(
+          children: [
+            _cell(VerdictBadge(
+              status: ProxStatus.marked,
+              label: 'Present $present',
+            )),
+            const SizedBox(width: ProxSpacing.xs),
+            _cell(VerdictBadge(
+              status: ProxStatus.late,
+              label: 'Partial $partial',
+            )),
+            const SizedBox(width: ProxSpacing.xs),
+            _cell(VerdictBadge(
+              status: ProxStatus.absent,
+              label: 'Absent $absent',
+            )),
+          ],
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        SessionShareBar(
+          present: present,
+          partial: partial,
+          absent: absent,
+        ),
+      ],
+    );
+  }
+}
+
 /// Search + present (intersection) + partial. Owns the search field state
 /// and the intersection-gated filtering; renders via [RosterSearchField],
 /// driver reads and filtering are unchanged).
@@ -421,8 +478,12 @@ class MarkedRosterSection extends StatefulWidget {
   /// Professor eject sink, threaded to present + partial rows.
   final Future<bool> Function(String email)? onRemove;
 
+  /// Class-strength ceiling for the absent count (history union, loaded
+  /// by the host screen). Null keeps the legacy tally-size ceiling.
+  final int? rosterTotal;
+
   const MarkedRosterSection(
-      {super.key, required this.tally, this.onRemove});
+      {super.key, required this.tally, this.onRemove, this.rosterTotal});
 
   @override
   State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
@@ -468,6 +529,27 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
       children: [
         RosterSearchField(
           onChanged: (v) => setState(() => _search = v),
+        ),
+        const SizedBox(height: ProxSpacing.sm),
+        Builder(
+          builder: (context) {
+            // Ceiling: history union when the host knows it (absent
+            // starts at class strength), else the live tally size. Maxes
+            // with the live size so newcomers never shrink the ceiling
+            // mid-visit. Recomputed every build — ticks and marks update
+            // it live.
+            final ceiling = widget.rosterTotal != null &&
+                    widget.rosterTotal! > widget.tally.size
+                ? widget.rosterTotal!
+                : widget.tally.size;
+            final absent =
+                (ceiling - present - partialRows.length).clamp(0, 1 << 30);
+            return _AttendanceSummary(
+              present: present,
+              partial: partialRows.length,
+              absent: absent,
+            );
+          },
         ),
         const SizedBox(height: ProxSpacing.sm),
         PresentSection(

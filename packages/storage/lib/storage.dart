@@ -68,6 +68,17 @@ class TallyStore {
     if (windowNo > 0) _openedWindows.add(windowNo);
   }
 
+  /// Drops round [windowNo]: un-opens it and strips it from every row's
+  /// wins. Rows stay (names/rolls/photos are visit data, not round
+  /// data), so waiting/manual people survive with empty wins; presence
+  /// recomputes from the remaining windows. No-op for unknown rounds.
+  void discardWindow(int windowNo) {
+    _openedWindows.remove(windowNo);
+    for (final r in _rows.values) {
+      r.wins.remove(windowNo);
+    }
+  }
+
   void ensure(String email, String name,
       [String roll = '', String photoUrl = '']) {
     final key = email.toLowerCase();

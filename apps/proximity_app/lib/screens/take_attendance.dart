@@ -49,105 +49,131 @@ import '../main.dart';
 import '../mode.dart';
 import '../widgets/host_preview_card.dart';
 import '../widgets/log_drawer.dart';
+import '../widgets/partial_list.dart';
+import '../widgets/student_card.dart' show courseInitials;
 
 // Recovery policy lives in the draft-recovery section; re-exported here
 // so existing imports (and tests) keep resolving it from this screen.
 export '../features/live/draft_recovery.dart'
     show recoverPromptThreshold, shouldPromptRecover;
 
-/// Lightweight segmented sub-nav (§7.1) under the fixed control cluster:
+/// Lightweight segmented sub-nav (§7.1) under the slim status strip:
 /// segment SWAPS the content below via the host's IndexedStack — each
 /// sub-tab shows ONLY its view (no shared scroll, no intersection);
 /// inactive views stay mounted so their state survives switches.
 ///
-/// Scrolls horizontally on narrow/large-text layouts (count badge +
-/// 130% type no longer overflow 360dp); fills full width otherwise.
+/// Order: Roster · Waiting · Inbox · Add · Setup. Five equal-width cells
+/// that always fit the screen width (never scroll, never flow out):
+/// symmetric `xs` padding on every cell, labels ellipsize instead of
+/// pushing siblings. Waiting + Inbox carry count badges with reserved
+/// width (maintainSize reserves space so 0→N never shifts siblings).
 class LiveSubNav extends StatelessWidget {
   final int selected;
+  final int waitingCount;
   final int inboxCount;
   final ValueChanged<int> onSelect;
 
   const LiveSubNav({
     super.key,
     required this.selected,
+    this.waitingCount = 0,
     required this.inboxCount,
     required this.onSelect,
   });
 
+  /// Inline live counter: `Waiting (3)` / `Inbox (2)` in the same label
+  /// style — no pill container, so all five cells keep even symmetric
+  /// padding and always fit. The label half stays an exact `Text(label)`
+  /// (tap finders keep working); the count rides a sibling Text.
+  Widget _cell(
+    BuildContext context,
+    ProximityColors c, {
+    required int index,
+    required String label,
+    int badgeCount = 0,
+    bool showBadge = false,
+  }) {
+    final active = selected == index;
+    final fg = active ? c.accentBrand : c.contentSecondary;
+    final labelStyle = ProxType.label(color: fg).copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onSelect(index),
+        child: AnimatedContainer(
+          duration: ProxDurations.micro,
+          curve: ProxCurves.standard,
+          constraints:
+              const BoxConstraints(minHeight: ProxSpacing.minTap),
+          padding: const EdgeInsets.symmetric(
+            horizontal: ProxSpacing.xs,
+            vertical: ProxSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: active
+                ? c.accentBrand.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(ProxRadii.pill),
+          ),
+          alignment: Alignment.center,
+          // Scale-down, never truncate: the full word always shows —
+          // it shrinks a hair on 360dp instead of clipping to "W...".
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  style: labelStyle,
+                  maxLines: 1,
+                  softWrap: false,
+                  textAlign: TextAlign.center,
+                ),
+                if (showBadge && badgeCount > 0)
+                  Text(
+                    ' ($badgeCount)',
+                    style: labelStyle,
+                    maxLines: 1,
+                    softWrap: false,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        key: const ValueKey('live-subnav-scroll'),
-        scrollDirection: Axis.horizontal,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: constraints.maxWidth),
-          child: SegmentedButton<int>(
-            style: SegmentedButton.styleFrom(
-        minimumSize: const Size(64, ProxSpacing.minTap),
-        textStyle: ProxType.label(color: c.contentPrimary).copyWith(
-          fontWeight: FontWeight.w600,
-        ),
-        foregroundColor: c.contentSecondary,
-        selectedForegroundColor: c.accentBrand,
-        selectedBackgroundColor: c.accentBrand.withValues(alpha: 0.12),
-        side: BorderSide(color: c.divider),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ProxRadii.pill),
-        ),
+    return Container(
+      key: const ValueKey('live-subnav'),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.divider),
+        borderRadius: BorderRadius.circular(ProxRadii.pill),
       ),
-      segments: [
-        const ButtonSegment(value: 0, label: Text('Roster')),
-        ButtonSegment(
-          value: 1,
-          // Stable width: count badge reserves space via maintainSize —
-          // 0→N no longer shifts Roster/Add/Setup segments.
-          label: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Inbox'),
-              Visibility(
-                visible: inboxCount > 0,
-                maintainSize: true,
-                maintainAnimation: true,
-                maintainState: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: c.accentBrand.withValues(alpha: 0.12),
-                        borderRadius:
-                            BorderRadius.circular(ProxRadii.pill),
-                      ),
-                      child: Text(
-                        '$inboxCount',
-                        style: ProxType.caption(color: c.accentBrand),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const ButtonSegment(value: 2, label: Text('Add')),
-        const ButtonSegment(value: 3, label: Text('Setup')),
-      ],
-      selected: {selected},
-      showSelectedIcon: false,
-      onSelectionChanged: (s) {
-        if (s.isEmpty) return;
-        onSelect(s.first);
-      },
-          ),
-        ),
+      padding: const EdgeInsets.all(ProxSpacing.xs),
+      child: Row(
+        children: [
+          _cell(context, c, index: 0, label: 'Roster'),
+          _cell(context, c,
+              index: 1,
+              label: 'Waiting',
+              badgeCount: waitingCount,
+              showBadge: true),
+          _cell(context, c,
+              index: 2,
+              label: 'Inbox',
+              badgeCount: inboxCount,
+              showBadge: true),
+          _cell(context, c, index: 3, label: 'Add'),
+          _cell(context, c, index: 4, label: 'Setup'),
+        ],
       ),
     );
   }
@@ -172,6 +198,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   // Elapsed open time: the window stays open until Stop (no countdown —
   // slow provers are never stranded by a clock).
   Duration elapsed = Duration.zero;
+  // Frozen elapsed at the last stop: resume re-opens the same round from
+  // this value (start = now - banked) instead of zero. Null = no banked
+  // value, so fresh rounds (_windowNo+1) still start at zero. Set in the
+  // _closeWindow path, consumed on resume in _startInner, cleared on
+  // fresh starts and discards.
+  Duration? _bankedElapsed;
   Timer? _t;
   Timer? _idlePoll;
   String? serverLine;
@@ -230,9 +262,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   final _nameCtrl = TextEditingController();
 
-  /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster, 1 inbox,
-  /// it; every tab stays mounted so mid-lecture state (inbox selection,
-  /// roster search, add fields) survives switches.
+  /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster,
+  /// 1 waiting, 2 inbox, 3 add, 4 setup). IndexedStack keeps every tab
+  /// mounted so mid-lecture state (roster search, waiting list, inbox
+  /// selection, add fields) survives switches.
   int _section = 0;
   // Retained (unused by composition): dispose() still disposes it, and the
   // dispose body is orchestration-frozen — so the field stays.
@@ -254,17 +287,39 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     }
   }
 
+  /// Class-strength ceiling for the roster absent count: union of
+  /// everyone ever seen in this course's history. Loaded once up front
+  /// (absent starts at class strength, not zero); the roster maxes it
+  /// with the live tally size so newcomers never shrink it.
+  int _historyUnion = 0;
+
   @override
   void initState() {
     super.initState();
     _host();
     _loadName();
     _loadAnnouncedOrg();
+    _loadUnion();
     // Bluetooth off is otherwise a log-only failure: prompt once, up
     // front, with a tappable Turn-on (rounds need the radio).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) promptEnableBluetoothIfOff(context, ref);
     });
+  }
+
+  /// Loads the history union for the roster absent ceiling (same
+  /// course filter as the overview roster count).
+  Future<void> _loadUnion() async {
+    try {
+      final history = await ref.read(deviceStoreProvider).readHistory();
+      final mine = history
+          .where((r) =>
+              r.courseId == widget.courseName ||
+              (r.courseId.isEmpty && r.classLabel == widget.courseName))
+          .toList();
+      if (!mounted) return;
+      setState(() => _historyUnion = courseRoster(mine).length);
+    } catch (_) {}
   }
 
   /// Prefills the professor display name: linked identity wins, last
@@ -582,6 +637,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _recordOrg = d['recordOrg'] as String?;
       _resumed = true;
       _lastSavedSig = '';
+      // Restored drafts resume idle: no frozen stop to continue from.
+      _bankedElapsed = null;
+      elapsed = Duration.zero;
     });
     _maybeAutosave();
   }
@@ -680,6 +738,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _resumed = false;
       _draftDateIso = null;
       _lastSavedSig = '';
+      _bankedElapsed = null;
+      elapsed = Duration.zero;
     });
   }
 
@@ -816,10 +876,17 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     _setWake(true);
     BleLog.log(ProxLogTags.state,
         'window #$windowNo live (code ${session.displayCode})');
+    // Resume continues from the frozen elapsed at stop (start = now -
+    // banked); fresh rounds (windowNo+1, no banked value) start at zero.
+    // The comparison runs before _windowNo advances, so same-number
+    // re-opens resume while next-number opens start fresh.
+    final isResume = windowNo == _windowNo && _bankedElapsed != null;
+    final startElapsed = isResume ? _bankedElapsed! : Duration.zero;
+    _bankedElapsed = null;
     setState(() {
       live = true;
       _windowNo = windowNo;
-      elapsed = Duration.zero;
+      elapsed = startElapsed;
       serverError = null;
       _session = session;
       _ip = session.hostIp;
@@ -845,6 +912,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// an un-closed session leaves data behind.
   Future<void> _closeWindow() async {
     _t?.cancel();
+    // Freeze the elapsed for a later resume (start = now - banked).
+    _bankedElapsed = elapsed;
     if (!mounted) return;
     BleLog.log(ProxLogTags.state, 'window #$_windowNo stopped (grace running)');
     setState(() => live = false);
@@ -858,6 +927,81 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _stopEarly() => _closeWindow();
+
+  /// Discards the stopped round [n] = [_windowNo] after an explicit
+  /// warning popup (marks for that round are lost; people stay — names,
+  /// waiting and manual entries are visit data, not round data). Resume
+  /// re-opens the same round instead (marks merge). After the drop,
+  /// [_windowNo] rewinds to the newest surviving round, so a discarded
+  /// final round returns the dock to Start.
+  Future<void> _discardRound() async {
+    final n = _windowNo;
+    if (n <= 0 || live || _leaving || !mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Discard round $n?'),
+        content: Text(
+            'This drops every mark taken in round $n. People stay on the roster — only the round goes away. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    tally.discardWindow(n);
+    BleLog.log(ProxLogTags.state, 'discarded round $n');
+    if (tally.windowCount == 0) {
+      // Full reset: the visit never started — no history record, no
+      // draft, dock back to Start. The stopped round already upserted a
+      // record at Stop time, so delete this visit's record outright
+      // (tombstoned like any local delete, so peers converge too).
+      final store = ref.read(deviceStoreProvider);
+      try {
+        await store.clearSession(widget.courseName);
+      } catch (_) {}
+      try {
+        tally.clear();
+      } catch (_) {}
+      final rid = _recordId;
+      if (rid != null && rid.isNotEmpty) {
+        try {
+          await syncEngine.deleteSessionsLocal(store, [rid],
+              courseOf: (_) => widget.courseName);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _windowNo = 0;
+        _resumed = false;
+        _recordId = null;
+        _recordStartIso = null;
+        _recordOrg = null;
+        _draftDateIso = null;
+        _lastSavedSig = '';
+        _bankedElapsed = null;
+        elapsed = Duration.zero;
+      });
+      bumpLiveHistoryTick();
+      return;
+    }
+    _windowNo = tally.windowCount;
+    // No round to resume from anymore: drop the frozen elapsed so the
+    // next fresh Start begins at zero.
+    _bankedElapsed = null;
+    elapsed = Duration.zero;
+    await _saveDraft();
+    await _saveSnapshot();
+    if (mounted) setState(() {});
+    bumpLiveHistoryTick();
+  }
 
   /// Best-effort wakelock: fire-and-forget so a hung platform channel can
   /// never stall the attendance flow (caught once in widget tests).
@@ -914,6 +1058,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _recordId = null;
       _recordStartIso = null;
       _recordOrg = null;
+      _bankedElapsed = null;
       // Shared tail: awaited endHosting via _teardown (save:false — the
       // draft was cleared above and must not be rewritten). A teardown
       // throw stays caught and the pop still proceeds (uniform with
@@ -1107,25 +1252,18 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final linked = ref.watch(linkedIdentityProvider);
     final present = tally.confirmedCount;
     final waiting = _driver?.waitingCount ?? 0;
     final windowsTaken = tally.windowCount;
     final waitingRows = _driver?.waitingRows ?? const [];
     final manualPending = _driver?.manualPending ?? const [];
-    final hostLine = linked == null
-        ? null
-        : 'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}';
-    // Header avatar reuses the exact opt-in state above (no new plumbing):
-    // gated Gmail photo iff `_sharePhoto` is on, else the initials disc.
-    final headerPhotoUrl = liveHeaderPhotoUrl(
+    // AppBar avatar (gated Gmail photo iff the per-course opt-in is on,
+    // else the CS-style course disc — the same [courseInitials] helper as
+    // the Live list + Courses pickers, so CSL1010 reads CS everywhere).
+    final appBarPhotoUrl = liveHeaderPhotoUrl(
       sharePhoto: _sharePhoto,
-      accountPhotoUrl:
-          ref.watch(accountProvider).valueOrNull?.photoUrl,
+      accountPhotoUrl: ref.watch(accountProvider).valueOrNull?.photoUrl,
     );
-    final headerAvatarName = _nameCtrl.text.trim().isNotEmpty
-        ? _nameCtrl.text.trim()
-        : (linked?.name ?? '');
     // Back-intercept (§3.5, navigation-shell rebuild): the shell still owns
     // tab back — in-tab back pops this tab's stack only, and this screen
     // never leaves the shell or touches mode. The route carries its own
@@ -1144,6 +1282,25 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       },
       child: AdaptiveScaffold(
         title: widget.courseName,
+        // Avatar just left of the course name (28dp, same photo/initials
+        // contract as before — placement only, no new plumbing).
+        titleWidget: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _TakeBarAvatar(
+              photoUrl: appBarPhotoUrl,
+              courseName: widget.courseName,
+            ),
+            const SizedBox(width: ProxSpacing.sm),
+            Flexible(
+              child: Text(
+                widget.courseName,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
         leading: BackButton(onPressed: () {
           // Composition wrapper (body untouched): leaving the Live tab
           // bumps the history-refresh tick so the Courses tab re-reads on
@@ -1161,175 +1318,278 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             onPressed: () => showLogDrawer(context),
           ),
         ],
-        body: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        body: Stack(
           children: [
-            // Fixed control-cluster header (§7.1): elapsed clock + pulsing
-            // on-air dot + counters stay on screen while the sections
-            // scroll beneath. The dot is the only repeating motion here —
-            // everything else updates in place so the 1s elapsed tick
-            // never replays entrances (waiting rows are keyed; present
-            // rows mount static, see the roster section).
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                  ProxSpacing.screenMargin, 12, ProxSpacing.screenMargin, 0),
-              child: LiveSessionHeader(
-                live: live,
-                elapsed: elapsed,
-                present: present,
-                waiting: waiting,
-                windowsTaken: windowsTaken,
-                windowNo: _windowNo,
-                hosting: hosting,
-                hostLine: hostLine,
-                photoUrl: headerPhotoUrl,
-                avatarName: headerAvatarName,
-                onStart: _startNext,
-                onRetake: () => _start(_windowNo),
-                onTakeAnother: _startNext,
-                // Composition wrappers (bodies untouched): stopping a round
-                // and ending attendance both upsert class history — bump the
-                // history-refresh tick so the Courses tab re-reads on
-                // re-show instead of serving its stale snapshot.
-                onStop: () =>
-                    _stopEarly().whenComplete(bumpLiveHistoryTick),
-                onEnd: () =>
-                    _endAttendance().whenComplete(bumpLiveHistoryTick),
-              ),
-            ),
-            if (_resumed)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                    ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
-                child: DraftResumedBanner(
-                  present: present,
-                  windowsTaken: windowsTaken,
-                  onDiscard: _discardDraft,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Slim top status only: dot + LIVE/IDLE + timer + counts.
+                // Everything else from the old card (avatar, meta lines,
+                // buttons) is gone — avatar lives in the AppBar above,
+                // actions dock below.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      ProxSpacing.screenMargin, 12, ProxSpacing.screenMargin, 0),
+                  child: LiveStatusStrip(
+                    live: live,
+                    elapsed: elapsed,
+                    present: present,
+                    waiting: waiting,
+                  ),
                 ),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                  ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
-              child: LiveSubNav(
-                selected: _section,
-                inboxCount: manualPending.length,
-                onSelect: _selectSection,
-              ),
-            ),
-            Expanded(
-              // this IndexedStack — each sub-tab shows ONLY its view, no
-              // shared scroll, no intersection. Inactive views stay mounted
-              // (state-preserving switch): roster search, mid-approve inbox
-              // selection, and direct-add fields survive tab switches — the
-              // reverted grouping probe failed exactly because unmounting
-              // broke the inbox approve flow. Order is the explicit
-              // the old scroll-spy. Each tab scrolls independently.
-              child: IndexedStack(
-                index: _section,
-                children: [
-                  // 0 — Roster only: waiting + dup flags + marked (search +
-                  // present + partial). Same `LiveRosterBody` composer as
-                  // the dedicated roster screen, identical wiring. No
-                  // inbox/add/setup composition here.
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
-                    child: LiveRosterBody(
-                      waitingRows: waitingRows,
-                      groups: _driver?.dupGroups ?? const {},
-                      names: tally.nameMap(),
-                      onResolve: _resolveDup,
-                      tally: tally,
-                      onRemoveStudent: _removeStudent,
+                if (_resumed)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
+                    child: DraftResumedBanner(
+                      present: present,
+                      windowsTaken: windowsTaken,
+                      onDiscard: _discardDraft,
                     ),
                   ),
-                  // 1 — Inbox only: pending manual requests. Wrappers bump
-                  // the history-refresh tick (decisions upsert history).
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
-                    child: ManualInboxSection(
-                      pending: manualPending,
-                      onApproveOne: (email) => _approveOne(email)
-                          .whenComplete(bumpLiveHistoryTick),
-                      onRejectOne: (email) => _rejectOne(email)
-                          .whenComplete(bumpLiveHistoryTick),
-                      onDecide: (emails, approve) =>
-                          _decideSelected(emails, approve)
-                              .whenComplete(bumpLiveHistoryTick),
-                    ),
+                // Wider bar: md (12) side insets instead of the screen
+                // margin (20) — the width is there, so the five cells
+                // breathe instead of squeezing.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      ProxSpacing.md, 8, ProxSpacing.md, 0),
+                  child: LiveSubNav(
+                    selected: _section,
+                    waitingCount: waitingRows.length,
+                    inboxCount: manualPending.length,
+                    onSelect: _selectSection,
                   ),
-                  // 2 — Add only: direct manual entry (the single home —
-                  // no AppBar sheet extra). The wrapper preserves the
-                  // submit's error propagation (`whenComplete` rethrows)
-                  // and bumps the tick (adds upsert history).
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
-                    child: DirectAddSection(
-                      course: widget.courseName,
-                      sessionId: _recordId ?? '',
-                      onAdd: ({
-                        required String name,
-                        required String roll,
-                        required String email,
-                      }) =>
-                          _addDirectEntry(
-                                  name: name, roll: roll, email: email)
-                              .whenComplete(bumpLiveHistoryTick),
-                      // Present = every round taken (intersection):
-                      // re-adding one shows "Already marked present.";
-                      // partials still go through.
-                      isPresent: (email) => tally.confirmed
-                          .any((r) => r.email == email.toLowerCase()),
-                    ),
-                  ),
-                  // 3 — Setup only: name/IP/discovery before Start, plus
-                  // a live student-view preview (same shared card).
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(ProxSpacing.screenMargin),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        LiveSetupSection(
-                          hosting: hosting,
-                          live: live,
-                          nameCtrl: _nameCtrl,
-                          onNameChanged: (v) {
-                            try {
-                              ref
-                                  .read(hostDriverProvider)
-                                  .setDisplayName(v);
-                            } catch (_) {}
-                            // Live preview follows typing.
-                            if (mounted) setState(() {});
-                          },
-                          serverLine: serverLine,
-                          allIps: _session?.allIps ?? const [],
-                          currentIp: _ip,
-                          onPickIp: _pickIp,
-                          serverError: serverError,
-                          showProfPhoto: _sharePhoto,
-                          onShowProfPhotoChanged: _setSharePhoto,
+                ),
+                Expanded(
+                  // this IndexedStack — each sub-tab shows ONLY its view, no
+                  // shared scroll, no intersection. Inactive views stay mounted
+                  // (state-preserving switch): roster search, waiting list,
+                  // mid-approve inbox selection, and direct-add fields survive
+                  // tab switches — the reverted grouping probe failed exactly
+                  // because unmounting broke the inbox approve flow. Order is
+                  // Roster · Waiting · Inbox · Add · Setup. Each tab scrolls
+                  // independently. Bottom padding reserves room for the
+                  // floating controls docked below (content never slides
+                  // under the buttons).
+                  child: IndexedStack(
+                    index: _section,
+                    children: [
+                      // 0 — Roster only: dup flags + marked (search + present
+                      // + partial). Same `LiveRosterBody` composer with
+                      // waiting excluded (it lives on its own tab). Top
+                      // inset is xs — the search sits tight under the bar.
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.xs,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: LiveRosterBody(
+                          waitingRows: const [],
+                          groups: _driver?.dupGroups ?? const {},
+                          names: tally.nameMap(),
+                          onResolve: _resolveDup,
+                          tally: tally,
+                          onRemoveStudent: _removeStudent,
+                          includeWaiting: false,
+                          rosterTotal: _historyUnion,
                         ),
-                        // Student-view preview from the first setup paint
-                        // (pre-hosting included): the toggle + name field
-                        // above drive it live, so the professor sees the
-                        // student view before going live.
-                        if (!live) ...[
-                          const SizedBox(height: ProxSpacing.md),
-                          _StudentViewPreview(
-                            displayName: _nameCtrl.text,
-                            showPhoto: _sharePhoto,
-                            org: _announcedOrg,
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                      // 1 — Waiting only: parked joiners for the next window.
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: WaitingListSection(
+                          waitingRows: waitingRows,
+                          onRemove: _removeStudent,
+                        ),
+                      ),
+                      // 2 — Inbox only: pending manual requests. Wrappers bump
+                      // the history-refresh tick (decisions upsert history).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: ManualInboxSection(
+                          pending: manualPending,
+                          onApproveOne: (email) => _approveOne(email)
+                              .whenComplete(bumpLiveHistoryTick),
+                          onRejectOne: (email) => _rejectOne(email)
+                              .whenComplete(bumpLiveHistoryTick),
+                          onDecide: (emails, approve) =>
+                              _decideSelected(emails, approve)
+                                  .whenComplete(bumpLiveHistoryTick),
+                        ),
+                      ),
+                      // 3 — Add only: direct manual entry (the single home —
+                      // no AppBar sheet extra). The wrapper preserves the
+                      // submit's error propagation (`whenComplete` rethrows)
+                      // and bumps the tick (adds upsert history).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: DirectAddSection(
+                          course: widget.courseName,
+                          sessionId: _recordId ?? '',
+                          onAdd: ({
+                            required String name,
+                            required String roll,
+                            required String email,
+                          }) =>
+                              _addDirectEntry(
+                                      name: name, roll: roll, email: email)
+                                  .whenComplete(bumpLiveHistoryTick),
+                          // Present = every round taken (intersection):
+                          // re-adding one shows "Already marked present.";
+                          // partials still go through.
+                          isPresent: (email) => tally.confirmed
+                              .any((r) => r.email == email.toLowerCase()),
+                        ),
+                      ),
+                      // 4 — Setup only: name/IP/discovery before Start, plus
+                      // a live student-view preview (same shared card).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            LiveSetupSection(
+                              hosting: hosting,
+                              live: live,
+                              nameCtrl: _nameCtrl,
+                              onNameChanged: (v) {
+                                try {
+                                  ref
+                                      .read(hostDriverProvider)
+                                      .setDisplayName(v);
+                                } catch (_) {}
+                                // Live preview follows typing.
+                                if (mounted) setState(() {});
+                              },
+                              serverLine: serverLine,
+                              allIps: _session?.allIps ?? const [],
+                              currentIp: _ip,
+                              onPickIp: _pickIp,
+                              serverError: serverError,
+                              showProfPhoto: _sharePhoto,
+                              onShowProfPhotoChanged: _setSharePhoto,
+                            ),
+                            // Student-view preview from the first setup paint
+                            // (pre-hosting included): the toggle + name field
+                            // above drive it live, so the professor sees the
+                            // student view before going live.
+                            if (!live) ...[
+                              const SizedBox(height: ProxSpacing.md),
+                              _StudentViewPreview(
+                                displayName: _nameCtrl.text,
+                                showPhoto: _sharePhoto,
+                                org: _announcedOrg,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              ],
+            ),
+            // Floating controls docked just above the shell nav bar:
+            // fresh → full-width Start; live → full-width Stop;
+            // post-round → 2x2 grid (Discard + End / Resume +
+            // Take another). Same enablement as the old cluster.
+            Positioned(
+              left: ProxSpacing.lg,
+              right: ProxSpacing.lg,
+              bottom: ProxSpacing.sm,
+              child: SafeArea(
+                top: false,
+                child: LiveFloatingControls(
+                  live: live,
+                  hosting: hosting,
+                  windowNo: _windowNo,
+                  elapsed: elapsed,
+                  present: present,
+                  waiting: waiting,
+                  onStart: _startNext,
+                  onResume: () => _start(_windowNo),
+                  onDiscard: _discardRound,
+                  onTakeAnother: _startNext,
+                  // Composition wrappers (bodies untouched): stopping a round
+                  // and ending attendance both upsert class history — bump the
+                  // history-refresh tick so the Courses tab re-reads on
+                  // re-show instead of serving its stale snapshot.
+                  onStop: () =>
+                      _stopEarly().whenComplete(bumpLiveHistoryTick),
+                  onEnd: () =>
+                      _endAttendance().whenComplete(bumpLiveHistoryTick),
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// AppBar avatar just left of the course name (28dp): gated Gmail photo
+/// iff the per-course opt-in supplied a URL, else the course disc via
+/// [courseInitials] — the same helper as the Live list + Courses pickers,
+/// so CSL1010 reads CS in all three places. Static (no timers/animation)
+/// so the 1s elapsed tick stays the only motion on this screen.
+class _TakeBarAvatar extends StatelessWidget {
+  final String photoUrl;
+  final String courseName;
+
+  const _TakeBarAvatar({required this.photoUrl, required this.courseName});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    Widget initials() => Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.accentBrand.withValues(alpha: 0.12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            courseInitials(courseName),
+            style: ProxType.label(color: c.accentBrand).copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+            overflow: TextOverflow.clip,
+            maxLines: 1,
+          ),
+        );
+    final photo = photoUrl.trim();
+    if (photo.isEmpty) return initials();
+    return ClipOval(
+      child: Image.network(
+        photo,
+        width: 28,
+        height: 28,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => initials(),
+        frameBuilder: (context, child, frame, _) {
+          if (frame == null) return initials();
+          return child;
+        },
       ),
     );
   }

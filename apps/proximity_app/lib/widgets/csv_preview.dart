@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/file_saver.dart';
+import '../design/tokens.dart';
 
 /// Shows [csv] with Close + Save + Share. [onSave]/[onShare] are the
 /// caller's persistence hooks so this dialog never touches providers —
@@ -37,25 +38,37 @@ Future<void> showCsvPreviewDialog(
       title: Text(title),
       content: SingleChildScrollView(child: SelectableText(csv)),
       actions: [
+        SizedBox(
+          width: double.infinity,
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.save_alt),
+                  label: const Text('Save'),
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    onSave();
+                  },
+                ),
+              ),
+              const SizedBox(width: ProxSpacing.sm),
+              Expanded(
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.ios_share),
+                  label: const Text('Share'),
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    onShare();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
         TextButton(
           onPressed: () => Navigator.of(dialogContext).pop(),
           child: const Text('Close'),
-        ),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.save_alt),
-          label: const Text('Save'),
-          onPressed: () {
-            Navigator.of(dialogContext).pop();
-            onSave();
-          },
-        ),
-        FilledButton.icon(
-          icon: const Icon(Icons.ios_share),
-          label: const Text('Share'),
-          onPressed: () {
-            Navigator.of(dialogContext).pop();
-            onShare();
-          },
         ),
       ],
     ),

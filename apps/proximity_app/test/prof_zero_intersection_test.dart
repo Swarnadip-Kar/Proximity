@@ -131,8 +131,8 @@ void main() {
     await t.pumpAndSettle();
     // Own concern only.
     expect(find.textContaining('Waiting area (1)'), findsOneWidget);
-    expect(find.textContaining('Present — all rounds (1)'), findsOneWidget);
-    expect(find.textContaining('Partial — some rounds'), findsOneWidget);
+    expect(find.textContaining('Present 1'), findsOneWidget);
+    expect(find.textContaining('Partial'), findsOneWidget);
     expect(find.textContaining('duplicate face'), findsOneWidget);
     expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
     // Zero intersection: no inbox/add/setup composition here.
@@ -187,7 +187,7 @@ void main() {
     expect(find.text('Direct manual entry'), findsNothing);
     expect(find.text('Add & mark present'), findsNothing);
     expect(find.textContaining('Waiting area'), findsNothing);
-    expect(find.textContaining('Present — all rounds'), findsNothing);
+    expect(find.textContaining('Present 1'), findsNothing);
     expect(find.byKey(const ValueKey('prof-search')), findsNothing);
     expect(
         find.widgetWithText(
@@ -288,10 +288,12 @@ void main() {
             home: const TakeAttendanceScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
 
-    // Fixed chrome each once.
-    expect(find.byType(LiveSessionHeader), findsOneWidget);
-    // Session date/day header (today) in the header.
-    expect(find.text(fullDateOf(todayIso())), findsOneWidget);
+    // Fixed chrome each once: slim top status (dot + IDLE + timer) and
+    // the floating controls docked above the nav bar (avatar lives in
+    // the AppBar title, not the body).
+    expect(find.byType(LiveStatusStrip), findsOneWidget);
+    expect(find.byType(LiveFloatingControls), findsOneWidget);
+    expect(find.text('IDLE'), findsOneWidget);
     // No AppBar sheet extra (removed duplicate entry point).
     expect(find.byTooltip('Add student'), findsNothing);
     expect(find.text('Add student'), findsNothing);
@@ -304,9 +306,9 @@ void main() {
     // absence below with the default offstage-skipping finders).
     expect(find.byType(IndexedStack), findsOneWidget);
 
-    // Default = Roster: waiting + marked only, no inbox/add/setup.
-    expect(find.textContaining('Waiting area'), findsOneWidget);
+    // Default = Roster: marked only, no waiting/inbox/add/setup.
     expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
+    expect(find.textContaining('Waiting area'), findsNothing);
     expect(find.textContaining('Manual requests'), findsNothing);
     expect(find.text('Direct manual entry'), findsNothing);
     expect(
@@ -314,7 +316,19 @@ void main() {
             TextField, 'Your name (optional, shown to students)'),
         findsNothing);
 
-    // Inbox sub-tab: requests only, no roster/add/setup.
+    // Waiting sub-tab: parked joiners only, no roster/inbox/add/setup.
+    await t.tap(find.text('Waiting'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Waiting area'), findsOneWidget);
+    expect(find.byKey(const ValueKey('prof-search')), findsNothing);
+    expect(find.textContaining('Manual requests'), findsNothing);
+    expect(find.text('Direct manual entry'), findsNothing);
+    expect(
+        find.widgetWithText(
+            TextField, 'Your name (optional, shown to students)'),
+        findsNothing);
+
+    // Inbox sub-tab: requests only, no roster/waiting/add/setup.
     await t.tap(find.text('Inbox'));
     await t.pumpAndSettle();
     expect(find.textContaining('Manual requests'), findsOneWidget);
@@ -326,7 +340,7 @@ void main() {
             TextField, 'Your name (optional, shown to students)'),
         findsNothing);
 
-    // Add sub-tab: entry only, no roster/inbox/setup.
+    // Add sub-tab: entry only, no roster/waiting/inbox/setup.
     await t.tap(find.text('Add'));
     await t.pumpAndSettle();
     expect(find.text('Direct manual entry'), findsOneWidget);
@@ -338,7 +352,7 @@ void main() {
     expect(find.textContaining('Waiting area'), findsNothing);
     expect(find.byKey(const ValueKey('prof-search')), findsNothing);
 
-    // Setup sub-tab: name field home, no roster/inbox/add.
+    // Setup sub-tab: name field home, no roster/waiting/inbox/add.
     await t.tap(find.text('Setup'));
     await t.pumpAndSettle();
     expect(

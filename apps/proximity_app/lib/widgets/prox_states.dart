@@ -191,6 +191,62 @@ class ProxSectionHeader extends StatelessWidget {
   }
 }
 
+/// Floating action dock (same chrome as the Live floating controls):
+/// flat `surfaceRaised`, `divider` border, `elevationSheet` shadow,
+/// `cardSpecRadius` — never a gradient fill. Callers position it just
+/// above the shell nav bar (`Positioned` + `SafeArea`) and hide it while
+/// a selection toolbar owns the bottom edge.
+class ProxFloatingAction extends StatelessWidget {
+  final Widget child;
+
+  const ProxFloatingAction({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surfaceRaised,
+        borderRadius: ProxRadii.cardSpecRadius,
+        border: Border.all(color: c.divider),
+        boxShadow: [c.elevationSheet],
+      ),
+      padding: const EdgeInsets.all(ProxSpacing.sm),
+      child: child,
+    );
+  }
+}
+
+/// Compact entry/search field density, shared by the Live roster search,
+/// the direct-manual-entry fields, and the session-editor add-person
+/// fields (one helper so all three stay identical). Token-only: dense +
+/// `xs/md` content padding + 13px entry text (icons untouched) — colors,
+/// borders, and error states stay on the theme, untouched.
+InputDecoration proxCompactFieldDecoration({
+  String? labelText,
+  Widget? prefixIcon,
+  Widget? suffixIcon,
+  String? helperText,
+}) {
+  return InputDecoration(
+    labelText: labelText,
+    prefixIcon: prefixIcon,
+    suffixIcon: suffixIcon,
+    helperText: helperText,
+    isDense: true,
+    contentPadding: const EdgeInsets.symmetric(
+      horizontal: ProxSpacing.md,
+      vertical: ProxSpacing.xs,
+    ),
+  );
+}
+
+/// 13px entry text for [proxCompactFieldDecoration] fields (default theme
+/// text runs 16px). Content-primary so typed text stays full contrast in
+/// both themes.
+TextStyle proxCompactFieldStyle(BuildContext context) =>
+    ProxType.label(color: ProximityColors.of(context).contentPrimary);
+
 /// Empty state with animated illustration: a subtle floating icon with
 /// orbiting dots that gently drift, plus optional sub-action button.
 class ProxEmptyState extends StatefulWidget {
@@ -310,12 +366,17 @@ class _ProxEmptyStateState extends State<ProxEmptyState> {
     );
   }
 
-  static double _cos(double x) => x.isNaN ? 0 : x >= 0 ? _cosImpl(x) : _cosImpl(-x);
+  static double _cos(double x) => x.isNaN
+      ? 0
+      : x >= 0
+          ? _cosImpl(x)
+          : _cosImpl(-x);
   static double _sin(double x) => x.isNaN ? 0 : _cosImpl(x - 1.5708);
   static double _cosImpl(double x) {
     // Inline cos to keep the file self-contained (no dart:math import).
     return _dartMathCos(x);
   }
+
   static double _dartMathCos(double x) {
     // Use a direct calculation rather than importing math to avoid
     // potential conflicts. This is called at 50ms intervals for 3 dots.
@@ -400,7 +461,8 @@ class ProxErrorState extends StatelessWidget {
 
 /// Quiet one-line sync/offline note (grey, centered). Replaces the
 /// scattered `Text(color: Colors.grey)` copies.
-class ProxSyncNote extends StatelessWidget {  final String message;
+class ProxSyncNote extends StatelessWidget {
+  final String message;
   const ProxSyncNote(this.message, {super.key});
 
   @override
@@ -565,8 +627,9 @@ class _ProxIdentityHeaderState extends State<ProxIdentityHeader> {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final initial =
-        widget.displayName.trim().isEmpty ? '?' : widget.displayName.trim()[0].toUpperCase();
+    final initial = widget.displayName.trim().isEmpty
+        ? '?'
+        : widget.displayName.trim()[0].toUpperCase();
     final photo = (widget.photoUrl ?? '').trim();
 
     Widget initials() => Container(

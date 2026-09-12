@@ -487,6 +487,12 @@ class _ProximityAppState extends ConsumerState<ProximityApp>
 /// when [adaptive] is true, Material Scaffold elsewhere. Same flow all OS.
 class AdaptiveScaffold extends StatelessWidget {
   final String title;
+
+  /// Optional rich title (e.g. avatar + name row). When non-null it
+  /// replaces the plain [title] text on both Material + Cupertino bars.
+  /// Null keeps the existing string-title contract — existing callers
+  /// are unaffected.
+  final Widget? titleWidget;
   final Widget body;
   final List<Widget>? actions;
 
@@ -501,6 +507,7 @@ class AdaptiveScaffold extends StatelessWidget {
   const AdaptiveScaffold(
       {super.key,
       required this.title,
+      this.titleWidget,
       required this.body,
       this.actions,
       this.leading,
@@ -521,14 +528,17 @@ class AdaptiveScaffold extends StatelessWidget {
       // explicit; desktop/Web have zero system insets so render unchanged.
       return Scaffold(
         extendBody: isMobile,
-        appBar: AppBar(title: Text(title), actions: actions, leading: leading),
+        appBar: AppBar(
+            title: titleWidget ?? Text(title),
+            actions: actions,
+            leading: leading),
         body: body,
         floatingActionButton: floatingActionButton,
       );
     }
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
-        middle: Text(title),
+        middle: titleWidget ?? Text(title),
         leading: leading,
         trailing: actions == null
             ? null

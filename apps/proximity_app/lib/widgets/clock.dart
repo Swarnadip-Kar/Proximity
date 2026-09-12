@@ -72,10 +72,23 @@ String fullDateOf(String dateIso) {
   return '${_kWeekdaysFull[d.weekday - 1]}, $dd-$mm-$yyyy';
 }
 
-/// Display date + time for a full timestamp ('Thu, 03-09-2026 · 10:04').
-/// Global rule, display only.
+/// Display date + time for a full timestamp
+/// ('Thu, 03-09-2026 · 10:04 AM'). Global rule, display only.
+/// 12-hour with AM/PM — every on-screen clock time uses this shape.
 /// Empty when the timestamp carries no clock time or is unparseable.
 String shortTimeOf(String timestampIso) {
+  final d = tryParseDate(timestampIso);
+  if (d == null) return '';
+  final local = d.toLocal();
+  if (local.hour == 0 && local.minute == 0 && local.second == 0) return '';
+  return _twelveHourMinute(local.hour, local.minute);
+}
+
+/// 24-hour HH:mm for a full timestamp ('14:30'). STORAGE/CSV ONLY — never
+/// for on-screen UI text. Preserves the pre-12-hour bytes for matrix
+/// column disambiguation / export headers; UI callers must use
+/// [shortTimeOf] (12-hour with AM/PM).
+String shortTime24Of(String timestampIso) {
   final d = tryParseDate(timestampIso);
   if (d == null) return '';
   final local = d.toLocal();
@@ -84,13 +97,30 @@ String shortTimeOf(String timestampIso) {
       '${local.minute.toString().padLeft(2, '0')}';
 }
 
-String formatTime(DateTime t) =>
-    '${t.hour.toString().padLeft(2, '0')}:'
-    '${t.minute.toString().padLeft(2, '0')}:'
-    '${t.second.toString().padLeft(2, '0')}';
+/// 12-hour HH:mm with AM/PM ('02:26 PM'). Display only — shared by
+/// [shortTimeOf] and [formatTime] so every UI clock reads identically.
+String _twelveHourMinute(int hour24, int minute) {
+  final period = hour24 >= 12 ? 'PM' : 'AM';
+  var h12 = hour24 % 12;
+  if (h12 == 0) h12 = 12;
+  return '${h12.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')} $period';
+}
+
+/// Ticking clock time ('02:26:05 PM'). Display only — 12-hour with AM/PM,
+/// consumed by [ClockHeader]. Seconds preserved; CSV/storage never routes
+/// through here.
+String formatTime(DateTime t) {
+  final period = t.hour >= 12 ? 'PM' : 'AM';
+  var h12 = t.hour % 12;
+  if (h12 == 0) h12 = 12;
+  return '${h12.toString().padLeft(2, '0')}:'
+      '${t.minute.toString().padLeft(2, '0')}:'
+      '${t.second.toString().padLeft(2, '0')} $period';
+}
 
 /// Tight session title: short weekday + DD-MM-YYYY, time when known
-/// ('CS201 · Thu, 03-09-2026 · 10:00'). Global rule, display only.
+/// ('CS201 · Thu, 03-09-2026 · 10:00 AM'). Global rule, display only.
 /// Shared by the course overview and the export center so both lists read
 /// identically. Pure — no record import.
 String sessionTightLabel(
@@ -101,7 +131,7 @@ String sessionTightLabel(
 }
 
 /// Roomy subtitle line: full weekday + DD-MM-YYYY
-/// ('Thursday, 03-09-2026 · 10:00'). Global rule, display only.
+/// ('Thursday, 03-09-2026 · 10:00 AM'). Global rule, display only.
 /// Shared by the overview + export lists.
 String sessionRoomyLine(String dateIso, String timestampIso) {
   final time = shortTimeOf(timestampIso);

@@ -294,15 +294,13 @@ void main() {
     await t.pumpAndSettle();
     expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
-    expect(find.textContaining('present /'), findsWidgets);
+    expect(find.textContaining('present'), findsWidgets);
     // stop early → Take another round appears
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(find.text('Take another round'), findsOneWidget);
     // end attendance (no export) → history holds the class record, detail
-    // End lives in the More menu after rounds (stable 2-action cluster).
-    await t.tap(find.text('More'));
-    await t.pumpAndSettle();
+    // End sits beside Resume in the floating controls (no More menu).
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).
@@ -668,13 +666,18 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Start'));
     // Live window runs the 1s elapsed tick + pulsing dot: pump fixed steps,
-    // never settle (settle would chase the tick).
+    // never settle (settle would chase the tick). Search lives on the
+    // Roster tab (waiting is its own tab now).
     await t.pump();
     await t.pump(const Duration(milliseconds: 500));
+    await t.tap(find.text('Roster'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
+    // Roster search sits at the top of its tab — already visible, no
+    // scroll needed (the 5-tab stack keeps several scrollables mounted,
+    // so a generic scroll lookup is ambiguous here).
     final searchField = find.byKey(const ValueKey('prof-search'));
-    await shellScroll(t, searchField, 500);
-    await t.pump();
-    await t.pump(const Duration(milliseconds: 500));
+    expect(searchField, findsOneWidget);
     await t.enterText(searchField, 'student');
     await t.pump();
     await t.pump(const Duration(milliseconds: 500));
@@ -738,13 +741,13 @@ void main() {
     await t.tap(find.text('Start'));
     await t.pumpAndSettle();
     expect(find.text('Stop'), findsOneWidget);
-    expect(find.textContaining('Window 1 ·'), findsOneWidget);
+    expect(find.text('LIVE'), findsOneWidget);
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(find.text('Take another round'), findsOneWidget);
     await t.tap(find.text('Take another round'));
     await t.pumpAndSettle();
-    expect(find.textContaining('intersection'), findsOneWidget);
+    expect(find.text('LIVE'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
     // Round 1 already persisted the class record (no End needed)…
     final snap1 = await store.readHistory();
@@ -755,9 +758,7 @@ void main() {
     final snap2 = await store.readHistory();
     expect(snap2, hasLength(1));
     expect(snap2.first.id, snap1.first.id);
-    // End lives in the More menu after rounds.
-    await t.tap(find.text('More'));
-    await t.pumpAndSettle();
+    // End sits beside Resume in the floating controls (no More menu).
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).
@@ -778,13 +779,13 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
-    // Stopped round offers retake (same number, marks merge) + new window
-    // in the More menu; Take another stays primary.
+    // Stopped round offers resume (same number, marks merge) + new window
+    // + discard beside End in the floating controls; Take another stays
+    // primary.
     expect(find.text('Take another round'), findsOneWidget);
-    await t.tap(find.text('More'));
-    await t.pumpAndSettle();
-    expect(find.text('Retake round 1'), findsOneWidget);
-    await t.tap(find.text('Retake round 1'));
+    expect(find.text('Resume round 1'), findsOneWidget);
+    expect(find.text('Discard round 1'), findsOneWidget);
+    await t.tap(find.text('Resume round 1'));
     await t.pumpAndSettle();
     // Server line lives on the Setup sub-tab (real sub-tabs: tap swaps);
     // Stop lives in the fixed header, tappable from any tab.
@@ -801,10 +802,43 @@ void main() {
     expect(find.text('Stop'), findsOneWidget);
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
-    // Retake still offered in More after the second stop.
-    await t.tap(find.text('More'));
+    // Resume still offered beside Discard + End after the second stop.
+    expect(find.text('Resume round 1'), findsOneWidget);
+    expect(find.text('Discard round 1'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('prof discard drops the stopped round after warning', (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
     await t.pumpAndSettle();
-    expect(find.text('Retake round 1'), findsOneWidget);
+    // Live-tab root → host for CS201 directly (§3.1 rebuild: hosting
+    // lives only in Live; Courses is records-only).
+    await t.tap(find.text('CS201'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Start'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Stop'));
+    await t.pumpAndSettle();
+    // Warning popup names the round and the consequence; Cancel keeps it.
+    await t.tap(find.text('Discard round 1'));
+    await t.pumpAndSettle();
+    expect(find.text('Discard round 1?'), findsOneWidget);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(find.text('Resume round 1'), findsOneWidget);
+    // Confirming drops the round: the dock rewinds to fresh Start.
+    await t.tap(find.text('Discard round 1'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Discard'));
+    await t.pumpAndSettle();
+    expect(find.text('Start'), findsOneWidget);
+    expect(find.text('Resume round 1'), findsNothing);
+    // Full reset: the stopped round's snapshot is gone from history and
+    // no draft survives — as if never started.
+    expect(await store.readHistory(), isEmpty);
+    expect(await store.readSession('CS201'), isNull);
     expect(t.takeException(), isNull);
   });
 
@@ -932,9 +966,7 @@ void main() {
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(await store.readSession('CS201'), isNotNull);
-    // End lives in the More menu after rounds.
-    await t.tap(find.text('More'));
-    await t.pumpAndSettle();
+    // End sits beside Resume in the floating controls (no More menu).
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // Ended → back on the Live root (§3.1 rebuild).
@@ -969,7 +1001,7 @@ void main() {
     // Open the saved session (overview → read-only detail → editor).
     // Date-anchored finder (global `[Day], DD-MM-YYYY` rule): the tight
     // title is unique to the session row.
-    await t.tap(find.textContaining('Sat, 05-09-2026'));
+    await t.tap(find.textContaining('Sat, 05-09-26'));
     await t.pumpAndSettle();
     expect(find.text('Session'), findsOneWidget);
     // Navigation identity (records packet): one named route per screen.
@@ -1421,6 +1453,104 @@ void main() {
     expect(find.text('Scan face'), findsNothing);
     expect(find.text('Enter IP manually'), findsOneWidget);
     expect(find.text('Press back again to leave the app'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('prof resume continues the stopped round timer', (t) async {
+    // Resume must NOT reset the timer: stop freezes elapsed, resume
+    // continues from the frozen mm:ss (start = now - banked). Fresh
+    // rounds still start at zero. Bounded pumps only in the live regime
+    // (the 1s elapsed tick never idles, so no bare pumpAndSettle there).
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    await t.pumpWidget(testScope(store: store, mode: AppMode.prof));
+    await t.pumpAndSettle();
+    await t.tap(find.text('CS201'));
+    await t.pumpAndSettle();
+
+    String readElapsed() {
+      final matches = <String>[];
+      for (final e in find.byType(Text).evaluate()) {
+        final data = (e.widget as Text).data;
+        if (data != null && RegExp(r'^\d\d:\d\d$').hasMatch(data)) {
+          matches.add(data);
+        }
+      }
+      expect(matches, isNotEmpty,
+          reason: 'elapsed mm:ss label must be visible');
+      return matches.first;
+    }
+
+    int secs(String mmss) {
+      final parts = mmss.split(':');
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    }
+
+    // Fresh round 1 starts at zero.
+    await t.tap(find.text('Start'));
+    await t.pump();
+    for (var i = 0;
+        i < 6 && find.text('Stop').evaluate().isEmpty;
+        i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Stop'), findsOneWidget);
+    expect(secs(readElapsed()), lessThanOrEqualTo(1));
+
+    // Let the 1s tick run forward.
+    await t.pump(const Duration(seconds: 5));
+    await t.pump();
+    final beforeStop = readElapsed();
+    expect(secs(beforeStop), greaterThanOrEqualTo(4));
+
+    // Stop freezes the clock.
+    await t.tap(find.text('Stop'));
+    await t.pump();
+    for (var i = 0;
+        i < 6 && find.text('Resume round 1').evaluate().isEmpty;
+        i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
+    // Idle regime (window shut): settle the dock's Stop→grid cross-fade
+    // so the Resume tap lands hit-testable instead of on the outgoing
+    // Stop mid-animation (a missed tap would leave us idle and the
+    // continuation read below would trivially equal the frozen value).
+    await t.pumpAndSettle();
+    expect(find.text('Resume round 1'), findsOneWidget);
+    final stopped = readElapsed();
+    expect(stopped, beforeStop);
+
+    // Resume continues from the frozen value — never resets to zero.
+    await t.tap(find.text('Resume round 1'));
+    await t.pump();
+    for (var i = 0;
+        i < 6 && find.text('Stop').evaluate().isEmpty;
+        i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Stop'), findsOneWidget);
+    final onResume = readElapsed();
+    expect(onResume, stopped,
+        reason: 'resume must continue from frozen elapsed, not reset');
+    expect(onResume, isNot('00:00'));
+
+    // The continued round keeps ticking past the frozen value (poll in
+    // whole-second steps — the tick advances exactly 1s per pumped
+    // second, so this cannot flake on truncation boundaries).
+    for (var i = 0;
+        i < 10 && secs(readElapsed()) <= secs(stopped);
+        i++) {
+      await t.pump(const Duration(seconds: 1));
+    }
+    expect(secs(readElapsed()), greaterThan(secs(stopped)));
+
+    await t.tap(find.text('Stop'));
+    await t.pump();
+    for (var i = 0;
+        i < 6 && find.text('Resume round 1').evaluate().isEmpty;
+        i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
     expect(t.takeException(), isNull);
   });
 }

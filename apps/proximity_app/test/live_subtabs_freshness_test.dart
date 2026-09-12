@@ -1,11 +1,10 @@
 // Live subtabs + freshness (tester-verified Live-tab defects).
 //
-// 1. Real sub-tabs: the Live sub-nav (Roster/Inbox/Add/Setup,
-//    product-owner order) SWAPS content via an IndexedStack — each sub-tab
-//    shows ONLY its view, no shared scroll, no intersection; inactive views
-//    stay mounted so state survives switches (incl. mid-approve inbox
-//    selection — the reverted grouping probe broke exactly this by
-//    unmounting).
+// 1. Real sub-tabs: the Live sub-nav (Waiting/Roster/Inbox/Add/Setup)
+//    SWAPS content via an IndexedStack — each sub-tab shows ONLY its view,
+//    no shared scroll, no intersection; inactive views stay mounted so
+//    state survives switches (incl. mid-approve inbox selection — the
+//    reverted grouping probe broke exactly this by unmounting).
 // 2. Date visibility: the session date/day is a proper visible header
 //    element (same frozen `fullDateOf(todayIso())` helper/format) in both
 //    IDLE and LIVE states.
@@ -108,25 +107,26 @@ void main() {
     await t.pumpAndSettle();
 
     // One state-preserving switch, one scroll per tab (no shared scroll):
-    // all four tab scrolls stay mounted (5 scrolls with offstage included:
-    // 4 tabs + the sub-nav's own horizontal overflow guard) while only the
-    // active tab's scroll + sub-nav are visible (2 with the default
-    // offstage-skipping finder). Which tab is visible is asserted per-tab
-    // below.
+    // all five tab scrolls stay mounted (5 with offstage included) while
+    // only the active tab's scroll is visible (1 with the default
+    // offstage-skipping finder). The sub-nav itself never scrolls — five
+    // equal cells always fit the width. Which tab is visible is asserted
+    // per-tab below.
     expect(find.byType(IndexedStack), findsOneWidget);
     expect(
       find.byType(SingleChildScrollView, skipOffstage: false),
       findsNWidgets(5),
     );
     expect(
-      find.byKey(const ValueKey('live-subnav-scroll')),
+      find.byKey(const ValueKey('live-subnav')),
       findsOneWidget,
     );
-    expect(find.byType(SingleChildScrollView), findsNWidgets(2));
+    expect(find.byType(SingleChildScrollView), findsNWidgets(1));
 
-    // Default = Roster (product-owner order, index 0): roster-only.
-    expect(find.textContaining('Waiting area (1)'), findsOneWidget);
-    expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
+    // Default = Roster (index 0): marked only, no waiting/inbox/add/setup.
+    expect(find.textContaining('Present 1'), findsOneWidget);
+    expect(find.textContaining('Partial'), findsOneWidget);
+    expect(find.textContaining('Waiting area'), findsNothing);
     expect(find.textContaining('Manual requests'), findsNothing);
     expect(find.text('Direct manual entry'), findsNothing);
     expect(
@@ -134,14 +134,26 @@ void main() {
             TextField, 'Your name (optional, shown to students)'),
         findsNothing);
 
-    // Inbox: requests only, no roster/add/setup.
+    // Waiting: parked joiners only, no roster/inbox/add/setup.
+    await t.tap(find.text('Waiting'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Waiting area (1)'), findsOneWidget);
+    expect(find.byKey(const ValueKey('prof-search')), findsNothing);
+    expect(find.textContaining('Manual requests'), findsNothing);
+    expect(find.text('Direct manual entry'), findsNothing);
+    expect(
+        find.widgetWithText(
+            TextField, 'Your name (optional, shown to students)'),
+        findsNothing);
+
+    // Inbox: requests only, no roster/waiting/add/setup.
     // (Label stays 'Inbox'; the count rides the reserved badge slot.)
     await t.tap(find.text('Inbox'));
     await t.pumpAndSettle();
     expect(find.text('Manual requests (2)'), findsOneWidget);
     expect(find.text('M One'), findsOneWidget);
     expect(find.textContaining('Waiting area'), findsNothing);
-    expect(find.textContaining('Present — all rounds'), findsNothing);
+    expect(find.textContaining('Present 1'), findsNothing);
     expect(find.text('Direct manual entry'), findsNothing);
     expect(find.byKey(const ValueKey('prof-search')), findsNothing);
     expect(
@@ -149,7 +161,7 @@ void main() {
             TextField, 'Your name (optional, shown to students)'),
         findsNothing);
 
-    // Add: entry only, no roster/inbox/setup.
+    // Add: entry only, no roster/waiting/inbox/setup.
     await t.tap(find.text('Add'));
     await t.pumpAndSettle();
     expect(find.text('Direct manual entry'), findsOneWidget);
@@ -158,7 +170,7 @@ void main() {
     expect(find.textContaining('Waiting area'), findsNothing);
     expect(find.byKey(const ValueKey('prof-search')), findsNothing);
 
-    // Setup: name field home, no roster/inbox/add.
+    // Setup: name field home, no roster/waiting/inbox/add.
     await t.tap(find.text('Setup'));
     await t.pumpAndSettle();
     expect(
@@ -169,12 +181,16 @@ void main() {
     expect(find.textContaining('Manual requests'), findsNothing);
     expect(find.textContaining('Waiting area'), findsNothing);
 
-    // Back to Roster: full roster again (waiting + present + partial).
+    // Back to Roster + Waiting: each shows ONLY its view again.
     await t.tap(find.text('Roster'));
     await t.pumpAndSettle();
+    expect(find.textContaining('Waiting area'), findsNothing);
+    expect(find.textContaining('Present 1'), findsOneWidget);
+    expect(find.textContaining('Partial'), findsOneWidget);
+    await t.tap(find.text('Waiting'));
+    await t.pumpAndSettle();
     expect(find.textContaining('Waiting area (1)'), findsOneWidget);
-    expect(find.textContaining('Present — all rounds (1)'), findsOneWidget);
-    expect(find.textContaining('Partial — some rounds'), findsOneWidget);
+    expect(find.textContaining('Present 1'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
@@ -193,6 +209,8 @@ void main() {
     await t.pumpAndSettle();
 
     // Roster search text survives a round-trip through another tab.
+    await t.tap(find.text('Roster'));
+    await t.pumpAndSettle();
     expect(find.byKey(const ValueKey('prof-search')), findsOneWidget);
     await t.enterText(
         find.byKey(const ValueKey('prof-search')), 'a@univ.edu');
@@ -207,7 +225,7 @@ void main() {
 
     // Switch away and back: the inbox stayed mounted, so the pending
     // selection (and the approve flow built on it) is intact.
-    await t.tap(find.text('Roster'));
+    await t.tap(find.text('Waiting'));
     await t.pumpAndSettle();
     expect(find.textContaining('Waiting area'), findsOneWidget);
     await t.tap(find.text('Inbox'));
@@ -229,8 +247,8 @@ void main() {
 
   testWidgets('sub-nav + inbox settle at 360x640 with count badge',
       (t) async {
-    // Regression: the Inbox count badge widened the 4-segment sub-nav past
-    // 360dp and the inbox tab overflowed. Sub-nav scrolls instead now.
+    // Regression: count badges widened the sub-nav past 360dp and tabs
+    // overflowed. Sub-nav scrolls instead now.
     t.view.physicalSize = const Size(360, 640);
     t.view.devicePixelRatio = 1.0;
     addTearDown(t.view.reset);
@@ -326,6 +344,12 @@ void main() {
     expect(find.byType(TakeAttendanceScreen), findsOneWidget);
     await host.addManualEntry(email: 'a@x.in', name: 'A', roll: '1');
     await t.pump();
+    // Fresh state shows Start only — open + close a round so the
+    // Retake / Take another / End trio appears, then End.
+    await t.tap(find.text('Start'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Stop'));
+    await t.pumpAndSettle();
     await t.tap(find.text('End attendance'));
     await t.pumpAndSettle();
     // End pops back to the Live root (no restart, no relaunch).
@@ -360,6 +384,56 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
+  testWidgets('roster attendance counts update live (union absent)',
+      (t) async {
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    // History union: two people ever seen → absent starts at class
+    // strength, not zero.
+    await store.upsertHistory(ClassRecord(
+      id: 'past-1',
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-09',
+      timestampIso: '2026-09-09T10:00:00.000Z',
+      w1: const {'a@x.in': true, 'b@x.in': true},
+      names: const {'a@x.in': 'A', 'b@x.in': 'B'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2'},
+    ));
+    final host = FakeHostDriver();
+    await host.startHosting(classLabel: 'CS201');
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
+    await t.pumpAndSettle();
+    // Default = Roster: nobody marked yet — absent reads the union.
+    expect(find.text('Present 0'), findsOneWidget);
+    expect(find.text('Absent 2'), findsOneWidget);
+    // Live window + marks, then Stop notes the round: the intersection
+    // contract counts noted windows only, so the trio recomputes on the
+    // tick rebuilds with no tab switch and no professor tap. Bounded
+    // pumps only — the live tick never idles.
+    await t.tap(find.text('Start'));
+    await t.pump();
+    for (var i = 0;
+        i < 6 && find.text('Stop').evaluate().isEmpty;
+        i++) {
+      await t.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Stop'), findsOneWidget);
+    host.tally.mark('a@x.in', 'A', 1, roll: '1');
+    host.tally.mark('b@x.in', 'B', 1, roll: '2');
+    await t.tap(find.text('Stop'));
+    await t.pumpAndSettle();
+    expect(find.text('Present 2'), findsOneWidget);
+    expect(find.text('Absent 0'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
   testWidgets('course overview re-reads on the history-refresh tick',
       (t) async {
     final store = InMemoryDeviceStore();
@@ -371,12 +445,12 @@ void main() {
             theme: proxLightTheme(),
             home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
-    expect(find.textContaining('1 sessions'), findsOneWidget);
+    expect(find.text('Total Classes: 1'), findsOneWidget);
 
     await store.upsertHistory(_record('sess-2', '2026-09-10'));
     bumpLiveHistoryTick();
     await t.pumpAndSettle();
-    expect(find.textContaining('2 sessions'), findsOneWidget);
+    expect(find.text('Total Classes: 2'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 }
