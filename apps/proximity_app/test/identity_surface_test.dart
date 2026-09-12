@@ -472,7 +472,9 @@ void main() {
     test('course letter fallback for the My Courses discs', () {
       // `courseInitials` is the shared helper behind `CourseLogo` (the
       // My Courses ring-center fallback): first 2 alphanumerics, upper.
+      // One helper everywhere — csl201 reads CS on every surface.
       expect(courseInitials('CS201'), 'CS');
+      expect(courseInitials('csl201'), 'CS');
       expect(courseInitials('Quantum Computing'), 'QU');
       expect(courseInitials(''), '?');
       expect(courseInitials('  '), '?');

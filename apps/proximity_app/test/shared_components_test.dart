@@ -40,6 +40,22 @@ void main() {
     expect(studentInitials('Mary Jane Watson'), 'MJ');
   });
 
+  test('course discs read CS-style initials on every surface', () {
+    // csl201 → CS (lowercase input, same helper as CourseLogo). Guards the
+    // prof-courses/live-list/overview consistency fix.
+    expect(courseInitials('csl201'), 'CS');
+    expect(courseInitials('CS201'), 'CS');
+  });
+
+  testWidgets('ProxAvatar.course renders CS initials for csl201',
+      (t) async {
+    await t.pumpWidget(
+        _app(const ProxAvatar.course(course: 'csl201')));
+    await t.pumpAndSettle();
+    expect(find.text('CS'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
   test('studentColorIndex is deterministic and in palette range', () {
     expect(studentColorIndex('Ada Lovelace'),
         studentColorIndex('Ada Lovelace'));

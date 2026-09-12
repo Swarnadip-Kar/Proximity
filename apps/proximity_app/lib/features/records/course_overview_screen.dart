@@ -471,38 +471,13 @@ class _CourseIdentityHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    final url = photoUrl.trim();
-    final Widget avatar;
-    if (sharePhoto && url.isNotEmpty) {
-      Widget initials() => Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: c.accentBrand.withValues(alpha: 0.12),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              courseInitials(courseName),
-              style: ProxType.title(color: c.accentBrand),
-            ),
-          );
-      avatar = ClipOval(
-        child: Image.network(
-          url,
-          width: 44,
-          height: 44,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => initials(),
-          frameBuilder: (context, child, frame, _) {
-            if (frame == null) return initials();
-            return child;
-          },
-        ),
-      );
-    } else {
-      avatar = CourseLogo(course: courseName, size: 44);
-    }
+    // One course-disc path: gated photo or CS-style initials via the
+    // shared component (same disc as pickers + live list).
+    final avatar = ProxAvatar.course(
+      course: courseName,
+      photoUrl: sharePhoto ? photoUrl : '',
+      size: 44,
+    );
     return Row(
       children: [
         avatar,

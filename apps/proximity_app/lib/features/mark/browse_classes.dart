@@ -347,6 +347,15 @@ class _BrowseAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Thin alias over the shared component — one avatar assembly left.
-    return ProxAvatar(name: name, photoUrl: photoUrl, size: 56);
+    // Empty identity renders nothing (key only exists with the avatar).
+    if (name.trim().isEmpty && photoUrl.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return ProxAvatar(
+      key: const ValueKey('browse-avatar-ring'),
+      name: name,
+      photoUrl: photoUrl,
+      size: 56,
+    );
   }
 }

@@ -147,11 +147,15 @@ class CourseLogo extends StatelessWidget {
 /// data), initials disc fallback on ProxIdentity hues. Optional gradient
 /// ring (identity accent, never glow — glow is reserved for live
 /// scanning). Replaces browse/header one-off avatar assemblies.
+///
+/// Course discs ([ProxAvatar.course]) use [courseInitials] (CS201 → CS),
+/// the same helper as [CourseLogo] — one course-disc language everywhere.
 class ProxAvatar extends StatelessWidget {
   final String name;
   final String photoUrl;
   final double size;
   final bool withRing;
+  final bool isCourse;
 
   const ProxAvatar({
     super.key,
@@ -159,14 +163,35 @@ class ProxAvatar extends StatelessWidget {
     this.photoUrl = '',
     this.size = 56,
     this.withRing = true,
+    this.isCourse = false,
   });
+
+  /// Course disc: photo (gated Gmail opt-in) or [courseInitials] fallback,
+  /// no ring (matches [CourseLogo]).
+  const ProxAvatar.course({
+    super.key,
+    required String course,
+    this.photoUrl = '',
+    this.size = 40,
+  })  : name = course,
+        withRing = false,
+        isCourse = true;
 
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final url = photoUrl.trim();
+    final label = isCourse ? courseInitials(name) : studentInitials(name);
+    final discTextStyle = isCourse
+        ? ProxType.label(color: courseAvatarColor(c, name)).copyWith(
+            fontWeight: FontWeight.w700,
+            fontSize: size * 0.34,
+          )
+        : ProxType.title(color: studentAvatarColor(c, name));
     Widget initials() {
-      final base = studentAvatarColor(c, name);
+      final base = isCourse
+          ? courseAvatarColor(c, name)
+          : studentAvatarColor(c, name);
       return Container(
         width: size,
         height: size,
@@ -176,8 +201,8 @@ class ProxAvatar extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: Text(
-          studentInitials(name),
-          style: ProxType.title(color: base),
+          label,
+          style: discTextStyle,
           overflow: TextOverflow.clip,
           maxLines: 1,
         ),
