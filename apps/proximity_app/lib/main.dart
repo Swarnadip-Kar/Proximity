@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'firebase_options.dart';
+import 'core/security/integrity.dart';
 import 'core/auth.dart';
 import 'core/ble_radio.dart';
 import 'core/cloud_sync.dart';
@@ -104,6 +105,17 @@ Future<void> main() async {
   } catch (_) {
     firebaseReady = false;
   }
+  // §5 integrity (2C): App Check before the first Firestore read, then the
+  // startup integrity snapshot (cached for the entry gates; sensitive ops
+  // re-probe fresh). Both fail-soft — offline marking never depends on them.
+  if (firebaseReady) {
+    try {
+      await IntegrityAppCheck.ensureActivated();
+    } catch (_) {}
+  }
+  try {
+    await IntegrityGate.performCheck();
+  } catch (_) {}
   // Restore linked identity from secure device storage so sign-in state
   // (Firebase Auth) + identity survive restarts with zero taps.
   // Fail-open: secure storage may be unavailable (e.g. unsigned sim
