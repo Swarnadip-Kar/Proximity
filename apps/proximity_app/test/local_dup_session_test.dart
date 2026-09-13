@@ -13,12 +13,14 @@ import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/core/sync/sessions.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
+
+import 'test_device.dart';
 
 List<double> _vec(int seed) {
   final rng = Random(seed);
@@ -31,24 +33,31 @@ List<double> _vec(int seed) {
   return [for (final x in v) x / sqrt(n)];
 }
 
-/// Sealed-only fixture (security §2): DKey-sealed envelope, never raw seed.
-Future<InMemoryDeviceStore> _enrolledAs(String email, String seedByte) async {
-  final s = InMemoryDeviceStore();
-  final sealed = hexEncode(await FakeDeviceKey()
-      .seal(Uint8List.fromList(hexDecode(seedByte * 32))));
-  await s.writeEnrollment(StoredEnrollment(
+/// Fresh-device fixture (security §2, full-fresh): HW test device (real
+/// P-256 dSig + fake-DER chain) + AAD-sealed envelope + FULL store.
+/// [salt] must differ per device (deterministic test keys).
+Future<({InMemoryDeviceStore store, TestHwDevice hw})> _freshAs(
+    String email, String seedByte, int salt) async {
+  final hw = await freshHwDevice(
     email: email,
-    name: email.split('@').first.toUpperCase(),
-    roll: '1',
-    seedHex: '',
-    pkHex: 'cd' * 30 + seedByte * 2,
-    sealedKeyHex: sealed,
+    seedBytes: Uint8List.fromList(hexDecode(seedByte * 32)),
+    installId: 'inst-dup-$salt',
+    salt: salt,
+  );
+  final store = await hwEnrolledStore(
+    email: email,
+    hw: hw,
+    installId: 'inst-dup-$salt',
     faceId: 'face-$email',
-    enrolledAt: DateTime.now().toUtc(),
-    verifierVer: kFaceVerifierVer,
-  ));
-  return s;
+  );
+  return (store: store, hw: hw);
 }
+
+/// Test-root pins seen so far (one per fresh device): the host loopback
+/// server ships production pins, so each mark re-points its test chain
+/// gate at the accumulated test pins (closure substitutes — the server's
+/// own pinset is untouched).
+final List<Uint8List> _dupPins = [];
 
 /// One full stock-app mark against the host's live loopback server: radio
 /// challenge heard late (mirrors offline_live_test), fresh face, real
@@ -63,20 +72,40 @@ Future<StudentResult> _mark({
   required RealHostDriver host,
   required ProxBleEngine hostEngine,
   required InMemoryDeviceStore store,
+  required TestHwDevice hw,
   required List<double> embedding,
   required String email,
 }) async {
-  // ignore: invalid_use_of_visible_for_testing
   final server = host.debugServer!;
   final port = server.port;
+  // Fresh FULL proof: point the loopback server's test gate at every
+  // test root pinned so far (including this device's; repeats harmless).
+  _dupPins.addAll(hw.pins);
+  server.testChainGate = ({
+    required AttestationChain chain,
+    required List<Uint8List> pinnedRootHashes,
+    required Uint8List expectedChallenge,
+    required Uint8List? expectedLeafPkD,
+    required AttestationLevel level,
+  }) =>
+      testChainGate(
+        chain: chain,
+        pinnedRootHashes: List<Uint8List>.from(_dupPins),
+        expectedChallenge: expectedChallenge,
+        expectedLeafPkD: expectedLeafPkD,
+        level: level,
+      );
   final engine = ProxBleEngine(radio: FakeBleRadio());
   final d = RealStudentDriver(
     store: store,
     verifier: FakeFaceVerifier(
         match: true, score: 0.85, scriptedEmbedding: embedding),
-    deviceKey: FakeDeviceKey(),
+    deviceKey: hw.deviceKey,
     engine: engine,
+    livenessGate: FakeLivenessGate(),
   )..silenceCap = const Duration(seconds: 2);
+  final check = await d.checkFace('still.jpg');
+  if (check.match != FaceMatch.pass) return StudentResult.faceFailed;
   final airBridge = Timer.periodic(const Duration(seconds: 1), (_) {
     final w = server.window;
     if (w == null) return;
@@ -116,7 +145,14 @@ Future<StudentResult> _mark({
           displayCode: 'X'),
       identity: LinkedIdentity(
           name: email.split('@').first.toUpperCase(), gmail: email, roll: '1'),
-      faceScore: 0.9,
+      faceScore: check.score,
+      faceValidAtMs: check.faceValidAtMs,
+      verifierVer: check.verifierVer,
+      livenessScore: check.livenessScore,
+      livenessVer: check.livenessVer,
+      // Clean verdict wire form (explicit → no native probe in tests).
+      integrityFlag: '',
+      integrityHash: '00000000',
       onStatus: (_) {},
     );
     return res.result;
@@ -182,11 +218,14 @@ void main() {
       await host.startWindow(1);
       try {
         final face = _vec(5);
+        final fa = await _freshAs('a@x.in', 'a1', 101);
+        final fb = await _freshAs('b@x.in', 'b2', 102);
         expect(
             await _mark(
                 host: host,
                 hostEngine: engine,
-                store: await _enrolledAs('a@x.in', 'a1'),
+                store: fa.store,
+                hw: fa.hw,
                 embedding: face,
                 email: 'a@x.in'),
             StudentResult.marked);
@@ -194,7 +233,8 @@ void main() {
             await _mark(
                 host: host,
                 hostEngine: engine,
-                store: await _enrolledAs('b@x.in', 'b2'),
+                store: fb.store,
+                hw: fb.hw,
                 embedding: face,
                 email: 'b@x.in'),
             StudentResult.marked);
@@ -218,21 +258,30 @@ void main() {
       await host.startWindow(1);
       try {
         final face = _vec(5);
-        for (final e in ['a@x.in', 'b@x.in', 'c@x.in']) {
+        final addrs = ['a@x.in', 'b@x.in', 'c@x.in'];
+        final devs = <String, ({InMemoryDeviceStore store, TestHwDevice hw})>{};
+        var salt = 103;
+        for (final e in addrs) {
+          devs[e] = await _freshAs(e, 'a1', salt++);
+        }
+        for (final e in addrs) {
           expect(
               await _mark(
                   host: host,
                   hostEngine: engine,
-                  store: await _enrolledAs(e, 'a1'),
+                  store: devs[e]!.store,
+                  hw: devs[e]!.hw,
                   embedding: face,
                   email: e),
               StudentResult.marked);
         }
+        final fs = await _freshAs('s@x.in', 'c3', 106);
         expect(
             await _mark(
                 host: host,
                 hostEngine: engine,
-                store: await _enrolledAs('s@x.in', 'c3'),
+                store: fs.store,
+                hw: fs.hw,
                 embedding: _vec(6),
                 email: 's@x.in'),
             StudentResult.marked);
@@ -253,12 +302,16 @@ void main() {
       await host.startWindow(1);
       try {
         final face = _vec(5);
+        final devs = <String, ({InMemoryDeviceStore store, TestHwDevice hw})>{};
+        var salt = 107;
         for (final e in ['a@x.in', 'b@x.in']) {
+          devs[e] = await _freshAs(e, 'a1', salt++);
           expect(
               await _mark(
                   host: host,
                   hostEngine: engine,
-                  store: await _enrolledAs(e, 'a1'),
+                  store: devs[e]!.store,
+                  hw: devs[e]!.hw,
                   embedding: face,
                   email: e),
               StudentResult.marked);
@@ -274,12 +327,15 @@ void main() {
         await host.stopWindow();
         await Future.delayed(const Duration(seconds: 1));
         await host.startWindow(2);
+        salt = 109;
         for (final e in ['a@x.in', 'b@x.in']) {
+          devs[e] = await _freshAs(e, 'a1', salt++);
           expect(
               await _mark(
                   host: host,
                   hostEngine: engine,
-                  store: await _enrolledAs(e, 'a1'),
+                  store: devs[e]!.store,
+                  hw: devs[e]!.hw,
                   embedding: face,
                   email: e),
               StudentResult.marked);
@@ -298,11 +354,14 @@ void main() {
       await host.startWindow(1);
       try {
         final face = _vec(5);
+        var salt = 111;
         for (final e in ['a@x.in', 'b@x.in']) {
+          final fdev = await _freshAs(e, 'a1', salt++);
           await _mark(
               host: host,
               hostEngine: engine,
-              store: await _enrolledAs(e, 'a1'),
+              store: fdev.store,
+              hw: fdev.hw,
               embedding: face,
               email: e);
         }
@@ -351,10 +410,15 @@ void main() {
           enrolledAt: DateTime.now().toUtc(),
           verifierVer: 'edgeface-xs-g06-tflite-1',
         ));
+        // Throwaway HW device: the stale template fails at the holder
+        // gate (checkFace → staleTemplate → faceFailed) before any key
+        // is touched.
+        final dummy = await _freshAs('old@x.in', 'ab', 113);
         final res = await _mark(
             host: host,
             hostEngine: engine,
             store: store,
+            hw: dummy.hw,
             embedding: _vec(5),
             email: 'old@x.in');
         expect(res, isNot(StudentResult.marked));
