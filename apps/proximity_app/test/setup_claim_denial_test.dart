@@ -47,7 +47,7 @@ class _DenyOwnCloud extends FakeCloudSync {
 
 Future<EnrollmentController> _readyToSave(
     FakeAuthService auth, InMemoryDeviceStore store, FakeCloudSync cloud,
-    {String installId = 'i-new'}) async {
+    {String installId = 'install-new-01'}) async {
   await store.writeInstallId(installId);
   final ctl = EnrollmentController(
     auth: auth,
@@ -68,6 +68,8 @@ Future<EnrollmentController> _readyToSave(
 }
 
 void main() {
+  setUp(clearInstallIdCacheForTest);
+
   group('isRulesDenialMessage (evidence check)', () {
     test('hint is denial; friendly copies and empty are not', () {
       expect(isRulesDenialMessage(cloudRulesHint('device lookup')), isTrue);
@@ -123,9 +125,9 @@ void main() {
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final cloud = FakeCloudSync();
-      cloud.installs['i1'] = 'a@gmail.com';
-      final ctl =
-          await _readyToSave(auth, store, cloud, installId: 'i1');
+      cloud.installs['install-conflict-01'] = 'a@gmail.com';
+      final ctl = await _readyToSave(auth, store, cloud,
+          installId: 'install-conflict-01');
       final id = await ctl.upload();
       expect(id, isNull);
       expect(
@@ -148,12 +150,12 @@ void main() {
         name: 'Old',
         roll: '1',
         modelVer: 'v',
-        installId: 'i-old',
+        installId: 'install-old-01',
         lastMoveAtMillis: now - 5 * _dayMs,
         lastSeenAtMillis: now - 5 * _dayMs,
       );
-      final ctl =
-          await _readyToSave(auth, store, cloud, installId: 'i-new');
+      final ctl = await _readyToSave(auth, store, cloud,
+          installId: 'install-new-02');
       final id = await ctl.upload();
       expect(id, isNull);
       expect(ctl.state.phase, EnrollPhase.error);
@@ -216,7 +218,7 @@ void main() {
 
     testWidgets('denied own read still surfaces (callers stay put)', (t) async {
       final store = InMemoryDeviceStore();
-      await store.writeInstallId('i-new');
+      await store.writeInstallId('install-new-03');
       final ref = await captureRef(t, store, _DenyOwnCloud());
       await expectLater(
           () => entryStudentGate(ref, 'b@univ.edu'),
@@ -226,7 +228,7 @@ void main() {
 
     testWidgets('clean reads keep the happy verdict', (t) async {
       final store = InMemoryDeviceStore();
-      await store.writeInstallId('i-new');
+      await store.writeInstallId('install-new-04');
       final ref = await captureRef(t, store, FakeCloudSync());
       final gate = await entryStudentGate(ref, 'b@univ.edu');
       expect(gate.verdict.claim, StudentClaim.firstBind);
