@@ -291,22 +291,24 @@ class RealHostDriver implements HostDriver {
   /// [expectedAirKey]/[expectedUuid] cover both formats (v2 `type:hex`,
   /// v1 `uuid:`) so mixed fleets interoperate.
   ///
-  /// Hop mapping: air packets carry NO TTL byte, so every real sighting
-  /// arrives with `ttl == kTtlOriginate` (3) — direct vs relayed is
-  /// unknowable on receipt. Map all matches to hop 0 and let the RSSI
-  /// gate do the proximity work (a far response never clears -70 dBm at
-  /// the professor's antenna; relay tolerance is by design). Mapping
-  /// `hop: s.ttl` instead rejects EVERY live prove as `no-ble-sighting`
-  /// (3 satisfies neither the `== 0` direct nor the `<= 2` relay branch)
-  /// — unit tests hid this by stubbing hop 0.
+  /// M2 hop mapping (honest): air packets carry NO TTL byte, so hop is
+  /// derived ONLY from the v3 relayed bit — v2 direct or unflagged v3 maps
+  /// hop 0 (RSSI gate does the proximity work), v3 relayed maps hop 1
+  /// (relayed branch, flagged, RSSI still gates via kRssiRelayMinDbm
+  /// upstream). Legacy v1 UUIDs map hop 0 with legacy:true (hop0-assumed
+  /// log). `ttl` is never used as hop (it is always kTtlOriginate=3 on
+  /// receipt, which satisfies neither verify branch — the old stub-masked
+  /// bug). kMaxRelayHop(2) stays the verify-side ceiling; single re-air
+  /// (hop 1) is the only relayed value this path can produce.
   static RadioSighting? matchResponse(
       ProxBleEngine engine, String expectedAirKey, String expectedUuid) {
     for (final s in engine.byRssiDesc) {
       if (s.isResponse &&
           (s.key == expectedAirKey || s.key == expectedUuid)) {
+        final hop = s.relayed ? 1 : 0;
         BleLog.log('BLE',
-            'response sighting match rssi=${s.rssiDbm} hop=${s.ttl}');
-        return RadioSighting(rssiDbm: s.rssiDbm, hop: 0, legacy: s.legacy);
+            'response sighting match rssi=${s.rssiDbm} hop=$hop relayed=${s.relayed}');
+        return RadioSighting(rssiDbm: s.rssiDbm, hop: hop, legacy: s.legacy);
       }
     }
     return null;
