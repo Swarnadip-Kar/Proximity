@@ -1,12 +1,15 @@
-// sec-face: Tl calibration harness (NO measured ROC — Tl=0.70 UNCALIBRATED).
+// sec-face: Tl calibration harness (NO Proximity-measured ROC — Tl=0.85 is
+// a STRICT posture from upstream data, not a Proximity EER).
 //
-// Tl=0.70 (`kLivenessThreshold`, protocol-owned) is the shipped operating
-// point, NOT a calibrated Proximity threshold: FAR/FRR are UNMEASURED on
-// Proximity captures (see `liveness_gate.dart` header). Do NOT invent ROC
-// numbers — every score below marked SYNTHETIC is a hand-written fixture
-// that pins the HARNESS MATH only, never a claim about the model.
+// Tl=0.85 (`kLivenessThreshold`, protocol-owned) is the shipped STRICT
+// operating point (2.7x training crop + upstream ~98.2% acc / ROC-AUC
+// 0.9984 + APK near FPR 1e-5 @ TPR 97.8%; proxy incentive + cheap rescan
+// recovery). FAR/FRR remain UNMEASURED on Proximity captures (see
+// `liveness_gate.dart` header). Do NOT invent ROC numbers — every score
+// below marked SYNTHETIC is a hand-written fixture that pins the HARNESS
+// MATH only, never a claim about the model.
 //
-// Procedure (run on REAL labeled Proximity captures to calibrate):
+// Procedure (run on REAL labeled Proximity captures to re-calibrate):
 //   1. Collect labeled stills: genuine holder stills (live) + print/replay
 //      spoofs, same capture pipeline (face-box crop path).
 //   2. Score each still offline via `LivenessGate.detectPassive` (the real
@@ -22,7 +25,7 @@
 //      kept) + `min_version` floor bump with the rules deploy together +
 //      update this file's pins. Never change Tl silently.
 //
-// TODO(sec-face): calibrate on real Proximity captures, then:
+// TODO(sec-face): measure a Proximity ROC, then:
 //   a. set the Tl this harness recommends on that data;
 //   b. bump `kLivenessVer` (new tag — stale-pipeline re-face, key kept);
 //   c. bump `kLivenessThreshold` in protocol + `min_version` floor;
@@ -223,11 +226,11 @@ void main() {
     });
   });
 
-  group('shipped operating point (UNCALIBRATED pins)', () {
-    test('kLivenessThreshold is still the uncalibrated 0.70', () {
+  group('shipped operating point (STRICT Tl=0.85 pins)', () {
+    test('kLivenessThreshold is the strict 0.85', () {
       // Flip ONLY via the TODO(sec-face) procedure above (threshold bump +
       // kLivenessVer bump + min_version floor, never silently).
-      expect(kLivenessThreshold, 0.70);
+      expect(kLivenessThreshold, 0.85);
     });
 
     test('kLivenessVer unchanged until real data lands', () {

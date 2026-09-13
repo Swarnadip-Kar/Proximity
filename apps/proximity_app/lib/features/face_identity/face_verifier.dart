@@ -31,17 +31,21 @@
 // therefore carried at exactly the decision [threshold] — the honest
 // boundary value, bound into the ticket and re-checked host-side
 // (score>=T). The exact-1.000-repeat anomaly flag can never false-fire on
-// these (it keys on >=1.0). Calibration note: FAR~0.01%/FRR<2% at the
-// 0.70 default is the plugin's published operating point, not a
-// Proximity-measured ROC — see residual risks. System operating point WITH
-// the §4 liveness gate (minifasnet-v2-27 scorer, Tl=0.70): UNMEASURED —
-// no Proximity FAR/FRR ROC exists yet for the combined matcher+liveness
-// decision (spoof FAR is strictly lower than face-only — a print must now
-// also clear the vitality gate — but the FRR cost of the vitality gate
-// on genuine dim/blurry stills is unquantified, and the shipped weights'
-// upstream accuracy number is not a Proximity ROC). The adversarial drill
-// + 2-phone relay stay required (sec-verify); never quote the plugin
-// numbers as system numbers.
+// these (it keys on >=1.0). The professor grades strength from the GRADED
+// liveness score (0..1 MiniFASNet live-prob, same ticket — a 0.95 pass
+// reads stronger than a 0.86 pass), not from this boundary value.
+// Calibration note: T=0.70 is the plugin default AND matches an
+// independent FaceNet512 deployment study (cosine-similarity 0.7 accept,
+// 2026) — the best available tuning without a Proximity ROC; do not move
+// it without one. System operating point WITH the §4 liveness gate
+// (minifasnet-v2-27 scorer at 2.7x crop, Tl=0.85 strict): UNMEASURED on
+// Proximity captures — no Proximity FAR/FRR ROC exists yet for the
+// combined matcher+liveness decision (spoof FAR is strictly lower than
+// face-only — a print must now also clear the vitality gate — but the FRR
+// cost of the strict vitality gate on genuine dim/blurry stills is
+// unquantified, and the shipped weights' upstream accuracy number is not
+// a Proximity ROC). The adversarial drill + 2-phone relay stay required
+// (sec-verify); never quote the plugin numbers as system numbers.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';

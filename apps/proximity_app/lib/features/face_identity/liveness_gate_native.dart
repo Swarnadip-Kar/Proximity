@@ -346,6 +346,9 @@ class HeuristicLivenessGate implements LivenessGate {
           width: frame.width,
           height: frame.height,
           faceBox: faceBox,
+          // Training-distribution crop (2.7_80x80 weights expect a 2.7x
+          // context margin — tight squares score off-distribution).
+          contextScale: kLivenessContextScale,
         );
         final output = List.generate(1, (_) => List.filled(3, 0.0));
         final it = await within(_interpreter());

@@ -48,19 +48,19 @@
 // timeout, unparseable dims) — same scorer + same Tl, never a pass, never
 // a throw for the fallback itself (comment at the call-site).
 //
-// Honesty note (residuals, not immunity claims): the gate now crops the
-// face box but runs only the primary 2.7-scale model (upstream ensembles
-// a second 4.0-scale model), and the box is a tight square with no 2.7x
-// context expansion the weights were trained with. FAR/FRR are UNMEASURED
-// on Proximity captures (no Proximity ROC yet); Tl=0.70
-// ([kLivenessThreshold], protocol-owned) is the shipped operating point,
-// NOT a calibrated Proximity threshold.
-// TODO(sec-face): calibrate box expansion + Tl on a Proximity ROC
-// (genuine dim/blurry stills vs print/replay spoofs), then pin the
-// calibrated expansion + threshold with a [kLivenessVer] bump (re-face,
-// key kept). The adversarial drill + 2-phone relay (sec-verify) stay
-// required. The gate FAILS CLOSED on unreadable stills, missing assets,
-// and interpreter errors — never a pass, never a heuristic fallback.
+// Honesty note (residuals, not immunity claims): the gate crops the face
+// box with the 2.7x training-distribution margin ([kLivenessContextScale])
+// but runs only the primary 2.7-scale model (upstream ensembles a second
+// 4.0-scale model). FAR/FRR are UNMEASURED on Proximity captures (no
+// Proximity ROC yet); Tl=0.85 ([kLivenessThreshold], protocol-owned) is the
+// shipped STRICT operating point (print/replay incentive + cheap rescan
+// recovery — see verify.dart), NOT a Proximity-measured EER.
+// TODO(sec-face): measure a Proximity ROC (genuine dim/blurry stills vs
+// print/replay spoofs) via liveness_calibration_test, then pin any new
+// threshold with a [kLivenessVer] bump (re-face, key kept) + min_version
+// floor. The adversarial drill + 2-phone relay (sec-verify) stay required.
+// The gate FAILS CLOSED on unreadable stills, missing assets, and
+// interpreter errors — never a pass, never a heuristic fallback.
 //
 // L1 mobile gate: [detectPassive] calls [requireMobileFace] first —
 // desktop/web fail closed (records-only stub below throws before any
@@ -92,6 +92,16 @@ const kLivenessModelAsset =
 
 /// Model input edge (square): 80x80.
 const kLivenessInputSize = 80;
+
+/// Face-box context scale matching the training distribution: the vendored
+/// weights are the `2.7_80x80` MiniFASNetV2 model, trained on face crops
+/// with a 2.7x margin around the bbox centre (upstream preprocessing +
+/// yakhyo `scale: 2.7` + HF card steps). The packer below expands the
+/// squared box by this factor (clamped to the frame) so production scores
+/// come from the distribution the weights expect — the tight-square crop
+/// was the uncalibrated residual. Unit tests keep the tight path by
+/// passing an explicit scale of 1.0; production always passes this.
+const double kLivenessContextScale = 2.7;
 
 /// Output index of the LIVE class in the model's [1,3] softmax
 /// ([spoof-print, LIVE, spoof-replay]).
@@ -133,12 +143,14 @@ double liveScoreFromProbs(List<double> probs) {
 
 /// Pure face-box helper (no native calls, unit-tested): squares an ML Kit
 /// bbox ([faceLeft]/[faceTop]/[faceRight]/[faceBottom] in the SAME pixel
-/// space as the frame) around its centre (max side, tight — no 2.7x
-/// context expansion; see the file header calibration TODO) and clamps it
-/// to the frame. Returns null when the box is unusable (empty, inverted,
-/// zero-area, or larger than the frame after clamping, or <8px detail) —
-/// the caller falls back to the legacy centre-square crop (same scorer +
-/// Tl, never a throw for the fallback itself).
+/// space as the frame) around its centre (max side) and clamps it to the
+/// frame. [contextScale] expands the square to match the training
+/// distribution ([kLivenessContextScale] = 2.7 in production; 1.0 = legacy
+/// tight square, kept for unit-test stability). Returns null when the box
+/// is unusable (empty, inverted, zero-area, or larger than the frame after
+/// clamping, or <8px detail) — the caller falls back to the legacy
+/// centre-square crop (same scorer + Tl, never a throw for the fallback
+/// itself).
 ({int left, int top, int edge})? squareCropFromFaceBox({
   required int frameWidth,
   required int frameHeight,
@@ -155,7 +167,62 @@ double liveScoreFromProbs(List<double> probs) {
   final w = r - l;
   final h = b - t;
   if (w <= 0 || h <= 0) return null;
-  final edge = w > h ? w : h;
+  final tight = w > h ? w : h;
+  if (tight < 8) return null;
+  // Legacy tight square (scale 1.0): unit-test-stable contract. Production
+  // passes [kLivenessContextScale] via [expandedSquareCropFromFaceBox] /
+  // [minifasnetInputFromRgba] directly.
+  return expandedSquareCropFromFaceBox(
+    frameWidth: frameWidth,
+    frameHeight: frameHeight,
+    faceLeft: l,
+    faceTop: t,
+    faceRight: r,
+    faceBottom: b,
+    contextScale: 1.0,
+  );
+}
+
+/// Pure expanded crop (no native calls, unit-tested): squares the box
+/// around its centre, expands by [contextScale] ([kLivenessContextScale] in
+/// production to match the 2.7_80x80 training distribution), then fits the
+/// square inside the frame (shrinks to the frame when the context exceeds
+/// it, centred as much as possible). Returns null only when no usable
+/// square fits (frame smaller than 8px detail).
+({int left, int top, int edge})? expandedSquareCropFromFaceBox({
+  required int frameWidth,
+  required int frameHeight,
+  required int faceLeft,
+  required int faceTop,
+  required int faceRight,
+  required int faceBottom,
+  double contextScale = kLivenessContextScale,
+}) {
+  if (frameWidth <= 0 || frameHeight <= 0) return null;
+  final l = faceLeft.clamp(0, frameWidth);
+  final t = faceTop.clamp(0, frameHeight);
+  final r = faceRight.clamp(0, frameWidth);
+  final b = faceBottom.clamp(0, frameHeight);
+  final w = r - l;
+  final h = b - t;
+  if (w <= 0 || h <= 0) return null;
+  final tight = w > h ? w : h;
+  if (tight < 8) return null;
+  final scale = contextScale.isFinite && contextScale >= 1.0
+      ? contextScale
+      : 1.0;
+  var edge = (tight * scale).round();
+  if (edge < tight) edge = tight;
+  if (scale == 1.0) {
+    // Legacy tight contract (unit-test-stable): the square must fit as-is
+    // or the caller falls back to the centre crop — never a silent shrink.
+    if (edge > frameWidth || edge > frameHeight) return null;
+  } else {
+    // Production context expansion: fit the largest centred square when
+    // the margin overflows the frame (same scorer + Tl either way).
+    final maxEdge = frameWidth < frameHeight ? frameWidth : frameHeight;
+    if (edge > maxEdge) edge = maxEdge;
+  }
   if (edge < 8) return null;
   final cx = l + w ~/ 2;
   final cy = t + h ~/ 2;
@@ -280,15 +347,19 @@ double liveScoreFromProbs(List<double> probs) {
 /// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
 /// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels /255).
 /// The crop is the squared face box ([faceBox] in the SAME pixel space as
-/// the frame, via [squareCropFromFaceBox]) when usable; otherwise the
-/// legacy centre square (fallback — same scorer + Tl, documented in the
-/// file header). Resized to [kLivenessInputSize] by nearest neighbour.
-/// Throws [ArgumentError] on size mismatches (fail-closed at the call-site).
+/// the frame, via [expandedSquareCropFromFaceBox] with [contextScale])
+/// when usable; otherwise the legacy centre square (fallback — same scorer
+/// + Tl, documented in the file header). Resized to [kLivenessInputSize] by
+/// nearest neighbour. [contextScale] defaults to 1.0 (tight, legacy unit
+/// tests); production passes [kLivenessContextScale] (2.7, training
+/// distribution). Throws [ArgumentError] on size mismatches (fail-closed
+/// at the call-site).
 List<List<List<List<double>>>> minifasnetInputFromRgba({
   required Uint8List rgba,
   required int width,
   required int height,
   ({int left, int top, int right, int bottom})? faceBox,
+  double contextScale = 1.0,
 }) {
   const size = kLivenessInputSize;
   if (width <= 0 || height <= 0) {
@@ -303,13 +374,14 @@ List<List<List<List<double>>>> minifasnetInputFromRgba({
   var ox = (width - edge) ~/ 2;
   var oy = (height - edge) ~/ 2;
   if (faceBox != null) {
-    final squared = squareCropFromFaceBox(
+    final squared = expandedSquareCropFromFaceBox(
       frameWidth: width,
       frameHeight: height,
       faceLeft: faceBox.left,
       faceTop: faceBox.top,
       faceRight: faceBox.right,
       faceBottom: faceBox.bottom,
+      contextScale: contextScale,
     );
     if (squared != null) {
       ox = squared.left;

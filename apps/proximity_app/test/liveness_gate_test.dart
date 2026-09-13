@@ -263,6 +263,112 @@ void main() {
     });
   });
 
+  group('expandedSquareCropFromFaceBox (2.7x training crop)', () {
+    test('scale 1.0 matches the legacy tight square', () {
+      final tight = squareCropFromFaceBox(
+        frameWidth: 100,
+        frameHeight: 80,
+        faceLeft: 10,
+        faceTop: 10,
+        faceRight: 70,
+        faceBottom: 40,
+      );
+      final expanded = expandedSquareCropFromFaceBox(
+        frameWidth: 100,
+        frameHeight: 80,
+        faceLeft: 10,
+        faceTop: 10,
+        faceRight: 70,
+        faceBottom: 40,
+        contextScale: 1.0,
+      );
+      expect(expanded, isNotNull);
+      expect(expanded!.edge, tight!.edge);
+      expect(expanded.left, tight.left);
+      expect(expanded.top, tight.top);
+    });
+
+    test('2.7x expands around the centre (training distribution)', () {
+      // 20px box in a 200x200 frame → 54px square centred on the box.
+      final c = expandedSquareCropFromFaceBox(
+        frameWidth: 200,
+        frameHeight: 200,
+        faceLeft: 90,
+        faceTop: 90,
+        faceRight: 110,
+        faceBottom: 110,
+        contextScale: kLivenessContextScale,
+      );
+      expect(c, isNotNull);
+      expect(c!.edge, 54);
+      // Centre (100, 100) → square from (73, 73).
+      expect(c.left, 73);
+      expect(c.top, 73);
+    });
+
+    test('overflow fits the largest centred square (same scorer)', () {
+      // 8px box with 2.7x context in a 20x20 frame → 21px request, 20px
+      // fit (whole frame, never null for a usable box).
+      final c = expandedSquareCropFromFaceBox(
+        frameWidth: 20,
+        frameHeight: 20,
+        faceLeft: 6,
+        faceTop: 6,
+        faceRight: 14,
+        faceBottom: 14,
+        contextScale: kLivenessContextScale,
+      );
+      expect(c, isNotNull);
+      expect(c!.edge, 20);
+      expect(c.left, 0);
+      expect(c.top, 0);
+    });
+
+    test('unusable boxes still return null (caller falls back)', () {
+      expect(
+          expandedSquareCropFromFaceBox(
+              frameWidth: 100,
+              frameHeight: 100,
+              faceLeft: 0,
+              faceTop: 0,
+              faceRight: 0,
+              faceBottom: 0,
+              contextScale: kLivenessContextScale),
+          isNull);
+      expect(
+          expandedSquareCropFromFaceBox(
+              frameWidth: 0,
+              frameHeight: 0,
+              faceLeft: 10,
+              faceTop: 10,
+              faceRight: 50,
+              faceBottom: 50,
+              contextScale: kLivenessContextScale),
+          isNull);
+    });
+
+    test('production packer accepts the 2.7x scale (shape [1,3,80,80])', () {
+      final rgba = Uint8List(20 * 20 * 4);
+      for (var i = 0; i < 20 * 20; i++) {
+        rgba[i * 4] = 200;
+        rgba[i * 4 + 1] = 150;
+        rgba[i * 4 + 2] = 100;
+        rgba[i * 4 + 3] = 255;
+      }
+      final input = minifasnetInputFromRgba(
+        rgba: rgba,
+        width: 20,
+        height: 20,
+        faceBox: (left: 6, top: 6, right: 14, bottom: 14),
+        contextScale: kLivenessContextScale,
+      );
+      expect(input.length, 1);
+      expect(input[0].length, 3);
+      expect(input[0][0].length, kLivenessInputSize);
+      expect(input[0][0][0].length, kLivenessInputSize);
+    });
+  });
+
   group('mapFaceBoxToFrame (pure box mapping)', () {
     test('scales original pixels onto the decoded frame', () {
       // 640x480 original → 160x120 decoded (0.25x each axis).

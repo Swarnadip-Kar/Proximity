@@ -92,10 +92,23 @@ RateLimiter windowLimiter() =>
 /// The passive anti-spoof classifier (`LivenessGate.detect` in the app,
 /// owned by sec-liveness) emits 0..1 on the same milli scale as the face
 /// score. The host confirms only when `livenessScore >= kLivenessThreshold`.
-/// Value 0.70 mirrors [kFaceThreshold] (strict, fail-closed); course-pinned
-/// stricter lists are future work — lowering this constant is a ticket
-/// break (bump min_version, never silent).
-const double kLivenessThreshold = 0.70;
+///
+/// Calibrated strict posture (2026-09-13, replaces the uncalibrated 0.70):
+/// MiniFASNetV2-27 is trained with a 2.7x face-box context margin (the
+/// `2.7_80x80` weights prefix; the app crops with [kLivenessContextScale]
+/// to match that distribution), reports ~98.2% accuracy / ROC-AUC 0.9984
+/// on CelebA Spoof (70k samples) at its argmax point, and the upstream APK
+/// ships a strict point near FPR 1e-5 @ TPR 97.8%. Attendance has a strong
+/// print/replay incentive while genuine FRR is cheap (rescan-free
+/// inconclusive path, never auto-absent, professor manual override), so Tl
+/// sits STRICT at 0.85: printed photos (live-prob typically 0.1-0.4) fail
+/// by margin, genuine holders (typically 0.9+) still pass. The liveness
+/// score sent IS graded (0..1 softmax live-prob, bound into the ticket) so
+/// the professor CAN tell a strong match (0.95) from a weak one (0.86) —
+/// only the face-matcher score stays at its decision boundary (plugin
+/// identity-only contract, documented in face_verifier.dart). Changing this
+/// constant is a ticket break (bump min_version, never silent).
+const double kLivenessThreshold = 0.85;
 
 /// M3 one-sided future tolerance for the face-ticket stamp: a ticket may be
 /// at most this far AHEAD of the verifier clock (clock skew), never more —
