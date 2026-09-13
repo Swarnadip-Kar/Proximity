@@ -303,6 +303,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// Last verification outcome (for the UI badge + queue; null before the
   /// first gated fetch in this process).
   ProfVerificationResult? lastProfVerification;
+
+  /// Leave tokens by `host:port|email` (anti-ejection credentials from the
+  /// matching /waiting replies; consumed on leave, process-local).
+  final Map<String, String> _leaveTokens = {};
   RealStudentDriver({
     required DeviceStore store,
     required FaceVerifier verifier,
@@ -587,6 +591,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           roll: identity.roll,
           org: myOrg,
           photoUrl: photoUrl);
+      // Anti-ejection credential: stored per host+email, presented on
+      // leaveWaiting (best-effort like the rest of leave — a lost token
+      // only leaves a stale row the professor can eject).
+      if (res.leaveToken.isNotEmpty) {
+        _leaveTokens[
+                '${target.host}:${target.port}|${identity.gmail.trim().toLowerCase()}'] =
+            res.leaveToken;
+      }
       BleLog.log('LAN', 'presence sent → waiting room (${target.host})');
       return PresenceSample(
           sent: true, windowOpen: res.windowOpen, display: res.display);
@@ -625,7 +637,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     BleLog.log('LAN', 'leaving waiting room (${target.host})');
     final client = ProxClient(host: target.host, port: target.port);
     try {
-      await client.postLeave(email: email);
+      final token = _leaveTokens.remove(
+              '${target.host}:${target.port}|${email.trim().toLowerCase()}') ??
+          '';
+      await client.postLeave(email: email, leaveToken: token);
       BleLog.log('LAN', 'leave sent — prof count drops');
     } finally {
       client.close();

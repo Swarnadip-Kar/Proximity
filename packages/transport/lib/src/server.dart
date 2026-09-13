@@ -356,15 +356,18 @@ class ProxServer {
 
   // ---- Waiting room (students join before the window opens) ----
   // Delegated to LiveRoom (identical semantics; see live_room.dart).
-  void registerWaiting(String email, String name,
+  // Returns the leave token ('' when nothing registered).
+  String registerWaiting(String email, String name,
           [String roll = '', String photoUrl = '']) =>
       room.registerWaiting(email, name, roll, photoUrl);
 
-  /// Explicit leave: the student backed out of the waiting room (Cancel /
-  /// back navigation / dispose). Returns true when an entry was removed.
-  /// Presence heartbeats stop with the room timers, so without this the
-  /// professor's waiting count would stay stale.
-  bool removeWaiting(String email) => room.removeWaiting(email);
+  /// Explicit leave over HTTP (token-enforced — see [_postLeave]).
+  bool removeWaiting(String email, {String leaveToken = ''}) =>
+      room.removeWaiting(email, leaveToken: leaveToken);
+
+  /// Server-internal waiting drop (mark auto-exit): token-free by
+  /// construction (the server owns it).
+  bool dropWaiting(String email) => room.dropWaiting(email);
 
   /// Professor eject: drops one email from waiting + manual queue + tally
   /// (session-local; saved history untouched until the next upsert).
@@ -1080,9 +1083,9 @@ class ProxServer {
         // in-flight response: zero new requests, endpoints, or fields.
         // Invalid proofs keep their waiting entry (the student is still
         // unmarked — retry/manual paths own their own leave).
-        removeWaiting(id);
-      }
-      // Local same-face dup check (RAM-only, window-scoped): exact cosine
+      dropWaiting(id);
+    }
+    // Local same-face dup check (RAM-only, window-scoped): exact cosine
       // over dequantized vectors, O(session) per prove. Runs on marked
       // proofs carrying a usable vector — no bound ticket required
       // (pipeline-equality inside the matcher is the comparability gate:
@@ -1284,7 +1287,7 @@ class ProxServer {
         return _json(
             {'decision': 'invalid', 'reason': 'org-mismatch'}, 403);
       }
-      registerWaiting(email, name, roll,
+      final leaveToken = registerWaiting(email, name, roll,
           (body['photo'] as String? ?? '').trim());
       // Piggybacked window sample for the join fast-path (SYNC-owned):
       // this POST just proved the host reachable over TLS, so shipping
@@ -1293,11 +1296,15 @@ class ProxServer {
       // per entry, one fewer TLS handshake on join→face). The 2s room
       // poll stays the authoritative flip; clients tolerant-parse these
       // keys (absent = closed) so mixed-version fleets fall back safely.
+      // `leaveToken` is the anti-ejection credential: the client stores it
+      // and presents it on /leave (old clients ignore it — their leave
+      // then 403s, and the floor forces them to update).
       return _json({
         'ok': true,
         'waiting': waitingCount,
         'windowOpen': windowOpen,
         'display': _window?.displayCode ?? '',
+        'leaveToken': leaveToken,
       });
     } catch (e) {
       return _json({'error': 'bad-body: $e'}, 400);
@@ -1309,8 +1316,16 @@ class ProxServer {
       final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
       final email = (body['email'] as String? ?? '').toLowerCase();
       if (email.isEmpty) return _json({'error': 'bad-email'}, 400);
-      final removed = removeWaiting(email);
-      return _json({'ok': true, 'removed': removed, 'waiting': waitingCount});
+      // Anti-ejection: only the token issued at THIS email's join removes
+      // it. Missing/mismatched tokens 403 REGARDLESS of whether the entry
+      // exists (no existence oracle for LAN scanners — a tokenless probe
+      // learns nothing about who is waiting). Honest clients always carry
+      // the token from their /waiting reply, so honest leave is unchanged.
+      final token = (body['leaveToken'] as String? ?? '').trim();
+      if (token.isEmpty) return _json({'error': 'forbidden'}, 403);
+      final removed = removeWaiting(email, leaveToken: token);
+      if (!removed) return _json({'error': 'forbidden'}, 403);
+      return _json({'ok': true, 'removed': true, 'waiting': waitingCount});
     } catch (e) {
       return _json({'error': 'bad-body: $e'}, 400);
     }

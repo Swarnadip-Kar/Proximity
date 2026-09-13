@@ -1076,18 +1076,52 @@ void main() {
     final server = await makeServer(prof: prof, stu: stu);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
-      await client.postWaiting(
+      final join1 = await client.postWaiting(
           email: _email, name: 'Student One', roll: '12342210');
+      expect(join1.leaveToken.isNotEmpty, isTrue);
       await client.postWaiting(
           email: 'student2@example.com', name: 'Student Two');
       expect(server.waitingCount, 2);
-      await client.postLeave(email: _email);
+      await client.postLeave(email: _email, leaveToken: join1.leaveToken);
       expect(server.waitingCount, 1);
       expect(server.waitingRows.single.email, 'student2@example.com');
-      // Leaving twice / unknown email is a no-op, never an error.
-      await client.postLeave(email: _email);
+      // Replayed token after removal is forbidden (no oracle, no error
+      // out — the client swallows it; the count is unchanged).
+      await client.postLeave(email: _email, leaveToken: join1.leaveToken);
+      // Unknown email without a token is forbidden, never an error out.
       await client.postLeave(email: 'ghost@institute.ac.in');
       expect(server.waitingCount, 1);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('waiting room: no-auth bulk ejection is closed (leaveToken)', () async {
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final server = await makeServer(prof: prof, stu: stu);
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final victim = await client.postWaiting(
+          email: _email, name: 'Student One', roll: '12342210');
+      expect(server.waitingCount, 1);
+      // Attacker without the token: tokenless, wrong, and cross-email
+      // tokens all fail — the victim stays waiting.
+      await client.postLeave(email: _email);
+      await client.postLeave(email: _email, leaveToken: 'deadbeef' * 8);
+      final attacker = await client.postWaiting(
+          email: 'attacker@example.com', name: 'Attacker');
+      await client.postLeave(
+          email: _email, leaveToken: attacker.leaveToken);
+      expect(server.waitingCount, 2);
+      expect(
+          server.waitingRows.map((w) => w.email), contains(_email));
+      // The victim's own token still works (honest leave unchanged).
+      await client.postLeave(email: _email, leaveToken: victim.leaveToken);
+      expect(server.waitingCount, 1);
+      expect(
+          server.waitingRows.map((w) => w.email), isNot(contains(_email)));
     } finally {
       client.close();
       await server.stop();

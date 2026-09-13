@@ -87,6 +87,7 @@ Future<StudentResult> _mark({
     required Uint8List expectedChallenge,
     required Uint8List? expectedLeafPkD,
     required AttestationLevel level,
+    String appAttestRawHex = '',
   }) =>
       testChainGate(
         chain: chain,

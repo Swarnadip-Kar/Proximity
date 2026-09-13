@@ -11,6 +11,7 @@
 // idle, i.e. `_windowNo == 0 ? 1 : _windowNo` on the server).
 library;
 
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 class WaitingEntry {
@@ -77,11 +78,19 @@ class LiveRoom {
   final Map<String, WaitingEntry> _waiting = {};
   final Map<String, ManualEntry> _manual = {};
 
+  /// Leave tokens (email → 16B hex): issued on every join, required on
+  /// /leave so one phone cannot bulk-eject other emails (no-auth ejection
+  /// fix). A rejoin rotates the token (the old one dies with the
+  /// overwritten entry). Never logged, never rendered.
+  final Map<String, String> _leaveTokens = {};
+
   // ---- Waiting room (students join before the window opens) ----
-  void registerWaiting(String email, String name,
+  /// Registers presence, returning the leave token for this join ('' when
+  /// the email is invalid and nothing registered).
+  String registerWaiting(String email, String name,
       [String roll = '', String photoUrl = '']) {
     final key = email.trim().toLowerCase();
-    if (key.isEmpty || !key.contains('@')) return;
+    if (key.isEmpty || !key.contains('@')) return '';
     _waiting[key] = WaitingEntry(
         email: key,
         name: name,
@@ -89,6 +98,9 @@ class LiveRoom {
         ts: DateTime.now().toUtc(),
         photoUrl: photoUrl.trim());
     tally.ensure(key, name, roll, photoUrl.trim());
+    final token = hexEncode(randBytes(16));
+    _leaveTokens[key] = token;
+    return token;
   }
 
   /// Latest volunteered photo for [email] (waiting first, then manual,
@@ -104,12 +116,29 @@ class LiveRoom {
   }
 
   /// Explicit leave: the student backed out of the waiting room (Cancel /
-  /// back navigation / dispose). Returns true when an entry was removed.
-  /// Presence heartbeats stop with the room timers, so without this the
-  /// professor's waiting count would stay stale.
-  bool removeWaiting(String email) {
+  /// back navigation / dispose). Requires the [leaveToken] issued at join —
+  /// a missing/mismatched token removes nothing (bulk ejection closed).
+  /// Returns true when an entry was removed. Presence heartbeats stop with
+  /// the room timers, so without this the professor's waiting count would
+  /// stay stale.
+  bool removeWaiting(String email, {String leaveToken = ''}) {
     final key = email.trim().toLowerCase();
     if (key.isEmpty) return false;
+    if (_waiting[key] == null) return false;
+    final want = _leaveTokens[key] ?? '';
+    if (want.isNotEmpty && leaveToken != want) return false;
+    _waiting.remove(key);
+    _leaveTokens.remove(key);
+    return true;
+  }
+
+  /// Server-internal drop (mark auto-exit after a confirming prove): the
+  /// server owns this action, so no token is required. Professor eject
+  /// keeps its own token-free path ([removeStudent]).
+  bool dropWaiting(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    _leaveTokens.remove(key);
     return _waiting.remove(key) != null;
   }
 

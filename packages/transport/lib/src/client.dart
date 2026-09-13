@@ -223,7 +223,8 @@ class ProxClient {
   /// display code on the same round trip, so waiting-room entry fast-paths
   /// without a second (rate-capped) GET /window. Tolerant-parsed
   /// (absent keys = closed) so older hosts degrade to the probe path.
-  Future<({int waiting, bool windowOpen, String display})> postWaiting(
+  Future<({int waiting, bool windowOpen, String display, String leaveToken})>
+      postWaiting(
           {required String email,
           required String name,
           String roll = '',
@@ -240,14 +241,21 @@ class ProxClient {
       waiting: (m['waiting'] as num?)?.toInt() ?? 0,
       windowOpen: (m['windowOpen'] as bool?) ?? false,
       display: (m['display'] as String?) ?? '',
+      leaveToken: (m['leaveToken'] as String? ?? '').trim(),
     );
   }
 
   /// Explicit waiting-room leave (best-effort: never throws; the prof UI
   /// also converges because heartbeats stop with the room timers).
-  Future<void> postLeave({required String email}) async {
+  /// [leaveToken] is the credential from the matching [postWaiting] reply
+  /// ('' = legacy caller — the server 403s, and the floor forces update).
+  Future<void> postLeave(
+      {required String email, String leaveToken = ''}) async {
     try {
-      await _postJson('/leave', {'email': email});
+      await _postJson('/leave', {
+        'email': email,
+        if (leaveToken.trim().isNotEmpty) 'leaveToken': leaveToken.trim(),
+      });
     } catch (_) {}
   }
 

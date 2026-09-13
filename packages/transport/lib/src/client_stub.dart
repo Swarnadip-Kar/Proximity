@@ -99,7 +99,13 @@ class ProxClient {
 
   /// Mirror of client.dart: presence + piggybacked window sample
   /// (web never joins; identical signature so shared code compiles).
-  Future<({int waiting, bool windowOpen, String display})> postWaiting(
+  Future<
+      ({
+        int waiting,
+        bool windowOpen,
+        String display,
+        String leaveToken
+      })> postWaiting(
           {required String email,
           required String name,
           String roll = '',
@@ -107,7 +113,8 @@ class ProxClient {
           String photoUrl = ''}) =>
       _web();
 
-  Future<void> postLeave({required String email}) => _web();
+  Future<void> postLeave({required String email, String leaveToken = ''}) =>
+      _web();
 
   Future<void> postManualRequest(
           {required String email,
