@@ -624,9 +624,26 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   }
 
   void _animateTo(int i) {
-    if (!_pages.hasClients) return;
-    if (ProxMotion.reduced(context)) {
-      _pages.jumpToPage(i);
+    if (!_pages.hasClients) {
+      // Pager not attached yet (first-frame resolve): retry post-frame so
+      // _index and the PageView never desync (Mark highlighted while
+      // Accounts shows — the reported open-in-Mark-but-see-Accounts bug).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pages.hasClients) return;
+        try {
+          _pages.jumpToPage(_index);
+        } catch (_) {}
+      });
+      return;
+    }
+    // Multi-step jumps (2<->0) must NOT animate across the middle page:
+    // the intermediate onPageChanged would land _index on Courses
+    // mid-flight (the reported Account<->Mark sometimes-lands-on-Courses
+    // bug). Jump atomically; animate only adjacent tabs.
+    if ((i - _index).abs() > 1 || ProxMotion.reduced(context)) {
+      try {
+        _pages.jumpToPage(i);
+      } catch (_) {}
       return;
     }
     _pages.animateToPage(
@@ -781,8 +798,24 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         // land atomically; user taps/swipes keep the slide (always
         // single-step, never crossing). Jump fires a single onPageChanged
         // for the target, which [_syncIndexFromPage] early-returns on.
+        //
+        // Post-mount guard: on the very first resolve the PageView may
+        // have no clients yet — schedule a post-frame jump so _index (0,
+        // Mark highlighted) and the pager (still on 2, Accounts showing)
+        // never desync (the reported open-in-Mark-but-see-Accounts bug).
+        // After enrollment the default is ALWAYS Mark (index 0); Accounts
+        // (index 2) is the default ONLY before enrollment/verification.
         try {
-          if (_pages.hasClients) _pages.jumpToPage(0);
+          if (_pages.hasClients) {
+            _pages.jumpToPage(0);
+          } else {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || !_pages.hasClients) return;
+              try {
+                if (_index == 0) _pages.jumpToPage(0);
+              } catch (_) {}
+            });
+          }
         } catch (_) {}
       }
       return;
@@ -1032,11 +1065,18 @@ class _ProfShellState extends ConsumerState<ProfShell> {
       if (i == 0) _liveRootKey.currentState?.refresh();
       return;
     }
+    // Prof default is ALWAYS Live (index 0) — same multi-step guard as the
+    // student shell: a 0<->2 animate crosses Courses mid-flight and can
+    // strand the pager on the course list (the reported sometimes-lands-
+    // on-Courses bug). Jump atomically across 2 pages; animate adjacent.
+    final from = _index;
     setState(() => _index = i);
     if (i == 0) _liveRootKey.currentState?.refresh();
     if (_pages.hasClients) {
-      if (ProxMotion.reduced(context)) {
-        _pages.jumpToPage(i);
+      if (ProxMotion.reduced(context) || (i - from).abs() > 1) {
+        try {
+          _pages.jumpToPage(i);
+        } catch (_) {}
       } else {
         _pages.animateToPage(
           i,
