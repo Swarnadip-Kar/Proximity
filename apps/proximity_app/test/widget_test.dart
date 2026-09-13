@@ -66,10 +66,14 @@ ProviderScope testScope(
       stillCapturerProvider.overrideWithValue(
           stillCapturer ?? const FakeStillCapturer()),
       // Continuous enrollment session: one fake camera open + an
-      // accept-all pose gate (angle math is pinned in enroll_guided_test).
+      // accept-all pose gate (angle math is pinned in enroll_guided_test)
+      // + scripted vitality pass (the in-loop pre-check pins scoring
+      // itself in enroll_guided_test; the terminal enrollFace gate above
+      // pins the save-time verdicts).
       enrollSessionCameraProvider
           .overrideWithValue(FakeEnrollSessionCamera()),
       poseGateProvider.overrideWithValue(FakePoseGate()),
+      enrollSessionLivenessProvider.overrideWithValue(FakeLivenessGate()),
       hostDriverProvider.overrideWithValue(hostDriver ?? FakeHostDriver()),
       studentDriverProvider.overrideWithValue(
           studentDriver ?? FakeStudentDriver(windowOpenProbe: probeOpen)),

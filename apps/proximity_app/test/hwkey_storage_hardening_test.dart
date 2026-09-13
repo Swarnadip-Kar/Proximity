@@ -3,9 +3,8 @@
 // Covers the gaps closed in this pass:
 // - ID-edit fallback path stays sealed-only (never re-persists a raw seed)
 //   and preserves the face-rescan stamp.
-// - Software-no-enroll law is two-branched (allowSoftwareEnroll policy,
-//   default kDebugMode): release refuses the software key, debug proceeds
-//   at the NONE tier.
+// - Software-no-enroll law is single-branched (debug allowance removed
+//   2026-09-13): software keys refuse in every build mode, debug included.
 // - Sealed-only restore on a clone/invalidated key reports
 //   'restore detected — re-enroll' (controller _tryRestore path).
 // - Host ephemeral identity: hosting starts with a sealed doc or no
@@ -107,14 +106,13 @@ class _Seal implements HwSealStore {
 }
 
 EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
-        {DeviceKey? deviceKey, bool? allowSoftwareEnroll}) =>
+        {DeviceKey? deviceKey}) =>
     EnrollmentController(
       auth: auth,
       store: store,
       verifier: FakeFaceVerifier(),
       deviceKey: deviceKey ?? FakeDeviceKey(),
       livenessGate: FakeLivenessGate(),
-      allowSoftwareEnroll: allowSoftwareEnroll,
     );
 
 void main() {
@@ -148,28 +146,16 @@ void main() {
     });
   });
 
-  group('Software-no-enroll at the controller', () {
-    test('release law refuses: allowSoftwareEnroll false blocks software key',
+  group('Software-no-enroll at the controller (all build modes)', () {
+    test('software key refuses at generateKey — no debug allowance',
         () async {
       final auth = FakeAuthService(_acct);
       final store = InMemoryDeviceStore();
-      final ctl = _ctl(auth, store,
-          deviceKey: SoftwareDeviceKey(), allowSoftwareEnroll: false);
+      final ctl = _ctl(auth, store, deviceKey: SoftwareDeviceKey());
       await ctl.signIn();
       await ctl.generateKey();
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.state.message, contains('Software-no-enroll'));
-    });
-
-    test('debug law allows: software key proceeds at NONE tier', () async {
-      final auth = FakeAuthService(_acct);
-      final store = InMemoryDeviceStore();
-      final ctl = _ctl(auth, store,
-          deviceKey: SoftwareDeviceKey(), allowSoftwareEnroll: true);
-      await ctl.signIn();
-      await ctl.generateKey();
-      expect(ctl.state.phase, EnrollPhase.keyReady);
-      expect(ctl.state.pkHex, isNotEmpty);
     });
   });
 

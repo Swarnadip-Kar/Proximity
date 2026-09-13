@@ -35,6 +35,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:proximity_protocol/protocol.dart';
+
 import '../../core/enrollment.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
@@ -44,6 +46,13 @@ import '../../features/face_identity/pose_gate.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
 import 'setup_step_scope.dart';
+
+/// Session vitality gate: the platform MiniFASNet scorer, default-
+/// constructed like [EnrollmentController] does (same copy idiom — no main
+/// wiring needed). Widget tests override with [FakeLivenessGate] the same
+/// way they override the camera + pose providers.
+final enrollSessionLivenessProvider =
+    Provider<LivenessGate>((ref) => HeuristicLivenessGate());
 
 /// Session-camera seam (navigation/camera plumbing, NOT face math):
 /// production opens the real front camera once per session; widget tests
@@ -331,19 +340,16 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// The no-tap driver: take a still, read its pose ONCE, opportunistically
-  /// fill ANY matching unfilled bucket. Wasted stills (unreadable /
-  /// matching nothing unfilled / capture errors) are SILENT in-UI — BleLog
-  /// only — and feed the stale budget that eventually moves the dot on.
-  /// Guidance ([_target], dot, line) changes only inside fill/evict
-  /// setStates below, never on per-frame output. Stops on set-complete
-  /// (save runs once), failure, or dispose.
-  /// The no-tap driver: take a still, read its pose ONCE, opportunistically
-  /// fill ANY matching unfilled bucket. Wasted stills (capture errors,
-  /// unreadable, matching nothing unfilled) are SILENT in-UI — BleLog
-  /// only — and the loop simply takes the next still. No target, no
-  /// eviction: with no dot to steer, every still is either progress or a
-  /// quiet retry. Stops on set-complete (save runs once), failure, or
-  /// dispose — every await re-checks [_done]/[_finished].
+  /// fill ANY matching unfilled bucket — then score vitality on the
+  /// candidate BEFORE accepting it (same per-slot bar enrollFace enforces;
+  /// non-live candidates are discarded silently and the loop continues, so
+  /// the holder never taps Recapture mid-flow). Wasted stills (capture
+  /// errors, unreadable, matching nothing unfilled, failing vitality) are
+  /// SILENT in-UI — BleLog only — and the loop simply takes the next
+  /// still. No target, no eviction: with no dot to steer, every still is
+  /// either progress or a quiet retry. Stops on set-complete (save runs
+  /// once), failure, or dispose — every await re-checks
+  /// [_done]/[_finished].
   Future<void> _autoLoop() async {
     await Future.delayed(_initialBeat);
     while (!_done && !_finished && !_failed) {
@@ -369,15 +375,54 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         // nothing else on screen ever changes mid-flow (the prompt is
         // static, the beacon is paint-driven).
         if (slot != null) {
-          // The challenge this fill walks (logged before advancing, so
-          // the record names the acknowledged challenge, not the next).
-          final walked = _livenessPlan?.current;
-          setState(() {
-            _paths[faceEnrollSlots.indexOf(slot)] = still;
-          });
-          _livenessPlan?.acknowledgeFill();
-          EnrollLog.face('bucket $slot filled ($_doneCount/${_paths.length})'
-              '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
+          // Vitality pre-check (auto-magic, 2026-09-13): score liveness
+          // BEFORE accepting the bucket, with the SAME per-slot bar the
+          // terminal enrollFace enforces (Tl for centre,
+          // kEnrollSideLivenessThreshold for the diversity slots). A
+          // pose-good but non-live still is discarded silently (file
+          // deleted best-effort) and the loop simply takes the next still —
+          // the holder keeps following the prompts, never taps Recapture.
+          // Runs only on pose-accepted candidates (never on wasted stills)
+          // so the scorer cost lands on ~5 stills per session, not every
+          // beat. enrollFace re-scores everything at save anyway (defense
+          // in depth — the loop can only ever reject early, never accept).
+          final bar = slot == 'centre'
+              ? kLivenessThreshold
+              : kEnrollSideLivenessThreshold;
+          double vitality = -1;
+          try {
+            vitality = (await ref
+                    .read(enrollSessionLivenessProvider)
+                    .detectPassive(still))
+                .score;
+          } catch (e) {
+            EnrollLog.face(
+                'slot $slot vitality unreadable (silent, continuing): $e');
+          }
+          if (_done) return;
+          if (vitality < bar) {
+            EnrollLog.face('slot $slot vitality '
+                '${vitality < 0 ? 'unreadable' : vitality.toStringAsFixed(2)} '
+                '< ${bar.toStringAsFixed(2)} (silent, continuing)');
+            // Fire-and-forget (never awaited): async dart:io never
+            // completes under the widget-test FakeAsync clock, and an
+            // await here would stall the loop forever there; on-device it
+            // completes normally. Best-effort either way — a leftover
+            // temp still is harmless (cache dir, overwritten next run).
+            unawaited(File(still).delete().then((_) {}, onError: (_) {}));
+          } else {
+            // The challenge this fill walks (logged before advancing, so
+            // the record names the acknowledged challenge, not the next).
+            final walked = _livenessPlan?.current;
+            setState(() {
+              _paths[faceEnrollSlots.indexOf(slot)] = still;
+            });
+            _livenessPlan?.acknowledgeFill();
+            EnrollLog.face(
+                'bucket $slot filled ($_doneCount/${_paths.length})'
+                ' vitality=${vitality.toStringAsFixed(2)}'
+                '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
+          }
         } else {
           EnrollLog.face('still classified nowhere (silent, continuing)');
         }
@@ -537,9 +582,10 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     final old = _paths[i];
     _paths[i] = null;
     if (old != null && old.isNotEmpty) {
-      try {
-        await File(old).delete();
-      } catch (_) {}
+      // Fire-and-forget like the in-loop discard above (an awaited
+      // async delete never completes under the widget-test FakeAsync
+      // clock; on-device it completes normally either way).
+      unawaited(File(old).delete().then((_) {}, onError: (_) {}));
     }
     EnrollLog.face('slot recapture reopened: $slot (kept $_doneCount/'
         '${_paths.length} buckets)');

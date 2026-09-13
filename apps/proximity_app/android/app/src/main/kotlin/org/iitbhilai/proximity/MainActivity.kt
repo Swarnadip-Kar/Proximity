@@ -8,10 +8,15 @@ import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import java.security.MessageDigest
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity (not FlutterActivity): biometric-gated Keystore
+// signing (AttestedSecureKeys, userAuth-gated DKey ops at prove time)
+// drives an androidx BiometricPrompt, which requires a FragmentActivity
+// host — plain FlutterActivity crashes the prove with
+// KeyOperationError(key_operation_failed). Zero behavior change otherwise.
+class MainActivity : FlutterFragmentActivity() {
     companion object {
         private const val TAG = "ProximityRelease"
     }

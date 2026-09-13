@@ -68,6 +68,9 @@ Widget _captureHarness({required EnrollmentController ctl}) =>
         enrollSessionCameraProvider
             .overrideWithValue(FakeEnrollSessionCamera()),
         poseGateProvider.overrideWithValue(FakePoseGate()),
+        // Session vitality pre-check: scripted pass (scoring itself is
+        // pinned in enroll_guided_test + enroll_liveness_gate_test).
+        enrollSessionLivenessProvider.overrideWithValue(FakeLivenessGate()),
       ],
       child: MaterialApp(
         // App theme: the shared two-oval overlay reads ProximityColors.

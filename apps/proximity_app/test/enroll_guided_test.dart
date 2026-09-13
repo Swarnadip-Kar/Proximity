@@ -89,13 +89,19 @@ Future<EnrollmentController> _keyReady(
 Widget _captureHarness(
         {required EnrollmentController ctl,
         EnrollSessionCamera? camera,
-        PoseGate? gate}) =>
+        PoseGate? gate,
+        LivenessGate? sessionLiveness}) =>
     ProviderScope(
       overrides: [
         enrollmentControllerProvider.overrideWith((ref) => ctl),
         enrollSessionCameraProvider
             .overrideWithValue(camera ?? FakeEnrollSessionCamera()),
         poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
+        // Session vitality pre-check: scripted pass by default (the
+        // terminal enrollFace gate pins scoring itself); pass a low-score
+        // gate to prove non-live stills are discarded in-loop.
+        enrollSessionLivenessProvider.overrideWithValue(
+            sessionLiveness ?? FakeLivenessGate()),
       ],
       child: MaterialApp(
         // App theme: the shared two-oval overlay reads ProximityColors.
@@ -685,6 +691,38 @@ void main() {
       expect(camera.closeCount, 0);
       // One pose read per still, nothing else touched the gate.
       expect(gate.readCalls, hasLength(5));
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('vitality pre-check discards non-live stills in-loop',
+        (t) async {
+      // Auto-magic (2026-09-13): a pose-good but non-live still never
+      // fills its bucket — the loop discards it silently and continues,
+      // so the holder just keeps following the prompts (no Recapture tap).
+      // The terminal enrollFace gate stays the decider (pinned in
+      // enroll_liveness_gate_test); here the save must never run.
+      final camera = FakeEnrollSessionCamera();
+      final gate = FakePoseGate();
+      final ctl = await _keyReady();
+      await t.pumpWidget(_captureHarness(
+        ctl: ctl,
+        camera: camera,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(score: 0.31),
+      ));
+      await _openSession(t);
+      // Several beats of pose-accepted, vitality-rejected stills: no
+      // bucket fills, no save, no error — the session just continues.
+      for (var i = 0; i < 12; i++) {
+        await t.pump(const Duration(milliseconds: 300));
+      }
+      expect(find.text('Save enrollment'), findsNothing);
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(ctl.state.message, isEmpty);
+      expect(camera.captures, greaterThan(5));
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
       expect(t.takeException(), isNull);
     });
 

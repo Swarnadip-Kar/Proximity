@@ -50,6 +50,23 @@ export '../features/mark/mark_phase.dart' show StudentPhase;
 /// UDP discovery port (injectable so tests avoid clashing with a running app).
 final discoveryPortProvider = Provider<int>((_) => kDiscoveryPort);
 
+/// Hands-free retry decision for one inconclusive face verdict (pure):
+/// returns the delay before the next automatic scan, or null when the
+/// window is spent (caller falls back to the manual Scan button). The
+/// try-count cap is a backstop for clock jumps; the deadline is the real
+/// budget. Mismatch never reaches here (it burns an attempt by design).
+Duration? nextAutoFaceRetryDelay({
+  required int tries,
+  required int tryCap,
+  required Duration gap,
+  required DateTime now,
+  required DateTime deadline,
+}) {
+  if (tries > tryCap) return null;
+  if (deadline.difference(now) <= Duration.zero) return null;
+  return gap;
+}
+
 class StudentHomeScreen extends ConsumerStatefulWidget {
   const StudentHomeScreen({super.key});
 
@@ -140,8 +157,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   String _manualStatus = '';
   // Instant face retries used this join (4 mismatch sessions, then review).
   int _faceAttempts = 0;
-  // Automatic re-scans after unreadable verdicts (bounded; Cancel exits).
+  // Automatic re-scans after unreadable verdicts: time-boxed (10s window,
+  // ~1s between scans — the holder just keeps holding still, never taps
+  // retry), with a try-count backstop; Cancel/back exits via the teardown
+  // guards. Mismatch (readable wrong-face/spoof) never auto-retries — it
+  // burns an attempt and parks for review, so retries can't spend the
+  // attempt budget or hand an attacker free oracle queries.
   int _autoFaceTries = 0;
+  DateTime? _autoFaceDeadline;
+  static const _autoFaceWindow = Duration(seconds: 10);
+  static const _autoFaceGap = Duration(seconds: 1);
+  static const _autoFaceTryCap = 8;
   // Samsung-style auto-start guard: the scan fires once per faceCheck
   // entry (post-frame); the manual button stays as fallback/retry.
   bool _autoFaceFired = false;
@@ -1005,6 +1031,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       phase = StudentPhase.faceCheck;
       _faceAttempts = 0;
       _autoFaceTries = 0;
+      _autoFaceDeadline = null;
       faceNotice = '';
       if (profName != null) _roomProf = profName.trim();
       if (org != null) _roomOrg = org.trim();
@@ -1101,6 +1128,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
       _autoFaceTries = 0;
+      _autoFaceDeadline = null;
       faceNotice = '';
     });
     // First back press from here returns to the class list (entry held
@@ -1438,17 +1466,28 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _faceAttempts++;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
-        // No readable verdict (attempt kept): relaunch automatically a
-        // couple of times with a helpful prompt, then fall back to the
-        // manual Scan button. Cancel exits this loop by returning null.
+        // No readable verdict (attempt kept): keep re-scanning hands-free
+        // inside a 10s window (~1s apart) with a steady prompt, then fall
+        // back to the manual Scan button. Cancel/back exits via the
+        // teardown guards below; an account switch mid-gap never scans as
+        // the stale identity.
+        _autoFaceTries++;
+        final now = DateTime.now();
+        _autoFaceDeadline ??= now.add(_autoFaceWindow);
+        final gap = nextAutoFaceRetryDelay(
+          tries: _autoFaceTries,
+          tryCap: _autoFaceTryCap,
+          gap: _autoFaceGap,
+          now: now,
+          deadline: _autoFaceDeadline!,
+        );
         BleLog.log(ProxLogTags.face,
-            'face inconclusive — auto-retry ($_autoFaceTries of 2)');
-        if (_autoFaceTries < 2) {
-          _autoFaceTries++;
+            'face inconclusive — auto-retry ($_autoFaceTries)');
+        if (gap != null) {
           if (!mounted) return;
           setState(() => faceNotice =
-              'Scan unclear — retrying automatically… ($_autoFaceTries of 2)');
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+              'Scan unclear — hold still, retrying automatically…');
+          Future.delayed(gap, () {
             if (!mounted || phase != StudentPhase.faceCheck) return;
             final retryLinked = _readLinked();
             final retryAcct = _readAccount();
@@ -1460,9 +1499,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
             _scanFace(target, retryLinked);
           });
         } else {
+          _autoFaceDeadline = null;
           if (!mounted) return;
           setState(() => faceNotice =
-              'Could not read that scan — adjust light and try again.');
+              'Could not read that scan — adjust light and tap Scan to try again.');
         }
       case FaceMatch.staleTemplate:
         // FaceId predates the plugin pipeline: matching against it would

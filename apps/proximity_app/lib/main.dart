@@ -224,11 +224,12 @@ Future<void> main() async {
     }
   };
   // Trust stack (Tracks 2+3 L3 DI): mobile-only plugin face verifier +
-  // HW DKey (StrongBox→TEE / Secure Enclave via HwDeviceKey, ES256) in
-  // release/profile — the provider default (see deviceKeyProvider) — with
-  // the test-only SoftwareDeviceKey kept for debug only (constructor
-  // asserts kDebugMode + ensure() throws outside debug, so release can
-  // never silently enroll software; level NONE there never marks
+  // HW DKey (StrongBox→TEE / Secure Enclave via HwDeviceKey, ES256) in ALL
+  // build modes — the provider default (see deviceKeyProvider). The debug
+  // SoftwareDeviceKey allowance was removed 2026-09-13: debug enrolls like
+  // release, against real secure hardware (SoftwareDeviceKey stays
+  // unit-test-only — constructor asserts kDebugMode + ensure() throws
+  // outside debug). Level NONE never enrolls anywhere and never marks
   // (`device-none-requires-approval` → manual path — same
   // ticket/Sig_s/face/sighting checks). Desktop/web records builds get
   // the fail-closed stubs: every
@@ -237,16 +238,10 @@ Future<void> main() async {
   final DeviceKey deviceKey;
   if (canUseFace()) {
     faceVerifier = PluginFaceVerifier();
-    if (kDebugMode) {
-      assert(kDebugMode,
-          'SoftwareDeviceKey is test-only — production uses HwDeviceKey.');
-      deviceKey = SoftwareDeviceKey();
-    } else {
-      deviceKey = HwDeviceKey(
-        backend: AttestedSecureKeysBackend(),
-        sealStore: const FlutterSealStore(),
-      );
-    }
+    deviceKey = HwDeviceKey(
+      backend: AttestedSecureKeysBackend(),
+      sealStore: const FlutterSealStore(),
+    );
   } else {
     faceVerifier = const UnavailableFaceVerifier();
     deviceKey = const UnavailableDeviceKey();

@@ -36,7 +36,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter/foundation.dart'
-    show debugPrint, defaultTargetPlatform, kDebugMode;
+    show debugPrint, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
@@ -144,13 +144,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   final PoseGate? _poseGate;
   // Cloud device binding (null in unit tests → local-only behavior).
   final CloudSync? _cloud;
-  // Debug NONE-tier law (§5 debug-alone-never-blocks): debug builds wire
-  // SoftwareDeviceKey (main.dart) so flows stay exercisable without secure
-  // hardware; the claim carries attestationLevel NONE (rules-accepted) and
-  // marking stays manual-approval there. Release/profile keep the hard
-  // Software-no-enroll refusal. Injectable so tests pin both branches
-  // (unit tests run with kDebugMode true).
-  final bool _allowSoftwareEnroll;
+  // NONE-tier law: software device keys can NEVER enroll, in any build
+  // mode (the debug allowance was removed 2026-09-13 — debug enrolls like
+  // release, against real secure hardware; unit tests use FakeDeviceKey at
+  // FULL tier). A NONE tier at generate/upload refuses with
+  // Software-no-enroll, and NONE proofs never confirm at marking
+  // (`device-none-requires-approval` → manual path).
 
   /// The face verifier (shared with the live check for the ticket stamp).
   FaceVerifier get verifier => _verifier;
@@ -189,12 +188,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     CloudSync? cloud,
     LivenessGate? livenessGate,
     PoseGate? poseGate,
-    bool? allowSoftwareEnroll,
   })  : _auth = auth,
         _store = store,
         _verifier = verifier,
         _deviceKey = deviceKey,
-        _allowSoftwareEnroll = allowSoftwareEnroll ?? kDebugMode,
         // Platform gate by default (native MiniFASNet scorer, web
         // fail-closed stub — same copy idiom as RealStudentDriver) so the
         // claimed livenessVer is MEASURED on every enroll, never asserted.
@@ -455,17 +452,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     state = state.copyWith(roll: roll.trim());
   }
 
-  /// NONE-tier gate shared by key ceremony + upload: true (proceed) in
-  /// debug allowance, false (caller refuses with Software-no-enroll) in
-  /// release/profile. Logs loudly on allow so a debug NONE enrollment can
-  /// never be mistaken for hardware-backed trust.
-  bool _allowNoneTier(String step) {
-    if (!_allowSoftwareEnroll) return false;
-    BleLog.log('SEC',
-        'DEBUG software device key at $step — NONE tier, local testing only; release requires StrongBox/TEE');
-    return true;
-  }
-
   /// Step 2: generate Ed25519 keypair (SKey) + bind the HW device key
   /// (DKey) it seals to, embedding the M1-gap challenge
   /// `SHA256(email || installId || pkS)` at HW key creation. Software is
@@ -550,8 +536,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         BleLog.log('FACE', 'device key generate: bind refused: $e');
         return;
       }
-      if (_deviceKey.level == AttestationLevel.none &&
-          !_allowNoneTier('generate')) {
+      if (_deviceKey.level == AttestationLevel.none) {
         state = state.copyWith(
             phase: EnrollPhase.error,
             message:
@@ -908,8 +893,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       try {
         requireMobileFace();
         await _deviceKey.ensure();
-        if (_deviceKey.level == AttestationLevel.none &&
-            !_allowNoneTier('upload')) {
+        if (_deviceKey.level == AttestationLevel.none) {
           throw StateError(
               'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
         }

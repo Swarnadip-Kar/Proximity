@@ -155,11 +155,24 @@ class RoleResumeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Records-only builds (desktop/web) cannot mark as a student — face +
+    // radio marking is mobile-only. A previously-registered student role
+    // still HELD on such a device keeps its button visible (no layout
+    // churn, no role loss) but disabled, with the reason inline — tapping
+    // through would only land on fail-closed gates.
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (var i = 0; i < ordered.length; i++) ...[
+          if (ordered[i] == 'student' && !canUseFace())
+            const Padding(
+              padding: EdgeInsets.only(bottom: ProxSpacing.xs),
+              child: Text(
+                'Student marking needs the mobile app — this device is records + hosting only.',
+                textAlign: TextAlign.center,
+              ),
+            ),
           if (i == 0)
             ProxPrimaryButton(
               icon: Icon(ordered[i] == 'prof'
@@ -168,8 +181,10 @@ class RoleResumeSection extends StatelessWidget {
               label: Text(ordered[i] == 'prof'
                   ? 'Continue as Professor'
                   : 'Continue as Student'),
-              onPressed:
-                  busy ? null : () => onContinue(role, ordered[i]),
+              onPressed: busy ||
+                      (ordered[i] == 'student' && !canUseFace())
+                  ? null
+                  : () => onContinue(role, ordered[i]),
             )
           else
             ProxSecondaryButton(
@@ -179,8 +194,10 @@ class RoleResumeSection extends StatelessWidget {
               label: Text(ordered[i] == 'prof'
                   ? 'Continue as Professor'
                   : 'Continue as Student'),
-              onPressed:
-                  busy ? null : () => onContinue(role, ordered[i]),
+              onPressed: busy ||
+                      (ordered[i] == 'student' && !canUseFace())
+                  ? null
+                  : () => onContinue(role, ordered[i]),
               expanded: true,
             ),
           if (i == 0 && lastMode.isNotEmpty)

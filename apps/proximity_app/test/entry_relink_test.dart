@@ -12,6 +12,7 @@
 //     unset, and the call lands on student with linked set.
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,7 @@ import 'package:proximity_app/features/entry/entry_flow.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/setup/role_sections.dart';
 import 'package:proximity_app/mode.dart';
+import 'package:proximity_app/widgets/prox_buttons.dart';
 
 /// Cloud whose binding gate never answers (stalled network worse than
 /// offline: no error, just silence). Models the classroom blackhole that
@@ -375,6 +377,48 @@ void main() {
       await t.pump();
       expect(find.text('Contacting server…'), findsNothing);
       expect(find.text('Continue as Student'), findsOneWidget);
+    });
+
+    testWidgets('records-only disables student continue (role kept)',
+        (t) async {
+      // Widget tests run as Android (canUseFace true); simulate a desktop
+      // records-only build with a platform override. A previously
+      // registered student role keeps its button (no layout churn, no
+      // role loss) but disabled, with the mobile-app reason inline.
+      // Professor continue stays enabled on the same build.
+      final prev = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        await t.pumpWidget(MaterialApp(
+          theme: proxLightTheme(),
+          home: const Scaffold(
+            body: RoleResumeSection(
+              role: <String, String>{},
+              ordered: ['student', 'prof'],
+              lastMode: 'student',
+              busy: false,
+              onContinue: _noopContinue,
+            ),
+          ),
+        ));
+        await t.pump();
+        expect(find.text('Continue as Student'), findsOneWidget);
+        expect(find.text('Continue as Professor'), findsOneWidget);
+        expect(
+            find.textContaining('Student marking needs the mobile app'),
+            findsOneWidget);
+        // First in order ('student') renders primary-disabled; prof renders
+        // secondary-enabled (ordered[1] branch).
+        final studentBtn = t.widget<ProxPrimaryButton>(
+            find.widgetWithText(ProxPrimaryButton, 'Continue as Student'));
+        expect(studentBtn.onPressed, isNull);
+        final profSecondary = t.widget<ProxSecondaryButton>(
+            find.widgetWithText(
+                ProxSecondaryButton, 'Continue as Professor'));
+        expect(profSecondary.onPressed, isNotNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = prev;
+      }
     });
   });
 }
