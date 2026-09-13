@@ -393,12 +393,20 @@ service cloud.firestore {
         ((missingOrg(resource.data)) &&
          resource.data.profUid == request.auth.uid)
       );
+      // H4 bounds: roster fan-out capped (600) + per-string caps so one
+      // write cannot blow quota. Phishing vector (documented): gmail.com
+      // is a normal org — any Gmail can host a same-org session named like
+      // a real class; students must join via the professor's live BLE/TLS
+      // identity (Sig_p + pin), never by class name alone.
       allow create: if signedIn()
         && request.resource.data.profUid == request.auth.uid
         && request.resource.data.profEmail.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
         && request.resource.data.courseId is string
+        && request.resource.data.courseId.size() <= 128
         && request.resource.data.studentEmails is list
+        && request.resource.data.studentEmails.size() <= 600
         && request.resource.data.names is map
         && request.resource.data.rolls is map;
       // Session org immutable on update: the stamp survives every merge;
