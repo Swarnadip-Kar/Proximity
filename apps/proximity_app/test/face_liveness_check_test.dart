@@ -177,7 +177,8 @@ void main() {
   group('checkFaceAny best-of burst (max vitality decides)', () {
     test('one dip + one pass → pass on the winning still', () async {
       final verifier = FakeFaceVerifier(match: true, score: 0.85);
-      final live = _PathLivenessGate({'a.jpg': 0.80, 'b.jpg': 0.92});
+      // Dip sits in the near-miss band below Tl=0.70; winner passes.
+      final live = _PathLivenessGate({'a.jpg': 0.65, 'b.jpg': 0.92});
       final d = _driver(
           store: await _enrolledStore(),
           verifier: verifier,
@@ -210,7 +211,8 @@ void main() {
     test('max inside the near-miss band → inconclusive, no burn',
         () async {
       final verifier = FakeFaceVerifier(match: true, score: 0.85);
-      final live = _PathLivenessGate({'a.jpg': 0.80, 'b.jpg': 0.79});
+      // Tl=0.70, band 0.60-0.70: max inside retries, never burns.
+      final live = _PathLivenessGate({'a.jpg': 0.69, 'b.jpg': 0.65});
       final d = _driver(
           store: await _enrolledStore(),
           verifier: verifier,
