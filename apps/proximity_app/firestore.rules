@@ -412,6 +412,57 @@ service cloud.firestore {
         && resource.data.org == tokenOrg();
     }
 
+    // Professor lecture-key pins (anti-fake-professor, anybody-can-host):
+    // profDevices/{lowercased-email}: {email, uid, org, keys[{pkP, createdAtMillis}],
+    // updatedAtMillis} — one doc per Gmail holding up to 8 recent lecture
+    // public keys (Ed25519, 32B hex). Owner-only writes (id + email + uid all
+    // bound to the signing-in Gmail, so an attacker hosting as self cannot
+    // overwrite a victim's pin); same-org signed-in reads for students
+    // (exact get by email, never list — no bulk dump). Lecture keys are
+    // ephemeral per hosting today, so the list is capped and append-only;
+    // students pin on first online fetch and verify Sig_p against the pin
+    // offline (mismatch = fake, unknown = first-seen TOFU with banner).
+    function validProfKeys() {
+      return request.resource.data.keys().hasAll(['pubKeys']) &&
+        request.resource.data.pubKeys is list &&
+        request.resource.data.pubKeys.size() <= 8;
+    }
+    function validProfDoc() {
+      return request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.size() <= 256
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.uid.size() <= 128
+        && request.resource.data.updatedAtMillis is int
+        && request.resource.data.updatedAtMillis > 0
+        && validProfKeys();
+    }
+    match /profDevices/{id} {
+      // Exact get by email for pin fetch; missing doc reads as not-found
+      // (first hosting has no pin yet). Same-org only — cross-org pins deny.
+      allow get: if signedIn() && (resource == null ||
+        resource.data.org == tokenOrg());
+      allow list: if false;
+      allow create: if signedIn()
+        && id == tokenEmailLower()
+        && validProfDoc();
+      allow update: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && resource.data.org == tokenOrg()
+        && request.resource.data.org == tokenOrg()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validProfDoc();
+      // Owner may delete their own pin (re-key rotation cleanup).
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.uid == request.auth.uid;
+    }
+
     // §6 force-update floor + §5 integrity posture (2C, append-only):
     // world-readable version floor so stale builds self-block at online
     // gates without sign-in; nothing else opens (list/write deny).
