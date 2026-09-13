@@ -251,6 +251,7 @@ class FlutterSealStore implements HwSealStore {
       [this.storage = const FlutterSecureStorage(
         aOptions: AndroidOptions(),
         iOptions: IOSOptions(
+          synchronizable: false,
           accessibility:
               KeychainAccessibility.first_unlock_this_device,
         ),
@@ -286,6 +287,21 @@ class FlutterSealStore implements HwSealStore {
     await storage.delete(key: keyFor(alias));
   }
 }
+
+/// True when [e] reports OS-level key invalidation (biometric/credential
+/// set changed): Android `KeyPermanentlyInvalidatedException` / plugin
+/// `KeyInvalidatedError`, iOS repeated-auth-failure-after-change.
+/// Message-based so this file stays decoupled from plugin error classes.
+/// `UserNotAuthenticatedError` (cancelled/locked prompt — key intact,
+/// retry the prompt) never matches and keeps propagating for re-prompt.
+bool _isKeyInvalidated(Object e) =>
+    '$e'.toLowerCase().contains('invalidat');
+
+/// Maps an invalidation thrown by the backend/DEK store to the canonical
+/// clone/invalidation failure (fail-closed re-enroll); rethrows anything
+/// else untouched (notably user-auth cancellations).
+StateError _restoreDetected([String detail = '']) => StateError(
+    'restore detected — re-enroll${detail.isEmpty ? '' : ' ($detail)'}');
 
 /// HW-bound `DeviceKey` (P-256, non-exportable, ES256).
 ///
@@ -444,7 +460,16 @@ class HwDeviceKey implements DeviceKey {
       throw StateError(
           'Software-no-enroll: device key is not hardware-backed.');
     }
-    final sig = await _backend.sign(alias: alias, payload: data);
+    // Biometric/credential-set invalidation destroys the HW key
+    // (deliberate OS behavior): surface it as restore-detected re-enroll,
+    // never a raw plugin error. Auth cancellations propagate for re-prompt.
+    late final Uint8List sig;
+    try {
+      sig = await _backend.sign(alias: alias, payload: data);
+    } catch (e) {
+      if (_isKeyInvalidated(e)) throw _restoreDetected('key invalidated');
+      rethrow;
+    }
     if (sig.length != 64) {
       throw StateError(
           'HW sign failed: ES256 must be 64B raw R||S, got ${sig.length}.');
@@ -466,7 +491,13 @@ class HwDeviceKey implements DeviceKey {
       throw StateError(
           'Software-no-enroll: device key is not hardware-backed.');
     }
-    final exists = await _backend.containsKey(alias: alias);
+    late final bool exists;
+    try {
+      exists = await _backend.containsKey(alias: alias);
+    } catch (e) {
+      if (_isKeyInvalidated(e)) throw _restoreDetected('key invalidated');
+      rethrow;
+    }
     if (!exists) throw StateError('restore detected — re-enroll');
     var dek = await _sealStore.readDek(alias: alias);
     if (dek == null) {
@@ -482,12 +513,26 @@ class HwDeviceKey implements DeviceKey {
   @override
   Future<Uint8List> unseal(Uint8List sealed) async {
     requireMobileFace();
-    final exists = await _backend.containsKey(alias: alias);
+    late final bool exists;
+    try {
+      exists = await _backend.containsKey(alias: alias);
+    } catch (e) {
+      if (_isKeyInvalidated(e)) throw _restoreDetected('key invalidated');
+      rethrow;
+    }
     if (!exists) throw StateError('restore detected — re-enroll');
     if (_pkD == null || _level == AttestationLevel.none) {
       throw StateError('restore detected — re-enroll');
     }
-    final dek = await _sealStore.readDek(alias: alias);
+    // A DEK-store read failure fails closed the same way a missing DEK
+    // does (clone / wiped storage / keychain unavailable): re-enroll,
+    // never a raw fallback or raw platform error.
+    Uint8List? dek;
+    try {
+      dek = await _sealStore.readDek(alias: alias);
+    } catch (_) {
+      throw StateError('restore detected — re-enroll');
+    }
     if (dek == null) throw StateError('restore detected — re-enroll');
     return unsealWithDek(dek32: dek, sealed: sealed);
   }
@@ -504,6 +549,15 @@ class HwDeviceKey implements DeviceKey {
   @override
   Future<bool> heartbeat({DateTime? now}) async {
     if (_pkD == null || _level == AttestationLevel.none) return false;
+    // The HW key may have died under us (biometric/credential-set
+    // invalidation destroys it): never roll the window on a dead key —
+    // the next seal/unseal/sign fails closed to re-enroll instead.
+    try {
+      if (!await _backend.containsKey(alias: alias)) return false;
+    } catch (e) {
+      if (_isKeyInvalidated(e)) return false;
+      rethrow;
+    }
     _attestedUntil =
         ((now ?? DateTime.now()).toUtc()).add(kDeviceAttestedValidity);
     return true;
