@@ -112,14 +112,14 @@ most once per 30 days); manual attendance covers any gap.
    of devices), student (one enrolled device per Gmail), or both. The app
    opens on the last-used mode.
 3. Generate keys (dual-key, Tracks 2+3):
-   - `SKey` Ed25519 (the signing key), sealed to `DKey` (AES-GCM `PXK1`
-     envelope — ciphertext only at rest).
-    - `DKey` P-256: StrongBox→TEE / Secure Enclave on HW backends;
-      software/fake backends (level `none`: no tier claimed — live proofs
-      confirm via the flagged `device-none-fallback`). **Residual: the HW
-      keystore/Enclave backend and its enrollment-time material
-      persistence are deferred — production DKeys are software until it
-      lands (§13).**
+   - `SKey` Ed25519 (the signing key), sealed to `DKey` (AES-GCM `PXK2`
+     envelope, AAD-bound to email/installId/pkS/pkD — ciphertext only at
+     rest).
+    - `DKey` P-256: StrongBox→TEE / Secure Enclave via `HwDeviceKey`
+      (ES256, challenge-bound, level FULL/STD). Software/fake backends
+      are debug/test-only (level `none` — `Software-no-enroll` at the
+      controller, and NONE proofs never confirm); desktop/web get the
+      fail-closed stub — no-silicon devices cannot enroll, ever.
    - The install is the device identity: an app-install UUID in secure
      storage (clones/dual-apps get their own).
 4. Face enrollment on-device (§4). The plugin store is keyed by
@@ -311,14 +311,16 @@ enrollment, marking, and the SK-use stamp. Backend is the
   any plugin/model swap forces re-face via the stale-pipeline check
   (key kept). The host allowlists verifier versions; flapping across
   proves is flagged post-hoc.
-- Liveness: passive only, stated plainly — no blink/turn-head prompts,
-  no stills heuristics (tried and removed: sparse stills can't catch
-  200ms blinks and either false-reject or are trivially weak). The 5
-  pose-gated angles buy genuine-match robustness and raise the spoof
-  cost (a single frontal print no longer suffices — the attacker needs
-  five pose-consistent views), but they are NOT photo-spoof immunity: a
-  good-quality print or replay held at each asked angle CAN still pass
-  the passive matcher. What stands behind that residual is the
+- Liveness: passive classifier PLUS an active challenge walk at
+  enroll (shuffled blink/smile prompts — order unpredictability is the
+  anti-replay property) gating the save, and per-still passive scoring
+  of all 5 pose-gated enrollment angles (C4: a single live centre plus
+  printed angles cannot enroll). The 5 angles buy genuine-match
+  robustness and raise the spoof cost (a single frontal print no longer
+  suffices — the attacker needs five pose-consistent live views), but
+  they are NOT photo-spoof immunity: a good-quality print or replay
+  held at each asked angle CAN still pass the matcher. What stands
+  behind that residual is the
   4-mismatch-session budget → needs-review → professor manual
   override, the 5-minute holder-freshness gate, and ticket binding
   (a replayed score can't cross tickets). If photo fraud appears in the
