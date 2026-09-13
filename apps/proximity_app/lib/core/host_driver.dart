@@ -418,41 +418,59 @@ class RealHostDriver implements HostDriver {
     if (stored != null && stored.chainDERHex.isNotEmpty) {
       unawaited(logChainRevocationReview(stored.chainDERHex, 'host'));
     }
+    // H10 sealed-only migration (security §2 F1): the raw `seedHex'
+    // reader is deleted — hosting NEVER derives the lecture identity from
+    // a raw seed. The lecture key is always ephemeral (never uploaded;
+    // students verify per-window Cert_p + Sig_p fresh each session), and
+    // enrollment truth lives in the HW-sealed envelope (`sealedKeyHex` +
+    // `pkDHex` + `chainDERHex`, opened only via the HW DeviceKey on the
+    // student path — never opened here). On first sealed open, a legacy
+    // doc carrying BOTH sealed + raw is wiped to sealed-only best-effort
+    // (raw-only legacy docs are left untouched — readable, never
+    // re-written — since wiping them would destroy the only copy).
+    if (stored != null &&
+        stored.sealedKeyHex.trim().isNotEmpty &&
+        stored.seedHex.trim().isNotEmpty) {
+      try {
+        await _store.writeEnrollment(StoredEnrollment(
+          email: stored.email,
+          name: stored.name,
+          roll: stored.roll,
+          // seedHex omitted → '' (sealed-only).
+          pkHex: stored.pkHex,
+          sealedKeyHex: stored.sealedKeyHex,
+          chainDERHex: List<String>.of(stored.chainDERHex),
+          faceId: stored.faceId,
+          enrolledAt: stored.enrolledAt,
+          verifierVer: stored.verifierVer,
+          org: stored.org,
+          pkDHex: stored.pkDHex,
+          attestationLevel: stored.attestationLevel,
+          attestedAt: stored.attestedAt,
+          attestedUntil: stored.attestedUntil,
+          lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+        ));
+      } catch (_) {
+        // Best-effort: hosting continues ephemeral regardless.
+      }
+    }
     String manual = '';
     try {
       manual = await _store.readHostName();
     } catch (_) {}
-    if (stored == null || stored.seedHex.trim().isEmpty) {
-      // No device key (never enrolled) or sealed-only enrollment
-      // (security §2: raw seedHex is never written anymore): ephemeral
-      // lecture identity (never uploaded). Students verify the per-window
-      // Cert_p + Sig_p fresh each session, so a rotating professor key is
-      // functionally identical here — and unsealing the SKey would need a
-      // biometric HW gate on the hosting hot path.
-      final kp = ProxCrypto.generateEdKeypair();
-      _profKeys = kp;
+    // Ephemeral lecture identity, always (H10): no raw-seed branch, no
+    // sealed open on the hosting hot path (unsealing would need a
+    // biometric HW gate per Take open). Students verify the per-window
+    // Cert_p + Sig_p fresh each session, so a rotating professor key is
+    // functionally identical here.
+    final kp = ProxCrypto.generateEdKeypair();
+    _profKeys = kp;
+    try {
+      _profName = manual.isNotEmpty
+          ? manual
+          : (stored?.name ?? manual);
+    } catch (_) {
       _profName = manual;
-    } else {
-      // Legacy raw-seed doc (pre-sealed-only installs): derive the lecture
-      // identity ephemerally. Corrupt hex falls back to ephemeral (never a
-      // hosting crash); the transient seed copy is zeroed after use so it
-      // never outlives this block on the heap.
-      // TODO(sec-keys): migrate legacy seedHex docs to the sealed DEK
-      // envelope (sealedKeyHex + pkDHex + chainDERHex via HwDeviceKey seal);
-      // this ephemeral fallback is delete-on-read migration cover only —
-      // do NOT expand raw-seed usage (no new readers/writers, no raw persist).
-      Uint8List? seed;
-      try {
-        seed = hexDecode(stored.seedHex);
-        final sk = ed.newKeyFromSeed(seed);
-        _profKeys = ed.KeyPair(sk, ed.public(sk));
-      } catch (_) {
-        final kp = ProxCrypto.generateEdKeypair();
-        _profKeys = kp;
-      } finally {
-        seed?.fillRange(0, seed.length, 0);
-      }
-      _profName = manual.isNotEmpty ? manual : stored.name;
     }
     _classLabel = classLabel;
     _sessionId = randBytes(kSessionIdBytes);
