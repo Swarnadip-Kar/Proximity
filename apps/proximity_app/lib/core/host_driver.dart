@@ -420,9 +420,21 @@ class RealHostDriver implements HostDriver {
       _profKeys = kp;
       _profName = manual;
     } else {
-      final seed = hexDecode(stored.seedHex);
-      final sk = ed.newKeyFromSeed(seed);
-      _profKeys = ed.KeyPair(sk, ed.public(sk));
+      // Legacy raw-seed doc (pre-sealed-only installs): derive the lecture
+      // identity ephemerally. Corrupt hex falls back to ephemeral (never a
+      // hosting crash); the transient seed copy is zeroed after use so it
+      // never outlives this block on the heap.
+      Uint8List? seed;
+      try {
+        seed = hexDecode(stored.seedHex);
+        final sk = ed.newKeyFromSeed(seed);
+        _profKeys = ed.KeyPair(sk, ed.public(sk));
+      } catch (_) {
+        final kp = ProxCrypto.generateEdKeypair();
+        _profKeys = kp;
+      } finally {
+        seed?.fillRange(0, seed.length, 0);
+      }
       _profName = manual.isNotEmpty ? manual : stored.name;
     }
     _classLabel = classLabel;
