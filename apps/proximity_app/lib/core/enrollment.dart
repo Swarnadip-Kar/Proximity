@@ -457,6 +457,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
         return;
       }
+      // Re-enroll purge: the new HW key already replaced the old under the
+      // same alias (the plugin deletes first — Android deleteEntry, iOS
+      // deleteBlob), the SKey below replaces `_keys`, and the sealed doc is
+      // overwritten at upload. Drop the previous gallery template for this
+      // faceId too, so an aborted re-enroll never leaves a stale template
+      // behind. Best-effort (a missing entry is a no-op), after the bind
+      // so a bind failure keeps the old working set intact.
+      try {
+        await _verifier.remove(
+            faceIdOf(acct.email.toLowerCase(), installId));
+      } catch (_) {}
       _keys = kp;
       _faceId = null;
       _restoredRoll = null;

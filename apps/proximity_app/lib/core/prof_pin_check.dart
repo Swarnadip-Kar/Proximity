@@ -23,10 +23,16 @@ class ProfPinCheck {
   final ProfPinVerdict verdict;
   final String profEmail;
   final String presentedPkPHex;
+
+  /// True only when a live remote fetch returned a non-empty pin list for
+  /// this verdict (drives the `Verified · live` badge — a cache-only
+  /// verdict while offline must never claim a live fetch).
+  final bool liveRefreshed;
   const ProfPinCheck(
       {required this.verdict,
       required this.profEmail,
-      required this.presentedPkPHex});
+      required this.presentedPkPHex,
+      this.liveRefreshed = false});
 }
 
 /// Pure cache read: cached pin hexes for [profEmailLower] from raw store rows.
@@ -62,6 +68,7 @@ Future<ProfPinCheck> checkProfPin({
   var hasCache = pinned.isNotEmpty;
   // Best-effort refresh when online: a fresh pin overrides the cache for
   // the verdict and rewrites the cache for next class.
+  var liveRefreshed = false;
   if (fetchRemote != null) {
     try {
       final fresh =
@@ -70,6 +77,7 @@ Future<ProfPinCheck> checkProfPin({
       if (freshHexes.isNotEmpty) {
         pinned = freshHexes;
         hasCache = true;
+        liveRefreshed = true;
         try {
           await store.writeProfPin(email, fresh);
         } catch (_) {}
@@ -97,5 +105,8 @@ Future<ProfPinCheck> checkProfPin({
     } catch (_) {}
   }
   return ProfPinCheck(
-      verdict: verdict, profEmail: email, presentedPkPHex: presented);
+      verdict: verdict,
+      profEmail: email,
+      presentedPkPHex: presented,
+      liveRefreshed: liveRefreshed);
 }

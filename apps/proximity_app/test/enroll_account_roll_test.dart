@@ -132,6 +132,36 @@ void main() {
       expect(await store.readEnrollment(), isNull);
     });
 
+    test('re-enroll purges the previous gallery template (replace, not pile)',
+        () async {
+      // Old keys purge on re-enroll: the HW key replaces under the same
+      // alias (plugin deletes first), the SKey swaps in memory + sealed doc
+      // overwrites at upload, and generateKey drops the previous gallery
+      // template so a stale face never survives a key rotation.
+      final auth = FakeAuthService(_a);
+      final store = InMemoryDeviceStore();
+      final verifier = FakeFaceVerifier();
+      final ctl = EnrollmentController(
+        auth: auth,
+        store: store,
+        verifier: verifier,
+        deviceKey: FakeDeviceKey(),
+        livenessGate: FakeLivenessGate(),
+      );
+      await ctl.signIn();
+      ctl.setRoll('A-ROLL');
+      await ctl.generateKey();
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      final installId = await getOrCreateInstallId(store);
+      final faceId = faceIdOf('a@gmail.com', installId);
+      expect(verifier.calls, contains('remove:$faceId'));
+      // Second rotation purges again (idempotent, never piles templates).
+      verifier.calls.clear();
+      await ctl.generateKey();
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(verifier.calls, contains('remove:$faceId'));
+    });
+
     test('sign-out clears the whole draft', () async {
       final auth = FakeAuthService(_a);
       final store = InMemoryDeviceStore();

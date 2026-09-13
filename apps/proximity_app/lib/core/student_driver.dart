@@ -1294,7 +1294,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
             presentedPkPHex: '',
           );
         }
-        final liveFetch = profKeyFetcher != null;
+        // Honest badge source: only a verdict backed by a live refresh
+        // claims `live` — a cache-only verdict while offline renders
+        // plain `Verified`, never `Verified · live`.
+        final liveFetch = pin.liveRefreshed;
         if (pin.verdict == ProfPinVerdict.mismatch) {
           BleLog.log('SEC',
               'prof pin MISMATCH ($profEmailForPin) — fake class? no proof sent');

@@ -112,6 +112,7 @@ void main() {
         fetchRemote: cloud.fetchProfKeys,
       );
       expect(check.verdict, ProfPinVerdict.known);
+      expect(check.liveRefreshed, isTrue);
       expect(profPinHexesFromRows(await store.readProfPin('prof@x.in')),
           contains(_pkHex(keys)));
     });
@@ -135,6 +136,23 @@ void main() {
         fetchRemote: (_) async => throw StateError('offline'),
       );
       expect(check.verdict, ProfPinVerdict.known);
+      // Cache-only while offline must never claim a live fetch.
+      expect(check.liveRefreshed, isFalse);
+    });
+
+    test('first-sight offline never claims live (unverified + queued)',
+        () async {
+      final store = InMemoryDeviceStore();
+      final keys = ProxCrypto.generateEdKeypair();
+      final desc = _descriptor(
+          profKeys: keys, profEmail: 'newprof@x.in');
+      final check = await checkProfPin(
+        desc: desc,
+        store: store,
+        fetchRemote: (_) async => throw StateError('offline'),
+      );
+      expect(check.verdict, ProfPinVerdict.unknown);
+      expect(check.liveRefreshed, isFalse);
     });
 
     test('pending queue round-trips (offline first-seen auto-verifies)',
