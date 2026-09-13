@@ -145,6 +145,25 @@ void main() {
       expect(win.allow('1.2.3.4', t0), isFalse);
     });
 
+    test('rate limiter memory is bounded (evict oldest, prune empties)', () {
+      final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
+      final lim = RateLimiter(maxHits: 40, window: const Duration(seconds: 10));
+      for (var i = 0; i < RateLimiter.maxKeys + 100; i++) {
+        expect(lim.allow('10.0.0.$i', t0), isTrue);
+      }
+      expect(lim.keyCount, RateLimiter.maxKeys);
+      // The earliest buckets were evicted: re-admitted as fresh.
+      expect(lim.allow('10.0.0.0', t0), isTrue);
+      expect(lim.keyCount, RateLimiter.maxKeys);
+      // Expired buckets never linger: after the window, a denied-then-
+      // expired key re-admits without growing the map.
+      final small = RateLimiter(maxHits: 1, window: const Duration(seconds: 10));
+      expect(small.allow('a', t0), isTrue);
+      expect(small.allow('a', t0.add(const Duration(seconds: 1))), isFalse);
+      expect(small.allow('a', t0.add(const Duration(seconds: 11))), isTrue);
+      expect(small.keyCount, 1);
+    });
+
     test('CSV export + detached sig verifies; tamper fails', () async {
       final prof = ProxCrypto.generateEdKeypair();
       final csv = buildAttendanceCsv(

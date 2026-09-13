@@ -38,16 +38,46 @@ int decisionCode(ProveDecision d) => switch (d) {
 class RateLimiter {
   final int maxHits;
   final Duration window;
+
+  /// Memory bound (audit M5 leftover): rotating-source flooding must not
+  /// grow [_hits] without limit on the professor's phone. Past [maxKeys]
+  /// keys the oldest-inserted buckets are evicted (maps preserve insertion
+  /// order); 4096 keys of small hit lists is bounded kilobytes, while a
+  /// real classroom peaks at hundreds of IPs/IDs. Single-host and
+  /// restart-reset limits stay as documented — this bounds RAM, not hosts.
+  static const int maxKeys = 4096;
   final Map<String, List<DateTime>> _hits = {};
 
   RateLimiter({required this.maxHits, required this.window});
+
+  /// Live bucket count (test seam for the memory bound).
+  int get keyCount => _hits.length;
 
   bool allow(String ip, [DateTime? now]) {
     final n = (now ?? DateTime.now()).toUtc();
     final list = _hits.putIfAbsent(ip, () => []);
     list.removeWhere((t) => n.difference(t) > window);
-    if (list.length >= maxHits) return false;
+    if (list.length >= maxHits) {
+      // Prune empty buckets so expired keys never linger as entries.
+      if (list.isEmpty) _hits.remove(ip);
+      return false;
+    }
     list.add(n);
+    if (_hits.length > maxKeys) {
+      // Evict oldest-inserted buckets back to the bound; never the bucket
+      // just touched (its hit was already admitted above).
+      var drop = _hits.length - maxKeys;
+      final evict = <String>[];
+      for (final k in _hits.keys) {
+        if (drop <= 0) break;
+        if (k == ip) continue;
+        evict.add(k);
+        drop--;
+      }
+      for (final k in evict) {
+        _hits.remove(k);
+      }
+    }
     return true;
   }
 }
