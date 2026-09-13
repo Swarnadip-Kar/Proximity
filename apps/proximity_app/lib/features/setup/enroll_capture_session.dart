@@ -242,12 +242,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// open): blink+smile in per-session Fisher-Yates shuffled order
   /// ([EnrollLivenessPlan.fresh] with Random.secure — offline,
   /// unpredictable, the anti-replay property). Each newly accepted bucket
-  /// acknowledges the current challenge (time-separated, pose-validated
-  /// captures). Presence/order record only — the save gate stays the 5
-  /// validated buckets + the passive centre-still classifier in
-  /// `enrollFace` (the plan never passes or fails a holder by itself;
-  /// see the honesty note on [EnrollLivenessPlan]). Null until the
-  /// session camera opens.
+  /// calls [EnrollLivenessPlan.acknowledgeFill] for the current challenge
+  /// (time-separated, pose-validated captures). Presence/order record
+  /// only — NOT a measured blink/smile classifier (no eye/smile detector
+  /// in the stills path; sparse stills cannot catch 200ms blinks), and the
+  /// save decider stays the 5 validated buckets + the passive centre-slot
+  /// still classifier in `enrollFace` (the plan never passes or fails a
+  /// holder by itself; see the honesty note on [EnrollLivenessPlan]).
+  /// Marking stays passive-only (single hold-still, no prompts — see
+  /// liveness_gate.dart). Null until the session camera opens.
   EnrollLivenessPlan? _livenessPlan;
 
   int get _doneCount => _paths.where((p) => p != null).length;
