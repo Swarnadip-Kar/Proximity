@@ -38,6 +38,7 @@ import '../../core/enrollment.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../features/face_identity/face_verifier.dart';
+import '../../features/face_identity/liveness_gate.dart';
 import '../../features/face_identity/pose_gate.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
@@ -237,6 +238,18 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   bool _cancelled = false;
   bool get _done => _cancelled || !mounted;
 
+  /// Security §4 active-challenge walk for this session (one plan per
+  /// open): blink+smile in per-session Fisher-Yates shuffled order
+  /// ([EnrollLivenessPlan.fresh] with Random.secure — offline,
+  /// unpredictable, the anti-replay property). Each newly accepted bucket
+  /// acknowledges the current challenge (time-separated, pose-validated
+  /// captures). Presence/order record only — the save gate stays the 5
+  /// validated buckets + the passive centre-still classifier in
+  /// `enrollFace` (the plan never passes or fails a holder by itself;
+  /// see the honesty note on [EnrollLivenessPlan]). Null until the
+  /// session camera opens.
+  EnrollLivenessPlan? _livenessPlan;
+
   int get _doneCount => _paths.where((p) => p != null).length;
   Set<String> get _filled => {
         for (var i = 0; i < _paths.length; i++)
@@ -276,6 +289,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
     setState(() => _opening = false);
     EnrollLog.face('session camera open — continuous to completion');
+    // Fresh active-challenge order per session (security §4): shuffled
+    // before the first still, so no pre-recorded sequence can match it.
+    _livenessPlan = EnrollLivenessPlan.fresh();
+    EnrollLog.face(
+        'liveness walk: ${_livenessPlan!.order.map((a) => a.name).join(' → ')}');
     _startLoop();
   }
 
@@ -347,10 +365,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         // nothing else on screen ever changes mid-flow (the prompt is
         // static, the beacon is paint-driven).
         if (slot != null) {
+          // The challenge this fill walks (logged before advancing, so
+          // the record names the acknowledged challenge, not the next).
+          final walked = _livenessPlan?.current;
           setState(() {
             _paths[faceEnrollSlots.indexOf(slot)] = still;
           });
-          EnrollLog.face('bucket $slot filled ($_doneCount/${_paths.length})');
+          _livenessPlan?.acknowledgeFill();
+          EnrollLog.face('bucket $slot filled ($_doneCount/${_paths.length})'
+              '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
         } else {
           EnrollLog.face('still classified nowhere (silent, continuing)');
         }
@@ -457,6 +480,17 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
 
   /// Terminal-write busy flag (disables the Try-again button).
   bool get isSaving => _saving;
+
+  /// Current active-liveness challenge for this session (null when the
+  /// walk is complete or the session has not opened yet). Render slot for
+  /// the future visible challenge cue — the overlay prompt copy stays
+  /// frozen (out of scope), so nothing renders this yet; the walk is
+  /// enforced driver-side regardless.
+  LivenessAction? get currentLivenessChallenge => _livenessPlan?.current;
+
+  /// True once both shuffled challenges have been walked (presence/order
+  /// record — not a vitality verdict; see [EnrollLivenessPlan]).
+  bool get livenessChallengesDone => _livenessPlan?.isComplete ?? false;
 
   /// Manual "Try again" re-runs the terminal write without touching the
   /// accepted stills (forwards to [_saveAll]).

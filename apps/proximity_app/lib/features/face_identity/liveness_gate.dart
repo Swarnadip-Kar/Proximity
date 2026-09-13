@@ -8,11 +8,22 @@
 // across tickets fails as bad-sig/liveness-unbound, never a silent pass).
 //
 // Flows (spec §4):
-//   enroll  = ACTIVE blink+smile (Fisher-Yates shuffled via
-//             [shuffledActiveChallenges], offline) + PASSIVE centre-still
-//             ([detectPassive] on the centre capture).
+//   enroll  = ACTIVE blink+smile walked in per-session Fisher-Yates
+//             shuffled order ([EnrollLivenessPlan], offline — the order is
+//             unpredictable, so a pre-recorded clip cannot match it) +
+//             PASSIVE centre-still ([detectPassive] on the centre capture,
+//             fail-closed, the DECIDER).
 //   marking = PASSIVE only on the single check still (~1s budget, no
 //             prompts — the holder just holds still).
+//
+// Honesty note on the active walk: each newly accepted pose bucket
+// acknowledges the current challenge (time-separated, pose-validated
+// captures — sustained live presence across the walked order). This is
+// NOT measured blink/smile detection: the stills path has no eye/smile
+// classifier, and sparse stills cannot catch 200ms blinks (see
+// PROXIMITY_DESIGN.md §4 — stills heuristics were tried and removed).
+// The passive MiniFASNetV2 centre-still gate above remains the enroll
+// decider; the walk binds presence + order, never a vitality verdict.
 //
 // Backend: real passive MiniFASNetV2 classifier (sec-liveness PRIMARY
 // rung, audit 2026-09-12 C4 fix). The vendored weights are the
@@ -171,6 +182,50 @@ abstract class LivenessGate {
   Future<LivenessResult> detectPassive(String imagePath);
 }
 
+/// Per-session active-challenge walk for enrollment (security §4, pure,
+/// unit-tested, offline). One plan per capture session: the blink+smile
+/// order is [shuffledActiveChallenges] (Fisher-Yates — unpredictable per
+/// session, the anti-replay property), and each newly accepted pose
+/// bucket acknowledges the current challenge, binding sustained live
+/// presence across the walked order (fills arrive on ~600ms beats, so
+/// consecutive acknowledgments are time-separated captures, never one
+/// frozen frame). This is an order/presence record, NOT a vitality
+/// verdict: completion is not measured blink/smile detection (no
+/// eye/smile classifier in the stills path; sparse stills cannot catch
+/// 200ms blinks), and the save gate stays the passive centre-still
+/// classifier + the 5 pose-validated buckets — the plan never passes or
+/// fails a holder by itself.
+class EnrollLivenessPlan {
+  /// Shuffled walk order for this session ([LivenessAction.blink] +
+  /// [LivenessAction.smile] in unpredictable order).
+  final List<LivenessAction> order;
+  int _acknowledged = 0;
+
+  EnrollLivenessPlan._(this.order);
+
+  /// Fresh per-session walk. A seeded [Random] drives deterministic unit
+  /// tests; production passes none (Random.secure via
+  /// [shuffledActiveChallenges]).
+  factory EnrollLivenessPlan.fresh({Random? rng}) =>
+      EnrollLivenessPlan._(shuffledActiveChallenges(rng: rng));
+
+  /// Next uncompleted challenge, null once the walk is complete.
+  LivenessAction? get current =>
+      _acknowledged < order.length ? order[_acknowledged] : null;
+
+  /// Challenges acknowledged so far (0..2).
+  int get acknowledged => _acknowledged;
+
+  /// True once both challenges have been walked.
+  bool get isComplete => _acknowledged >= order.length;
+
+  /// Acknowledges the current challenge (called once per newly accepted
+  /// bucket fill). No-op once complete — extra fills never over-advance.
+  void acknowledgeFill() {
+    if (!isComplete) _acknowledged++;
+  }
+}
+
 /// Test-only fake (same role FakeFaceVerifier plays): scripted score/ver,
 /// records calls, optional fail-closed throw. Never shipped (DI wires the
 /// platform gate / stub).
@@ -198,13 +253,15 @@ class FakeLivenessGate implements LivenessGate {
   }
 }
 
-/// DI seam: production wires [HeuristicLivenessGate] (resolving to the web
-/// fail-closed stub on records builds via the conditional export above —
-/// same pattern as faceVerifierProvider); tests override with
-/// [FakeLivenessGate]. RealStudentDriver defaults to the platform gate so
-/// main.dart needs no new override (2C-owned file, untouched). The class
-/// keeps its historical name for that shared wiring — the scorer inside is
-/// the MiniFASNetV2 TFLite model above, not a heuristic.
+/// DI seam: override with the platform gate ([HeuristicLivenessGate],
+/// resolving to the web fail-closed stub on records builds via the
+/// conditional export above — same pattern as faceVerifierProvider) or
+/// with [FakeLivenessGate] in tests. [RealStudentDriver] and
+/// [EnrollmentController] default-construct the platform gate themselves
+/// (same copy idiom), so production never reads this provider without an
+/// override — it exists for widget tests and future main wiring. The
+/// gate class keeps its historical name for that shared wiring — the
+/// scorer inside is the MiniFASNetV2 TFLite model above, not a heuristic.
 final livenessGateProvider = Provider<LivenessGate>((ref) {
   throw UnimplementedError('Override in main / tests');
 });

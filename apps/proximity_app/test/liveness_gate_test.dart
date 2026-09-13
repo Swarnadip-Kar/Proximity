@@ -217,6 +217,49 @@ void main() {
     });
   });
 
+  group('EnrollLivenessPlan (per-session active walk)', () {
+    test('fresh plan is a permutation of blink+smile, starting unacked',
+        () {
+      for (var seed = 0; seed < 20; seed++) {
+        final plan = EnrollLivenessPlan.fresh(rng: Random(seed));
+        expect(plan.order, hasLength(2));
+        expect(plan.order.toSet(),
+            {LivenessAction.blink, LivenessAction.smile});
+        expect(plan.current, plan.order.first);
+        expect(plan.acknowledged, 0);
+        expect(plan.isComplete, isFalse);
+      }
+    });
+
+    test('acknowledgeFill walks the shuffled order, then no-ops', () {
+      final plan = EnrollLivenessPlan.fresh(rng: Random(3));
+      final first = plan.current!;
+      plan.acknowledgeFill();
+      expect(plan.acknowledged, 1);
+      expect(plan.isComplete, isFalse);
+      // Advanced to the OTHER challenge (a 2-walk has no repeats).
+      expect(plan.current, isNot(first));
+      plan.acknowledgeFill();
+      expect(plan.acknowledged, 2);
+      expect(plan.isComplete, isTrue);
+      expect(plan.current, isNull);
+      // Extra fills never over-advance (no wraparound, no third state).
+      plan.acknowledgeFill();
+      expect(plan.acknowledged, 2);
+      expect(plan.isComplete, isTrue);
+      expect(plan.current, isNull);
+    });
+
+    test('order varies across sessions (anti-replay property)', () {
+      final orders = <String>{
+        for (var seed = 0; seed < 20; seed++)
+          EnrollLivenessPlan.fresh(rng: Random(seed)).order.join(','),
+      };
+      // 2! = 2 possible orders; a real shuffle hits both over 20 seeds.
+      expect(orders, hasLength(2));
+    });
+  });
+
   group('DI seam', () {
     test('livenessGateProvider throws without override', () {
       final container = ProviderContainer();
