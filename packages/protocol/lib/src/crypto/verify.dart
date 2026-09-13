@@ -183,30 +183,19 @@ class VerifyOutcome {
 ///   livenessScore/livenessVer + pkD) or [requireBoundTicket] is true (the
 ///   professor server always sets it) — Sig_s is verified over the extended
 ///   preimage, the verifierVer allowlist + faceValid window apply, the
-///   liveness gate (`>= kLivenessThreshold` + liveness allowlist) applies,
-///   device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+banner),
-///   and attestation anomaly flags ride on the outcome. Legacy and
-///   pre-liveness tickets fail closed here once [requireLiveness] flips
-///   (`face-unbound` / `unknown-verifier` / `liveness-unbound` /
-///   `unknown-liveness-verifier` / `liveness-below-threshold`), never
-///   auto-present. During migration ([requireLiveness] false) face-bound
-///   proofs without liveness still confirm (no liveness claimed).
-/// - bound with level NONE (explicit fallback — HW keys don't ship, so
-///   production `SoftwareDeviceKey` is always NONE): C3 fail-closed by
-///   default — returns `device-none-requires-approval` (never confirms)
-///   unless the caller explicitly passes [allowNoneFallback]: true (server
-///   test compat / documented deployment allowance). With the flag, the
-///   ticket-bound Sig_s, face threshold/window, allowlists (face +
-///   liveness), liveness threshold and sighting checks all still apply, but
-///   no device tier is claimed and `dSig` is not gated. Confirms with a
-///   `device-none-fallback` flag (logged, never silent). Tampered
-///   ticket/pkD/liveness bindings still fail as `bad-sig`; FULL/STD/expiry
-///   semantics unchanged.
-/// - legacy (unbound): C3 migration bypass closed — when [requireLiveness]
-///   is true a legacy proof (liveness fields absent 0.0/'') fails closed as
-///   `liveness-unbound` unless the caller explicitly passes [legacyAllow]:
-///   true (mixed-fleet tests). With [requireLiveness] false the legacy
-///   confirm path is unchanged.
+///   liveness gate (`>= kLivenessThreshold` + liveness allowlist) ALWAYS
+///   applies, device-proof tiers gate (FULL/STD→confirmed, STALE→confirmed+
+///   banner), and attestation anomaly flags ride on the outcome.
+///   Pre-liveness tickets fail closed (`liveness-unbound`), never
+///   auto-present.
+/// - bound with level NONE (no hardware tier claimed): NEVER confirms —
+///   returns `device-none-requires-approval`, routing the proof to the
+///   manual path instead of silently marking. Tampered ticket/pkD/liveness
+///   bindings still fail as `bad-sig`; FULL/STD/expiry semantics unchanged.
+/// - legacy (unbound): NEVER confirms — fails closed as `liveness-unbound`.
+///   There is no migration accept, no opt-in flag: old builds are floored
+///   by the ForceUpdate barrier (min_version + force:true) before they
+///   can prove.
 VerifyOutcome verifyProve({
   required VerifyRequest req,
   required Uint8List expectedCj,
@@ -218,29 +207,6 @@ VerifyOutcome verifyProve({
   required bool singleUseOk, // (ID,j) unseen
   DateTime? nowOverride,
   bool requireBoundTicket = false,
-  // Security §4 migration grace (PROXIMITY_SECURITY.md:121-123): false
-  // (default) accepts pre-liveness face-bound proofs without a liveness
-  // gate — live marking + existing tests keep working while liveness
-  // clients roll out. Proofs that DO carry liveness fields are always
-  // gated (allowlist + >= Tl on BOTH the NONE fallback and FULL/STD
-  // paths), never silently downgraded.
-  // TODO(sec-face): flip default to true together with the
-  // liveness-required min_version bump + `unknown-liveness-verifier`
-  // allowlist deploy — then pre-liveness fails `liveness-unbound`, never
-  // a silent downgrade. Post-rollout test pins the closed behavior;
-  // migration test pins the open default.
-  bool requireLiveness = false,
-  // C3(a): bound-NONE fallback allowance. False (default) fails a
-  // ticket-bound NONE proof closed as `device-none-requires-approval`
-  // (never confirms, never silent). True restores the explicit
-  // confirm-with-`device-none-fallback`-flag path for deployments/tests
-  // that knowingly run without HW keys.
-  bool allowNoneFallback = false,
-  // C3(b): legacy pre-liveness allowance. False (default) fails a legacy
-  // (unbound, liveness 0.0/'') proof closed as `liveness-unbound` once
-  // [requireLiveness] is true. True preserves the legacy confirm path
-  // for mixed-fleet tests.
-  bool legacyAllow = false,
 }) {
   final now = (nowOverride ?? req.now).toUtc();
   if (!bytesEqual(req.windowId, windowIdExpected)) {
@@ -337,47 +303,30 @@ VerifyOutcome verifyProve({
       return VerifyOutcome(ProveDecision.invalid, reason, flags());
     }
     // Security §4 liveness gate: the extended ticket binds
-    // (livenessScore, livenessVer). Proofs CARRYING liveness are always
-    // gated (allowlisted pipeline + score >= Tl) on BOTH the NONE fallback
-    // and FULL/STD paths. Pre-liveness proofs (0.0/'') gate only when
-    // [requireLiveness] is true (post-rollout + min_version bump → fail
-    // `liveness-unbound`, never a silent downgrade); during migration they
-    // confirm as face-bound (no liveness claimed, no liveness flag).
-    final carriesLiveness =
-        req.livenessVer.isNotEmpty || req.livenessScore != 0.0;
-    if (carriesLiveness || requireLiveness) {
-      final livenessAllowed = req.livenessAllowlist
-          .any((p) => req.livenessVer.startsWith(p));
-      if (req.livenessVer.isEmpty || req.livenessScore == 0.0) {
-        return VerifyOutcome(
-            ProveDecision.invalid, 'liveness-unbound', flags());
-      }
-      if (!livenessAllowed) {
-        return VerifyOutcome(
-            ProveDecision.invalid, 'unknown-liveness-verifier', flags());
-      }
-      if (req.livenessScore < kLivenessThreshold) {
-        return VerifyOutcome(
-            ProveDecision.invalid, 'liveness-below-threshold', flags());
-      }
+    // (livenessScore, livenessVer). Liveness is ALWAYS gated (allowlisted
+    // pipeline + score >= Tl): pre-liveness proofs fail `liveness-unbound`,
+    // never a silent downgrade to face-only.
+    final livenessAllowed = req.livenessAllowlist
+        .any((p) => req.livenessVer.startsWith(p));
+    if (req.livenessVer.isEmpty || req.livenessScore == 0.0) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'liveness-unbound', flags());
     }
-    // C3(a) fail-closed NONE: a bound proof claiming no device tier never
-    // confirms by default — `device-none-requires-approval` routes it to
-    // the manual path instead of silently marking. Explicit
-    // [allowNoneFallback]: true restores the flagged confirm below.
+    if (!livenessAllowed) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'unknown-liveness-verifier', flags());
+    }
+    if (req.livenessScore < kLivenessThreshold) {
+      return VerifyOutcome(
+          ProveDecision.invalid, 'liveness-below-threshold', flags());
+    }
+    // Bound proofs claiming no device tier NEVER confirm:
+    // `device-none-requires-approval` routes them to the manual path
+    // instead of silently marking. Software keys cannot enroll (fail-closed
+    // at enrollment), so NONE here means a tampered or non-device claim.
     if (req.attestationLevel == AttestationLevel.none) {
-      if (!allowNoneFallback) {
-        return VerifyOutcome(ProveDecision.invalid,
-            'device-none-requires-approval', flags());
-      }
-      final fallbackFlags = [...flags(), 'device-none-fallback'];
-      final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
-      final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
-      if (!direct && !relayed) {
-        return VerifyOutcome(
-            ProveDecision.invalid, 'no-ble-sighting', fallbackFlags);
-      }
-      return VerifyOutcome(ProveDecision.confirmed, 'ok', fallbackFlags);
+      return VerifyOutcome(ProveDecision.invalid,
+          'device-none-requires-approval', flags());
     }
     // STALE (14d grace)→confirmed+banner, expired/bad-dSig→device-unproven.
     final proof = evaluateDeviceProof(
@@ -403,20 +352,11 @@ VerifyOutcome verifyProve({
     // attestedUntil; the flag tells the professor to expect re-attest).
     return VerifyOutcome(ProveDecision.confirmed, 'ok', allFlags);
   }
-  // C3(b) legacy-unbound closed: post-liveness-floor (requireLiveness true)
-  // a legacy proof (no ticket at all) fails as liveness-unbound unless the
-  // caller explicitly opts into mixed-fleet via legacyAllow. With
-  // requireLiveness false the legacy confirm path is unchanged.
-  if (!bound && requireLiveness && !legacyAllow) {
-    return const VerifyOutcome(ProveDecision.invalid, 'liveness-unbound');
-  }
-  // BLE sighting: direct RSSI > -70, or relayed hop <= 2 (flagged).
-  final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
-  final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
-  if (!direct && !relayed) {
-    return const VerifyOutcome(ProveDecision.invalid, 'no-ble-sighting');
-  }
-  return const VerifyOutcome(ProveDecision.confirmed, 'ok');
+  // Unbound (legacy-shaped) proofs NEVER confirm: without a ticket there
+  // is no liveness claim to gate, and old builds are floored by the
+  // ForceUpdate barrier before they can prove. Fail `liveness-unbound`
+  // unconditionally — no opt-in, no migration accept.
+  return const VerifyOutcome(ProveDecision.invalid, 'liveness-unbound');
 }
 
 // ------------------------------------------------------------ CSV export ---

@@ -5,21 +5,227 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
+import 'package:pointycastle/export.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 import 'package:test/test.dart';
 
 const _email = 'student@example.com';
 
+// Fresh-proof fixtures (no legacy bodies confirm): every confirming prove
+// in this suite sends a bound+liveness+FULL proof with a genuine P-256 dSig
+// and a fake-DER chain carrying the OID + recomputed challenge + pkD. The
+// server verifies through the REAL testChainGate stub (challenge
+// containment + pkD containment + pin) — X.509 signature math lives in
+// protocol chain_verify_test on genuine fixtures.
+const _freshInstallId = 'inst-test-1';
+const _freshVerifierVer = 'face_verification/test+deadbeef';
+// Allowlisted liveness pipeline tag (prefix `liveness/`).
+const _freshLiveVer = 'liveness/minifasnet-v2-test+a1b2c3d4';
+
+SecureRandom _frand([int salt = 5]) {
+  final r = SecureRandom('Fortuna');
+  r.seed(KeyParameter(Uint8List.fromList(
+      List.generate(32, (i) => (i * 11 + salt) & 0xFF))));
+  return r;
+}
+
+({Uint8List pkD, BigInt d}) _freshP256Key([int salt = 5]) {
+  final domain = ECDomainParameters('prime256v1');
+  final gen = ECKeyGenerator()
+    ..init(ParametersWithRandom(
+        ECKeyGeneratorParameters(domain), _frand(salt)));
+  final pair = gen.generateKeyPair();
+  final ECPublicKey pub = pair.publicKey;
+  return (
+    pkD: Uint8List.fromList(pub.Q!.getEncoded(false).sublist(1)),
+    d: pair.privateKey.d!,
+  );
+}
+
+Uint8List _freshP256Sign(BigInt d, Uint8List preimage, [int salt = 7]) {
+  final domain = ECDomainParameters('prime256v1');
+  final signer = ECDSASigner(SHA256Digest())
+    ..init(
+        true,
+        ParametersWithRandom(
+            PrivateKeyParameter(ECPrivateKey(d, domain)), _frand(salt)));
+  final sig = signer.generateSignature(preimage) as ECSignature;
+  Uint8List be(BigInt v) =>
+      hexDecode(v.toRadixString(16).padLeft(64, '0'));
+  return Uint8List.fromList([...be(sig.r), ...be(sig.s)]);
+}
+
+/// Fake-DER chain: leaf embeds the attestation OID + [challenge] + raw pkD
+/// bytes; root is random bytes. Returns (chainHex, rootDer) — the caller
+/// pins sha256(rootDer).
+(List<String>, Uint8List) _freshChainFor(Uint8List challenge, Uint8List pkD,
+    [int salt = 9]) {
+  final leaf = Uint8List.fromList(
+      [...kKeyAttestationOidDer, ...challenge, ...pkD, 0xAA, 0xBB]);
+  final root = Uint8List.fromList(
+      List.generate(64, (i) => (i * 13 + salt) & 0xFF));
+  return ([hexEncode(leaf), hexEncode(root)], root);
+}
+
+/// Test-only chain gate for fake-DER fixtures (mirrors hw_prove_test):
+/// challenge + pkD byte-containment, OID, pin. No X.509 math.
+ChainPinResult _fakeChainGate({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required Uint8List? expectedLeafPkD,
+  required AttestationLevel level,
+}) {
+  if (level == AttestationLevel.none) {
+    return const ChainPinResult(
+        ok: false, reason: 'level-none', flags: ['attest-level-none']);
+  }
+  if (chain.isEmpty) {
+    return const ChainPinResult(
+        ok: false, reason: 'empty-chain', flags: ['attest-empty-chain']);
+  }
+  final leaf = chain.leaf!;
+  if (!attestationLeafHasKeyOid(leaf)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'missing-attestation-oid',
+        flags: ['attest-missing-oid']);
+  }
+  if (expectedLeafPkD != null &&
+      expectedLeafPkD.isNotEmpty &&
+      !attestationLeafContainsChallenge(leaf, expectedLeafPkD)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'leaf-pkd-mismatch',
+        flags: ['attest-leaf-pkd-mismatch']);
+  }
+  if (!attestationLeafContainsChallenge(leaf, expectedChallenge)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'challenge-mismatch',
+        flags: ['attest-challenge-mismatch']);
+  }
+  final rootHash = ProxCrypto.sha256Sync(chain.root!);
+  if (!pinnedRootHashes.any((h) => bytesEqual(h, rootHash))) {
+    return const ChainPinResult(
+        ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
+  }
+  return const ChainPinResult(ok: true, reason: 'ok');
+}
+
+/// A test device enrollment: P-256 key + fake chain bound to
+/// (email, installId, pkS) via the V2 challenge — the same binding the
+/// professor recomputes. One per (email, key) pair.
+({Uint8List pkD, BigInt d, List<String> chainHex, Uint8List rootDer})
+    freshDevice({
+  required String email,
+  required Uint8List pkS,
+  String installId = _freshInstallId,
+  int salt = 5,
+}) {
+  final dev = _freshP256Key(salt);
+  final challenge = deviceBindingChallengeV2(
+      emailLower: email, installId: installId, pkS: pkS);
+  final (chainHex, rootDer) = _freshChainFor(challenge, dev.pkD, salt);
+  return (pkD: dev.pkD, d: dev.d, chainHex: chainHex, rootDer: rootDer);
+}
+
+/// Full fresh prove: bound ticket + liveness + FULL + genuine dSig +
+/// chain. Confirms against a server pinning sha256(fd.rootDer).
+Future<ProveResult> proveFresh(
+  ProxClient client, {
+  required WindowDescriptor desc,
+  required Uint8List cj,
+  required int j,
+  required ed.KeyPair stu,
+  required String email,
+  required ({
+    Uint8List pkD,
+    BigInt d,
+    List<String> chainHex,
+    Uint8List rootDer,
+  }) fd,
+  double face = 0.9,
+  String installId = _freshInstallId,
+  String? vec,
+  String verifierVer = _freshVerifierVer,
+  int? faceValidAtMs,
+  double livenessScore = 0.92,
+  String livenessVer = _freshLiveVer,
+}) {
+  final pkS = pk32(stu.publicKey);
+  final peerW = ProxCrypto.peerAlias(pkS, desc.windowId);
+  final stampMs =
+      faceValidAtMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+  return client.prove(
+    desc: desc,
+    studentId: email,
+    challenge: cj,
+    j: j,
+    faceScore: face,
+    peerW: peerW,
+    pkS: pkS,
+    name: email,
+    roll: '12342210',
+    sigSFor: (c, jj) => ProxCrypto.signStudentProve(
+      studentSk: stu.privateKey,
+      sessionId: desc.sessionId,
+      windowId: desc.windowId,
+      j: jj,
+      challenge: c,
+      studentId: email,
+      faceScore: face,
+      faceValidAtMs: stampMs,
+      verifierVer: verifierVer,
+      pkD: fd.pkD,
+      livenessScore: livenessScore,
+      livenessVer: livenessVer,
+    ),
+    sigBindFor: (fp, jj) => ProxCrypto.sign(
+        stu.privateKey,
+        bindPreimage(
+            sessionId: desc.sessionId,
+            windowId: desc.windowId,
+            j: jj,
+            tlsFingerprint: fp)),
+    faceValidAtMs: stampMs,
+    verifierVer: verifierVer,
+    pkD: fd.pkD,
+    dSigFor: (ticket, jj, h) async => _freshP256Sign(
+        fd.d,
+        ProxCrypto.deviceProvePreimage(
+          sessionId: desc.sessionId,
+          windowId: desc.windowId,
+          j: jj,
+          challenge: cj,
+          faceTicketHashBytes: ticket,
+          pkS: pkS,
+          integrityHash: h,
+        )),
+    integrityHash: '00000000',
+    attestationLevel: 'FULL',
+    attestedUntilMs: DateTime.now()
+        .toUtc()
+        .add(kDeviceAttestedValidity)
+        .millisecondsSinceEpoch,
+    livenessScore: livenessScore,
+    livenessVer: livenessVer,
+    attestationChain: fd.chainHex,
+    installId: installId,
+    faceVecB64: vec ?? '',
+  );
+}
+
 Future<ProxServer> makeServer({
   required ed.KeyPair prof,
   required ed.KeyPair stu,
   int windowNo = 1,
   void Function(String email, String decision, String reason)? onProve,
-  // C3(a): bound proofs without HW keys (no pkD) confirm only with the
-  // explicit NONE fallback (dup-path tests use bound pipeline tags without
-  // device keys). Default false (production closed).
-  bool allowNoneFallback = false,
+  // Pins for the fake-DER test chain gate (sha256 of each test device's
+  // rootDer — see freshDevice). Confirming proofs need their root pinned;
+  // tests asserting early invalid reasons pass none.
+  List<Uint8List> pins = const [],
 }) async {
   final window = WindowParams(
     sessionId: randBytes(16),
@@ -35,14 +241,8 @@ Future<ProxServer> makeServer({
     sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
         const RadioSighting(rssiDbm: -55, hop: 0),
     onProve: onProve,
-    // Legacy-fleet simulation: this suite proves legacy (unbound) bodies
-    // for sighting/duplicate/retake/dup-path behavior. Production default
-    // is closed (allowLegacyUnbound=false → liveness-unbound); the closed
-    // default is pinned by 'legacy unbound fails liveness-unbound by
-    // default' below + protocol C3b tests.
-  )
-    ..allowLegacyUnbound = true
-    ..allowNoneFallback = allowNoneFallback;
+    pinnedRoots: pins,
+  )..testChainGate = _fakeChainGate;
   await server.start(port: 0);
   server.openWindow(window, windowNo);
   return server;
@@ -114,10 +314,15 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final proved = <String>[];
-    final server =
-        await makeServer(prof: prof, stu: stu, onProve: (e, d, r) {
-      proved.add('$e $d $r');
-    });
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      onProve: (e, d, r) {
+        proved.add('$e $d $r');
+      },
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
       // Radio: student heard UUID_P(0) over BLE (fake radio in test).
@@ -125,34 +330,16 @@ void main() {
       final desc = await client.fetchWindow(cj);
       expect(desc.display, server.window!.displayCode);
 
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
       const face = 0.85;
-      final res = await client.prove(
+      final res = await proveFresh(
+        client,
         desc: desc,
-        studentId: _email,
-        challenge: cj,
+        cj: cj,
         j: 0,
-        faceScore: face,
-        peerW: peerW,
-        pkS: pk32(stu.publicKey),
-        name: 'Student One',
-        roll: '12342210',
-        sigSFor: (c, j) => ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: desc.sessionId,
-          windowId: desc.windowId,
-          j: j,
-          challenge: c,
-          studentId: _email,
-          faceScore: face,
-        ),
-        sigBindFor: (fp, j) => ProxCrypto.sign(
-            stu.privateKey,
-            bindPreimage(
-                sessionId: desc.sessionId,
-                windowId: desc.windowId,
-                j: j,
-                tlsFingerprint: fp)),
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: face,
       );
       expect(res.decision, ProveDecision.confirmed);
       expect(proved, ['$_email confirmed ok|direct-rssi']);
@@ -179,36 +366,23 @@ void main() {
     int j,
     ed.KeyPair stu, {
     double face = 0.85,
-  }) {
-    final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
-    return client.prove(
-      desc: desc,
-      studentId: _email,
-      challenge: cj,
-      j: j,
-      faceScore: face,
-      peerW: peerW,
-      pkS: pk32(stu.publicKey),
-      name: 'Student One',
-      roll: '12342210',
-      sigSFor: (c, jj) => ProxCrypto.signStudentProve(
-        studentSk: stu.privateKey,
-        sessionId: desc.sessionId,
-        windowId: desc.windowId,
-        j: jj,
-        challenge: c,
-        studentId: _email,
-        faceScore: face,
-      ),
-      sigBindFor: (fp, jj) => ProxCrypto.sign(
-          stu.privateKey,
-          bindPreimage(
-              sessionId: desc.sessionId,
-              windowId: desc.windowId,
-              j: jj,
-              tlsFingerprint: fp)),
-    );
-  }
+    required ({
+      Uint8List pkD,
+      BigInt d,
+      List<String> chainHex,
+      Uint8List rootDer,
+    }) fd,
+  }) =>
+      proveFresh(
+        client,
+        desc: desc,
+        cj: cj,
+        j: j,
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: face,
+      );
 
   test('late radio sighting still confirms within grace', () async {
     // The POST routinely beats the host BLE scan: a crypto-valid POST
@@ -217,6 +391,7 @@ void main() {
     // heard 43ms later).
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
     RadioSighting? held;
     final window = WindowParams(
       sessionId: randBytes(16),
@@ -230,9 +405,10 @@ void main() {
       profSk: prof.privateKey,
       profPk: prof.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => held,
+      pinnedRoots: [ProxCrypto.sha256Sync(fd.rootDer)],
     )
       ..sightingGrace = const Duration(seconds: 2)
-      ..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
+      ..testChainGate = _fakeChainGate;
     await server.start(port: 0);
     server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
@@ -243,7 +419,7 @@ void main() {
       Future.delayed(const Duration(milliseconds: 800), () {
         held = const RadioSighting(rssiDbm: -55, hop: 0);
       });
-      final res = await proveOnce(client, desc, cj, desc.jNow, stu);
+      final res = await proveOnce(client, desc, cj, desc.jNow, stu, fd: fd);
       expect(res.decision, ProveDecision.confirmed);
       expect(server.tally.presentCount, 1);
     } finally {
@@ -252,12 +428,9 @@ void main() {
     }
   });
 
-  test('legacy unbound fails liveness-unbound by default (C3b closed)',
-      () async {
-    // Production default: allowLegacyUnbound=false (host_driver never sets
-    // it). A legacy (unbound, pre-liveness) proof fails closed once the
-    // liveness floor is enforced — never a silent confirm. Mixed-fleet
-    // tests opt in explicitly (see makeServer).
+  test('legacy unbound never confirms (liveness-unbound)', () async {
+    // Fresh-only: a legacy (unbound, pre-liveness) body fails closed as
+    // `liveness-unbound` — never a confirm. No opt-in exists.
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final window = WindowParams(
@@ -274,14 +447,40 @@ void main() {
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
     );
-    expect(server.allowLegacyUnbound, isFalse);
     await server.start(port: 0);
     server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
       final cj = window.challengeFor(window.jForTime(DateTime.now().toUtc()));
       final desc = await client.fetchWindow(cj);
-      final res = await proveOnce(client, desc, cj, desc.jNow, stu);
+      // Legacy-shaped body (6-field Sig_s, no ticket): kept only to pin
+      // the closed verdict — production clients send fresh proofs.
+      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
+      final res = await client.prove(
+        desc: desc,
+        studentId: _email,
+        challenge: cj,
+        j: desc.jNow,
+        faceScore: 0.85,
+        peerW: peerW,
+        pkS: pk32(stu.publicKey),
+        sigSFor: (c, j) => ProxCrypto.signStudentProve(
+          studentSk: stu.privateKey,
+          sessionId: desc.sessionId,
+          windowId: desc.windowId,
+          j: j,
+          challenge: c,
+          studentId: _email,
+          faceScore: 0.85,
+        ),
+        sigBindFor: (fp, j) => ProxCrypto.sign(
+            stu.privateKey,
+            bindPreimage(
+                sessionId: desc.sessionId,
+                windowId: desc.windowId,
+                j: j,
+                tlsFingerprint: fp)),
+      );
       expect(res.decision, ProveDecision.invalid);
       expect(res.reason, 'liveness-unbound');
       expect(server.tally.presentCount, 0);
@@ -294,6 +493,7 @@ void main() {
   test('absent sighting still invalid after grace', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
     final window = WindowParams(
       sessionId: randBytes(16),
       windowId: randBytes(6),
@@ -306,16 +506,17 @@ void main() {
       profSk: prof.privateKey,
       profPk: prof.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+      pinnedRoots: [ProxCrypto.sha256Sync(fd.rootDer)],
     )
       ..sightingGrace = const Duration(milliseconds: 300)
-      ..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
+      ..testChainGate = _fakeChainGate;
     await server.start(port: 0);
     server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
       final cj = window.challengeFor(window.jForTime(DateTime.now().toUtc()));
       final desc = await client.fetchWindow(cj);
-      final res = await proveOnce(client, desc, cj, desc.jNow, stu);
+      final res = await proveOnce(client, desc, cj, desc.jNow, stu, fd: fd);
       expect(res.decision, ProveDecision.invalid);
       expect(res.reason, 'no-ble-sighting');
       expect(server.tally.presentCount, 0);
@@ -449,39 +650,26 @@ void main() {
     // confirm — never fail a marked student as replay-id-j invalid.
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
-    final server = await makeServer(prof: prof, stu: stu);
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
       final cj = server.window!.challengeFor(0);
       final desc = await client.fetchWindow(cj);
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
       const face = 0.9;
-      Future<ProveResult> once() => client.prove(
+      Future<ProveResult> once() => proveFresh(
+            client,
             desc: desc,
-            studentId: _email,
-            challenge: cj,
+            cj: cj,
             j: 0,
-            faceScore: face,
-            peerW: peerW,
-        pkS: pk32(stu.publicKey),
-            name: 'Student One',
-            roll: '12342210',
-            sigSFor: (c, j) => ProxCrypto.signStudentProve(
-              studentSk: stu.privateKey,
-              sessionId: desc.sessionId,
-              windowId: desc.windowId,
-              j: j,
-              challenge: c,
-              studentId: _email,
-              faceScore: face,
-            ),
-            sigBindFor: (fp, j) => ProxCrypto.sign(
-                stu.privateKey,
-                bindPreimage(
-                    sessionId: desc.sessionId,
-                    windowId: desc.windowId,
-                    j: j,
-                    tlsFingerprint: fp)),
+            stu: stu,
+            email: _email,
+            fd: fd,
+            face: face,
           );
       final first = await once();
       expect(first.decision, ProveDecision.confirmed);
@@ -501,6 +689,7 @@ void main() {
     // whoever was present in class lands in the union, no enrollment sync.
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
     final server = ProxServer(
       classLabel: 'CS201-Room301',
       profSk: prof.privateKey,
@@ -510,41 +699,22 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
+      pinnedRoots: [ProxCrypto.sha256Sync(fd.rootDer)],
       // ignore: cascade_invocations
-    )..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
+    )..testChainGate = _fakeChainGate;
     await server.start(port: 0);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     Future<ProveResult> proveAt(int j) async {
       final cj = server.window!.challengeFor(j);
       final desc = await client.fetchWindow(cj);
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
-      const face = 0.9;
-      return client.prove(
+      return proveFresh(
+        client,
         desc: desc,
-        studentId: _email,
-        challenge: cj,
+        cj: cj,
         j: j,
-        faceScore: face,
-        peerW: peerW,
-        pkS: pk32(stu.publicKey),
-        name: 'Student One',
-        roll: '12342210',
-        sigSFor: (c, jj) => ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: desc.sessionId,
-          windowId: desc.windowId,
-          j: jj,
-          challenge: c,
-          studentId: _email,
-          faceScore: face,
-        ),
-        sigBindFor: (fp, jj) => ProxCrypto.sign(
-            stu.privateKey,
-            bindPreimage(
-                sessionId: desc.sessionId,
-                windowId: desc.windowId,
-                j: jj,
-                tlsFingerprint: fp)),
+        stu: stu,
+        email: _email,
+        fd: fd,
       );
     }
 
@@ -615,10 +785,18 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final evil = ProxCrypto.generateEdKeypair();
-    final server = await makeServer(prof: prof, stu: stu);
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
     try {
       // Attacker runs their own server; student is tricked into binding the
       // ATTACKER's fingerprint, but the POST goes to the real professor.
+      // The body is an otherwise fully-valid fresh proof (bound ticket +
+      // liveness + FULL + genuine dSig + chain) so the failure pins the
+      // channel binding, not an earlier gate.
       final evilServer = await makeServer(prof: evil, stu: stu);
       final evilFp = evilServer.tls.fingerprint;
       await evilServer.stop();
@@ -635,6 +813,26 @@ void main() {
       const face = 0.9;
       final peerW =
           ProxCrypto.peerAlias(pk32(stu.publicKey), server.window!.windowId);
+      final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final pkS = pk32(stu.publicKey);
+      final ticket = ProxCrypto.faceTicketHash(
+        faceScore: face,
+        faceValidAtMs: stampMs,
+        verifierVer: _freshVerifierVer,
+        livenessScore: 0.92,
+        livenessVer: _freshLiveVer,
+      );
+      final dSig = _freshP256Sign(
+          fd.d,
+          ProxCrypto.deviceProvePreimage(
+            sessionId: server.window!.sessionId,
+            windowId: server.window!.windowId,
+            j: 0,
+            challenge: cj,
+            faceTicketHashBytes: ticket,
+            pkS: pkS,
+            integrityHash: '00000000',
+          ));
       req.write(jsonEncode(buildProveBody(
         id: _email,
         windowId: server.window!.windowId,
@@ -648,10 +846,15 @@ void main() {
           challenge: cj,
           studentId: _email,
           faceScore: face,
+          faceValidAtMs: stampMs,
+          verifierVer: _freshVerifierVer,
+          pkD: fd.pkD,
+          livenessScore: 0.92,
+          livenessVer: _freshLiveVer,
         ),
         faceScore: face,
         peerW: peerW,
-        pkS: pk32(stu.publicKey),
+        pkS: pkS,
         tlsFp: evilFp, // what the victim saw through the relay
         sigBind: ProxCrypto.sign(
             stu.privateKey,
@@ -660,6 +863,20 @@ void main() {
                 windowId: server.window!.windowId,
                 j: 0,
                 tlsFingerprint: evilFp)),
+        faceValidAtMs: stampMs,
+        verifierVer: _freshVerifierVer,
+        pkD: fd.pkD,
+        dSig: dSig,
+        attestationLevel: 'FULL',
+        attestedUntilMs: DateTime.now()
+            .toUtc()
+            .add(kDeviceAttestedValidity)
+            .millisecondsSinceEpoch,
+        livenessScore: 0.92,
+        livenessVer: _freshLiveVer,
+        integrityHash: '00000000',
+        attestationChain: fd.chainHex,
+        installId: _freshInstallId,
       )));
       final resp = await req.close();
       final body =
@@ -676,36 +893,26 @@ void main() {
       () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
-    final server = await makeServer(prof: prof, stu: stu);
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
       final cj = server.window!.challengeFor(0);
       final desc = await client.fetchWindow(cj);
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
-      Future<ProveResult> once() => client.prove(
+      const face = 0.9;
+      Future<ProveResult> once() => proveFresh(
+            client,
             desc: desc,
-            studentId: _email,
-            challenge: cj,
+            cj: cj,
             j: 0,
-            faceScore: 0.9,
-            peerW: peerW,
-        pkS: pk32(stu.publicKey),
-            sigSFor: (c, j) => ProxCrypto.signStudentProve(
-              studentSk: stu.privateKey,
-              sessionId: desc.sessionId,
-              windowId: desc.windowId,
-              j: j,
-              challenge: c,
-              studentId: _email,
-              faceScore: 0.9,
-            ),
-            sigBindFor: (fp, j) => ProxCrypto.sign(
-                stu.privateKey,
-                bindPreimage(
-                    sessionId: desc.sessionId,
-                    windowId: desc.windowId,
-                    j: j,
-                    tlsFingerprint: fp)),
+            stu: stu,
+            email: _email,
+            fd: fd,
+            face: face,
           );
       expect((await once()).decision, ProveDecision.confirmed);
       // Identical retry (lost ACK on flaky WiFi): confirms idempotently —
@@ -796,36 +1003,24 @@ void main() {
   test('new window resets single-use: same (ID,j) provable again', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
-    final server = await makeServer(prof: prof, stu: stu);
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     Future<ProveResult> proveOnce(int j) async {
       final cj = server.window!.challengeFor(j);
       final desc = await client.fetchWindow(cj);
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
-      return client.prove(
+      return proveFresh(
+        client,
         desc: desc,
-        studentId: _email,
-        challenge: cj,
+        cj: cj,
         j: j,
-        faceScore: 0.9,
-        peerW: peerW,
-        pkS: pk32(stu.publicKey),
-        sigSFor: (c, jj) => ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: desc.sessionId,
-          windowId: desc.windowId,
-          j: jj,
-          challenge: c,
-          studentId: _email,
-          faceScore: 0.9,
-        ),
-        sigBindFor: (fp, jj) => ProxCrypto.sign(
-            stu.privateKey,
-            bindPreimage(
-                sessionId: desc.sessionId,
-                windowId: desc.windowId,
-                j: jj,
-                tlsFingerprint: fp)),
+        stu: stu,
+        email: _email,
+        fd: fd,
       );
     }
 
@@ -985,49 +1180,43 @@ void main() {
       required ed.KeyPair stu,
       required Uint8List challenge,
       required int j,
+      required ({
+        Uint8List pkD,
+        BigInt d,
+        List<String> chainHex,
+        Uint8List rootDer,
+      }) fd,
       double faceScore = 0.9,
-    }) {
-      final peerW = ProxCrypto.peerAlias(pk32(stu.publicKey), desc.windowId);
-      return client.prove(
-        desc: desc,
-        studentId: _email,
-        challenge: challenge,
-        j: j,
-        faceScore: faceScore,
-        peerW: peerW,
-        pkS: pk32(stu.publicKey),
-        sigSFor: (c, jj) => ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: desc.sessionId,
-          windowId: desc.windowId,
-          j: jj,
-          challenge: c,
-          studentId: _email,
-          faceScore: faceScore,
-        ),
-        sigBindFor: (fp, jj) => ProxCrypto.sign(
-            stu.privateKey,
-            bindPreimage(
-                sessionId: desc.sessionId,
-                windowId: desc.windowId,
-                j: jj,
-                tlsFingerprint: fp)),
-      );
-    }
+    }) =>
+        proveFresh(
+          client,
+          desc: desc,
+          cj: challenge,
+          j: j,
+          stu: stu,
+          email: _email,
+          fd: fd,
+          face: faceScore,
+        );
 
     test('retake: same (ID,j) provable again under a new windowId', () async {
       // The single-use scope is (windowId, ID, j): a stale-window POST
       // that fails window-mismatch must not burn the new window's slot.
       final prof = ProxCrypto.generateEdKeypair();
       final stu = ProxCrypto.generateEdKeypair();
-      final server = await makeServer(prof: prof, stu: stu);
+      final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+      final server = await makeServer(
+        prof: prof,
+        stu: stu,
+        pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj1 = server.window!.challengeFor(0);
         final desc1 = await client.fetchWindow(cj1);
         expect(
             (await proveAs(client,
-                    desc: desc1, stu: stu, challenge: cj1, j: 0))
+                    desc: desc1, stu: stu, challenge: cj1, j: 0, fd: fd))
                 .decision,
             ProveDecision.confirmed);
         // Retake: fresh windowId, same j.
@@ -1044,7 +1233,7 @@ void main() {
         final cj2 = server.window!.challengeFor(0);
         final desc2 = await client.fetchWindow(cj2);
         final r2 = await proveAs(client,
-            desc: desc2, stu: stu, challenge: cj2, j: 0);
+            desc: desc2, stu: stu, challenge: cj2, j: 0, fd: fd);
         expect(r2.decision, ProveDecision.confirmed);
         expect(r2.reason, isNot('replay-id-j'));
       } finally {
@@ -1058,7 +1247,12 @@ void main() {
       // the student WAS there — the round keeps its mark.
       final prof = ProxCrypto.generateEdKeypair();
       final stu = ProxCrypto.generateEdKeypair();
-      final server = await makeServer(prof: prof, stu: stu);
+      final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+      final server = await makeServer(
+        prof: prof,
+        stu: stu,
+        pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         server.openWindow(
@@ -1107,7 +1301,7 @@ void main() {
           display: desc.display,
         );
         final r = await proveAs(client,
-            desc: descLive, stu: stu, challenge: cj0, j: 0);
+            desc: descLive, stu: stu, challenge: cj0, j: 0, fd: fd);
         expect(r.decision, ProveDecision.late);
         expect(server.tally.windowNos, contains(1));
         expect(server.tally.lateList.map((e) => e.email),
@@ -1121,13 +1315,18 @@ void main() {
     test('closed empty rounds persist in history snapshots', () async {
       final prof = ProxCrypto.generateEdKeypair();
       final stu = ProxCrypto.generateEdKeypair();
-      final server = await makeServer(prof: prof, stu: stu);
+      final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+      final server = await makeServer(
+        prof: prof,
+        stu: stu,
+        pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       try {
         // Round 1 marked, round 2 opened and closed empty, round 3 live.
         final cj = server.window!.challengeFor(0);
         final client = ProxClient(host: '127.0.0.1', port: server.port);
         final desc = await client.fetchWindow(cj);
-        await proveAs(client, desc: desc, stu: stu, challenge: cj, j: 0);
+        await proveAs(client, desc: desc, stu: stu, challenge: cj, j: 0, fd: fd);
         client.close();
         server.openWindow(
           WindowParams(
@@ -1154,13 +1353,18 @@ void main() {
     test('ACK binds decision+time+student: tampering fails verify', () async {
       final prof = ProxCrypto.generateEdKeypair();
       final stu = ProxCrypto.generateEdKeypair();
-      final server = await makeServer(prof: prof, stu: stu);
+      final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+      final server = await makeServer(
+        prof: prof,
+        stu: stu,
+        pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
         final desc = await client.fetchWindow(cj);
         final res = await proveAs(client,
-            desc: desc, stu: stu, challenge: cj, j: 0);
+            desc: desc, stu: stu, challenge: cj, j: 0, fd: fd);
         expect(res.decision, ProveDecision.confirmed);
         // Flipped decision with the same signature: rejected.
         final flipped = ProveResult(
@@ -1216,50 +1420,80 @@ void main() {
       Uint8List cj, {
       required ed.KeyPair key,
       required String email,
+      required ({
+        Uint8List pkD,
+        BigInt d,
+        List<String> chainHex,
+        Uint8List rootDer,
+      }) fd,
       String vec = '',
-      String verifierVer = '',
+      String verifierVer = _freshVerifierVer,
       int? faceValidAtMs,
-      // Security §4 post-rollout: bound proofs must carry a gated liveness
-      // ticket (score >= Tl + allowlisted ver) or fail `liveness-unbound`.
-      // Legacy (default 0.0/'') callers stay on the unbound path.
-      double livenessScore = 0.0,
-      String livenessVer = '',
-    }) =>
-        client.prove(
-          desc: desc,
+      // Liveness ticket (score >= Tl + allowlisted ver) — always required.
+      double livenessScore = 0.92,
+      String livenessVer = _freshLiveVer,
+      String installId = _freshInstallId,
+    }) {
+      final pkS = pk32(key.publicKey);
+      final stampMs =
+          faceValidAtMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+      return client.prove(
+        desc: desc,
+        studentId: email,
+        challenge: cj,
+        j: 0,
+        faceScore: 0.9,
+        peerW: ProxCrypto.peerAlias(pkS, desc.windowId),
+        pkS: pkS,
+        name: email,
+        sigSFor: (c, j) => ProxCrypto.signStudentProve(
+          studentSk: key.privateKey,
+          sessionId: desc.sessionId,
+          windowId: desc.windowId,
+          j: j,
+          challenge: c,
           studentId: email,
-          challenge: cj,
-          j: 0,
           faceScore: 0.9,
-          peerW: ProxCrypto.peerAlias(pk32(key.publicKey), desc.windowId),
-          pkS: pk32(key.publicKey),
-          name: email,
-          sigSFor: (c, j) => ProxCrypto.signStudentProve(
-            studentSk: key.privateKey,
-            sessionId: desc.sessionId,
-            windowId: desc.windowId,
-            j: j,
-            challenge: c,
-            studentId: email,
-            faceScore: 0.9,
-            faceValidAtMs: faceValidAtMs ?? 0,
-            verifierVer: verifierVer,
-            livenessScore: livenessScore,
-            livenessVer: livenessVer,
-          ),
-          sigBindFor: (fp, j) => ProxCrypto.sign(
-              key.privateKey,
-              bindPreimage(
-                  sessionId: desc.sessionId,
-                  windowId: desc.windowId,
-                  j: j,
-                  tlsFingerprint: fp)),
-          faceVecB64: vec,
+          faceValidAtMs: stampMs,
           verifierVer: verifierVer,
-          faceValidAtMs: faceValidAtMs,
+          pkD: fd.pkD,
           livenessScore: livenessScore,
           livenessVer: livenessVer,
-        );
+        ),
+        sigBindFor: (fp, j) => ProxCrypto.sign(
+            key.privateKey,
+            bindPreimage(
+                sessionId: desc.sessionId,
+                windowId: desc.windowId,
+                j: j,
+                tlsFingerprint: fp)),
+        faceVecB64: vec,
+        verifierVer: verifierVer,
+        faceValidAtMs: stampMs,
+        pkD: fd.pkD,
+        dSigFor: (ticket, j, h) async => _freshP256Sign(
+            fd.d,
+            ProxCrypto.deviceProvePreimage(
+              sessionId: desc.sessionId,
+              windowId: desc.windowId,
+              j: j,
+              challenge: cj,
+              faceTicketHashBytes: ticket,
+              pkS: pkS,
+              integrityHash: h,
+            )),
+        integrityHash: '00000000',
+        attestationLevel: 'FULL',
+        attestedUntilMs: DateTime.now()
+            .toUtc()
+            .add(kDeviceAttestedValidity)
+            .millisecondsSinceEpoch,
+        livenessScore: livenessScore,
+        livenessVer: livenessVer,
+        attestationChain: fd.chainHex,
+        installId: installId,
+      );
+    }
 
     test('pair flags on second prove; both marked; wire verdict clean',
         () async {
@@ -1267,20 +1501,30 @@ void main() {
       final ka = ProxCrypto.generateEdKeypair();
       final kb = ProxCrypto.generateEdKeypair();
       final log = <String>[];
+      final fda = freshDevice(email: 'a@x.in', pkS: pk32(ka.publicKey));
+      final fdb = freshDevice(
+          email: 'b@x.in', pkS: pk32(kb.publicKey), salt: 11);
       final server = await makeServer(
-          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e $d $r'));
+        prof: prof,
+        stu: ka,
+        onProve: (e, d, r) => log.add('$e $d $r'),
+        pins: [
+          ProxCrypto.sha256Sync(fda.rootDer),
+          ProxCrypto.sha256Sync(fdb.rootDer)
+        ],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
         final desc = await client.fetchWindow(cj);
         final vec = faceVecEncode(tvec(5));
         final ra = await proveAs(client, desc, cj,
-            key: ka, email: 'a@x.in', vec: vec);
+            key: ka, email: 'a@x.in', vec: vec, fd: fda);
         expect(ra.decision, ProveDecision.confirmed);
         expect(ra.reason, isNot(contains('dupface')));
         expect(server.faceVectorCount, 1);
         final rb = await proveAs(client, desc, cj,
-            key: kb, email: 'b@x.in', vec: vec);
+            key: kb, email: 'b@x.in', vec: vec, fd: fdb);
         expect(rb.decision, ProveDecision.confirmed);
         // Wire verdict carries no trace; the host log line carries peers.
         expect(rb.reason, isNot(contains('dupface')));
@@ -1306,8 +1550,19 @@ void main() {
         for (var i = 0; i < 3; i++) ProxCrypto.generateEdKeypair()
       ];
       final log = <String>[];
+      final fds = [
+        for (var i = 0; i < 3; i++)
+          freshDevice(
+              email: '${'abc'[i]}@x.in',
+              pkS: pk32(keys[i].publicKey),
+              salt: 20 + i),
+      ];
       final server = await makeServer(
-          prof: prof, stu: keys[0], onProve: (e, d, r) => log.add('$e|$d|$r'));
+        prof: prof,
+        stu: keys[0],
+        onProve: (e, d, r) => log.add('$e|$d|$r'),
+        pins: [for (final fd in fds) ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
@@ -1315,10 +1570,12 @@ void main() {
         // All three carry the same holder vector (A/B/C group): the
         // newcomer's token must name BOTH earlier provers.
         final vec = faceVecEncode(tvec(5));
-        await proveAs(client, desc, cj, key: keys[0], email: 'a@x.in', vec: vec);
-        await proveAs(client, desc, cj, key: keys[1], email: 'b@x.in', vec: vec);
+        await proveAs(client, desc, cj,
+            key: keys[0], email: 'a@x.in', vec: vec, fd: fds[0]);
+        await proveAs(client, desc, cj,
+            key: keys[1], email: 'b@x.in', vec: vec, fd: fds[1]);
         final rc = await proveAs(client, desc, cj,
-            key: keys[2], email: 'c@x.in', vec: vec);
+            key: keys[2], email: 'c@x.in', vec: vec, fd: fds[2]);
         expect(rc.decision, ProveDecision.confirmed);
         final line =
             log.firstWhere((l) => l.startsWith('c@x.in|confirmed|'));
@@ -1343,26 +1600,36 @@ void main() {
       final kc = ProxCrypto.generateEdKeypair();
       final kd = ProxCrypto.generateEdKeypair();
       final log = <String>[];
+      final fds = {
+        'a@x.in': freshDevice(email: 'a@x.in', pkS: pk32(ka.publicKey), salt: 31),
+        'b@x.in': freshDevice(email: 'b@x.in', pkS: pk32(kb.publicKey), salt: 32),
+        'c@x.in': freshDevice(email: 'c@x.in', pkS: pk32(kc.publicKey), salt: 33),
+        'd@x.in': freshDevice(email: 'd@x.in', pkS: pk32(kd.publicKey), salt: 34),
+      };
       final server = await makeServer(
-          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+        prof: prof,
+        stu: ka,
+        onProve: (e, d, r) => log.add('$e|$d|$r'),
+        pins: [for (final fd in fds.values) ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
         final desc = await client.fetchWindow(cj);
         await proveAs(client, desc, cj,
-            key: ka, email: 'a@x.in', vec: faceVecEncode(tvec(5)));
+            key: ka, email: 'a@x.in', vec: faceVecEncode(tvec(5)), fd: fds['a@x.in']!);
         final rb = await proveAs(client, desc, cj,
-            key: kb, email: 'b@x.in', vec: faceVecEncode(tvec(6)));
+            key: kb, email: 'b@x.in', vec: faceVecEncode(tvec(6)), fd: fds['b@x.in']!);
         expect(rb.decision, ProveDecision.confirmed);
         expect(log.any((l) => l.contains('dupface')), isFalse);
         // No vector at all: marks, plants nothing.
-        final rc =
-            await proveAs(client, desc, cj, key: kc, email: 'c@x.in');
+        final rc = await proveAs(client, desc, cj,
+            key: kc, email: 'c@x.in', fd: fds['c@x.in']!);
         expect(rc.decision, ProveDecision.confirmed);
         expect(server.faceVectorCount, 2);
         // Garbage vector: marks normally, plants nothing.
         final rd = await proveAs(client, desc, cj,
-            key: kd, email: 'd@x.in', vec: '!!!not-base64!!!');
+            key: kd, email: 'd@x.in', vec: '!!!not-base64!!!', fd: fds['d@x.in']!);
         expect(rd.decision, ProveDecision.confirmed);
         expect(server.faceVectorCount, 2);
         expect(log.any((l) => l.contains('dupface')), isFalse);
@@ -1377,8 +1644,14 @@ void main() {
       final stu = ProxCrypto.generateEdKeypair();
       final evil = ProxCrypto.generateEdKeypair();
       final log = <String>[];
+      final fd = freshDevice(
+          email: 'genuine@x.in', pkS: pk32(stu.publicKey), salt: 41);
       final server = await makeServer(
-          prof: prof, stu: stu, onProve: (e, d, r) => log.add('$e|$d|$r'));
+        prof: prof,
+        stu: stu,
+        onProve: (e, d, r) => log.add('$e|$d|$r'),
+        pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
@@ -1416,12 +1689,12 @@ void main() {
         // Genuine prove as a DIFFERENT id (the forged attempt burned this
         // ID's single-use slot for j=0): no ghost to match.
         final ok = await proveAs(client, desc, cj,
-            key: stu, email: 'genuine@x.in', vec: vec);
+            key: stu, email: 'genuine@x.in', vec: vec, fd: fd);
         expect(ok.decision, ProveDecision.confirmed);
         expect(log.any((l) => l.contains('dupface')), isFalse);
         // Identical retry (lost ACK): duplicate-confirmed, still no token.
         final retry = await proveAs(client, desc, cj,
-            key: stu, email: 'genuine@x.in', vec: vec);
+            key: stu, email: 'genuine@x.in', vec: vec, fd: fd);
         expect(retry.decision, ProveDecision.confirmed);
         expect(log.any((l) => l.contains('dupface')), isFalse);
         expect(server.faceVectorCount, 1);
@@ -1436,14 +1709,19 @@ void main() {
       final ka = ProxCrypto.generateEdKeypair();
       final kb = ProxCrypto.generateEdKeypair();
       final log = <String>[];
-      // Bound-NONE proofs (no HW keys in this suite): the dup path is the
-      // behavior under test, so the explicit NONE fallback is passed —
-      // production leaves it closed (professor tap).
+      // Fresh FULL proofs (per-key test devices): the dup path is the
+      // behavior under test — device trust is real, not bypassed.
+      final fda = freshDevice(email: 'a@x.in', pkS: pk32(ka.publicKey), salt: 51);
+      final fdb = freshDevice(email: 'b@x.in', pkS: pk32(kb.publicKey), salt: 52);
       final server = await makeServer(
-          prof: prof,
-          stu: ka,
-          onProve: (e, d, r) => log.add('$e|$d|$r'),
-          allowNoneFallback: true);
+        prof: prof,
+        stu: ka,
+        onProve: (e, d, r) => log.add('$e|$d|$r'),
+        pins: [
+          ProxCrypto.sha256Sync(fda.rootDer),
+          ProxCrypto.sha256Sync(fdb.rootDer)
+        ],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);
@@ -1452,12 +1730,13 @@ void main() {
         // Same BYTES, different pipeline tags (both allowlisted, mutually
         // incomparable) → no token, both plant.
         // Bound signatures (explicit fresh stamp, matching ticket +
-        // post-rollout liveness ticket, allowlisted ver).
+        // liveness ticket, allowlisted ver).
         final stamp = DateTime.now().toUtc().millisecondsSinceEpoch;
         await proveAs(client, desc, cj,
             key: ka,
             email: 'a@x.in',
             vec: vec,
+            fd: fda,
             verifierVer: 'face_verification/pipe-A',
             faceValidAtMs: stamp,
             livenessScore: 0.9,
@@ -1466,6 +1745,7 @@ void main() {
             key: kb,
             email: 'b@x.in',
             vec: vec,
+            fd: fdb,
             verifierVer: 'face_verification/pipe-B',
             faceValidAtMs: stamp,
             livenessScore: 0.9,
@@ -1485,16 +1765,27 @@ void main() {
       final ka = ProxCrypto.generateEdKeypair();
       final kb = ProxCrypto.generateEdKeypair();
       final log = <String>[];
+      final fda = freshDevice(email: 'a@x.in', pkS: pk32(ka.publicKey), salt: 61);
+      final fdb = freshDevice(email: 'b@x.in', pkS: pk32(kb.publicKey), salt: 62);
       final server = await makeServer(
-          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+        prof: prof,
+        stu: ka,
+        onProve: (e, d, r) => log.add('$e|$d|$r'),
+        pins: [
+          ProxCrypto.sha256Sync(fda.rootDer),
+          ProxCrypto.sha256Sync(fdb.rootDer)
+        ],
+      );
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final vec = faceVecEncode(tvec(5));
         Future<ProveResult> proveBoth() async {
           final cj = server.window!.challengeFor(0);
           final desc = await client.fetchWindow(cj);
-          await proveAs(client, desc, cj, key: ka, email: 'a@x.in', vec: vec);
-          return proveAs(client, desc, cj, key: kb, email: 'b@x.in', vec: vec);
+          await proveAs(client, desc, cj,
+              key: ka, email: 'a@x.in', vec: vec, fd: fda);
+          return proveAs(client, desc, cj,
+              key: kb, email: 'b@x.in', vec: vec, fd: fdb);
         }
 
         expect((await proveBoth()).decision, ProveDecision.confirmed);

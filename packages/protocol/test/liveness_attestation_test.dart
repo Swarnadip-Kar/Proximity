@@ -313,14 +313,14 @@ void main() {
         revoked: false,
         freshWindow: true,
         singleUseOk: true,
-        // Post-rollout + min_version bump: liveness mandatory.
-        requireLiveness: true,
       );
+      // Fresh-only: a face-bound proof without liveness never confirms —
+      // old builds are floored by ForceUpdate before they can prove.
       expect(out.decision, ProveDecision.invalid);
       expect(out.reason, 'liveness-unbound');
     });
 
-    test('pre-liveness bound ticket confirms during migration (default)',
+    test('pre-liveness bound ticket never confirms (no migration accept)',
         () {
       final s = _setup(1);
       final now = DateTime.now().toUtc();
@@ -362,8 +362,10 @@ void main() {
         freshWindow: true,
         singleUseOk: true,
       );
-      expect(out.decision, ProveDecision.confirmed);
-      expect(out.reason, 'ok');
+      // Fresh-only: a face-bound proof without liveness never confirms —
+      // old builds are floored by ForceUpdate before they can prove.
+      expect(out.decision, ProveDecision.invalid);
+      expect(out.reason, 'liveness-unbound');
     });
 
     test('unknown liveness pipeline fails closed', () {
@@ -517,7 +519,8 @@ void main() {
       expect(out.reason, 'bad-sig');
     });
 
-    test('NONE fallback still gates liveness (no downgrade)', () {
+    test('NONE never confirms; liveness still gated first (no downgrade)',
+        () {
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       Uint8List ticketFor(double liv) => ProxCrypto.faceTicketHash(
@@ -561,10 +564,6 @@ void main() {
             revoked: false,
             freshWindow: true,
             singleUseOk: true,
-            // C3(a): bound-NONE confirms only via the explicit fallback
-            // allowance (never by default) — this pins that path; the
-            // default-closed path is pinned in verify_test.dart.
-            allowNoneFallback: true,
           );
       // Weak liveness on NONE still rejects.
       final weakT = ticketFor(0.2);
@@ -589,11 +588,11 @@ void main() {
         faceTicketHashBytes: missingT,
       );
       expect(run(0.0, missingT, missingSig).reason, 'liveness-unbound');
-      // Strong liveness on NONE confirms with the fallback flag.
+      // Strong liveness on NONE still never confirms (manual path).
       final goodT = ticketFor(0.92);
       final good = run(0.92, goodT, sigFor(goodT));
-      expect(good.decision, ProveDecision.confirmed);
-      expect(good.attestationFlags, contains('device-none-fallback'));
+      expect(good.decision, ProveDecision.invalid);
+      expect(good.reason, 'device-none-requires-approval');
     });
 
     test('NONE fails closed by default (device-none-requires-approval)',
@@ -644,7 +643,7 @@ void main() {
       expect(out.reason, 'device-none-requires-approval');
     });
 
-    test('legacy unbound fails liveness-unbound post-floor (C3b)', () {
+    test('legacy unbound never confirms (no opt-in, no migration)', () {
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       // Legacy 6-field Sig_s (no ticket at all).
@@ -657,7 +656,7 @@ void main() {
         studentId: 'a@x.in',
         faceScore: 0.85,
       );
-      VerifyOutcome run({required bool legacyAllow}) => verifyProve(
+      VerifyOutcome run() => verifyProve(
             req: VerifyRequest(
               id: 'a@x.in',
               windowId: s.wid,
@@ -678,11 +677,11 @@ void main() {
             revoked: false,
             freshWindow: true,
             singleUseOk: true,
-            requireLiveness: true,
-            legacyAllow: legacyAllow,
           );
-      expect(run(legacyAllow: false).reason, 'liveness-unbound');
-      expect(run(legacyAllow: true).decision, ProveDecision.confirmed);
+      // Fresh-only: an unbound proof never confirms — old builds are
+      // floored by ForceUpdate before they can prove.
+      expect(run().decision, ProveDecision.invalid);
+      expect(run().reason, 'liveness-unbound');
     });
   });
 

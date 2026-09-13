@@ -48,6 +48,8 @@ VerifyRequest _boundReq({
   String lastVer = '',
   double livenessScore = _livScore,
   String livenessVer = _livVer,
+  int hop = 0,
+  int rssi = -55,
 }) =>
     VerifyRequest(
       id: id,
@@ -58,8 +60,8 @@ VerifyRequest _boundReq({
       faceScore: score,
       faceValidAt: faceValidAt,
       peerW: Uint8List(8),
-      rssiDbm: -55,
-      relayHop: 0,
+      rssiDbm: rssi,
+      relayHop: hop,
       now: now,
       verifierVer: verifierVer,
       faceValidAtMs: faceValidAt.millisecondsSinceEpoch,
@@ -515,12 +517,9 @@ void main() {
       expect(r.confirms, isFalse);
     });
 
-    test('NONE at verifyProve falls back to legacy-equivalent confirm', () {
-      // C3(a) explicit fallback: bound fields present but level NONE
-      // verifies like the legacy unbound proof ONLY with
-      // allowNoneFallback:true — same ticket-bound Sig_s + sighting
-      // checks, no tier claimed. Logged via the fallback flag, never
-      // silent. Default (no flag) fails device-none-requires-approval.
+    test('NONE never confirms (device-none-requires-approval)', () {
+      // Fresh-only: a bound proof claiming no hardware tier never confirms
+      // — it routes to the manual path. No opt-in, no fallback flag.
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       const score = 0.85;
@@ -564,11 +563,9 @@ void main() {
         revoked: false,
         freshWindow: true,
         singleUseOk: true,
-        allowNoneFallback: true,
       );
-      expect(out.decision, ProveDecision.confirmed);
-      expect(out.reason, 'ok');
-      expect(out.attestationFlags, contains('device-none-fallback'));
+      expect(out.decision, ProveDecision.invalid);
+      expect(out.reason, 'device-none-requires-approval');
     });
 
     test('NONE fallback still rejects a tampered binding (bad-sig)', () {
@@ -624,7 +621,9 @@ void main() {
       expect(out.reason, 'bad-sig');
     });
 
-    test('NONE fallback still gates sighting + face like legacy', () {
+    test('FULL still gates sighting (direct confirms, none fails)', () {
+      // Sighting coverage moved to the fresh tier: FULL + valid dSig +
+      // liveness confirms on direct radio, fails without a sighting.
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       const score = 0.85;
@@ -647,25 +646,20 @@ void main() {
         faceTicketHashBytes: ticket,
       );
       VerifyOutcome v({required int hop, required int rssi}) => verifyProve(
-            req: VerifyRequest(
-              id: 'a@x.in',
-              windowId: s.wid,
-              j: 1,
-              cClaimed: s.cj,
-              sigS: sig,
-              faceScore: score,
-              faceValidAt: now,
-              peerW: Uint8List(8),
-              rssiDbm: rssi,
-              relayHop: hop,
-              now: now,
-              verifierVer: _ver,
-              faceValidAtMs: now.millisecondsSinceEpoch,
-              faceTicketHashBytes: ticket,
-              livenessScore: _livScore,
-              livenessVer: _livVer,
-              attestationLevel: AttestationLevel.none,
-            ),
+            req: _boundReq(
+                id: 'a@x.in',
+                wid: s.wid,
+                j: 1,
+                cj: s.cj,
+                sigS: sig,
+                score: score,
+                faceValidAt: now,
+                verifierVer: _ver,
+                pkD: Uint8List(0),
+                ticket: ticket,
+                now: now,
+                hop: hop,
+                rssi: rssi),
             expectedCj: s.cj,
             sessionId: s.sess,
             windowIdExpected: s.wid,
@@ -673,7 +667,6 @@ void main() {
             revoked: false,
             freshWindow: true,
             singleUseOk: true,
-            allowNoneFallback: true,
           );
       expect(v(hop: 0, rssi: -55).decision, ProveDecision.confirmed);
       expect(v(hop: 99, rssi: -127).reason, 'no-ble-sighting');

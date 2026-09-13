@@ -187,14 +187,11 @@ class ProxServer {
 
   /// Security §4 rollout flip: TRUE since the liveness rollout completed
   /// (MiniFASNetV2 model vendored + enrollment gated — sec-liveness): every
-  /// bound proof must carry a gated liveness ticket (score >= Tl +
-  /// allowlisted livenessVer), or it fails closed as `liveness-unbound`
-  /// (never a silent downgrade to face-only). Legacy UNBOUND proofs (no
-  /// ticket at all — old mixed-fleet stragglers) still take the legacy
-  /// path; pre-liveness BOUND proofs fail closed with an actionable
-  /// reason. Pairs with the liveness-required min_version bump
-  /// (app_config/min_version 0.2.0 + force:true — stale builds hit the
-  /// ForceUpdate barrier instead of cryptic rejects).
+  /// Floor marker (pinned by hw_prove_test): the liveness rollout is done —
+  /// [verifyProve] unconditionally requires a gated liveness ticket, and old
+  /// builds are floored by the ForceUpdate barrier (app_config/min_version
+  /// 0.2.0 + force:true) before they can prove. Kept as a named constant so
+  /// the floor cannot be silently reverted.
   static const requireLivenessEnforced = true;
 
   /// Pinned attestation roots for the §2 chain gate (SHA-256 digests of
@@ -208,23 +205,6 @@ class ProxServer {
   /// instead of instantly failing. Without it, marking is a coin flip
   /// between WiFi latency and scan intervals. Tests shrink it.
   Duration sightingGrace = const Duration(seconds: 4);
-
-  /// C3(b) legacy allowance (migration only, default CLOSED): false fails a
-  /// legacy (unbound, pre-liveness) proof as `liveness-unbound` once the
-  /// liveness floor is enforced (requireLivenessEnforced=true + min_version
-  /// 0.2.0/force:true). True preserves the legacy confirm path for
-  /// mixed-fleet tests (mirrors verifyProve's [legacyAllow] — same
-  /// pattern). Production (host_driver) leaves this false; tests simulating
-  /// the legacy fleet pass true explicitly.
-  bool allowLegacyUnbound = false;
-
-  /// C3(a) NONE-fallback allowance (default CLOSED — NONE never confirms
-  /// without professor tap): true restores the flagged
-  /// (`device-none-fallback`) confirm for ticket-bound NONE proofs, for
-  /// tests exercising non-device paths (e.g. the local dup detector) with
-  /// bound proofs but no HW keys. Mirrors verifyProve's [allowNoneFallback].
-  /// Production (host_driver) leaves this false.
-  bool allowNoneFallback = false;
 
   /// Test-only chain-gate override (HW transport tests use fake-DER chains
   /// carrying the OID + challenge bytes but no X.509 signatures — the
@@ -683,11 +663,12 @@ class ProxServer {
           Uint8List.fromList(hexDecode(body['sigBind'] as String? ?? ''));
 
       // Tracks 2+3 bound ticket: face:{score,faceValidAt,verifierVer} (no
-      // images/embeddings leave the device) + pkD + dSig. Absent → legacy
-      // path (migration). Bound → extended Sig_s + allowlist + tiers.
+      // images/embeddings leave the device) + pkD + dSig. Absent fields
+      // mean an unbound proof, which never confirms (`liveness-unbound`).
+      // Bound → extended Sig_s + allowlist + tiers.
       // `bound` keys on TICKET CONTENT, not map presence: the local dup
-      // vector rides `face:{vec}` on legacy proofs too, and a vec-only map
-      // must NOT flip a legacy-Sig_s proof into the bound path.
+      // vector rides `face:{vec}` on unbound proofs too, and a vec-only map
+      // must NOT flip an unbound-Sig_s proof into the bound path.
       final faceMap = body['face'] as Map<String, dynamic>?;
       final ticketStampMs =
           (faceMap?['faceValidAt'] as num?)?.toInt() ?? 0;
@@ -755,9 +736,10 @@ class ProxServer {
           : Uint8List(0);
 
       // Rosterless (offline-local phase): the student presents its device
-      // key and both signatures verify against it — trust-on-first-use per
-      // class, no roster lookup. Radio freshness, single-use, face score,
-      // sighting and channel binding still gate. Email is self-asserted
+      // key and a bound+liveness+FULL proof verifies against it —
+      // trust-on-first-use per class, no roster lookup. Liveness, radio
+      // freshness, single-use, face score, sighting, dSig, chain pin and
+      // channel binding all gate. Email is self-asserted
       // (verified identity returns with the professor-sign-in phase).
       final presentedPk =
           Uint8List.fromList(hexDecode(body['pkS'] as String? ?? ''));
@@ -819,10 +801,10 @@ class ProxServer {
       // recomputed with the CLAIMED hash, so a transplanted dSig (wrong
       // hash, or a pre-binding dSig with no trailing field) fails verify.
       // dSig-gated (FULL/STD: pkD+dSig present) proofs additionally REQUIRE
-      // a well-formed hash — pre-binding clients omit it and fail closed
+      // a well-formed hash — proofs without one fail closed
       // here as device-unproven, never a silent downgrade to the hash-less
-      // preimage. NONE proofs skip dSig gating (the fallback path owns
-      // them); their advisory `integrity-flagged` flag still rides the
+      // preimage. NONE proofs never confirm (`device-none-requires-approval`
+      // in verify); their advisory `integrity-flagged` flag still rides the
       // outcome flags below.
       final integrityHash =
           ((body['integrityHash'] as String?) ?? '').trim().toLowerCase();
@@ -903,16 +885,6 @@ class ProxServer {
           freshWindow: w.isFresh(j, t),
           singleUseOk: singleUse,
           requireBoundTicket: bound,
-          // Security §4 enforcement: the liveness rollout is done, so
-          // face-bound pre-liveness proofs fail closed (`liveness-unbound`
-          // with actionable copy) via [requireLivenessEnforced] above.
-          requireLiveness: requireLivenessEnforced,
-          // C3(b): legacy (unbound) proofs fail `liveness-unbound` unless
-          // this server explicitly allows the legacy fleet (tests only).
-          legacyAllow: allowLegacyUnbound,
-          // C3(a): bound-NONE proofs confirm with the fallback flag only
-          // when explicitly allowed (tests only — production taps manual).
-          allowNoneFallback: allowNoneFallback,
         );
       }
 
@@ -995,9 +967,9 @@ class ProxServer {
       // (expectedLeafPkD — structure-only compare, no decryption), (d)
       // validates X.509 signatures + validity dates, and (e) pins to the
       // Google roots. Any failure verdicts device-unproven (never a tier,
-      // never a silent presence flag). NONE proofs skip this (fallback
-      // path owns them); legacy unbound proofs never reach it (their
-      // level parses as none).
+      // never a silent presence flag). NONE proofs never reach this as
+      // confirms (verify fails them first); unbound proofs never reach it
+      // (their level parses as none).
       if ((outcome.decision == ProveDecision.confirmed ||
               outcome.decision == ProveDecision.late) &&
           attLevel != AttestationLevel.none) {
