@@ -14,18 +14,23 @@
 //                          profName follows the same gated channel (never BLE).
 //   POST /prove           {ID,windowID,j,C_j,Sig_s,faceScore,peerW,roll,
 //                          tlsFp,sigBind} -> {confirmed|late|invalid,...}
-//   GET  /live?token=     counts + rows           (host bearer)
-//   GET  /export?token=   attendance.csv          (host bearer)
+//   GET  /live             counts + rows           (host bearer)
+//   GET  /export           attendance.csv          (host bearer)
 //
 // Security notes:
-//  - TLS cert is per-window runtime-generated (see tls.dart); clients pin
-//    via channel binding (tlsFp + sigBind). A blind Evil-Twin relay cannot
-//    present the professor's cert without its private key, so relayed POSTs
-//    fail binding with `tls-mismatch`.
+//  - TLS cert is per-hosting runtime-generated (see tls.dart, LAN-IP SANs);
+//    clients pin via channel binding (tlsFp + sigBind). A blind Evil-Twin
+//    relay cannot present the professor's cert without its private key, so
+//    relayed POSTs fail binding with `tls-mismatch`. First-connect cert
+//    TOFU is the stated residual (UWB needed for a full close).
 //  - BLE sightings come from the radio layer via [SightingLookup]; the
 //    server never trusts client-claimed RSSI.
-//  - Host bearer = hex(SHA-256(S_w)): only the host knows the window secret.
-//  - Rate limits: /prove 40/10s/IP, /window 5/10s/IP (§6.3).
+//  - Host bearer = hex(SHA-256(S_w)), fresh per window (rotated in
+//    [openWindow]); pass via `Authorization: Bearer` (preferred — never in
+//    URLs). A `?token=` query fallback stays for mixed fleets; the server
+//    never logs request URIs and the path rides TLS.
+//  - Rate limits: /prove 40/10s per IP AND 10/10s per ID, /window 5/10s/IP,
+//    presence endpoints 20/10s per ID, all with Retry-After (§6.3).
 library;
 
 import 'dart:async';

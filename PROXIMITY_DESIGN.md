@@ -178,24 +178,30 @@ stays source of truth), not key distribution.
 ### 3.3 In-class authentication (offline, as built)
 
 - Student to professor: `Sig_s` (extended ticket, §5.1) + Gmail +
-  `pkD` + `dSig = Sign(DKey, deviceProvePreimage)` + the face ticket
-  `{score, faceValidAt, verifierVer}` (hash-bound, no images leave the
-  device). Professor verifies against the presented `PK_s` (TOFU per
-  class, no roster lookup), checks `score >= T`, `faceValidAt` fresh,
-  `verifierVer` allowlisted, then: FULL/STD fresh → confirmed, FULL/STD
-  past `attestedUntil` within the 14d grace → confirmed+banner,
-  expired/bad-dSig → device-unproven → manual path, and level NONE →
-  graceful fallback (same ticket-bound `Sig_s` + face + sighting checks,
-  no tier claimed, `dSig` not gated) → confirmed with a
-  `device-none-fallback` flag. The fallback exists because HW keys don't
-  ship yet — production is always `SoftwareDeviceKey`/NONE, and gating it
-  hard-invalid stranded all live marking.
+  `pkS` + `pkD` + `dSig = Sign(DKey, deviceProvePreimage)` + the face
+  ticket `{score, faceValidAt, verifierVer}` + liveness
+  `{livenessScore, livenessVer}` (hash-bound, no images leave the
+  device). Professor verifies `Sig_s` under the PINNED `pkS` (prefetched
+  at one-time online setup; unknown `pkS` rejected offline — first-ever
+  class is TOFU, every later class is pinned), checks face `score >= T`
+  + one-sided `faceValidAt` (≤30 s future skew, ≤5 m old) +
+  `verifierVer`/`livenessVer` allowlisted + `livenessScore >= Tl`, then
+  the chain gate for FULL/STD (attestation OID + V2-challenge match +
+  leaf-SPKI==`pkD` bind + X.509 signatures + validity dates + Google-root
+  pin, `checkValidity: true`): FULL/STD fresh → confirmed, FULL/STD past
+  `attestedUntil` within the 14d grace → confirmed+banner,
+  expired/bad-`dSig`/bad-chain → device-unproven → manual path. Level
+  NONE never confirms (`device-none-requires-approval` → manual path)
+  and unbound (no ticket) never confirms (`face-unbound` /
+  `liveness-unbound`) — no fallback, no migration accept.
 - Professor to student: `Sign(SK_p, ...)` over the session descriptor,
   verified against the live window fetch (rotation-tolerant). Blocks
   Evil-Twin access points.
-- TLS: per-hosting-session runtime cert; MITM resistance via channel
-  binding (`tlsFp` + `sigBind` over the presented cert) verified
-  server-side. No external CA needed.
+- TLS: per-hosting runtime cert (LAN-IP SANs); MITM resistance via
+  channel binding (`tlsFp` + `sigBind` over the presented cert) verified
+  server-side. No external CA needed. Host bearer is per-window
+  (`hex(SHA-256(S_w))`, rotated each `openWindow`) via `Authorization:
+  Bearer`. First-connect cert TOFU is the stated residual (§13).
 
 ### 3.4 Attestation trust — offline-only (no server re-check)
 
@@ -614,7 +620,7 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
 
 - **Hostel join fails:** attacker on campus WiFi elsewhere can fetch `/window` but never hears `UUID_P(j)` over radio (30 m limit, 5 s rotation). Without `C_j` they cannot build a valid `UUID_S` or `Sig_s` for the current sub-epoch. A screenshot forwarded after 5 s is already stale.
 - **Lent phone fails:** holder's face does not match enrollment template, `SK_s` stays locked, no signature is produced. Mismatches burn one of 4 attempts, then the needs-review queue with professor check.
-- **Copied ID fails:** signatures verify against the presented device key for that Gmail (TOFU per class). Attacker's phone holds a different key (or none), verification fails.
+- **Copied ID fails:** `Sig_s` verifies under the PINNED `pkS` for that Gmail (prefetched online; TOFU only for the first-ever class). An accomplice's fresh keypair is an unknown `pkS` offline — rejected before any other check.
 - **Cloned app fails:** the install UUID + sealed SKey envelope don't
   transfer — a backup-restore clone fails unwrap and must re-enroll
   (subject to the 30-day move bound), and the old install's binding
@@ -629,7 +635,7 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
   freshness (`0 <= now - t_j < 12 s`) plus LRU dedup. Replayed POST or
   re-advertised UUID is marked late/invalid; retakes (fresh windowId)
   never false-replay.
-- **Back-row works:** controlled-flood relay brings the challenge to every seat within 2–3 hops; WiFi POSTs need no relay; BLE response sightings tolerate one relay hop with flag.
+- **Back-row works:** controlled-flood relay brings the challenge to every seat; WiFi POSTs need no relay; BLE response sightings tolerate a single relay hop (v3 relayed bit → hop 1, flagged, RSSI-gated).
 - **Equal where it runs:** every marking device advertises/scans the
   same packets, verifies the same signatures, runs the same face gate
   and timing. Off-mobile there is no weaker path — there is no path
