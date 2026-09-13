@@ -413,7 +413,7 @@ String buildAttendanceCsv({
             ? 'Partial'
             : 'Absent';
     sb.writeln(
-        '${names[email] ?? ''},${rolls[email] ?? ''},$email,${a ? 1 : 0},${b ? 1 : 0},$status');
+        '${csvCell(names[email] ?? '')},${csvCell(rolls[email] ?? '')},${csvCell(email)},${a ? 1 : 0},${b ? 1 : 0},$status');
   }
   return sb.toString();
 }

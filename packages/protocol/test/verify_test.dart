@@ -164,6 +164,20 @@ void main() {
       expect(small.keyCount, 1);
     });
 
+    test('signed LAN export hardens identity cells (formula/quoting)',
+        () {
+      final csv = buildAttendanceCsv(
+        classLabel: 'CS201-Room301',
+        dateIso: '2026-09-03',
+        w1: {'a@x.in': true},
+        w2: {'a@x.in': true},
+        names: {'a@x.in': '=EVIL(), Jr'},
+        rolls: {'a@x.in': '1'},
+      );
+      expect(csv, contains('"\'=EVIL(), Jr"'));
+      expect(csv, contains(',1,1,Present'));
+    });
+
     test('CSV export + detached sig verifies; tamper fails', () async {
       final prof = ProxCrypto.generateEdKeypair();
       final csv = buildAttendanceCsv(
