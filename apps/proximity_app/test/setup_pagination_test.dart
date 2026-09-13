@@ -62,7 +62,6 @@ List<Override> _base({SignedAccount? acct = _acct}) {
 
 Map<String, String> _studentRole() => {
       'roles': 'student',
-      'role': 'student',
       'lastMode': 'student',
       'email': _acct.email.toLowerCase(),
       'uid': 'test-uid',

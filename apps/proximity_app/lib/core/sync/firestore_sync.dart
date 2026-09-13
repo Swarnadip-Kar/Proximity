@@ -106,11 +106,6 @@ class FirestoreCloudSync implements CloudSync {
           if (r == 'prof' || r == 'student') roles.add(r as String);
         }
       }
-      // Legacy single-role docs.
-      final legacy = d['role'] as String?;
-      if (roles.isEmpty && (legacy == 'prof' || legacy == 'student')) {
-        roles.add(legacy!);
-      }
       final email = (d['email'] as String? ?? '').toLowerCase();
       return RoleDoc(
         uid: uid,

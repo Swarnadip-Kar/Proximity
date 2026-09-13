@@ -3,9 +3,8 @@ library;
 
 /// Professor and/or student role record. One doc per Firebase uid — the same
 /// Gmail can hold BOTH roles (professor on many devices, student on one).
-/// [role] is the legacy single-role constructor param (maps to roles:[role]);
-/// new code passes [roles]. [lastMode] ('prof'|'student'|'') is the last used
-/// mode and drives the landing default + relaunch routing.
+/// [roles] is the full set; [lastMode] ('prof'|'student'|'') is the last
+/// used mode and drives the landing default + relaunch routing.
 class RoleDoc {
   final String uid;
   final String email;
@@ -21,24 +20,19 @@ class RoleDoc {
       {required this.uid,
       required this.email,
       required this.name,
-      List<String>? roles,
-      String? role,
+      this.roles = const <String>[],
       this.displayName = '',
       this.lastMode = '',
       this.org = '',
-      this.updatedAtMillis = 0})
-      : roles = roles ??
-            (role != null && role.isNotEmpty ? [role] : const <String>[]);
-
-  /// Legacy single-role read (first role, or ''). New code uses [roles].
-  String get role => roles.isEmpty ? '' : roles.first;
+      this.updatedAtMillis = 0});
 }
 
 /// Local role-cache helpers. Cache shape (see DeviceStore.readRole):
 /// {roles: 'prof,student', lastMode: 'prof'|'student', email, uid,
-///  displayName} plus a legacy mirror 'role' (= lastMode or first role).
+///  displayName, org}. Fresh-only: the single-key 'role' entry is gone —
+/// a cache without 'roles' holds nothing (re-register).
 
-/// Parses held roles from a cache map (legacy single 'role' supported).
+/// Parses held roles from a cache map ('roles' CSV only).
 Set<String> roleSet(Map<String, String>? role) {
   if (role == null) return const {};
   final out = <String>{};
@@ -46,8 +40,6 @@ Set<String> roleSet(Map<String, String>? role) {
     final r = part.trim();
     if (r == 'prof' || r == 'student') out.add(r);
   }
-  final legacy = (role['role'] ?? '').trim();
-  if (legacy == 'prof' || legacy == 'student') out.add(legacy);
   return out;
 }
 
@@ -97,17 +89,13 @@ Map<String, String> mergeRoleCache(Map<String, String>? existing,
     if (set.contains('prof')) 'prof',
     if (set.contains('student')) 'student'
   ];
-  final primary = mode.isNotEmpty
-      ? mode
-      : (ordered.isNotEmpty ? ordered.first : '');
   // Org persists from sign-in (never user-entered): an explicit non-empty
-  // value wins, else the previous cache entry survives (legacy '' stays).
+  // value wins, else the previous cache entry survives ('' stays unset).
   final nextOrg = (org != null && org.isNotEmpty)
       ? org
       : (prev['org'] ?? existing?['org'] ?? '');
   return {
     'roles': ordered.join(','),
-    'role': primary, // legacy mirror
     'lastMode': mode,
     'email': email.toLowerCase(),
     'uid': uid,

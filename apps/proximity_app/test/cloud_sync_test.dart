@@ -49,16 +49,28 @@ void main() {
             authEmail: 'a@x.in',
             authUid: 'u2',
             authName: 'A',
-            role: const {'role': 'student', 'email': 'a@x.in'},
+            role: const {'roles': 'student', 'email': 'a@x.in'},
             hostNameFallback: ''),
         isNull);
-    // Legacy single-role cache still works.
+    // Fresh-only: a single-key 'role' cache holds nothing (re-register).
+    expect(
+        profPushIdentity(
+            authEmail: 'P@x.in',
+            authUid: 'u1',
+            authName: 'Gmail Name',
+            role: const {
+              'role': 'prof',
+              'email': 'p@x.in',
+              'displayName': 'Prof Display'
+            },
+            hostNameFallback: 'Typed'),
+        isNull);
     final legacy = profPushIdentity(
         authEmail: 'P@x.in',
         authUid: 'u1',
         authName: 'Gmail Name',
         role: const {
-          'role': 'prof',
+          'roles': 'prof',
           'email': 'p@x.in',
           'displayName': 'Prof Display'
         },
@@ -73,7 +85,6 @@ void main() {
         authName: 'Gmail Name',
         role: const {
           'roles': 'prof,student',
-          'role': 'student',
           'lastMode': 'student',
           'email': 'p@x.in',
           'displayName': 'Prof Display'
@@ -92,9 +103,10 @@ void main() {
         isNull);
   });
 
-  test('role cache helpers: dual roles, legacy fallback, lastMode', () {
+  test('role cache helpers: dual roles, roles-only, lastMode', () {
     expect(roleSet(null), isEmpty);
-    expect(roleSet(const {'role': 'prof', 'email': 'p@x.in'}), {'prof'});
+    expect(roleSet(const {'role': 'prof', 'email': 'p@x.in'}), isEmpty);
+    expect(roleSet(const {'roles': 'prof', 'email': 'p@x.in'}), {'prof'});
     expect(roleSet(const {'roles': 'prof,student'}), {'prof', 'student'});
     expect(roleHas(const {'roles': 'prof', 'email': 'p@x.in'}, 'prof',
         email: 'P@X.IN'), isTrue);
@@ -102,11 +114,11 @@ void main() {
         isFalse);
     expect(roleLastMode(const {'roles': 'prof,student', 'lastMode': 'student'}),
         'student');
-    expect(roleLastMode(const {'role': 'prof'}), 'prof');
+    expect(roleLastMode(const {'roles': 'prof'}), 'prof');
     var m = mergeRoleCache(null,
         email: 'P@X.in', uid: 'u1', addRole: 'student', lastMode: 'student');
     expect(m['roles'], 'student');
-    expect(m['role'], 'student'); // legacy mirror
+    expect(m.containsKey('role'), isFalse); // no single-role mirror
     expect(m['email'], 'p@x.in');
     m = mergeRoleCache(m,
         email: 'p@x.in', uid: 'u1', displayName: 'Prof', addRole: 'prof');
@@ -114,7 +126,7 @@ void main() {
     expect(m['lastMode'], 'student'); // untouched when not passed
     m = mergeRoleCache(m, email: 'p@x.in', uid: 'u1', lastMode: 'prof');
     expect(m['lastMode'], 'prof');
-    expect(m['role'], 'prof');
+    expect(m.containsKey('role'), isFalse);
   });
 
   test('session doc round-trips through Firestore mapping', () {
@@ -137,7 +149,11 @@ void main() {
   test('FakeCloudSync: setRole unions roles, keeps lastMode', () async {
     final fake = FakeCloudSync();
     await fake.setRole(RoleDoc(
-        uid: 'u1', email: 'p@x.in', name: 'P', role: 'prof', lastMode: 'prof'));
+        uid: 'u1',
+        email: 'p@x.in',
+        name: 'P',
+        roles: const ['prof'],
+        lastMode: 'prof'));
     await fake.setRole(RoleDoc(
         uid: 'u1',
         email: 'p@x.in',
@@ -358,7 +374,7 @@ void main() {
   test('FakeCloudSync: push/pull/rename/delete + offline refusal', () async {
     final fake = FakeCloudSync();
     await fake.setRole(RoleDoc(
-        uid: 'u1', email: 'p@x.in', name: 'Prof', role: 'prof'));
+        uid: 'u1', email: 'p@x.in', name: 'Prof', roles: const ['prof']));
     expect(await fake.fetchRole('u1'), isNotNull);
     final r = _rec('s1', '2026-09-06T10:00:00.000Z', {'a@x.in': true});
     await fake.pushSession(

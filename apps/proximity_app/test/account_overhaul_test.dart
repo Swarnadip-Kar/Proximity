@@ -86,7 +86,6 @@ FakeCloudSync _boundCloud({String roll = 'R1001'}) {
 
 Map<String, String> _bothRoles({String lastMode = 'prof'}) => {
       'roles': 'prof,student',
-      'role': lastMode,
       'lastMode': lastMode,
       'email': _email.toLowerCase(),
       'uid': 'test-uid',
@@ -241,7 +240,6 @@ void main() {
       await store.writeInstallId(_installId);
       await store.writeRole({
         'roles': 'student',
-        'role': 'student',
         'lastMode': 'student',
         'email': _email.toLowerCase(),
         'uid': 'test-uid',

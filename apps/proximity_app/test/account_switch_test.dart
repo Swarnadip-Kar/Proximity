@@ -47,7 +47,6 @@ const _acct = SignedAccount(
 
 Map<String, String> _bothRoles({String email = _email, String lastMode = 'prof'}) => {
       'roles': 'prof,student',
-      'role': lastMode,
       'lastMode': lastMode,
       'email': email.toLowerCase(),
       'uid': 'test-uid',
@@ -57,7 +56,6 @@ Map<String, String> _bothRoles({String email = _email, String lastMode = 'prof'}
 
 Map<String, String> _singleRole(String which) => {
       'roles': which,
-      'role': which,
       'lastMode': which,
       'email': _email.toLowerCase(),
       'uid': 'test-uid',
@@ -535,7 +533,6 @@ void main() {
       final store = InMemoryDeviceStore();
       await store.writeRole({
         'roles': 'prof',
-        'role': 'prof',
         'lastMode': 'prof',
         'email': 'aaa@example.com',
         'uid': 'uid-a',
