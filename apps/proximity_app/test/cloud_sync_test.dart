@@ -174,7 +174,6 @@ void main() {
     // First bind.
     expect(
         evaluateStudentClaim(
-            localPkHex: 'aa',
             localInstallId: 'i1',
             binding: null,
             installEmail: null,
@@ -183,7 +182,6 @@ void main() {
         StudentClaim.firstBind);
     // Same install enrolled as another Gmail: hard refuse.
     final conflict = evaluateStudentClaim(
-        localPkHex: 'aa',
         localInstallId: 'i1',
         binding: null,
         installEmail: 'other@x.in',
@@ -195,7 +193,6 @@ void main() {
     // device (a copied public key must not bypass the cooldown).
     expect(
         evaluateStudentClaim(
-                localPkHex: 'AA',
                 localInstallId: 'iX',
                 binding: dev('aa', 'i1', movedAgoDays: 0),
                 installEmail: email,
@@ -204,7 +201,6 @@ void main() {
         StudentClaim.cooldownBlocked);
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i1',
                 binding: dev('aa', 'i1', movedAgoDays: 0),
                 installEmail: email,
@@ -213,7 +209,6 @@ void main() {
         StudentClaim.sameDevice);
     // Different device, moved today: cooldown with a retry date.
     final blocked = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: dev('aa', 'i1', movedAgoDays: 1),
         installEmail: null,
@@ -225,17 +220,17 @@ void main() {
     // Different device, moved 31 days ago: allowed.
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i2',
                 binding: dev('aa', 'i1', movedAgoDays: 31),
                 installEmail: null,
                 email: email)
             .claim,
         StudentClaim.allowedMove);
-    // Legacy doc without timestamps: one migration move.
+    // Zero-stamp doc (hand-built — fresh clients always stamp): the
+    // cooldown reads 1970, so one move lands, then the write stamps now
+    // (rules agree: 0 is 30d+ past). Never a silent re-bind loop.
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i2',
                 binding: dev('aa', 'i1'),
                 installEmail: null,

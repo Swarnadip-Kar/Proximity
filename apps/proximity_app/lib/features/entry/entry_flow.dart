@@ -499,12 +499,13 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
   } on StateError catch (e) {
     if (isRulesDenialMessage(e.message)) installDenied = true;
   } catch (_) {}
+  // Local key for the heartbeat touch below (identity signal only —
+  // the verdict above is install-identity, never a pk match).
   String localPk = '';
   try {
     localPk = (await store.readEnrollment())?.pkHex ?? '';
   } catch (_) {}
   final probed = evaluateStudentClaim(
-      localPkHex: localPk,
       localInstallId: installId,
       binding: binding,
       installEmail: installEmail,

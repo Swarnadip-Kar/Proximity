@@ -18,8 +18,9 @@ import 'store/store_base.dart';
 /// [installId] is the app-install UUID (secure storage; app clones and work
 /// profiles get their own, so a clone counts as a different device).
 /// Millis fields are UTC epoch ms: [createdAtMillis] first bind,
-/// [lastMoveAtMillis] last device change (0/legacy = pre-timestamp doc —
-/// the next move is allowed once and stamps it), [lastSeenAtMillis] last
+/// [lastMoveAtMillis] last device change (fresh clients always stamp;
+/// a zero stamp reads as 1970, so one move lands and stamps it),
+/// [lastSeenAtMillis] last
 /// online touch from the bound device (powers the lost-phone story:
 /// professors see recency in the console, students see their retry date).
 class StudentDeviceDoc {
@@ -31,7 +32,7 @@ class StudentDeviceDoc {
   final String modelVer;
   final String installId;
   final String platform;
-  final String org; // Google-account domain (see orgOf), '' = legacy
+  final String org; // Google-account domain (see orgOf); '' denies (rules)
   final int createdAtMillis;
   final int lastMoveAtMillis;
   final int lastSeenAtMillis;
@@ -39,10 +40,10 @@ class StudentDeviceDoc {
   final int moveCount;
   // --- Tracks 2+3 extended claim {pkS,pkD,installId,attestationLevel,
   // attestedAt,attestedUntil=+90d} (+ pipeline tag for flapping audit).
-  // Defaults keep legacy constructors compiling; enrollment always stamps
-  // them. [modelVer] is kept as the pipeline-version slot (now stamped
-  // with the plugin verifierVer) so existing rules/queries keep working.
-  /// DKey public bytes hex ('' = unbound legacy).
+  // Enrollment always stamps them. [modelVer] is kept as the
+  // pipeline-version slot (now stamped with the plugin verifierVer) so
+  // existing rules/queries keep working.
+  /// DKey public bytes hex ('' = unbound: never confirms, manual path).
   final String pkDHex;
   /// Attestation level wire name ('FULL'/'STD'/'NONE').
   final String attestationLevel;
@@ -130,8 +131,7 @@ enum StudentClaim {
   /// No binding yet and this install holds no other Gmail: bind freely.
   firstBind,
 
-  /// Same app install (installId matches; legacy docs without one still
-  /// honor a pk match for migration): re-key / touch freely.
+  /// Same app install (installId matches): re-key / touch freely.
   sameDevice,
 
   /// Different device and the cooldown since the last move elapsed: move.
@@ -178,7 +178,6 @@ class StudentClaimResult {
 /// gates). Verify-only here: no decryption, no interpretation of
 /// encrypted content — shape/signature plumbing only.
 StudentClaimResult evaluateStudentClaim({
-  required String localPkHex,
   required String localInstallId,
   required StudentDeviceDoc? binding,
   required String? installEmail,
@@ -196,16 +195,15 @@ StudentClaimResult evaluateStudentClaim({
     }
     return const StudentClaimResult(StudentClaim.firstBind);
   }
-  final pkSame = localPkHex.isNotEmpty &&
-      binding.pkHex.toLowerCase() == localPkHex.toLowerCase();
   final instSame = localInstallId.isNotEmpty &&
       binding.installId.isNotEmpty &&
       binding.installId == localInstallId;
   // The install is the device identity: a bare pk match from a DIFFERENT
   // install is a move (backup/clone restore carrying the key), not the same
   // device — otherwise copying a public key would bypass the cooldown.
-  // Legacy docs without an installId still honor a pk match (migration).
-  if (instSame || (pkSame && binding.installId.isEmpty)) {
+  // Full-fresh: stored docs always carry installId (rules require it on
+  // create), so same-device is install equality only — no pk fallback.
+  if (instSame) {
     return const StudentClaimResult(StudentClaim.sameDevice);
   }
   if (held != null && held.isNotEmpty && held != want) {
@@ -446,7 +444,6 @@ ClaimWrite resolveStudentClaimWrite({
   final atMillis = at.millisecondsSinceEpoch;
   final key = email.toLowerCase();
   final verdict = evaluateStudentClaim(
-      localPkHex: doc.pkHex,
       localInstallId: installId,
       binding: binding,
       installEmail: installEmail,

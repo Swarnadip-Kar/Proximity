@@ -912,7 +912,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           }
           if (!skipPreclaim) {
             final preVerdict = evaluateStudentClaim(
-                localPkHex: pkHex,
                 localInstallId: installId,
                 binding: preBinding,
                 installEmail: preInstall,

@@ -45,7 +45,6 @@ void main() {
     test('29d23h59m blocked with exact retry date; 30d+1s allowed', () {
       const cooldown = 30 * _dayMs;
       final blocked = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: cooldown - 1000, lastSeenAgoMs: cooldown - 1000),
@@ -61,7 +60,6 @@ void main() {
       expect(studentClaimMessage(blocked, null), contains('re-enroll'));
 
       final allowed = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: cooldown + 1000, lastSeenAgoMs: cooldown + 1000),
@@ -80,7 +78,6 @@ void main() {
       // no input slot: the verdict reads the STORED lastSeen (5d fresh),
       // so the 5d-old move still waits out the 30d bound.
       final r = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs, lastSeenAgoMs: 5 * _dayMs),
@@ -94,7 +91,6 @@ void main() {
     test('genuinely-stale stored value passes inside the cooldown', () {
       // Moved 5d ago (inside 30d) but the old phone silent 61d: lost.
       final r = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs, lastSeenAgoMs: 61 * _dayMs),
@@ -108,7 +104,6 @@ void main() {
     test('59d silence still waits; unknown (zero) lastSeen never exempts',
         () {
       final almost = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs, lastSeenAgoMs: 59 * _dayMs),
@@ -119,7 +114,6 @@ void main() {
       expect(almost.claim, StudentClaim.cooldownBlocked);
 
       final unknown = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: StudentDeviceDoc(
           email: _email,
@@ -151,7 +145,6 @@ void main() {
           Uint8List.fromList(utf8.encode('i2|$atMs'));
       final sig = ed.sign(kp.privateKey, msg);
       final intent = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs,
@@ -169,7 +162,6 @@ void main() {
       expect(intent.claim, StudentClaim.allowedMove);
       // Unsigned move inside the cooldown still refuses (no bypass).
       final noSig = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs,
@@ -192,7 +184,6 @@ void main() {
       );
       expect(
           evaluateStudentClaim(
-                  localPkHex: 'zz',
                   localInstallId: 'i2',
                   binding: legacy,
                   installEmail: null,
@@ -204,7 +195,6 @@ void main() {
 
     test('stale binding never frees the install one-Gmail rule', () {
       final r = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
             lastMoveAgoMs: 5 * _dayMs, lastSeenAgoMs: 90 * _dayMs),

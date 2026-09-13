@@ -139,25 +139,18 @@ service cloud.firestore {
         && purgeStale(resource.data.updatedAtMillis);
     }
 
-    // studentDevices helpers. Field-missing guards come first: reading a
-    // missing key errors (it does NOT yield false), so the legacy check
-    // must short-circuit before any timestamp comparison. The install is
-    // the device identity: a bare pkHex match from a different install is
-    // a move (backup/clone restore), not the same device — copying a
-    // public key must not bypass the cooldown. Legacy docs without an
-    // installId still honor a pk match (migration).
-    function isLegacyDevice() {
-      return !(resource.data.keys().hasAll(['lastMoveAtMillis'])) ||
-        resource.data.lastMoveAtMillis == 0;
-    }
+    // studentDevices helpers. Full-fresh: every doc carries
+    // lastMoveAtMillis + installId (create requires both), so a missing
+    // key errors (it does NOT yield false) and the write denies —
+    // fail-closed, never a migration bypass. The install is the device
+    // identity: a bare pkHex match from a different install is a move
+    // (backup/clone restore), not the same device — copying a public key
+    // must not bypass the cooldown.
     function isSameDevice() {
-      return (request.resource.data.keys().hasAll(['installId']) &&
+      return request.resource.data.keys().hasAll(['installId']) &&
          resource.data.keys().hasAll(['installId']) &&
          request.resource.data.installId != '' &&
-         request.resource.data.installId == resource.data.installId) ||
-        (request.resource.data.pkHex == resource.data.pkHex &&
-         (!(resource.data.keys().hasAll(['installId'])) ||
-          resource.data.installId == ''));
+         request.resource.data.installId == resource.data.installId;
     }
     function moveCooldownElapsed() {
       return request.time.toMillis() - resource.data.lastMoveAtMillis >
@@ -200,16 +193,17 @@ service cloud.firestore {
     // Adjacent hardening on the same chain: lastMoveAt is preserved by
     // same-device writes and freshly stamped by moves — rewinding it to
     // 0/ancient (a cooldown bypass via a hand-built write) is denied.
-    // Legacy docs without the key migrate freely (isLegacyDevice).
+    // Full-fresh: the key is always present (create requires it), so a
+    // missing key denies.
     function storedMoveKeptOrFresh() {
-      return !(resource.data.keys().hasAll(['lastMoveAtMillis'])) ||
-        request.resource.data.lastMoveAtMillis ==
+      return resource.data.keys().hasAll(['lastMoveAtMillis']) &&
+        (request.resource.data.lastMoveAtMillis ==
           resource.data.lastMoveAtMillis ||
         (request.resource.data.lastMoveAtMillis is int &&
          request.time.toMillis() - request.resource.data.lastMoveAtMillis <
            60 * 60 * 1000 &&
          request.time.toMillis() - request.resource.data.lastMoveAtMillis >
-           -60 * 60 * 1000);
+           -60 * 60 * 1000));
     }
 
     // Security §7 additive fields (Spark-free type locks: absent =
@@ -286,8 +280,7 @@ service cloud.firestore {
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
         && incomingStampsFresh()
-        && ((!('installId' in request.resource.data)) ||
-            validInstallId(request.resource.data.installId))
+        && validInstallId(request.resource.data.installId)
         && validSecurityFields();
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 30-day cooldown (server-enforced: clients cannot
@@ -295,8 +288,7 @@ service cloud.firestore {
       // proves the old phone lost (isLostPhone, 60d, server clock). A
       // forged-stale lastSeen at move time still waits: the exemption reads
       // the stored value, and the fresh-stamp gate below refused the forgery
-      // at write time. Pre-timestamp docs move once freely (migration),
-      // stamping lastMoveAtMillis as they go.
+      // at write time.
       // Org stamps once and never blanks.
       allow update: if signedIn()
         && id == tokenEmailLower()
@@ -304,7 +296,7 @@ service cloud.firestore {
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
         && resource.data.org == tokenOrg()
-        && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed() ||
+        && (isSameDevice() || moveCooldownElapsed() ||
             isLostPhone())
         && incomingStampsFresh()
         && storedMoveKeptOrFresh()
