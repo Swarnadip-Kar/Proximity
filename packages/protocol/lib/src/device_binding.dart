@@ -345,8 +345,9 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// 1. [level] >= TEE (FULL/STD only — NONE never pins);
 /// 2. [chain] non-empty, every cert non-empty;
 /// 3. leaf carries the Key Attestation OID ([kKeyAttestationOid]) —
-///    else `missing-attestation-oid` (skipped when [requireKeyOid] is
-///    false — see iOS below);
+///    else `missing-attestation-oid` (always required in production;
+///    pin-pre-gate units with synthetic leaves run through
+///    [verifyAttestationChainPinForTest] — see iOS note below);
 /// 4. leaf embeds [expectedChallenge] (see [deviceBindingChallengeV2])
 ///    — else `challenge-mismatch`;
 /// 5. full X.509 chain signatures verify offline, BEFORE the pin is
@@ -355,9 +356,8 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 ///    see `chain_verify.dart`) — else `bad-chain-signature` /
 ///    `bad-root-signature` / `bad-chain-der` / `unsupported-sigalg` /
 ///    `unsupported-key` / `issuer-mismatch` / `expired-cert` (opt-in).
-///    Skipped only via the test-only [verifySignatures] escape hatch
-///    (pin-pre-gate unit tests — see [verifyAttestationChainPinForTest];
-///    production callers MUST leave it true — no silent downgrades).
+///    Never skipped in production (no downgrade flags — pin-pre-gate
+///    units run through [verifyAttestationChainPinForTest]).
 /// 6. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
 ///    setup) — else `unknown-root`. Runs AFTER signature validation so an
 ///    unvalidated chain is never trusted by pin alone.
@@ -381,9 +381,9 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// DeviceCheck fallback, console enforcement on Firestore — owned by
 /// sec-integrity), while per-request App Attest assertions verify offline
 /// against the stored key with a strictly-increasing counter. iOS callers
-/// carrying a raw X.509 chain pass their pinned Apple root and skip the
-/// OID gate via [requireKeyOid] = false (App Attest objects are
-/// CBOR/authenticator-data and never carry the Android OID).
+/// carrying a raw X.509 chain pass their pinned Apple root; App Attest
+/// objects (CBOR/authenticator-data, never the Android OID) are
+/// out-of-scope for this Android-shaped gate.
 ///
 /// X.509 signature math runs HERE (offline, pure-Dart — see
 /// `chain_verify.dart`), not in the platform adapter: this is the full
@@ -392,13 +392,11 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// (Google's CRL at android.googleapis.com/attestation/status) needs
 /// network and is therefore an online-setup-time check only — the offline
 /// professor gate cannot consult it (residual risk, see doc §7).
-/// Test-only escape hatch for pin-pre-gate units (M4).
-///
-/// Production code MUST call [verifyAttestationChainPin] with the defaults
-/// (`verifySignatures: true`, `requireKeyOid: true`). Unit tests covering
-/// the pin/challenge pre-gates with synthetic leaves call this wrapper,
-/// which sets the zone-scoped [_allowInsecurePinGate] so the asserts in
-/// [verifyAttestationChainPin] pass. Never set the flag outside tests.
+/// Test-only entry point for pin/challenge pre-gate units with synthetic
+/// leaves (not X.509): exposes the [requireKeyOid]/[verifySignatures]
+/// downgrades the production gate deliberately lacks. Never used outside
+/// tests — production [verifyAttestationChainPin] always verifies
+/// signatures and always requires the attestation OID.
 bool _allowInsecurePinGate = false;
 
 @visibleForTesting
@@ -414,7 +412,7 @@ ChainPinResult verifyAttestationChainPinForTest({
   final prev = _allowInsecurePinGate;
   _allowInsecurePinGate = true;
   try {
-    return verifyAttestationChainPin(
+    return _verifyAttestationChainPin(
       chain: chain,
       pinnedRootHashes: pinnedRootHashes,
       expectedChallenge: expectedChallenge,
@@ -428,20 +426,53 @@ ChainPinResult verifyAttestationChainPinForTest({
   }
 }
 
+/// Offline chain-vs-pinned-roots gate (production): signatures ALWAYS
+/// verify (pure-Dart X.509, leaf-first) and the attestation OID is ALWAYS
+/// required — there are no downgrade flags (M4: the old
+/// `verifySignatures:false` / `requireKeyOid:false` params existed only so
+/// pin-pre-gate units could run synthetic leaves; they now live behind
+/// [verifyAttestationChainPinForTest]).
+///
+/// [checkValidity] stays opt-in (default false) because the genuine Google
+/// fixtures in chain_verify_test chain to the legacy 2016 root (expired
+/// May 2026): fixture tests run without it, while the professor server
+/// passes `checkValidity: true` explicitly.
 ChainPinResult verifyAttestationChainPin({
   required AttestationChain chain,
   required List<Uint8List> pinnedRootHashes,
   required Uint8List expectedChallenge,
   required AttestationLevel level,
-  bool requireKeyOid = true,
-  bool verifySignatures = true,
+  Uint8List? expectedLeafPkD,
+  DateTime? now,
+  bool checkValidity = false,
+}) =>
+    _verifyAttestationChainPin(
+      chain: chain,
+      pinnedRootHashes: pinnedRootHashes,
+      expectedChallenge: expectedChallenge,
+      level: level,
+      requireKeyOid: true,
+      verifySignatures: true,
+      expectedLeafPkD: expectedLeafPkD,
+      now: now,
+      checkValidity: checkValidity,
+    );
+
+ChainPinResult _verifyAttestationChainPin({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required AttestationLevel level,
+  required bool requireKeyOid,
+  required bool verifySignatures,
   Uint8List? expectedLeafPkD,
   DateTime? now,
   bool checkValidity = false,
 }) {
-  // M4: the two `false' escape hatches are pin-pre-gate unit-test-only.
-  // Production MUST leave both true (asserts below fire in debug when a
-  // non-test caller downgrades; tests use [verifyAttestationChainPinForTest]).
+  // The two downgrade hatches are test-only by construction: only
+  // [verifyAttestationChainPinForTest] sets the zone flag (asserts fire in
+  // debug if any other caller downgrades — and production has no params
+  // to downgrade with).
   assert(
       verifySignatures || _allowInsecurePinGate,
       'verifySignatures:false is test-only (use verifyAttestationChainPinForTest).');
