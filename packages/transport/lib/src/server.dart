@@ -375,25 +375,50 @@ class ProxServer {
     _http = null;
   }
 
+  /// M5 per-ID+IP limiter (10/10s per email+IP): bounds one device
+  /// hammering many IDs behind one NAT IP, where the IP-only _proveLimits
+  /// (40/10s/IP) is too coarse. Keyed ip|id after body parse (see
+  /// _postProve); the IP gate above still runs first.
+  final RateLimiter _proveIdLimits =
+      RateLimiter(maxHits: 10, window: kRateWindow);
+
+  /// M5 presence-endpoint limiter (20/10s/IP shared): /waiting, /leave and
+  /// /manual-request were unguarded — one loop could fill the professor's
+  /// waiting list. Window-membership itself stays presence-volunteered
+  /// (no crypto proof at join — /prove owns marking); the gate here is
+  /// rate + org-match, never identity.
+  final RateLimiter _presenceLimits =
+      RateLimiter(maxHits: 20, window: kRateWindow);
+
+  Response _rateLimited() => Response(429,
+      body: jsonEncode({'error': 'rate-limited'}),
+      headers: {'content-type': 'application/json', 'retry-after': '10'});
+
   Future<Response> _route(Request req) async {
     final path = req.url.pathSegments;
     try {
       if (req.method == 'GET' && path.length == 1 && path[0] == 'window') {
         if (!_windowLimits.allow(_ip(req))) {
-          return _json({'error': 'rate-limited'}, 429);
+          return _rateLimited();
         }
         return _getWindow(req);
       }
       if (req.method == 'POST' && path.length == 1 && path[0] == 'prove') {
         if (!_proveLimits.allow(_ip(req))) {
-          return _json({'error': 'rate-limited'}, 429);
+          return _rateLimited();
         }
         return await _postProve(req);
       }
       if (req.method == 'POST' && path.length == 1 && path[0] == 'waiting') {
+        if (!_presenceLimits.allow(_ip(req))) {
+          return _rateLimited();
+        }
         return await _postWaiting(req);
       }
       if (req.method == 'POST' && path.length == 1 && path[0] == 'leave') {
+        if (!_presenceLimits.allow(_ip(req))) {
+          return _rateLimited();
+        }
         return await _postLeave(req);
       }
       if (req.method == 'GET' && path.length == 1 && path[0] == 'waiting') {
@@ -402,6 +427,9 @@ class ProxServer {
       if (req.method == 'POST' &&
           path.length == 1 &&
           path[0] == 'manual-request') {
+        if (!_presenceLimits.allow(_ip(req))) {
+          return _rateLimited();
+        }
         return await _postManualRequest(req);
       }
       if (req.method == 'GET' &&
@@ -601,6 +629,11 @@ class ProxServer {
           'serverTime': now.toUtc().toIso8601String(),
           'sigAck': hexEncode(Uint8List(64)),
         }, 200);
+      }
+      // M5 per-ID+IP gate (after id parse, before crypto): one device
+      // hammering many IDs behind one NAT IP is bounded per identity.
+      if (!_proveIdLimits.allow('${_ip(req)}|$id')) {
+        return _rateLimited();
       }
       final wid = Uint8List.fromList(hexDecode(body['windowID'] as String));
       final j = body['j'] as int;
@@ -880,21 +913,32 @@ class ProxServer {
             ProveDecision.confirmed, 'duplicate-confirmed');
       }
 
-      // TLS channel binding: the client must have seen OUR cert.
+      // TLS channel binding: the client must have seen OUR cert. M5 V2
+      // (ID-bound) verifies first; V1 (legacy, no ID) is the migration
+      // fallback so mixed fleets keep marking. New clients MUST send V2.
+      bool bindOk(Uint8List preimage) =>
+          ProxCrypto.verify(stuPk, preimage, sigBind);
       if (outcome.decision == ProveDecision.confirmed) {
         if (!bytesEqual(tlsFp, tls.fingerprint)) {
           outcome =
               const VerifyOutcome(ProveDecision.invalid, 'tls-mismatch');
-        } else if (!ProxCrypto.verify(
-            stuPk,
-            bindPreimage(
-              sessionId: w.sessionId,
-              windowId: w.windowId,
-              j: j,
-              tlsFingerprint: tls.fingerprint,
-            ),
-            sigBind)) {
-          outcome = const VerifyOutcome(ProveDecision.invalid, 'bad-bind');
+        } else {
+          final v2 = bindPreimageV2(
+            sessionId: w.sessionId,
+            windowId: w.windowId,
+            j: j,
+            tlsFingerprint: tls.fingerprint,
+            studentId: id,
+          );
+          final v1 = bindPreimage(
+            sessionId: w.sessionId,
+            windowId: w.windowId,
+            j: j,
+            tlsFingerprint: tls.fingerprint,
+          );
+          if (!bindOk(v2) && !bindOk(v1)) {
+            outcome = const VerifyOutcome(ProveDecision.invalid, 'bad-bind');
+          }
         }
       }
 

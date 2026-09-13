@@ -16,7 +16,8 @@ import 'package:proximity_protocol/protocol.dart';
 
 // M1: bindPreimage's canonical home is proximity_protocol crypto/preimages.
 // Re-export (same declaration — no ambiguity for importers of both packages).
-export 'package:proximity_protocol/protocol.dart' show bindPreimage;
+export 'package:proximity_protocol/protocol.dart'
+    show bindPreimage, bindPreimageV2;
 
 class WindowTls {
   final String certPem;

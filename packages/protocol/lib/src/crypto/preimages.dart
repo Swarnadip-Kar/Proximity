@@ -8,6 +8,7 @@
 // (one class cannot span files); only this top-level preimage lives here.
 library;
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../bytes.dart';
@@ -21,3 +22,23 @@ Uint8List bindPreimage({
   required Uint8List tlsFingerprint,
 }) =>
     concat([sessionId, windowId, ProxCrypto.j32(j), tlsFingerprint]);
+
+/// M5 channel-binding V2: V1 + lowercased student ID bytes appended
+/// (sessionID || windowID || j32 || tlsFingerprint || emailLowerUtf8).
+/// Binds the channel proof to the prover so a captured sigBind cannot be
+/// transplanted across IDs in the same window. Servers verify V2 first,
+/// V1 as migration fallback (mixed fleets); new clients MUST use V2.
+Uint8List bindPreimageV2({
+  required Uint8List sessionId,
+  required Uint8List windowId,
+  required int j,
+  required Uint8List tlsFingerprint,
+  required String studentId,
+}) =>
+    concat([
+      sessionId,
+      windowId,
+      ProxCrypto.j32(j),
+      tlsFingerprint,
+      utf8.encode(studentId.trim().toLowerCase()),
+    ]);

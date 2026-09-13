@@ -1242,11 +1242,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         ),
         sigBindFor: (fp, jj) => ProxCrypto.sign(
             sk,
-            bindPreimage(
+            bindPreimageV2(
                 sessionId: desc.sessionId,
                 windowId: desc.windowId,
                 j: jj,
-                tlsFingerprint: fp)),
+                tlsFingerprint: fp,
+                studentId: identity.gmail.toLowerCase())),
         faceValidAtMs: bound ? faceValidAtMs : null,
         verifierVer: verifierVer,
         faceVecB64: faceVecB64,
