@@ -229,11 +229,19 @@ class AttestationWindow {
 const String kKeyAttestationOid = '1.3.6.1.4.1.11129.2.1.17';
 
 /// DER TLV encoding of [kKeyAttestationOid]:
-/// 06 09 2B 06 01 04 01 D6 79 02 01 11.
+/// 06 0A 2B 06 01 04 01 D6 79 02 01 11 (tag 06, length 10: the OID has 10
+/// content bytes — 2B + 8 arcs with 11129 taking two base-128 bytes D6 79).
 /// Pure-byte needle for [attestationLeafHasKeyOid] — no ASN.1 parser needed.
+///
+/// Provenance (audit 2026-09-13): byte-verified against a genuine
+/// Google-signed leaf (`android/keyattestation` testdata
+/// `blueline/sdk28/TEE_EC_NONE.pem`), whose extension carries
+/// `... 30 82 01 2D 06 0A 2B 06 01 04 01 D6 79 02 01 11 ...`. The previous
+/// `06 09` needle never matched a real cert (every genuine chain failed
+/// `missing-attestation-oid`); fixed to `06 0A`.
 const List<int> kKeyAttestationOidDer = [
   0x06,
-  0x09,
+  0x0A,
   0x2B,
   0x06,
   0x01,
@@ -299,17 +307,20 @@ class ChainPinResult {
 /// [verifyAttestationChainPin] hashes). Public trust anchors, not secrets —
 /// published at
 /// https://developer.android.com/privacy-and-security/security-key-attestation#root_certificate
-/// (pins computed 2026-09-12 from the page's PEM roots):
-/// - RSA root, serial f92009e853b6b045, valid to 2042-03-15.
-/// - EC root ("Key Attestation CA11"), valid 2025-07-17 → 2035-07-15;
-///   starts signing device chains 2026-02-01.
+/// and mirrored with test vectors at
+/// https://github.com/android/keyattestation/blob/main/roots.json
+/// (audit 2026-09-13: both pins below re-hashed from that file's PEMs —
+/// `SHA256(DER)` — with openssl cross-check of serials/validity):
+/// - RSA root, serial f92009e853b6b045, 2022-03-20 → 2042-03-15.
+/// - EC root, CN "Key Attestation CA1", serial 84A9D0297B0EB58AE7FF0E80DE76,
+///   2025-07-17 → 2035-07-15; starts signing device chains 2026-02-01.
 /// Legacy roots (2016/2019/2021) are deliberately omitted: the 2016 root
 /// expired May 2026 and pre-2021 devices chaining to it fail closed as
 /// `unknown-root` (manual path) rather than silently trusting an expired
 /// anchor. iOS App Attest chains pin Apple roots instead — callers pass
 /// their own [pinnedRootHashes]; these defaults are the Android set.
 const String kGoogleHwAttestationRootRsaSha256Hex =
-    'df1d9307e9905467bd87f3a596da5269525f81971c7a0ea0a9c364746b1271a7';
+    'cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc';
 const String kGoogleHwAttestationRootEcSha256Hex =
     '6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0';
 
@@ -334,13 +345,27 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 ///
 /// [pinnedRootHashes] are raw 32-byte SHA-256 digests of trusted root DERs
 /// (TOFU→pin-check: first online fetch pins, offline verifies against the
-/// pin). iOS App Attest flows through the same carrier with Apple roots —
-/// the OID/challenge gates are Android-shaped; iOS callers pass their
-/// pinned Apple root and skip the OID gate via [requireKeyOid] = false.
+/// pin).
+///
+/// Platform split (audit 2026-09-13): this gate is the ANDROID half —
+/// the OID/challenge/pin checks above are Android-key-attestation-shaped.
+/// iOS has no offline X.509 attestation chain to pin: App Attest
+/// attestation needs Apple servers (online, once per key) and DeviceCheck
+/// needs Apple server calls, so with no custom backend the iOS path is
+/// Firebase App Check (Spark-compatible: App Attest provider on iOS 14+,
+/// DeviceCheck fallback, console enforcement on Firestore — owned by
+/// sec-integrity), while per-request App Attest assertions verify offline
+/// against the stored key with a strictly-increasing counter. iOS callers
+/// carrying a raw X.509 chain pass their pinned Apple root and skip the
+/// OID gate via [requireKeyOid] = false (App Attest objects are
+/// CBOR/authenticator-data and never carry the Android OID).
 ///
 /// X.509 signature math is explicitly OUT of scope here (platform adapter
 /// owns it) — this is the pure format+pin+challenge gate the professor
-/// runs offline before [evaluateDeviceProof] tiers the proof.
+/// runs offline before [evaluateDeviceProof] tiers the proof. Revocation
+/// (Google's CRL at android.googleapis.com/attestation/status) needs
+/// network and is therefore an online-setup-time check only — the offline
+/// professor gate cannot consult it (residual risk, see doc §7).
 ChainPinResult verifyAttestationChainPin({
   required AttestationChain chain,
   required List<Uint8List> pinnedRootHashes,
