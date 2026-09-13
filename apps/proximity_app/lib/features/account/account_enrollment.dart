@@ -120,7 +120,7 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
   bool _editing = false;
   bool _busy = false;
   String _status = '';
-  String _lastSeed = '';
+  String _lastRoll = '';
 
   @override
   void dispose() {
@@ -213,11 +213,15 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
           final stored = await store.readEnrollment();
           if (stored != null &&
               stored.email.trim().toLowerCase() == me) {
+            // Sealed-only (security §2 F1): never re-persist a legacy raw
+            // seed — always '' (the envelope + chain carry the key).
+            // Preserves the face-rescan stamp (dropping it to 0 would lift
+            // the 30-day rescan cooldown).
             await store.writeEnrollment(StoredEnrollment(
               email: stored.email,
               name: stored.name,
               roll: want,
-              seedHex: stored.seedHex,
+              seedHex: '',
               pkHex: stored.pkHex,
               sealedKeyHex: stored.sealedKeyHex,
               chainDERHex: stored.chainDERHex,
@@ -229,6 +233,7 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
               attestationLevel: stored.attestationLevel,
               attestedAt: stored.attestedAt,
               attestedUntil: stored.attestedUntil,
+              lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
             ));
           }
         } catch (_) {}
@@ -270,10 +275,10 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
         final seed = roll;
         if (_ctrl == null) {
           _ctrl = TextEditingController(text: roll);
-          _lastSeed = seed;
-        } else if (seed != _lastSeed && !_editing) {
+          _lastRoll = seed;
+        } else if (seed != _lastRoll && !_editing) {
           _ctrl!.text = roll;
-          _lastSeed = seed;
+          _lastRoll = seed;
         }
         if (!_editing) {
           return Column(
