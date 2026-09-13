@@ -335,7 +335,14 @@ service cloud.firestore {
          (callerIsProf() &&
           (missingOrg(resource.data) ||
            resource.data.org == tokenOrg())));
-      allow list: if callerIsProf();
+      // H1: list is per-doc org-gated — the query MUST constrain
+      // where('org', == tokenOrg) or it denies as a whole when it would
+      // match other-org rows. Spark-free: no request.query filter
+      // introspection; enforcement is per-doc org equality here +
+      // client-side where('org') in firestore_sync._prefixQuery (org
+      // required — empty org throws before any query).
+      allow list: if callerIsProf() &&
+        (missingOrg(resource.data) || resource.data.org == tokenOrg());
       allow create: if signedIn()
         && id == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()

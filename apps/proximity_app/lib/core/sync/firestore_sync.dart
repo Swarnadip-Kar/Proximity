@@ -267,6 +267,10 @@ class FirestoreCloudSync implements CloudSync {
   @override
   Future<List<ClassRecord>> pullProfSessions(String profUid,
           {String org = ''}) =>
+      // H1/H2: org-scoped when stamped (steady state always passes org);
+      // the engine's one legacy-discovery pull intentionally omits org so
+      // pre-Track-1 rows surface for stamping (rules keep the read grace
+      // until the backfill signal + console check gate its removal).
       _querySessions((col) {
         var q = col.where('profUid', isEqualTo: profUid);
         if (org.isNotEmpty) q = q.where('org', isEqualTo: org);
@@ -759,6 +763,12 @@ class FirestoreCloudSync implements CloudSync {
   Future<List<StudentDirectoryEntry>> _prefixQuery(
       String field, String prefix, int limit,
       {String org = ''}) async {
+    // H1: directory list is per-doc org-gated server-side — every prefix
+    // query MUST carry where('org', == org) (callers always pass org), or
+    // the query denies as a whole when it would match other-org rows.
+    if (org.isEmpty) {
+      throw StateError('Directory search needs an org (query-constraint).');
+    }
     var q = _db
         .collection('studentDirectory')
         .where(field, isGreaterThanOrEqualTo: prefix)
