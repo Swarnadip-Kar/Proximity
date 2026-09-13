@@ -63,6 +63,7 @@ class _ParsedCert {
   final Uint8List tbsDer;
 
   /// Signature-algorithm OID (dotted) from the outer Certificate SEQ.
+  /// Must equal the inner TBS `signature' OID (M4 alg-confusion gate).
   final String sigAlgOid;
 
   /// Raw signature bytes (BIT STRING content: RSA block or DER SEQ{r,s}).
@@ -117,12 +118,23 @@ class _Spki {
 ///    (else `bad-chain-signature`);
 /// 6. root is self-issued and self-signed (else `bad-root-signature`).
 ///
-/// Does NOT check trust (pin), validity dates, revocation, or key usage —
-/// the caller ([verifyAttestationChainPin]) gates those. Dates are
-/// deliberately unchecked: attestation chains carry far-future test
-/// validity (e.g. 2070+) and offline professor clocks skew; expiry is
-/// enforced at the [AttestationWindow] tier, not here.
-ChainSigResult verifyChainSignaturesLeafFirst(List<Uint8List> certsDer) {
+/// Does NOT check trust (pin), revocation, or key usage — the caller
+/// ([verifyAttestationChainPin]) gates those. Validity dates are opt-in:
+/// pass [checkValidity] with [now] to fail `expired-cert` outside
+/// notBefore/notAfter (structure-only UTCTime/GeneralizedTime compare, no
+/// content interpretation). Default off: attestation chains carry
+/// far-future test validity (e.g. 2070+) and offline professor clocks skew;
+/// expiry is otherwise enforced at the [AttestationWindow] tier, not here.
+/// After the legacy-test-root sunset (2016 root expired 2026-05-24),
+/// production callers SHOULD pass `checkValidity: true`; test fixtures
+/// covering expired roots pass [allowExpiredTestRoots] instead (never in
+/// production — it skips the date gate only, never signatures).
+ChainSigResult verifyChainSignaturesLeafFirst(
+  List<Uint8List> certsDer, {
+  DateTime? now,
+  bool checkValidity = false,
+  bool allowExpiredTestRoots = false,
+}) {
   if (certsDer.isEmpty) {
     return const ChainSigResult(
         ok: false, reason: 'bad-chain-der', flags: ['attest-bad-der']);
@@ -156,16 +168,49 @@ ChainSigResult verifyChainSignaturesLeafFirst(List<Uint8List> certsDer) {
   }
   // Touch the x509 package (parse each cert once) so the declared
   // dependency stays load-bearing: it cross-validates the asn1lib parse
-  // above and fails closed on any structural disagreement.
+  // above and fails closed on any structural disagreement. Validity
+  // windows are captured here (structure-only dates, no content
+  // interpretation) for the opt-in [checkValidity] gate below.
+  final notBefore = <DateTime?>[];
+  final notAfter = <DateTime?>[];
   for (var i = 0; i < certsDer.length; i++) {
     try {
       final seq = ASN1Parser(certsDer[i]).nextObject() as ASN1Sequence;
-      x509.X509Certificate.fromAsn1(seq);
+      final cert = x509.X509Certificate.fromAsn1(seq);
+      DateTime? nb;
+      DateTime? na;
+      try {
+        nb = cert.tbsCertificate.validity?.notBefore;
+        na = cert.tbsCertificate.validity?.notAfter;
+        // ignore: avoid_catches_without_on_clauses
+      } catch (_) {}
+      notBefore.add(nb);
+      notAfter.add(na);
     } catch (_) {
       return ChainSigResult(
           ok: false,
           reason: 'bad-chain-der',
           flags: ['attest-bad-der', 'attest-cert-$i']);
+    }
+  }
+  if (checkValidity && !allowExpiredTestRoots) {
+    final at = (now ?? DateTime.now()).toUtc();
+    for (var i = 0; i < certsDer.length; i++) {
+      final nb = notBefore[i];
+      final na = notAfter[i];
+      // Missing/unparseable dates fail closed only when the gate is on.
+      if (nb == null || na == null) {
+        return ChainSigResult(
+            ok: false,
+            reason: 'expired-cert',
+            flags: ['attest-expired', 'attest-cert-$i']);
+      }
+      if (at.isBefore(nb.toUtc()) || at.isAfter(na.toUtc())) {
+        return ChainSigResult(
+            ok: false,
+            reason: 'expired-cert',
+            flags: ['attest-expired', 'attest-cert-$i']);
+      }
     }
   }
   for (var i = 0; i < parsed.length - 1; i++) {
@@ -303,6 +348,21 @@ _ParsedCert _parseCert(Uint8List der) {
   final base = hasVersion ? 1 : 0;
   // Need at least serial..spki (6 fields after optional version).
   if (tbs.length < base + 6) throw const FormatException('short TBS');
+  // M4 alg-confusion gate: the inner TBS `signature' alg MUST equal the
+  // outer Certificate `signatureAlgorithm' (structure-only OID compare).
+  // A mismatch means the TBS was signed under different parameters than
+  // the outer claims — fail closed as malformed, never verify.
+  final innerSigObj = tbs[base + 1];
+  if (innerSigObj is! ASN1Sequence || innerSigObj.elements.isEmpty) {
+    throw const FormatException('bad TBS signature alg');
+  }
+  final innerSigOidObj = innerSigObj.elements[0];
+  if (innerSigOidObj is! ASN1ObjectIdentifier) {
+    throw const FormatException('bad TBS sig alg OID');
+  }
+  if (_oidOf(innerSigOidObj) != sigAlgOid) {
+    throw const FormatException('TBS/outer signatureAlgorithm mismatch');
+  }
   final issuerObj = tbs[base + 2];
   final subjectObj = tbs[base + 4];
   final spkiObj = tbs[base + 5];

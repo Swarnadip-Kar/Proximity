@@ -22,6 +22,7 @@ dependencies:
   # code, no network — Spark-free (no billing-gated backend, no CRL fetch).
   x509: ^0.2.4+3
   asn1lib: ^1.6.5
+  meta: ^1.9.1
 
 dev_dependencies:
   test: ^1.25.0

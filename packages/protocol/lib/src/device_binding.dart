@@ -49,6 +49,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import 'bytes.dart';
 import 'chain_verify.dart';
 import 'constants.dart';
@@ -345,17 +347,21 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// 3. leaf carries the Key Attestation OID ([kKeyAttestationOid]) —
 ///    else `missing-attestation-oid` (skipped when [requireKeyOid] is
 ///    false — see iOS below);
-/// 4. leaf embeds [expectedChallenge] (see [deviceBindingChallenge]) —
-///    else `challenge-mismatch`;
-/// 5. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
-///    setup) — else `unknown-root`;
-/// 6. full X.509 chain signatures verify offline (each TBS signed by the
-///    issuer SPKI, RSA + ECDSA P-256/P-384, root self-signed — see
-///    `chain_verify.dart`) — else `bad-chain-signature` /
+/// 4. leaf embeds [expectedChallenge] (V2 preferred, see
+///    [deviceBindingChallengeV2]) or, during migration, [alternateChallenge]
+///    (V1, byte-identical) — else `challenge-mismatch`;
+/// 5. full X.509 chain signatures verify offline, BEFORE the pin is
+///    trusted (M4 validate-then-trust: each TBS signed by the issuer SPKI,
+///    RSA + ECDSA P-256/P-384, root self-signed, TBS outer alg == inner —
+///    see `chain_verify.dart`) — else `bad-chain-signature` /
 ///    `bad-root-signature` / `bad-chain-der` / `unsupported-sigalg` /
-///    `unsupported-key` / `issuer-mismatch`. Skipped only when
-///    [verifySignatures] is false (pin-pre-gate unit tests; production
-///    callers MUST leave it true — no silent downgrades).
+///    `unsupported-key` / `issuer-mismatch` / `expired-cert` (opt-in).
+///    Skipped only via the test-only [verifySignatures] escape hatch
+///    (pin-pre-gate unit tests — see [verifyAttestationChainPinForTest];
+///    production callers MUST leave it true — no silent downgrades).
+/// 6. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
+///    setup) — else `unknown-root`. Runs AFTER signature validation so an
+///    unvalidated chain is never trusted by pin alone.
 /// 7. optional leaf-pkD bind: when [expectedLeafPkD] is non-null, the
 ///    leaf EC SPKI (structure-only via `extractLeafEcPublicKeyRaw`, no
 ///    decryption) must equal it — else `leaf-pkd-mismatch`. This is the
@@ -387,6 +393,44 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// (Google's CRL at android.googleapis.com/attestation/status) needs
 /// network and is therefore an online-setup-time check only — the offline
 /// professor gate cannot consult it (residual risk, see doc §7).
+/// Test-only escape hatch for pin-pre-gate units (M4).
+///
+/// Production code MUST call [verifyAttestationChainPin] with the defaults
+/// (`verifySignatures: true`, `requireKeyOid: true`). Unit tests covering
+/// the pin/challenge pre-gates with synthetic leaves call this wrapper,
+/// which sets the zone-scoped [_allowInsecurePinGate] so the asserts in
+/// [verifyAttestationChainPin] pass. Never set the flag outside tests.
+bool _allowInsecurePinGate = false;
+
+@visibleForTesting
+ChainPinResult verifyAttestationChainPinForTest({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required AttestationLevel level,
+  bool requireKeyOid = true,
+  bool verifySignatures = true,
+  Uint8List? expectedLeafPkD,
+  Uint8List? alternateChallenge,
+}) {
+  final prev = _allowInsecurePinGate;
+  _allowInsecurePinGate = true;
+  try {
+    return verifyAttestationChainPin(
+      chain: chain,
+      pinnedRootHashes: pinnedRootHashes,
+      expectedChallenge: expectedChallenge,
+      level: level,
+      requireKeyOid: requireKeyOid,
+      verifySignatures: verifySignatures,
+      expectedLeafPkD: expectedLeafPkD,
+      alternateChallenge: alternateChallenge,
+    );
+  } finally {
+    _allowInsecurePinGate = prev;
+  }
+}
+
 ChainPinResult verifyAttestationChainPin({
   required AttestationChain chain,
   required List<Uint8List> pinnedRootHashes,
@@ -395,7 +439,19 @@ ChainPinResult verifyAttestationChainPin({
   bool requireKeyOid = true,
   bool verifySignatures = true,
   Uint8List? expectedLeafPkD,
+  Uint8List? alternateChallenge,
+  DateTime? now,
+  bool checkValidity = false,
 }) {
+  // M4: the two `false' escape hatches are pin-pre-gate unit-test-only.
+  // Production MUST leave both true (asserts below fire in debug when a
+  // non-test caller downgrades; tests use [verifyAttestationChainPinForTest]).
+  assert(
+      verifySignatures || _allowInsecurePinGate,
+      'verifySignatures:false is test-only (use verifyAttestationChainPinForTest).');
+  assert(
+      requireKeyOid || _allowInsecurePinGate,
+      'requireKeyOid:false is test-only (use verifyAttestationChainPinForTest).');
   if (level == AttestationLevel.none) {
     return const ChainPinResult(
         ok: false, reason: 'level-none', flags: ['attest-level-none']);
@@ -430,11 +486,26 @@ ChainPinResult verifyAttestationChainPin({
     }
   }
   if (expectedChallenge.isEmpty ||
-      !attestationLeafContainsChallenge(leaf, expectedChallenge)) {
+      !(_leafHasChallenge(leaf, expectedChallenge) ||
+          (alternateChallenge != null &&
+              alternateChallenge.isNotEmpty &&
+              _leafHasChallenge(leaf, alternateChallenge)))) {
     return const ChainPinResult(
         ok: false,
         reason: 'challenge-mismatch',
         flags: ['attest-challenge-mismatch']);
+  }
+  // M4 validate-then-trust: signatures BEFORE the pin is trusted.
+  if (verifySignatures) {
+    final sig = verifyChainSignaturesLeafFirst(
+      chain.certsDer,
+      now: now,
+      checkValidity: checkValidity,
+    );
+    if (!sig.ok) {
+      return ChainPinResult(
+          ok: false, reason: sig.reason, flags: sig.flags);
+    }
   }
   final root = chain.root!;
   final rootHash = ProxCrypto.sha256Sync(root);
@@ -443,15 +514,15 @@ ChainPinResult verifyAttestationChainPin({
     return const ChainPinResult(
         ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
   }
-  if (verifySignatures) {
-    final sig = verifyChainSignaturesLeafFirst(chain.certsDer);
-    if (!sig.ok) {
-      return ChainPinResult(
-          ok: false, reason: sig.reason, flags: sig.flags);
-    }
-  }
   return const ChainPinResult(ok: true, reason: 'ok');
 }
+
+/// Opaque byte-containment for one challenge candidate (HARD REQUIREMENT:
+///
+/// sealed/attestation bytes are never decrypted or interpreted — only
+/// structure, lengths, signatures, bindings are verified).
+bool _leafHasChallenge(Uint8List leafDer, Uint8List challenge) =>
+    attestationLeafContainsChallenge(leafDer, challenge);
 
 /// M1-gap enrollment challenge (security §2, canonical V1):
 /// SHA256(emailLower || installId || pkS32).
