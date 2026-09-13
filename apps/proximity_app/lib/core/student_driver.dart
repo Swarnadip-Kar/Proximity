@@ -1447,10 +1447,17 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // LAN-only session vector for the professor's in-memory dup compare
       // (RAM-only there, never the cloud). Best-effort per prove: the
       // plugin gallery read is local and cheap; failure omits the field.
+      // Success logs too (length only, never content): an attached vector
+      // with no professor-side dup log means the pin/crypto gates refused
+      // first (see unknown-pkS), not a silent vector drop.
       var faceVecB64 = '';
       try {
         faceVecB64 =
             faceVecEncode(await _verifier.embeddingFor(stored.faceId));
+        if (faceVecB64.isNotEmpty) {
+          BleLog.log('SEC',
+              'session vector attached (${faceVecB64.length} chars — prof dup compare participates)');
+        }
       } catch (e) {
         BleLog.log('SEC', 'session vector unavailable ($e) — proving bare');
       }

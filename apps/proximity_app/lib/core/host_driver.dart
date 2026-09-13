@@ -145,7 +145,11 @@ abstract class HostDriver {
 
   /// Hydrates the server's student-key pins from the professor's persistent
   /// directory cache (email → pkS) so offline `unknown-pkS` enforcement
-  /// survives restarts. Returns pinned count.
+  /// survives restarts. Forces overwrite: the source is the authenticated
+  /// same-org directory merged over the cache (never LAN), so a student
+  /// re-enroll that landed after the last hydrate converges instead of
+  /// refusing as stale-`unknown-pkS` for the rest of the session.
+  /// Returns pinned count.
   Future<int> hydrateStudentPins(Map<String, String> emailToPkSHex) async =>
       0;
 }
@@ -242,7 +246,10 @@ class RealHostDriver implements HostDriver {
     final s = _server;
     if (s == null) return 0;
     try {
-      return s.pinStudentKeys(emailToPkSHex);
+      // Force: the directory source is authenticated + freshest-known —
+      // a stale live pin (student re-enrolled mid-class) must converge,
+      // not refuse for the rest of the session (see pinStudentKeys).
+      return s.pinStudentKeys(emailToPkSHex, force: true);
     } catch (_) {
       return 0;
     }

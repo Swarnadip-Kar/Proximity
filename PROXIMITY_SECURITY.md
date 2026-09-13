@@ -176,9 +176,9 @@ token per host+email, sends it on leave).
 17s acceptance), discovery expiry 12s (one missed 10s rotation +
 margin). Ticket break with the floor below.
 
+**Follow-up (2026-09-13, stale-pin convergence + dedup visibility + loop race):** (a) A stale LIVE pin never converged: `pinStudentKeys` was first-seen-wins, so the per-window directory re-prefetch updated the persistent cache but the live server kept refusing the re-enrolled key as `unknown-pkS`. Hydration now forces overwrite (the source is the authenticated same-org directory merged over cache — never LAN); a new window converges when online, offline stale pins still fail closed to manual attendance. (b) Dedup observability: the path was wired but silent on success — the student now logs `session vector attached` (length only) and the host log carries `vec-ok` per marked prove that plants a decodable vector with no match (`dupface:` still rides matches). No vector ever arrives while the pin gate refuses first, so missing vector logs diagnose upstream refusal, not a vector drop. (c) Enroll loop race: the save latches `_finished` synchronously, but an in-flight still could still score/fill mid-save and move progress under Processing — the post-pose, post-vitality, and bottom gates now drop on `_finished` too. The `Unknown landmark type` logcat spam is the `face_verification` plugin's INTERNAL detector (per verify call: 5 terminal self-checks + marking verifies), not the app's gates (both run landmarks-off).
+
 **Pubspec (app — as-built, `apps/proximity_app/pubspec.yaml`):**
-```yaml
-attested_secure_keys: ^0.1.1 # HW DKey (StrongBox→TEE / Secure Enclave)
 device_info_plus: ^13.2.0 # stable phone id (ANDROID_ID / identifierForVendor) for the same-phone reclaim only
 flutter_secure_storage: ^11.0.0
 firebase_app_check: ^0.4.7 # 0.4.x provider-class API

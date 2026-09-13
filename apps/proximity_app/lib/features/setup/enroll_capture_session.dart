@@ -366,7 +366,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
           if (_done) return;
           EnrollLog.face('pose read error (silent, continuing): $e');
         }
-        if (_done) return;
+        if (_done || _finished) return;
         final slot = reading == null
             ? null
             : EnrollBucketFill.classifyInto(
@@ -399,7 +399,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             EnrollLog.face(
                 'slot $slot vitality unreadable (silent, continuing): $e');
           }
-          if (_done) return;
+          if (_done || _finished) return;
           if (vitality < bar) {
             EnrollLog.face('slot $slot vitality '
                 '${vitality < 0 ? 'unreadable' : vitality.toStringAsFixed(2)} '
@@ -427,7 +427,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
           EnrollLog.face('still classified nowhere (silent, continuing)');
         }
       }
-      if (_done) return;
+      // The save latches [_finished] synchronously at start, so an
+      // in-flight still that lands during the terminal write is dropped
+      // here (and at the two gates above) instead of filling a bucket
+      // mid-save — the camera never takes another still once Processing
+      // owns the set, and progress never moves under it.
+      if (_done || _finished) return;
       if (_doneCount == _paths.length) {
         await _saveAll();
         return;

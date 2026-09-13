@@ -436,7 +436,45 @@ void main() {
           isTrue,
           reason: 'early invalids must verify — never BAD-sig');
       expect(proved.last, contains('pin-mismatch'));
-      // 3) Closed window: unsigned by contract (nothing to bind), but the
+      // 3) Forced re-pin (what the professor's per-window prefetch now
+      // does): the fresh directory key converges instead of refusing for
+      // the rest of the session. New window (new single-use scope), same
+      // student key — marks normally.
+      server.pinStudentKeys({_email: hexEncode(pk32(stu.publicKey))},
+          force: true);
+      server.openWindow(
+        WindowParams(
+          sessionId: server.window!.sessionId,
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'CS201-Room301',
+        ),
+        2,
+      );
+      final cj3 = server.window!.challengeFor(0);
+      final desc3 = await client.fetchWindow(cj3);
+      final converged = await proveFresh(
+        client,
+        desc: desc3,
+        cj: cj3,
+        j: 0,
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: 0.9,
+      );
+      expect(converged.decision, ProveDecision.confirmed);
+      expect(
+          converged.verifyAck(
+            profPk: prof.publicKey,
+            sessionId: desc3.sessionId,
+            windowId: desc3.windowId,
+            j: 0,
+            studentId: _email,
+          ),
+          isTrue);
+      // 4) Closed window: unsigned by contract (nothing to bind), but the
       // shape still parses — the driver maps it pre-ACK-check.
       server.closeWindow();
       final closed = await proveFresh(

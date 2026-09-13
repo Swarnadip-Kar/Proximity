@@ -179,11 +179,15 @@ class ProxServer {
   }
 
   /// Bulk pre-fetch helper for online setup: pins every entry of
-  /// [emailToPkSHex] first-seen-wins. Returns pinned count.
-  int pinStudentKeys(Map<String, String> emailToPkSHex) {
+  /// [emailToPkSHex] first-seen-wins (unless [force]). Returns pinned count.
+  /// [force] overwrites stale pins: the source is always the authenticated
+  /// same-org directory merged over the persistent cache (never LAN), so a
+  /// mid-class student re-enroll converges instead of refusing as
+  /// `unknown-pkS` for the rest of the session.
+  int pinStudentKeys(Map<String, String> emailToPkSHex, {bool force = false}) {
     var n = 0;
     emailToPkSHex.forEach((k, v) {
-      if (pinStudentKey(k, v)) n++;
+      if (pinStudentKey(k, v, force: force)) n++;
     });
     return n;
   }
@@ -1139,6 +1143,7 @@ class ProxServer {
           outcome.decision == ProveDecision.late;
       // Validate-before-plant: garbage own-vectors mark normally but plant
       // nothing (no RAM noise, no count noise).
+      var vecPlanted = false;
       if (markedNow &&
           faceVecB64.isNotEmpty &&
           faceVecDecode(faceVecB64) != null) {
@@ -1152,6 +1157,7 @@ class ProxServer {
           }
         }
         _faceVecs[id] = mine;
+        vecPlanted = true;
       }
       // Tracks 2+3: feed the anomaly context (bounded) and surface flags
       // alongside the verdict. The signed ACK is unchanged; flags ride in
@@ -1187,6 +1193,13 @@ class ProxServer {
         // pin" in the terminal, and from `unknown-pkS|pin-mismatch`
         // (a STALE pin refusing a re-enrolled key) above.
         if (marked && pinned == null) 'first-seen',
+        // Vector receipt marker (log only, never the wire verdict): a
+        // decodable session vector planted with no dup match. Lets the
+        // professor terminal confirm the dedup path is ARMED per prove
+        // (`vec-ok` = vectors arriving + comparing, just no twins this
+        // round) instead of wondering whether vectors arrive at all. A
+        // matched pair rides `dupface:` instead (never both).
+        if (vecPlanted && dupPeers.isEmpty) 'vec-ok',
         // Dup pair rides the host log line (never the wire verdict): the
         // app parses it into roster flags + override. Peers only — the
         // prover is the callback's first arg. Neutral copy at the UI, not
