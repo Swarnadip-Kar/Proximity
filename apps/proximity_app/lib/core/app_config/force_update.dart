@@ -136,6 +136,59 @@ class ForceUpdate {
   static const configCollection = 'app_config';
   static const configDoc = 'min_version';
 
+  /// H6 last-known floor cache (Spark-free, in-memory): the last verified
+  /// floor + fetch time. Updated on every verified [checkNow]; enforced
+  /// offline by [checkNow]/[checkCached] so a pinned old build cannot dodge
+  /// the floor by staying offline after seeing it once. Structure only
+  /// (version strings + timestamps) — no sealed bytes involved.
+  static ForceUpdateConfig? _lastFloor;
+  static DateTime? _lastFetchedAt;
+
+  /// Last verified floor (null until the first verified read).
+  static ForceUpdateConfig? get lastKnownFloor => _lastFloor;
+
+  /// Fetch time of [lastKnownFloor] (null until the first verified read).
+  static DateTime? get lastFetchedAt => _lastFloor == null
+      ? null
+      : (_lastFetchedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
+
+  /// Test seam: seed/clear the last-known floor cache.
+  static void debugSeedFloorForTest(ForceUpdateConfig? config,
+      {DateTime? fetchedAt}) {
+    _lastFloor = config;
+    _lastFetchedAt = config == null
+        ? null
+        : (fetchedAt ?? DateTime.now()).toUtc();
+  }
+
+  /// Offline verdict against the cached floor: verified-stale + force
+  /// blocks even without a fresh read (fail-closed); anything else passes
+  /// unchecked (never blocks without a floor). Pure — the offline path of
+  /// [checkNow] delegates here on transport failure.
+  static ForceUpdateResult checkCached({required String currentVersion}) {
+    final floor = _lastFloor;
+    final current = currentVersion.trim();
+    if (floor == null || floor.minVersion.isEmpty || !floor.force) {
+      return ForceUpdateResult(
+        checked: false,
+        updateRequired: false,
+        currentVersion: current,
+        config: floor,
+      );
+    }
+    final stale =
+        current.isEmpty || compareVersions(current, floor.minVersion) < 0;
+    // Cached-floor verdicts are checked:true when they block (a known floor
+    // was enforced) and checked:false when they pass (no fresh verification
+    // — callers re-check at the next online gate).
+    return ForceUpdateResult(
+      checked: stale,
+      updateRequired: stale,
+      currentVersion: current,
+      config: floor,
+    );
+  }
+
   /// Pure verdict — unit-testable, platform-independent.
   ///
   /// Fail-closed: an empty [currentVersion] with `force: true` counts as
@@ -193,17 +246,30 @@ class ForceUpdate {
           await store.collection(configCollection).doc(configDoc).get();
       final data = snap.data();
       if (data == null) {
+        // Missing doc: fall back to the cached floor (H6 offline
+        // enforcement) instead of blind pass — a pinned build that saw the
+        // floor once cannot clear it by deleting the doc offline.
+        final cached = checkCached(currentVersion: current);
+        if (cached.updateRequired) return cached;
         return ForceUpdateResult(
           checked: false,
           updateRequired: false,
           currentVersion: current,
         );
       }
-      return check(
+      final result = check(
         currentVersion: current,
         config: ForceUpdateConfig.fromMap(data),
       );
+      // Cache every verified read (floor or no-floor) with its fetch time.
+      _lastFloor = result.config;
+      _lastFetchedAt = DateTime.now().toUtc();
+      return result;
     } catch (_) {
+      // Transport failure: enforce the cached floor when it blocks (H6),
+      // else unchecked (marking stays offline-capable on first-ever run).
+      final cached = checkCached(currentVersion: current);
+      if (cached.updateRequired) return cached;
       return ForceUpdateResult(
         checked: false,
         updateRequired: false,

@@ -687,6 +687,12 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
   try {
     await (() async {
       if (cloud.available && await cloud.isOnline()) {
+        // H6: student re-entry enforces the version floor too (previously
+        // prof-only): a pinned old build rejoining the next day cannot
+        // dodge the floor by skipping registration. Offline → unchecked →
+        // passes (marking stays offline-capable); verified-stale throws
+        // update copy before any binding read.
+        await entryRequireFreshBuild(checkNow: checkNow);
         final gate = await entryStudentGate(ref, email);
         if (!gate.verdict.ok) {
           BleLog.log(
