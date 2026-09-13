@@ -69,7 +69,7 @@
 - `core/enrollment.dart:generateKey/upload/_tryRestore`: `generateKey` → `ensure()` + `if(level==none) throw Software-no-enroll`; `upload` seals via HW (AES-GCM), persists `sealedKeyHex+pkDHex+chainDER`, never writes `seedHex`; `_tryRestore` deletes raw branch, only `unseal(sealedKeyHex)`.
 - `core/student_driver.dart:_prove:747`: delete `else fromSeed(seedHex)`; `sealedKeyHex.isEmpty → error('re-enroll')`.
 - `core/sync/store/store_base.dart:StoredEnrollment`: `seedHex` field DELETED full-fresh (sec-legacy-e1 — no parse-compat, unknown keys ignored); carries `sealedKeyHex + pkDHex + chainDERHex, level, window`.
-- `packages/protocol/src/device_binding.dart + crypto/verify.dart + crypto/primitives.dart + chain_verify.dart`: `deviceProvePreimage` unchanged (already P-256 contract); professor pre-fetches pinned binding when online, offline runs full X.509 chain verification in pure Dart (`chain_verify.dart:verifyChainSignaturesLeafFirst` — each TBS signature vs issuer SPKI, RSA PKCS#1 v1.5 + ECDSA P-256/P-384, root self-signed + SHA-256 hash-pin pre-gate; fail-closed `bad-chain-signature`/`bad-root-signature`/`bad-chain-der`/`unsupported-sigalg`/`unsupported-key`/`issuer-mismatch`) as step 6 of `verifyAttestationChainPin` (`verifySignatures:true` in production — never the platform adapter), plus the pin gates (Android Key Attestation `OID 1.3.6.1.4.1.11129.2.1.17`, `level>=TEE`, challenge match; iOS via App Check with `requireKeyOid:false`), TOFU→pin-check. Revocation is a snapshot side-channel only: `RevocationCache` (`core/security/revocation_cache.dart`, TTL 7d) refreshed best-effort at one-time online setup (`core/enrollment.dart:724`, `core/host_driver.dart:412`); `revocation-stale`/`revocation-revoked` are professor-review flags, never blocks.
+- `packages/protocol/src/device_binding.dart + crypto/verify.dart + crypto/primitives.dart + chain_verify.dart`: `deviceProvePreimage` unchanged (already P-256 contract); professor pre-fetches pinned binding when online, offline runs full X.509 chain verification in pure Dart (`chain_verify.dart:verifyChainSignaturesLeafFirst` — each TBS signature vs issuer SPKI, RSA PKCS#1 v1.5 + ECDSA P-256/P-384, root self-signed + SHA-256 hash-pin pre-gate; fail-closed `bad-chain-signature`/`bad-root-signature`/`bad-chain-der`/`unsupported-sigalg`/`unsupported-key`/`issuer-mismatch`) as step 6 of `verifyAttestationChainPin` (`verifySignatures:true` in production — never the platform adapter), plus the pin gates (Android Key Attestation `OID 1.3.6.1.4.1.11129.2.1.17`, `level>=TEE`, challenge match; iOS App Attest branch in protocol `app_attest.dart` — no Android-OID check by construction (App Attest leaves carry the Apple nonce extension), chain vs pinned Apple App Attest Root + SE-key/challenge nonce binding at the STD tier, assertion path via credential-key signature; Android path unchanged), TOFU→pin-check. Revocation is a snapshot side-channel only: `RevocationCache` (`core/security/revocation_cache.dart`, TTL 7d) refreshed best-effort at one-time online setup (`core/enrollment.dart:724`, `core/host_driver.dart:412`); `revocation-stale`/`revocation-revoked` are professor-review flags, never blocks.
 
 ## 3. Secure storage
 
@@ -107,16 +107,20 @@
 
 ## 7. Schema / offline (additive only)
 
-Keep `studentDevices/directory/{emailLower}, users/{uid}, deviceInstalls/{uuid}, classSessions/{randomId}`. Only adds: `attestationChain (list<string> DER hex), livenessVer (string), integrityFlag (string)`. Marking stays `BLE Cj(5s)+Sig_s+dSig(HW)+face/liveness+pin+sighting→ACK`; sync later `PRESENT/ABSENT/FLAGGED` only. Zero face vectors/images to cloud.
+Keep `studentDevices/directory/{emailLower}, users/{uid}, deviceInstalls/{uuid}, classSessions/{randomId}`. Only adds: `attestationChain (list<string> DER hex), livenessVer (string), integrityFlag (string), appAttestRawHex (hex ≤8KB, iOS), appAttestCredKeyHex (128 hex, iOS)`. Marking stays `BLE Cj(10s)+Sig_s+dSig(HW)+face/liveness+pin+sighting→ACK`; sync later `PRESENT/ABSENT/FLAGGED` only. Zero face vectors/images to cloud.
 
-**Rules diff (append, existing gates untouched — matches `firestore.rules:234-242 + 395-397`):**
+**Rules diff (append, existing gates untouched — matches `firestore.rules`
+`validSecurityFields` + `validDirectoryPkS` + `profDevices`):**
 ```
 match /app_config/{id} { allow get: if true; allow list,write: if false; }
-match /studentDevices/{id} { // create/update: + pkDHex is string
-  && (!('attestationChain' in request.resource.data) || request.resource.data.attestationChain is list)
-  && (!('livenessVer' in request.resource.data) || request.resource.data.livenessVer is string)
-  && (!('integrityFlag' in request.resource.data) || request.resource.data.integrityFlag == '' || request.resource.data.integrityFlag == 'integrity-flagged')
-  && (!('pkDHex' in request.resource.data) || request.resource.data.pkDHex is string) }
+match /studentDevices/{id} { // create/update: + validSecurityFields()
+  // attestationChain list≤8, livenessVer string≤128, integrityFlag ''|'integrity-flagged',
+  // pkDHex ''|hex≤256, attestationLevel FULL|STD|NONE, attestedAt/Until int,
+  // appAttestRawHex ''|hex≤8192, appAttestCredKeyHex ''|128-hex }
+match /studentDirectory/{id} { // create/update: + validDirectoryPkS()
+  // pkS ''|64-hex ('' = legacy no-pin TOFU, never a mismatch) }
+match /profDevices/{id} { // owner-write, same-org get, never list
+  // {email,uid,org,pubKeys[≤8],updatedAtMillis} — lecture pkP pins }
 ```
 App Check enforcement is console toggle (no rules syntax on Spark).
 Opaque handling: chain/pkD bytes are type-checked only here — never
@@ -140,6 +144,37 @@ no-pin TOFU, never a mismatch) into the persistent
 `prox.studentKeyPins.v1` cache, hydrated into the live server at hosting
 start so offline `unknown-pkS` enforcement survives restarts. First-seen
 TOFU on both sides is VISIBLE (unverified captions/flags), never silent.
+Offline professors (never published a pin) ALWAYS show unverified on
+first sight — the only exception is a previously-seen professor whose pin
+is already cached (then `Verified` from cache, `Verified · live` only
+when a direct fetch just confirmed it — cache-only verdicts never claim
+live). Re-enrollment purges by replace (HW key deletes-then-creates
+under the alias, SKey swaps, sealed doc overwrites, gallery template
+dropped at `generateKey`).
+
+**iOS App Attest (shipped 2026-09-13 — iPhones enroll and mark at STD):**
+the plugin returns CBOR (never x5c), so the backend parses it
+(`attestApple`): attestation objects yield the x5c chain + authData +
+credential key, assertions yield authData with an empty chain (the
+credential key rides forward from the previous enrollment, else a
+reinstall pointer). SE tiers STD on iOS only. Claim/prove carry
+`appAttestRawHex`/`appAttestCredKeyHex` (rules type-locked); the server
+routes by artifact presence to `verifyAppAttestChainPin` (Apple root pin
+`1cb982…42c932`, fetched 2026-09-13, self-signed CN=Apple App
+Attestation Root CA → 2045) or the assertion proof. Residuals: assertion
+path credential key is TOFU; rpId/counter unchecked offline.
+
+**/leave anti-ejection (shipped 2026-09-13):** `/waiting` issues a random
+16B `leaveToken` per join (rejoin rotates); `/leave` requires it —
+missing/mismatch 403s regardless of entry existence (no membership
+oracle for LAN scanners). Mark auto-exit + professor eject stay
+token-free (server-owned). Honest leave unchanged (client stores the
+token per host+email, sends it on leave).
+
+**Timing (2026-09-13):** challenges rotate every 10s (was 5s;
+`kSubEpochSeconds`), freshness stays one-sided (rotation + 7s grace =
+17s acceptance), discovery expiry 12s (one missed 10s rotation +
+margin). Ticket break with the floor below.
 
 **Pubspec (app — as-built, `apps/proximity_app/pubspec.yaml`):**
 ```yaml
@@ -163,6 +198,10 @@ file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
 
 **Verification log (2026-09-13, `sec-docs` close-out):** code landed by sibling tracks, docs closed here — (a) X.509 full verify (`chain_verify.dart` + `verifyAttestationChainPin` step 6, pure-Dart, no platform adapter); (b) App Check 0.4.x provider-class migration (`IntegrityAppCheck` provider constants + `ensureActivated()` call shape, `firebase_app_check ^0.4.7`); STRONG enforce runbook verified present in `integrity.dart` `IntegrityAppCheck` docs (commit `7de0d2e`); (c) CRL snapshot wired (`RevocationCache`, `core/enrollment.dart:724` + `core/host_driver.dart:412`, TTL 7d). Open work is field/console-only: Tl uncalibrated, CRL snapshot-only, Magisk console steps — see residual risks. No thresholds changed, no FAR/FRR numbers claimed.
 
+**Verification log (2026-09-13, batch: email-pins + Tl=0.85 + floor-disk + iOS + leave + 10s):** suites green — protocol 189, transport 66, storage 18, ble 38, app 1110 (`flutter test` / `dart test`). New: `app_attest_test` (python-oracle thumbprint/nonce vectors, CBOR/COSE fixtures, hatched gate logic, assertion round-trip), `prof_email_verification_test` (TOFU/mismatch/live-refresh/queue/directory-pkS), `hw_prove_test` iOS branch (object/assertion/malformed/Android-unchanged), leave-token ejection tests, 10s rotation math. Rules drill re-run + `app_config/min_version` floor bump are operator steps in §9 (console/terminal, not code).
+
+**Check-and-report (2026-09-13, offline-profs + re-enroll purge — verified in code, no change needed):** (a) Offline professors on first sight ALWAYS show unverified — `checkProfPin` returns `unknown` with no cache and no fetch, the driver queues `prox.pendingProfVerify.v1` and renders `Unverified — first seen`; the ONLY exception is a previously-seen professor whose pin is already cached (`Verified` from cache, `Verified · live` only when a direct fetch just confirmed it — cache-only verdicts never claim live; mismatch blocks with no proof sent). (b) Re-enrollment purges by replace: HW key deletes-then-creates under the same alias (`bindEnrollment` → plugin `generateKey`, Android deleteEntry / iOS deleteBlob), SKey swaps (`_keys = kp`, sealed doc overwritten at upload), gallery template dropped at `generateKey` (`_verifier.remove(faceIdOf)` after a successful bind, so an aborted re-enroll keeps the old working set; iOS same-install assertion path carries the credential key forward, else a reinstall pointer).
+
 **Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required; hide-resistance close-out is console-side: Play Console SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump, requires console access); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; liveness is always gated at strict Tl=0.85 with the 2.7x training crop (a photo-spoof must beat the vitality gate plus face/ticket/radio gates — FAR/FRR still UNMEASURED on Proximity captures; a field ROC via `sweepTl`/`recommendTl`/`formatCalibrationTable` stays the way to move Tl, shipped only as threshold + `kLivenessVer` + `min_version` bump); email→key pins are TOFU (first-seen allows with an unverified banner — a sustained MITM from the very first class is not detected until the next online fetch; mismatch refuses outright); force-update cannot reach a build that never goes online after the floor publishes (no channel exists — bound is attestation validity + auto-update); CRL is snapshot-only offline (true push revocation needs a backend, excluded by Spark-free — stale/revoked stay review flags).
 
 ---
@@ -182,3 +221,40 @@ Phases are dependency-ordered. Phase 0 (this doc) done. Phases 1–2 run paralle
 | 4 | `sec-verify` | `rules-drill/`, full `flutter test`, `analyze`, adversarial checklist | 3 | all suites + drill green, residual log updated |
 
 Handoff rule: each agent exports its public API (`HwDeviceKey`, `LivenessGate.detect`, `IntegrityGate.verifyBeforeSensitiveOp`, `SecureStoreOptions`, `ForceUpdate.check`) — callers depend on the API, never on internals. No two agents edit the same file concurrently (see exclusive owns above); `pubspec.yaml` edits via 1B only (others request versions through 1B).
+
+---
+
+## 9. Operator steps (not code — run at release, in order)
+
+These close the floor event: `Tl=0.85` + the directory `pkS` write make
+old builds fail closed (`liveness-unbound` / `unknown-pkS` mismatch
+surface), which is the INTENDED floor — ship the rules + floor WITH the
+build, never silently after.
+
+1. Deploy rules + indexes (new `pkS` type-lock + `profDevices` pins +
+   `appAttest` locks — old builds fail closed on the new writes):
+   ```bash
+   cd apps/proximity_app
+   firebase deploy --only firestore:rules,firestore:indexes \
+     --project proximity-attendence
+   ```
+2. Bump the version floor WITH this build (`force:true` at the shipping
+   version — `pubspec.yaml: version: 0.1.0+1` → `minVersion: 0.1.0`):
+   ```bash
+   # via Firebase console, or:
+   firebase firestore:set --project proximity-attendence \
+     app_config/min_version \
+     '{"minVersion":"0.1.0","latest":"0.1.0","force":true,
+       "msg":"This version of Proximity is too old to mark attendance safely. Update to continue.",
+       "storeAndroid":"","storeIos":""}'
+   # verify:
+   firebase firestore:get --project proximity-attendence app_config/min_version
+   ```
+   The disk-backed floor (`prox.forceFloor.v1`) enforces this offline
+   across restarts once seen; a build that NEVER goes online after the
+   floor publishes cannot know about it (no channel exists — bound is
+   attestation validity + Play auto-update).
+3. Re-run the rules drill vs the emulator after deploy
+   (`rules-drill/sec-drill.mjs`, needs JDK 21 for firebase-tools), then
+   run the suites (`dart test` per package + `flutter test` in
+   `apps/proximity_app`).

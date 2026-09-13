@@ -6,10 +6,11 @@ marking are mobile-only (Android/iOS, on-device face + hardware key);
 sign-in and records read everywhere (macOS/Windows/Linux/web, org-scoped),
 and professor hosting runs on any platform. Plus a records-only web build.
 Foreground-only during windows — no background-attendance promises on any
-OS. Trust is tiered, not identical: hardware-backed mobile (FULL/STD),
+OS. Trust is tiered, not identical: hardware-backed mobile (Android
+StrongBox→FULL / TEE→STD, iOS Secure Enclave→STD via App Attest),
 stale-attestation grace (STALE), software-key mobile (NONE — no tier
-claimed, marks via the flagged `device-none-fallback` until HW keys
-ship), and records-only devices (no key at all, manual path only) — see
+claimed, never confirms: `device-none-requires-approval` → manual path),
+and records-only devices (no key at all, manual path only) — see
 design §3.4/§4.
 
 Design source of truth: [`PROXIMITY_DESIGN.md`](PROXIMITY_DESIGN.md).
@@ -87,16 +88,24 @@ page, never someone else's home).
    present is the intersection of all windows taken. A stopped round can
    instead be resumed with **Retake round N** (same round number, fresh
    secrets, marks merge — no new intersection hurdle).
-3. While open, the professor advertises a rotating challenge (new token
-   every 5s, unbounded); students hear it over BLE, answer with their
-   response token, pass the single-shot plugin holder check, and POST an
-   Ed25519-signed proof binding the live challenge + score/timestamp/
+ 3. While open, the professor advertises a rotating challenge (new token
+   every 10s, unbounded); students hear it over BLE, answer with their
+   response token, pass the single-shot plugin holder check + passive
+   MiniFASNetV2 liveness gate (Tl=0.85 strict, graded 0..1 on the ticket),
+   and POST an
+   Ed25519-signed proof binding the live challenge + face/liveness
+   score/timestamp/
    matcher-version ticket + device key, with TLS channel binding. The
    student first compares the class org (a mismatch returns a typed
-   wrong-org verdict — no proof sent, no PII leaves). Professor verifies
-   (freshness, single-use `(windowID,ID,j)`, signatures under the
-   presented keys, ticket score ≥ 0.70 + 5-min freshness + allowlisted
-   matcher version, hardware `dSig`, BLE sighting with RSSI gates) and
+   wrong-org verdict — no proof sent, no PII leaves), verifies `Sig_p`
+   then the prof email→key pin (`profDevices`, TOFU + queue — mismatch
+   sends nothing, first-seen shows unverified), and only then signs.
+   Professor verifies
+   (freshness 17 s, single-use `(windowID,ID,j)`, signatures under the
+   PINNED `pkS` (prefetched online; unknown `pkS` rejected offline),
+   face ticket score ≥ 0.70 + 5-min freshness + allowlisted
+   matcher version, liveness score ≥ 0.85 + allowlisted liveness version,
+   hardware `dSig` + chain-vs-pinned-roots, BLE sighting with RSSI gates) and
    returns a signed ACK, which the student sees as ✓ Marked.
 4. Front-row phones re-advertise challenges (TTL/jitter/dedup/split-horizon
    controlled flood) so back rows hear them — each phone keeps relaying for
@@ -122,7 +131,7 @@ page, never someone else's home).
    of the course reads as absent in sessions they missed (matching the
    matrix exports).
 
-Why it holds: hostel joins never hear `C_j` over radio (30m, 5s rotation);
+Why it holds: hostel joins never hear `C_j` over radio (30m, 10s rotation);
 cross-org joins die at the typed wrong-org gate before any proof is sent;
 lent phones fail the plugin holder check (SKey stays sealed without a
 fresh match ticket); cloned app bundles hold ciphertext without the
@@ -238,22 +247,30 @@ org-scoped queries fail without the new composite indexes, cross-org
   must equal the caller's Google-account domain (`tokenOrg()`).
 - `studentDevices/{emailLower}`: `{email, uid, pkHex, installId, name,
   roll, modelVer, platform, org, createdAtMillis/lastMoveAtMillis/lastSeenAtMillis/updatedAtMillis,
-  moveCount}` — one enrolled student device per Gmail. Same-install
+  moveCount, pkDHex, attestationLevel, attestedAt/attestedUntilMillis,
+  attestationChain, livenessVer, integrityFlag, appAttestRawHex,
+  appAttestCredKeyHex (iOS)}` — one enrolled student device per Gmail. Same-install
   re-keys free; moves need the 30-day cooldown (server-enforced; a bare
   pkHex match from another install is a move, not the same device);
   pre-timestamp docs migrate once. Claimed in one transaction
   (`studentDevices` + `deviceInstalls` + directory row, all three stamped
   with `org`) so racing devices
   resolve to exactly one winner. **No delete for anyone** (reset would be
-  self-service while professor registration is self-asserted).
+  self-service while professor registration is self-asserted) except the
+  owner-lazy 180d-stale purge of their OWN binding (server-time-gated).
 - `deviceInstalls/{installId}`: `{email, pkHex, org, updatedAtMillis}` — one
   student Gmail per app install (secure-storage UUID; clones/dual-apps get
   their own). Unguessable ids; writes bound to the signing-in Gmail + org.
 - `studentDirectory/{emailLower}`: `{email, name, roll, nameLower, org,
-  updatedAtMillis}` — minimal professor-searchable directory, maintained
-  by the claim transaction. Prefix search on ID/name/email, each
+  updatedAtMillis, pkS}` — minimal professor-searchable directory, maintained
+  by the claim transaction (`pkS` = enrollment SKey hex, type-locked
+  `''|64-hex`; legacy `''` = no-pin TOFU). Prefix search on ID/name/email, each
   org-scoped (`where org == myOrg`, indexes org+email/roll/nameLower).
+  Professors prefetch `pkS` pins online into the persistent
+  `prox.studentKeyPins.v1` cache and enforce `unknown-pkS` offline.
   Professor reads are **advisory** until professor roles are institute-verified.
+- `profDevices/{emailLower}`: `{email, uid, org, pubKeys[{pkP, createdAtMillis}] (≤8), updatedAtMillis}` — professor lecture-key pins (anti-fake-professor). Owner-only write, same-org exact-get (never list). Published best-effort at `startHosting` (never blocks offline); students pin on first online fetch and verify `Sig_p` against the pin offline (mismatch = fake, unknown = first-seen TOFU with banner + queue).
+- `app_config/min_version`: `{minVersion, latest, force, msg, storeAndroid, storeIos}` — world-readable force-update floor (`allow get:true`). Bumped with `force:true` at every ticket/rules/verifier break alongside the release; clients enforce the disk-backed cached floor offline across restarts (see `ForceUpdate`).
 - `classSessions/{sessionId}`: `{courseId, courseName, classLabel, profUid,
   profEmail, profName, org, dateIso, timestampIso, startIso, windows, names,
   rolls, studentEmails[], updatedAt}` — professors own their sessions;
@@ -316,7 +333,7 @@ packages/storage/        tally + course history + roster helpers (in-memory API;
 
 Prereqs: Flutter stable, Firebase CLI + flutterfire, Xcode (iOS/macOS),
 Android SDK. Firebase project: `proximity-attendence`. Suite status:
-protocol 113 · transport 51 · ble 35 · storage 11 · app 902 — green,
+protocol 189 · transport 66 · ble 38 · storage 18 · app 1110 — green,
 `flutter analyze` clean, `flutter build web` green.
 
 ```bash
@@ -371,7 +388,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
 5. **TLS**: per-hosting-session runtime cert; MITM resistance via
    **channel binding** (`tlsFp` + `sigBind` over the presented cert)
    verified server-side.
-6. **Discovery is passive** (UDP beacons `:54545`, 2s beacons, 6s expiry)
+6. **Discovery is passive** (UDP beacons `:54545`, 2s beacons, 12s expiry)
    **+ BLE IP hint + typed IP**, instead of mDNS — same “live list +
    manual IP” UX, no extra plugins. mDNS may return. The old unicast
    `/24` sweep fallback is **deleted**: 254 rapid TCP+TLS probes kicked
@@ -406,22 +423,32 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    silently. Verified live 2026-09-05 Mac↔phone (see §6 above for the
    Apple displacement finding that froze this shape).
 8. **Live refresh + explicit leave.** Browsing recomputes the merged
-   (beacon/BLE-hint) list every 2 s; unacked entries vanish on the 6 s
+   (beacon/BLE-hint) list every 2 s; unacked entries vanish on the 12 s
    expiry, while hinted hosts that answered a TCP probe persist up to
    120 s (re-probed every 15 s) so the class survives the round end —
    tapping re-validates through the waiting room. Pull-down refreshes
    instantly from local state (no network
-   scan of any kind). Leaving the waiting room POSTs `/leave` so the
+   scan of any kind). Leaving the waiting room POSTs `/leave
+   {email,leaveToken}` so the
    prof count/view drops within ~2 s (logged as `waiting -email`).
+   The token is the per-join credential from the `/waiting` reply —
+   missing/mismatch 403s (no bulk ejection, no membership oracle).
 9. **History in JSON prefs** (not SQLite yet); **face verification is the
    `face_verification` plugin (^0.3.9, FaceNet gallery + ML Kit detect,
    bundled model, fully offline)** — the old hand-rolled
    BlazeFace/EdgeFace pipeline is deleted (models, code, and tests);
-   threshold 0.70 on the plugin score scale (old EdgeFace numbers stay
-   retired). **Device binding is dual-key** (HW DKey sealing the Ed25519
-   SKey) with offline-only attestation trust (no server re-check — see
+   face threshold 0.70 on the plugin score scale (old EdgeFace numbers stay
+   retired) + liveness Tl=0.85 strict on vendored MiniFASNetV2
+   `2.7_80x80` (2.7x training crop, graded score on the ticket).
+   **Device binding is dual-key** (HW DKey sealing the Ed25519
+   SKey: Android StrongBox→FULL / TEE→STD, iOS Secure Enclave→STD via
+   App Attest) with offline-only attestation trust (no server re-check — see
    design §3.4); the OS-biometric
    prompt is deliberately NOT a substitute (face-only).
+   **Email→key pins** (`profDevices` + directory `pkS`, TOFU + queue,
+   offline `unknown-pkS` enforcement) and the **disk-backed force-update
+   floor** (`app_config/min_version`, restart-safe) ship with the 10 s
+   rotation (`kSubEpochSeconds=10`, 17 s acceptance).
 10. Present rule: single window by default; each “Take another round” adds a window and
    Present = intersection of all windows taken (`lenientOneOfTwo` per export
    call preserves the old any-window mode).
@@ -500,11 +527,13 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
   or inside try/caught blocks; audited, no other uncaught site.
 - Accepted risks, stated: enroll-then-crash between claim and local write
   strands the key until the cooldown (millisecond window); two colluding
-  phones with live relay + victim face can still wormhole within 5 s
+  phones with live relay + victim face can still wormhole within 10 s
   (needs an accomplice present both windows; UWB would close it);
-  printed-photo face fraud can pass the passive matcher (fix is a
-  liveness-capable plugin behind the same adapter, not stills
-  heuristics); directory professor-gate is advisory until roles are
+  printed-photo/replay fraud must now beat the passive MiniFASNetV2
+  vitality gate (Tl=0.85 strict + 2.7x training crop, graded score on the
+  ticket) plus face/ticket/radio gates — FAR/FRR remain UNMEASURED on
+  Proximity captures (field ROC via `sweepTl`/`recommendTl` before moving
+  Tl); directory professor-gate is advisory until roles are
   institute-verified.
 - Simplifications applied: manual-add is one widget (the separate search
   widget is deleted); edit-page save preserves `startIso`; course cards
@@ -534,13 +563,19 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
       kicked phones off WiFi).
 - [x] Live refresh + leave — verified live 2026-09 (`/leave` drops prof
       count 1→0 with `waiting -email` log; sweep-hit expiry removes stopped
-      classes via the 6 s refresh).
+      classes via the 12 s refresh). `/leave` now requires the per-join
+      `leaveToken` (missing/mismatch 403s, no membership oracle — bulk
+      ejection closed; honest leave unchanged).
 - [ ] Phone→phone BLE IP-hint listing (unit + TX-air verified; needs a
       second Android on hand: prof hint `0xFFFF/PX 02` decodes to host:port;
       Mac bleak already confirms the bytes survive the air intact).
-- [ ] Face tuning: threshold 0.70 on the plugin score scale (old EdgeFace
-  0.60/0.80 numbers retired, never reused) targeting FAR ~0.01% /
-  FRR <2% — re-measure genuine/impostor distributions on-device;
+- [ ] Face tuning: face threshold 0.70 on the plugin score scale (old EdgeFace
+  0.60/0.80 numbers retired, never reused) + liveness Tl=0.85 strict on
+  MiniFASNetV2 `2.7_80x80` with the 2.7x training crop (upstream ~98.2%
+  acc / ROC-AUC 0.9984 on CelebA Spoof, APK near FPR 1e-5 @ TPR 97.8%;
+  Proximity FAR/FRR UNMEASURED — field ROC via `sweepTl`/`recommendTl`
+  before moving Tl, shipped as threshold + `kLivenessVer` + `min_version`
+  together);
   `nRF Connect` walk-test for −70/−80 dBm gates per hall.
 - [ ] Desktop: student enrollment/marking stay unreachable (records-only
   gates); professor hosting + records work on macOS/Windows/Linux.
@@ -578,12 +613,13 @@ sessions → needs-review queue → professor manual override; never
 auto-present on face fail). A version mismatch forces re-face (key kept);
 no images ever leave the device; marking proofs carry a compact face vector
 (numbers only, no photo) to the professor's phone over classroom WiFi —
-held in memory for that session only, never the cloud. Anti-spoof is accordingly
-modest: the passive matcher plus the signed ticket plus the device key —
-a good-quality printed photo CAN pass, stated plainly. If photo fraud
-appears in the pilot, the fix is swapping the adapter for a
-liveness-capable plugin behind the same `FaceVerifier` interface, not
-new heuristics.
+held in memory for that session only, never the cloud. Anti-spoof is the
+passive MiniFASNetV2 vitality gate (Tl=0.85 strict, 2.7x training crop,
+graded 0..1 live-prob bound into `Sig_s`/`dSig` — the professor sees
+strong vs weak passes) plus the shuffled active blink/smile walk at enroll
+(order unpredictability, not measured vitality) plus the signed ticket plus
+the hardware device key. A print/replay must beat all of them; FAR/FRR stay
+UNMEASURED on Proximity captures until a field ROC is measured.
 
 ## System log (toggleable terminal)
 
@@ -616,13 +652,12 @@ fact (the on-screen ring autoscrolls).
 - SQLite/drift backing (history still JSON prefs).
 - Institute-verified professor roles (turns the directory gate from
   advisory to enforced; enables a safe reset path).
-- Hardware keystore/Secure Enclave DKey enrollment (interface +
-  sealed-SKey + tiers ship; Kotlin/Swift platform work + persisted
-  attestation material pending) + Apple App Attest root provisioning +
-  attestation revocation/CRL story (theft response today: 30-day move
-  bound + manual attendance).
-- Liveness-capable face plugin behind the existing adapter if photo
-  fraud appears in the pilot.
+- Attestation revocation/CRL story — snapshot-only today
+  (`RevocationCache`, 7d TTL; stale/revoked stay review flags; theft
+  response today: 30-day move bound + manual attendance; true push needs a
+  backend, excluded by Spark-free). HW keystore/Secure Enclave DKey
+  enrollment + Apple App Attest root pinning + MiniFASNetV2 liveness gate
+  are SHIPPED (see design §3.2–§3.4/§4).
 - Windows/Linux binaries via CI (macOS verified here).
 
 ## Face model provenance
@@ -630,14 +665,17 @@ fact (the on-screen ring autoscrolls).
 Face verification is the `face_verification` Flutter plugin (^0.3.9,
 MIT — FaceNet embeddings + ML Kit detection, model bundled in the
 package, fully offline and on-device; integration follows the package's
-own example app). Threshold 0.70 on the plugin score scale targets
-FAR ~0.01% / FRR <2% — the old EdgeFace 0.60/0.80 numbers are retired
-and must never be reused (different embedding space). The old
+own example app). Face threshold 0.70 on the plugin score scale (plugin
+default; old EdgeFace 0.60/0.80 numbers retired, never reused —
+different embedding space) + liveness Tl=0.85 strict on the vendored
+MiniFASNetV2 `2.7_80x80` model (`assets/models/silentface-minifasnetv2-27-80x80.tflite`,
+Apache-2.0, `tflite_flutter`, 2.7x training crop, graded 0..1 live-prob on
+the ticket). The old
 hand-rolled BlazeFace/EdgeFace pipeline — code, vendored `.tflite`s, and
 tests — is deleted; no photo ever leaves the phone: enrollment holds the
 gallery on-device and each marking proof carries only the signed match
-ticket plus a compact face vector (numbers only, no photo) to the
+ticket (face + liveness) plus a compact face vector (numbers only, no photo) to the
 professor's phone over classroom WiFi — held in memory for that session
 only, never the cloud. Enrollment identity is `sha256(gmail+installId)`,
-and matcher versions are allowlisted (`verifierVer`) so a plugin/model
-bump forces re-face instead of matching across versions.
+and matcher + liveness versions are allowlisted (`verifierVer`,
+`livenessVer`) so a plugin/model bump forces re-face instead of matching across versions.

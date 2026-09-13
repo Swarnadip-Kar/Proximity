@@ -115,19 +115,28 @@ most once per 30 days); manual attendance covers any gap.
    - `SKey` Ed25519 (the signing key), sealed to `DKey` (AES-GCM `PXK2`
      envelope, AAD-bound to email/installId/pkS/pkD — ciphertext only at
      rest).
-    - `DKey` P-256: StrongBox→TEE / Secure Enclave via `HwDeviceKey`
-      (ES256, challenge-bound, level FULL/STD). Software/fake backends
-      are debug/test-only (level `none` — `Software-no-enroll` at the
-      controller, and NONE proofs never confirm); desktop/web get the
-      fail-closed stub — no-silicon devices cannot enroll, ever.
+    - `DKey` P-256 via `HwDeviceKey` (ES256, challenge-bound):
+      Android StrongBox→FULL / TEE→STD (Google key-attestation chain);
+      iOS Secure Enclave→STD (Apple App Attest object/assertion — the
+      plugin returns CBOR, never an X.509 x5c list; the backend parses
+      it, and same-install re-enroll carries the credential key forward).
+      Software/fake backends are debug/test-only (level `none` —
+      `Software-no-enroll` at the controller, and NONE proofs never
+      confirm); desktop/web get the fail-closed stub — no-silicon
+      devices cannot enroll, ever.
    - The install is the device identity: an app-install UUID in secure
      storage (clones/dual-apps get their own).
 4. Face enrollment on-device (§4). The plugin store is keyed by
    `faceIdOf = SHA-256(lowercased Gmail || installId)` — the raw Gmail
-   never lands in the plugin-owned table.
+   never lands in the plugin-owned table. Re-enrollment purges by
+   replace: the HW key deletes-then-creates under the same alias, the
+   SKey swaps + sealed doc overwrites at upload, and `generateKey`
+   drops the previous gallery template (an aborted re-enroll never
+   leaves a stale template).
 5. Atomic extended claim `{Gmail, pkS, pkD, installId, name, roll,
    modelVer/verifierVer, attestationLevel, attestedAt,
-   attestedUntil=+90d}` in one Firestore transaction
+   attestedUntil=+90d, attestationChain, appAttestRawHex,
+   appAttestCredKeyHex (iOS only)}` in one Firestore transaction
    (`studentDevices/{email}` + `deviceInstalls/{installId}` + a
    `studentDirectory` search row — §4). Same-install re-keys are free; moves
    to a different install need a 30-day cooldown (unlimited moves,
@@ -195,7 +204,15 @@ stays source of truth), not key distribution.
   and unbound (no ticket) never confirms (`face-unbound` /
   `liveness-unbound`) — no fallback, no migration accept.
 - Professor to student: `Sign(SK_p, ...)` over the session descriptor,
-  verified against the live window fetch (rotation-tolerant). Blocks
+  verified against the live window fetch (rotation-tolerant). The student
+  then runs `checkProfPin` against the pinned lecture keys
+  (`profDevices/{email}`, owner-write, same-org get) BEFORE signing
+  `Sig_s`: known → verified badge (`Verified · live` only on a direct
+  online fetch, else `Verified` from cache), unknown → first-seen TOFU
+  with an unverified banner + `prox.pendingProfVerify.v1` queue that
+  auto-verifies on resume/online (never silent), mismatch → no proof is
+  sent. Offline professors on first sight always show unverified; only a
+  previously-seen cached pin shows `Verified` offline. Blocks
   Evil-Twin access points.
 - TLS: per-hosting runtime cert (LAN-IP SANs); MITM resistance via
   channel binding (`tlsFp` + `sigBind` over the presented cert) verified
@@ -214,27 +231,33 @@ read any older note, comment, or report as implying a server check —
 if one does, it is stale and this section wins.
 
 What that costs, honestly: the `attestationLevel` on every binding
-(FULL/STD/NONE) is SELF-ASSERTED by the enrolling client. No chain
-verification exists anywhere — not on-device, not on-server. A modified
-client can claim FULL while holding a software key, and no component in
-the system can tell the difference from the claim alone. The tier
-machinery (`evaluateDeviceProof`) still runs on every proof, but until
-the keystore/Enclave track lands real hardware keys, treat every mobile
-tier as provisional.
+(FULL/STD/NONE) is SELF-ASSERTED by the enrolling client — no
+billing-gated server re-check exists. Chain verification DOES exist,
+offline, on the professor phone (pure-Dart X.509 in `chain_verify.dart`,
+no platform adapter, no network): Android proofs verify Key-Attestation
+OID + challenge + leaf-pkD bind + signatures + Google-root pin
+(`verifyAttestationChainPin`); iOS proofs verify the App Attest chain
+vs the pinned Apple App Attest Root + SE-key/challenge nonce binding at
+the STD tier, or the assertion signature under the enrollment credential
+key (`app_attest.dart` — object path for first enrolls, assertion path
+for same-install re-enrolls). A modified client claiming FULL with a
+software key fails the chain gate as `device-unproven` (manual path) —
+the claim alone never confirms. The tier machinery
+(`evaluateDeviceProof`) runs on every proof; treat tiers as
+professor-verified-offline, never as server provenance.
 
 What still holds without it (all offline, all tested):
 - dSig challenge-binding: every proof carries a FRESH signature over
-  the live 5s challenge. Replays are worthless after rotation
-  (single-use `(windowID,ID,j)` + 12s window); forging requires the
+  the live 10s challenge. Replays are worthless after rotation
+  (single-use `(windowID,ID,j)` + 17s window); forging requires the
   device's SKey unwrapped behind a fresh face ticket, every rotation.
 - Sealed SKey: on hardware keys, file copies are ciphertext without the
-  silicon DKey (restore detected → re-enroll). On software keys
-  (everything shipped today — `SoftwareDeviceKey`, level NONE) the seal
-  travels with its files: that is exactly why software keys claim NO tier
-  and confirm only via the flagged `device-none-fallback` rather than as
-  FULL/STD. The fallback flag (plus the ticket anomaly flags and the
-  double-pkD audit below) is the honest record that no silicon stood
-  behind the mark.
+  silicon DKey (restore detected → re-enroll). Software keys
+  (`SoftwareDeviceKey`, level NONE, debug/test-only) travel with their
+  files: that is exactly why software keys claim NO tier and never
+  confirm (`device-none-requires-approval` → manual path). The ticket
+  anomaly flags and the double-pkD audit below stay the honest record
+  for review.
 - Face-ticket anomaly flags (`detectFaceAnomalies`: saturated scores,
   future/reused stamps, unknown verifier, version flapping) ride every
   proof for professor-side visibility.
@@ -251,11 +274,13 @@ What still holds without it (all offline, all tested):
   NONE gate + double-pkD audit. (Pre-fresh fallback history: fix note
   2026-09-08; removed full-fresh 2026-09-13, sec-legacy series.)
 
-Remains (scoped feature work, not stubs): on-device HW key production
-by the keystore/Enclave track (the step that makes FULL/STD mean
-silicon, not self-assertion); Apple App Attest root provisioning (moot
-until a backend exists to verify against it); revocation/CRL checks
-(theft response today: 30-day move bound + manual attendance).
+Remains (scoped feature work, not stubs): revocation/CRL checks
+(theft response today: 30-day move bound + manual attendance); online
+fetch of the original App Attest chain for assertion-path re-enrolls
+(today the credential key is TOFU there — stability enforced like pkS
+pins); rpId/counter checks on App Attest (the professor doesn't know
+the teamID.appId binding offline). HW key production (keystore/Enclave)
+and Apple App Attest root pinning are SHIPPED (see above).
 
 ---
 
@@ -311,20 +336,23 @@ enrollment, marking, and the SK-use stamp. Backend is the
   any plugin/model swap forces re-face via the stale-pipeline check
   (key kept). The host allowlists verifier versions; flapping across
   proves is flagged post-hoc.
-- Liveness: passive classifier PLUS an active challenge walk at
+- Liveness: passive MiniFASNetV2 classifier (`2.7_80x80`, `Tl=0.85`
+  strict, 2.7x training crop, graded 0..1 live-prob on the ticket — the
+  professor CAN tell 0.95 from 0.86) PLUS an active challenge walk at
   enroll (shuffled blink/smile prompts — order unpredictability is the
   anti-replay property) gating the save, and per-still passive scoring
   of all 5 pose-gated enrollment angles (C4: a single live centre plus
   printed angles cannot enroll). The 5 angles buy genuine-match
   robustness and raise the spoof cost (a single frontal print no longer
-  suffices — the attacker needs five pose-consistent live views), but
-  they are NOT photo-spoof immunity: a good-quality print or replay
-  held at each asked angle CAN still pass the matcher. What stands
-  behind that residual is the
+  suffices — the attacker needs five pose-consistent live views), and a
+  good-quality print/replay must now ALSO beat the strict vitality gate
+  plus face/ticket/radio gates. What stands behind the residual is the
   4-mismatch-session budget → needs-review → professor manual
   override, the 5-minute holder-freshness gate, and ticket binding
-  (a replayed score can't cross tickets). If photo fraud appears in the
-  pilot, the fix is video-stream liveness or a spoof-classifier model.
+  (a replayed score can't cross tickets). FAR/FRR remain UNMEASURED on
+  Proximity captures — move Tl only via a field ROC
+  (`sweepTl`/`recommendTl`) shipped as threshold + `kLivenessVer` +
+  `min_version` together (see §13.3/§13.5).
 - Gating: private-key use requires `faceValid < 5 min`
   (`kFaceValidWindow`). Signing throws otherwise. Each 30 s window
   demands a fresh check (~1 s oval UI).
@@ -377,7 +405,7 @@ Package: `packages/protocol` (pure Dart, no platform code). Primitives via `cryp
 sessionID  = rand(128) per lecture
 windowID   = rand(48) per attendance window (3-char display code derived from it)
 S_w        = rand(256) per window
-j          = 0,1,2… sub-epoch index (5 s each, unbounded — the window stays
+j          = 0,1,2… sub-epoch index (10 s each, unbounded — the window stays
              open until the professor stops it; j encodes as u32 BE)
 C_j        = HMAC-SHA256(S_w, windowID || j32)[0:8]  // 64-bit rolling secret
 R_IDj      = HMAC-SHA256(C_j, ID)[0:8]               // per-student response token
@@ -392,12 +420,14 @@ dSig       = Sign(DKey, sessionID || windowID || j || C_j
 
 #### 5.1a Extended ticket (Tracks 2+3, as built)
 
-The face ticket `{score, faceValidAt, verifierVer}` travels in POST
-`/prove face:{...}`; its hash `faceTicketHash =
-SHA-256(scoreMilliBE16 || faceValidAtBE64 || verifierVerHash8)[0:8]`
+The face ticket `{score, faceValidAt, verifierVer}` + liveness
+`{livenessScore, livenessVer}` travels in POST `/prove face:{...} /
+liveness:{...}`; its hash `faceTicketHash =
+SHA-256(scoreMilliBE16 || faceValidAtBE64 || verifierVerHash8 ||
+livenessMilliBE16 || livenessVerHash8)[0:8]`
 binds into BOTH Sig_s and dSig, so neither signature transplants
 across tickets. No images/embeddings leave the device — only the hash
-+ the ticket. The preimage is longer than the old 6-field form, so old
++ the tickets. The preimage is longer than the old 6-field form, so old
 signatures never verify against it and vice versa; the host requires
 non-zero `faceValidAt` + allowlisted `verifierVer` (legacy-neutral
 defaults exist only to keep the migration compilable, never to accept
@@ -422,8 +452,8 @@ hint (see §6.3).
 ```
 BaseP64 = fixed 64-bit Proximity challenge prefix (e.g. 9A3B7C1D4E5F6071)
 BaseS64 = fixed 64-bit Proximity response prefix (different constant)
-UUID_P(j) = BaseP64 || C_j                 // professor challenge, rotating every 5 s
-UUID_S(ID,j) = BaseS64 || R_IDj            // student response, rotating every 5 s
+UUID_P(j) = BaseP64 || C_j                 // professor challenge, rotating every 10 s
+UUID_S(ID,j) = BaseS64 || R_IDj            // student response, rotating every 10 s
 ```
 
 Fixed service UUID `PROX_SVC` is always advertised alongside for scan filtering. Rotating UUID carries the secret. Scan-response carries `peerW(ID)` (8 bytes) so the professor can map radio sightings to class entries without stable MACs and without linkability across lectures.
@@ -441,7 +471,7 @@ Signatures exclude the TTL byte so relays can decrement it without invalidating 
 ### 5.3 Verification (professor, per POST + per BLE sighting)
 
 ```
-1. window open? 0 <= now - t_j < 12 s (5 s rotation + 7 s drift, one-sided:
+1. window open? 0 <= now - t_j < 17 s (10 s rotation + 7 s drift, one-sided:
    future sub-epochs never verify — no pre-play), (windowID, ID, j) unseen
    -> else late/invalid
 2. C_j == expected for (windowID, j)          // proves live radio hear
@@ -456,7 +486,7 @@ Signatures exclude the TTL byte so relays can decrement it without invalidating 
 ```
 
 Rotation tolerance: `/window` ships `sigP_prev` alongside `sigP`, so a fetch
-landing just after the 5 s tick still verifies the heard token (either `j`
+landing just after the 10 s tick still verifies the heard token (either `j`
 verifies; only neither-matching is a genuine mismatch). Single-use is scoped
 `(windowId, ID, j)` so retakes never false-replay. Deduplication: LRU
 seen-set (1000 entries, 5-min expiry) keyed `sender + ts + type + digest`,
@@ -470,7 +500,7 @@ identical to BitChat dedup.
 
 - Advertise interval 200 ms, connectable, TxPower Low (`-12 dBm` small room, `-6 dBm` large hall).
 - Scan: foreground continuous, filter `PROX_SVC`, in-app prefix check `BaseP/BaseS`, RSSI logged per sighting.
-- Rotation: stop/start advertise every 5 s to publish next `UUID_P(j)` / `UUID_S`.
+- Rotation: stop/start advertise every 10 s to publish next `UUID_P(j)` / `UUID_S`.
 - MTU 517 negotiated before any GATT read/write. `autoConnect=false` for fast fallback connects. Minimum 5 s between scan restarts (Android scanner rate-limit guard).
 
 ### 6.2 Mesh relay (challenge distribution, students help)
@@ -524,9 +554,9 @@ GET  /window?org=         -> gated unicast identity (matching/legacy org:
                              Sig_p, Sig_p_prev, org, profEmail}; mismatched
                              org: 403 {decision, reason, org} — silence, no
                              class/email/window). profEmail travels ONLY here.
-POST /prove {ID,windowID,j,C_j,Sig_s,faceScore,peerW[, face:{score,faceValidAt,verifierVer}, pkD, dSig, attestationLevel]} -> {confirmed|late|invalid, serverTime, Sig_pAck}
-POST /waiting {email,name,roll}   -> presence heartbeat (waiting room)
-POST /leave {email}               -> explicit leave (count drops at once)
+POST /prove {ID,windowID,j,C_j,Sig_s,faceScore,peerW[, face:{score,faceValidAt,verifierVer}, liveness:{score,ver}, pkD, dSig, attestationLevel, livenessScore, livenessVer]} -> {confirmed|late|invalid, serverTime, Sig_pAck}
+POST /waiting {email,name,roll}   -> presence heartbeat (waiting room; reply carries per-join `leaveToken`)
+POST /leave {email,leaveToken}    -> explicit leave (count drops at once; missing/mismatch 403s regardless of entry existence — no membership oracle, no bulk ejection)
 GET  /waiting                     -> waiting rows (professor)
 POST /manual-request {...} / GET /manual-requests / POST /manual-decide / GET /manual-status
 GET  /live                 -> counts + rows (professor Bearer)
@@ -537,7 +567,7 @@ Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. I
 
 Discovery detail — ORG-GATED (as built + field-verified 2026-09):
 professors advertise CONTINUOUSLY while hosting over UDP broadcast
-`:54545` (2 s beacons, 6 s expiry; targets: limited broadcast + /24 and
+`:54545` (2 s beacons, 12 s expiry — one missed 10 s rotation + margin; targets: limited broadcast + /24 and
 /16 directed guesses; announced IP prefers non-VPN, non-cellular WiFi
 NICs and re-resolves on every window open) + BLE IP-hint rotation
 (`host:port` only). One-time announce is NOT sufficient: late joiners
@@ -564,8 +594,8 @@ air packet; students background-probe and list answerers with zero taps),
 plus the manual-IP join (last IP prefilled). A former /24 unicast sweep was
 deleted: 254 rapid probes kicked phones off enterprise WiFi. Browsing
 live-refreshes every 2 s from local state only (stopped classes vanish on
-the 6 s expiry) and supports pull-down refresh; leaving the waiting room
-POSTs `/leave` so the prof count drops at once. All beacon/probe/presence/
+the 12 s expiry) and supports pull-down refresh; leaving the waiting room
+POSTs `/leave {email,leaveToken}` so the prof count drops at once (token-free paths are server-owned mark auto-exit + professor eject only). All beacon/probe/presence/
 manual/ACK events stream into the toggleable system log on both screens.
 The discovery ladder (assumptions table + degradation order,
 `packages/transport/lib/src/discovery.dart`) is the decision record for
@@ -587,7 +617,7 @@ authoritative for which screens exist.
 2. Open a course (registered by name). The Take screen shows the current IP for student join.
 3. Tap **Start** at lecture start. App:
    - generates `S_w`, opens the window (no timer — it stays open until Stop),
-   - starts BLE advertise (challenge rotation, new token every 5s) + HTTPS server + BLE scan,
+   - starts BLE advertise (challenge rotation, new token every 10s) + HTTPS server + BLE scan,
    - shows LIVE elapsed clock plus `present/waiting` counts, waiting list, manual requests.
 4. Tap **Stop** when marking is done: rotation ends, but proofs already on the wire are still accepted through a short grace; then the window hard-closes. Tally persisted on-device.
    Back navigation autosaves the draft; recent drafts snapshot to history
@@ -620,21 +650,22 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
 
 ### 7.3 Why this flow works
 
-- **Hostel join fails:** attacker on campus WiFi elsewhere can fetch `/window` but never hears `UUID_P(j)` over radio (30 m limit, 5 s rotation). Without `C_j` they cannot build a valid `UUID_S` or `Sig_s` for the current sub-epoch. A screenshot forwarded after 5 s is already stale.
+- **Hostel join fails:** attacker on campus WiFi elsewhere can fetch `/window` but never hears `UUID_P(j)` over radio (30 m limit, 10 s rotation). Without `C_j` they cannot build a valid `UUID_S` or `Sig_s` for the current sub-epoch. A screenshot forwarded after 10 s is already stale.
 - **Lent phone fails:** holder's face does not match enrollment template, `SK_s` stays locked, no signature is produced. Mismatches burn one of 4 attempts, then the needs-review queue with professor check.
 - **Copied ID fails:** `Sig_s` verifies under the PINNED `pkS` for that Gmail (prefetched online; TOFU only for the first-ever class). An accomplice's fresh keypair is an unknown `pkS` offline — rejected before any other check.
 - **Cloned app fails:** the install UUID + sealed SKey envelope don't
   transfer — a backup-restore clone fails unwrap and must re-enroll
   (subject to the 30-day move bound), and the old install's binding
-  still names the old install. (Residual: software DKey until §13 HW
-  lands, so this is envelope+server-claim strength, not silicon.)
+  still names the old install. (HW DKey via StrongBox→TEE / Secure
+  Enclave seals the SKey — file copies unwrap to nothing; software keys
+  are debug/test-only and never confirm.)
 - **Fake professor fails:** the student verifies `Sig_p(j)` over the
   radio-heard challenge before signing anything (fetch also accepts the
-  previous rotation's signature across the 5 s tick). A rogue AP without
+  previous rotation's signature across the 10 s tick). A rogue AP without
   `SK_p` cannot forge either, and only a genuine mismatch — never a
   closed window or rate limit — counts as suspicious.
 - **Replay fails:** `(windowID, ID, j)` single-use plus one-sided
-  freshness (`0 <= now - t_j < 12 s`) plus LRU dedup. Replayed POST or
+  freshness (`0 <= now - t_j < 17 s`) plus LRU dedup. Replayed POST or
   re-advertised UUID is marked late/invalid; retakes (fresh windowId)
   never false-replay.
 - **Back-row works:** controlled-flood relay brings the challenge to every seat; WiFi POSTs need no relay; BLE response sightings tolerate a single relay hop (v3 relayed bit → hop 1, flagged, RSSI-gated).
@@ -643,7 +674,7 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
   and timing. Off-mobile there is no weaker path — there is no path
   (fail-closed, §1 goal 6).
 
-Residual risk (stated): two colluding phones with continuous real-time radio relay across two full windows plus live victim face on the remote end could still wormhole within 5 s. Cost is a dedicated accomplice present for the whole lecture plus low-latency link, far above casual proxy. UWB distance bounding would close it once available on all phones.
+Residual risk (stated): two colluding phones with continuous real-time radio relay across two full windows plus live victim face on the remote end could still wormhole within 10 s. Cost is a dedicated accomplice present for the whole lecture plus low-latency link, far above casual proxy. UWB distance bounding would close it once available on all phones.
 
 ---
 
@@ -733,7 +764,7 @@ mandatory during windows on all OS (keep-open banner).
 
 - Load: 500 POSTs/30 s (~17/s) + 500 UUID advertisers + 6 rotations. Ed25519 verify total ~1000–2500 per lecture, well under 1 s on phone/laptop. Jitter 0–2 s plus server `Retry-After` spreads herd. BLE capture requires 1/6 sub-epochs seen per student, not all.
 - Collisions: 200 ms adv interval + continuous scan + GATT-read fallback on CRC fail. Field-tune TxPower and `-70 dBm` direct / `-80 dBm` relay thresholds per hall with `nRF Connect` walk-test.
-- Clock drift: 12 s one-sided acceptance covers typical phone drift; professor is time authority (signed `serverTime` in ACK); the app banners median drift over recent verdicts instead of silently verdicting late.
+- Clock drift: 17 s one-sided acceptance (10 s rotation + 7 s grace) covers typical phone drift; professor is time authority (signed `serverTime` in ACK); the app banners median drift over recent verdicts instead of silently verdicting late.
 - MAC rotation: neutralized by rotating `peerW` in scan response + presented-key HMAC lookup (500 HMACs per sighting batch, trivial).
 - Crash windows (stated): a crash between the history write and the
   outbox enqueue leaves that record unqueued until its next mutation
@@ -741,8 +772,8 @@ mandatory during windows on all OS (keep-open banner).
   (doc id = record id, `set(merge:true)`, monotonic timestamps).
 - Tests: golden vectors (HMAC/UUID pack/Ed25519 RFC8032, ticket/dSig
   preimages), claim/tier unit tests, dedup/flood unit tests, two-phone
-  relay test, suite: protocol 113 · transport 51 · ble 35 · storage 11 ·
-  app 902, `flutter analyze` clean, `flutter build web`
+  relay test, suite: protocol 189 · transport 66 · ble 38 · storage 18 ·
+  app 1110, `flutter analyze` clean, `flutter build web`
   green. Pilots pending: 30-room, 150-hall, 500-hall load + adversarial
   drill (forwarded code, off-site VPN, lent phone, photo spoof,
   dual-phone wormhole attempt). Ship only when wormhole needs active accomplice across both windows.
@@ -757,14 +788,17 @@ BitChat (permissionlesstech/bitchat, whitepaper v2.0 Jul 2026; `bitchat-android`
 
 ## 11. Build status (as built, Track 6)
 
-Shipped: protocol HMAC/UUID/Ed25519 + window rotation + mesh relay +
-typed-IP/manual join + iOS parity + face gate + SK lock +
+Shipped: protocol HMAC/UUID/Ed25519 + window rotation (10 s) + mesh relay +
+typed-IP/manual join + iOS parity (App Attest STD) + face gate + liveness
+gate (MiniFASNetV2 Tl=0.85) + SK lock + email→key pins (profDevices +
+directory pkS, TOFU + queue) + leave-token anti-ejection +
 channel-bound TLS + desktop host + Linux shim + cloud roles/claims/
 session backup + student records + web records build +
 org join-gate with structured
-wrong-org receipts (§3.0) + Track 6 consolidation (§13). (GATT
+wrong-org receipts (§3.0) + Track 6 consolidation (§13) + disk-backed
+force-update floor (§6). (GATT
 `PROX_SVC`/`PROX_CHR` fallback is future work, not shipped.)
-Suite: protocol 113 · transport 51 · ble 35 · storage 11 · app 902,
+Suite: protocol 189 · transport 66 · ble 38 · storage 18 · app 1110,
 `flutter analyze` clean, `flutter build web` green.
 Prior-track verified: `flutter build macos`, `flutter build apk`,
 `flutter build ios --no-codesign` green (2026-09-06; Track 6 touches
@@ -852,16 +886,18 @@ one-liner idioms and intentional seams (below).
    `requireLivenessEnforced=true` (always enforced — liveness is a
    confirm-gate with no opt-out). Measure a field ROC via §13.5 before
    moving Tl again (threshold + `kLivenessVer` + `min_version` together).
-2. **Device trust is HW-backed but still client-asserted TOFU at first join
-   (§3.4).** `HwDeviceKey` ships (StrongBox→TEE / Secure Enclave,
-   `attested_secure_keys ^0.1.1`, PXK2 AES-GCM, offline chain pin incl. full
-   X.509 verify); no server re-check exists by constraint. A claimed FULL/STD
-   verifies as fresh `dSig` + offline chain pin + challenge match — never as
-   server provenance. Anti-clone strength = silicon seal + install UUID + 30d
-   move bound + offline double-pkD audit + revocation snapshot. Live NONE
-   marks carry `device-none-fallback` so the lack of silicon stays visible
-   per proof (hard NONE no-confirm ships with the HW-fleet + `min_version`
-   flip).
+2. **Device trust is HW-backed, professor-verified offline (§3.4).**
+   `HwDeviceKey` ships (Android StrongBox→FULL / TEE→STD, iOS Secure
+   Enclave→STD via App Attest, `attested_secure_keys ^0.1.1`, PXK2
+   AES-GCM, offline chain pin incl. full X.509 verify on both branches);
+   no server re-check exists by constraint. A claimed FULL/STD verifies
+   as fresh `dSig` + offline chain pin + challenge match — never as
+   server provenance. Anti-clone strength = silicon seal + install UUID
+   + 30d move bound + offline double-pkD audit + revocation snapshot.
+   Level NONE never confirms (`device-none-requires-approval` → manual
+   path). First-join device trust stays TOFU-shaped (chain pins are
+   trust-on-first-use per class) — the tier is verified, the first
+   sighting is not.
 3. **Network failure modes:** isolating APs kill UDP (measured 0/5 on
    institute /18) → BLE hint + manual IP carry join; the /24 sweep was
    deleted for kicking phones off WiFi; hotspot is excluded by design
@@ -888,7 +924,7 @@ one-liner idioms and intentional seams (below).
 
 ### 13.4 Explicitly deferred
 
-Apple root file · SQLite/drift · background modes · privacy manifest /
+SQLite/drift · background modes · privacy manifest /
 foreground-service / snap plug · CoreML export · UWB distance bounding ·
 true push CRL (needs backend, excluded by Spark-free) · student-pull engine
 entry · bearer query→header move (Track B/D) · strict semver pre-release
