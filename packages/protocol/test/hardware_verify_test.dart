@@ -38,6 +38,104 @@ SecureRandom _testRandom([int salt = 3]) {
   return (pkD, preimage, Uint8List.fromList([...be(sig.r), ...be(sig.s)]));
 }
 
+// Genuine Google fixtures (audit 2026-09-13 ground truth — public trust
+// anchors and test vectors, not secrets):
+// - _genuineLeafDerHex: TEE_EC_NONE.pem leaf from
+//   android/keyattestation testdata/blueline/sdk28 (genuine Google-signed
+//   Pixel attestation; attestationChallenge "challenge", 643B DER).
+// - _googleRsaRootDerHex / _googleEcRootDerHex: the two current roots from
+//   android/keyattestation roots.json (RSA serial f92009e853b6b045,
+//   1312B; EC CN "Key Attestation CA1", 550B).
+// These caught two live-path bugs the self-consistent fakes could not
+// (wrong OID length byte, wrong RSA pin) — every genuine chain failed
+// closed. Keep them byte-exact; any edit must re-verify against the
+// upstream sources above.
+const _genuineLeafDerHex =
+    '3082027f30820226a003020102020101300a06082a8648ce3d04030230293119'
+    '30170603550405131061306236336133353734333637336237310c300a060355'
+    '040c0c035445453020170d3730303130313030303030305a180f323130363032'
+    '30373036323831355a301f311d301b06035504030c14416e64726f6964204b65'
+    '7973746f7265204b65793059301306072a8648ce3d020106082a8648ce3d0301'
+    '07034200044387a332699ce4ef6f707a478dfa351272c8b86b1e6fd7d3336e85'
+    '3c1401323500a34cf2558250a671319009c59e92a47d93c0ca4ee02dd1449e04'
+    '9eb48934d6a382014530820141300e0603551d0f0101ff040403020780308201'
+    '2d060a2b06010401d6790201110482011d308201190201030a01010201040a01'
+    '0104096368616c6c656e67650400308183bf853d0802060166228e2d76bf8545'
+    '730471306f314930470442636f6d2e676f6f676c652e776972656c6573732e61'
+    '6e64726f69642e73656375726974792e6174746573746174696f6e7665726966'
+    '6965722e636f6c6c6563746f7202010031220420103938ee4537e59e8ee792f6'
+    '54504fb8346fc6b346d0bbc4415fc339fcfc8ec13078a1053103020102a20302'
+    '0103a30402020100aa03020101bf8377020500bf853e03020100bf85402c302a'
+    '04000101000a010204206e9d0c5bea2cda99f3e5c76fb2740cdf8793d1d36342'
+    '2cd065d22bf0a2bb5badbf8541050203015f90bf85420502030314b4bf854e05'
+    '0203031451bf854f0502030314b4300a06082a8648ce3d040302034700304402'
+    '200db51c969f648ff01b2e655ee06d66de348da5eaeb395b5e6f643c99b70b31'
+    '5002203cd6ecb34bc3d303f87d5b98428eb48672c8c78f7bd9d1f0c5c63abc24'
+    '701c92';
+
+const _googleRsaRootDerHex =
+    '3082051c30820304a003020102020900f1c172a699eaf51d300d06092a864886'
+    'f70d01010b0500301b3119301706035504051310663932303039653835336236'
+    '62303435301e170d3232303332303138303734385a170d343230333135313830'
+    '3734385a301b3119301706035504051310663932303039653835336236623034'
+    '3530820222300d06092a864886f70d01010105000382020f003082020a028202'
+    '0100afb6c7822bb1a701ec2bb42e8bcc541663abef982f32c77f7531030c9752'
+    '4b1b5fe809fbc72aa9451f743cbd9a6f1335744aa55e77f6b6ac3535ee17c25e'
+    '639517dd9c92e6374a53cbfe258f8ffbb6fd129378a22a4ca99c452d47a59f32'
+    '01f44197ca1ccd7e762fb2f53151b6feb2fffd2b6fe4fe5bc6bd9ec34bfe0823'
+    '9daafceb8eb5a8ed2b3acd9c5e3a7790e1b51442793159859811ad9eb2a96bbd'
+    'd7a57c93a91c41fccd27d67fd6f671aa0b815261ad384fa37944864604ddb3d8'
+    'c4f920a19b1656c2f14ad6d03c56ec060899041c1ed1a5fe6d3440b556bad1d0'
+    'a152589c53e55d370762f0122eef91861b1b0e6c4c80927499c0e9bec0b83e3b'
+    'c1f93c72c049604bbd2f1345e62c3f8e26dbec06c94766f3c128239d4f4312fa'
+    'd8123887e06becf567583bf8355a81feeabaf99a83c8df3e2a322afc672bf120'
+    'b135158b6821ceaf309b6eee77f98833b018daa10e451f06a374d50781f35908'
+    '2966bb778b9308942698e74e0bcd24628a01c2cc03e51f0b3e5b4ac1e4df9eaf'
+    '9ff6a492a77c1483882885015b422ce67b80b88c9b48e13b607ab545c723ff8c'
+    '44f8f2d368b9f6520d31145ebf9e862ad71df6a3bfd2450959d653740d97a12f'
+    '368b13ef66d5d0a54a6e2f5d9a6fef446832bc67844725861f093dd0e6f3405d'
+    'a89643ef0f4d69b6420051fdb93049673e36950580d3cdf4fbd08bc584839526'
+    '00630203010001a3633061301d0603551d0e041604143661e1007c880509518b'
+    '446c47ff1a4cc9ea4f12301f0603551d230418301680143661e1007c88050951'
+    '8b446c47ff1a4cc9ea4f12300f0603551d130101ff040530030101ff300e0603'
+    '551d0f0101ff040403020204300d06092a864886f70d01010b05000382020100'
+    '7c70ca939651dcf14faa0ab3a58371fbd7be2599a0ac6e8fdb2740b5ec912030'
+    'b6f892faeab1766cd35537981fea00183fd6de4f77900e447011b35861a86202'
+    '5bf9ca31abf9ef87fdad93783c2d9996e7c65dbeec21d2691a23bd72d46188bb'
+    '98ba5cb5d0971c5191841e91d260cd86b648186d96daea5b023d80003fcddcc8'
+    '357ed5a3a44dfd510a9fe53343cabe6c58375d1162c2badf58eb95e19d71d931'
+    'a122bffe64906e07169e600466bcc7a05d7fd20b28d47660227d182f35612d20'
+    '3f897097e104f6877279cf7ce796e286d67bfc3507717a2d832088404967eef3'
+    '4e0203de9c40a4d395a69ed9fc1ea978dd375fefda7a8e86780dcb3d77eb5985'
+    '9abe1799a287fc8b53c0e7bbd8d23d65cc12d6555a0afb089130c2117766f6b0'
+    '8d3c0635d224ee9c81c55d187eeca3f394719ec02abff133a8841467d3f34d7e'
+    '1eee46c94e499ff129b37db4c06dc37ed9f1ddafbe75eafd859db26d7e24b570'
+    '9fac980ffc9a70d241970a5d7656bc79a54c8ec17a9c19c881039ff732927b4e'
+    'a7493aaf830507a2c80e10264967512ecdb1f8cacc1bb74dad2ad284161c7ebf'
+    'e39381eff4e95fa31aca9358bb1face08d2ee03c1fefb3fa9504366a6a9e71e8'
+    'bda238ee00be4cda648181a49014fa07f9bf534d41b8e0414f384894c119abda'
+    'a40d6b8cd9c039916e55dc525471f1e7c3521d6088365b183bc8771065e98542';
+
+const _googleEcRootDerHex =
+    '30820222308201a8a00302010202110084a9d0297b0eb58ae7ff0e80de760605'
+    '300a06082a8648ce3d0403033052311c301a06035504030c134b657920417474'
+    '6573746174696f6e204341313110300e060355040b0c07416e64726f69643113'
+    '3011060355040a0c0a476f6f676c65204c4c43310b3009060355040613025553'
+    '301e170d3235303731373232333231385a170d3335303731353232333231385a'
+    '3052311c301a06035504030c134b6579204174746573746174696f6e20434131'
+    '3110300e060355040b0c07416e64726f696431133011060355040a0c0a476f6f'
+    '676c65204c4c43310b30090603550406130255533076301006072a8648ce3d02'
+    '0106052b810400220362000423da23714edf3e5b050a3c72e8846ace078ea0ad'
+    '1bf98b15f453d0cb08b2c3c110453909f6edeac1f9c8e031a848b941a829535c'
+    '97e07c2719beceb416290d3079eee1f911cce6df803914d8a3577b34fdfd143e'
+    '5ef36c9713c7ac70a8c211aba3423040300f0603551d130101ff040530030101'
+    'ff300e0603551d0f0101ff040403020106301d0603551d0e041604145232bb2c'
+    'fb46439bdcd681a90e6566e03441ea40300a06082a8648ce3d04030303680030'
+    '65023044df8cf3bf1f0a91791d824bba74656a03fcb1ecea10e2e36da8a627c7'
+    '1146982f1c06953f522dd8e4569cf4514391e70231008a06cb118a447553a6aa'
+    '46445889b5010e393a7ffacd46731798b91db387ff34950caef6f0050a3e84e0'
+    '05dcfa8b2646';
+
 void main() {
   group('verifyDeviceSignature (P-256 ES256)', () {
     test('genuine signature verifies', () {
@@ -145,6 +243,152 @@ void main() {
       );
       expect(r.ok, isFalse);
       expect(r.reason, 'unknown-root');
+    });
+
+    test('real RSA root pins ok against the default pins', () {
+      final root = hexDecode(_googleRsaRootDerHex);
+      expect(root.length, 1312);
+      expect(hexEncode(ProxCrypto.sha256Sync(root)),
+          kGoogleHwAttestationRootRsaSha256Hex);
+      final challenge = deviceBindingChallenge(
+          emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
+      final leaf = Uint8List.fromList(
+          [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xAB)]);
+      final r = verifyAttestationChainPin(
+        chain: AttestationChain([leaf, root]),
+        pinnedRootHashes: defaultPinnedAttestationRoots(),
+        expectedChallenge: challenge,
+        level: AttestationLevel.full,
+      );
+      expect(r.ok, isTrue, reason: r.reason);
+    });
+
+    test('real EC root pins ok against the default pins', () {
+      final root = hexDecode(_googleEcRootDerHex);
+      expect(root.length, 550);
+      expect(hexEncode(ProxCrypto.sha256Sync(root)),
+          kGoogleHwAttestationRootEcSha256Hex);
+      final challenge = deviceBindingChallenge(
+          emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
+      final leaf = Uint8List.fromList(
+          [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xCD)]);
+      final r = verifyAttestationChainPin(
+        chain: AttestationChain([leaf, root]),
+        pinnedRootHashes: defaultPinnedAttestationRoots(),
+        expectedChallenge: challenge,
+        level: AttestationLevel.standard,
+      );
+      expect(r.ok, isTrue, reason: r.reason);
+    });
+  });
+
+  group('genuine Google leaf (OID + challenge ground truth)', () {
+    // Regression for the audit find: the OID needle was `06 09` while
+    // genuine certs carry `06 0A`, so EVERY real chain failed
+    // `missing-attestation-oid`. This leaf is byte-exact Google testdata
+    // (see fixtures above) — it must pass both helpers.
+    test('genuine leaf carries the attestation OID', () {
+      final leaf = hexDecode(_genuineLeafDerHex);
+      expect(leaf.length, 643);
+      expect(attestationLeafHasKeyOid(leaf), isTrue);
+    });
+
+    test('genuine leaf embeds its real challenge ("challenge")', () {
+      final leaf = hexDecode(_genuineLeafDerHex);
+      final challenge = Uint8List.fromList('challenge'.codeUnits);
+      expect(attestationLeafContainsChallenge(leaf, challenge), isTrue);
+      expect(
+          attestationLeafContainsChallenge(
+              leaf, Uint8List.fromList('challengf'.codeUnits)),
+          isFalse);
+    });
+  });
+
+  group('dSig P-256 contract over deviceProvePreimage', () {
+    // Audit item (b): the exact bytes ProxCrypto.deviceProvePreimage emits
+    // — extended 5-field ticket + pkS + integrity hash — must verify under
+    // P-256 ES256, and every bound field must be load-bearing (no
+    // transplant across tickets/keys/integrity verdicts).
+    (ECPrivateKey, Uint8List) p256Key([int salt = 7]) {
+      final domain = ECDomainParameters('prime256v1');
+      final gen = ECKeyGenerator()
+        ..init(ParametersWithRandom(
+            ECKeyGeneratorParameters(domain), _testRandom(salt)));
+      final pair = gen.generateKeyPair();
+      final ECPublicKey pub = pair.publicKey;
+      final ECPrivateKey priv = pair.privateKey;
+      return (
+        priv,
+        Uint8List.fromList(pub.Q!.getEncoded(false).sublist(1))
+      );
+    }
+
+    Uint8List p256Sign(
+        ECPrivateKey priv, Uint8List preimage, SecureRandom rng) {
+      final signer = ECDSASigner(SHA256Digest())
+        ..init(true, ParametersWithRandom(PrivateKeyParameter(priv), rng));
+      final s = signer.generateSignature(preimage) as ECSignature;
+      Uint8List be(BigInt v) =>
+          hexDecode(v.toRadixString(16).padLeft(64, '0'));
+      return Uint8List.fromList([...be(s.r), ...be(s.s)]);
+    }
+
+    test('real preimage verifies; ticket/pkS/integrity tamper fails', () {
+      final (priv, pkD) = p256Key();
+      final sess = randBytes(16), wid = randBytes(6), cj = randBytes(8);
+      final pkS = randBytes(32);
+      const ver = 'face_verification/0.3.9+b45ab893';
+      const livVer = 'liveness/minifasnet-v2+a1b2c3d4';
+      const faceMs = 1725628800000;
+      final ticket = ProxCrypto.faceTicketHash(
+        faceScore: 0.85,
+        faceValidAtMs: faceMs,
+        verifierVer: ver,
+        livenessScore: 0.92,
+        livenessVer: livVer,
+      );
+      final pre = ProxCrypto.deviceProvePreimage(
+        sessionId: sess,
+        windowId: wid,
+        j: 1,
+        challenge: cj,
+        faceTicketHashBytes: ticket,
+        pkS: pkS,
+        integrityHash: '00000000',
+      );
+      final sig = p256Sign(priv, pre, _testRandom(21));
+      expect(
+          verifyDeviceSignature(
+              pkDRaw64: pkD, preimage: pre, sig64: sig),
+          isTrue);
+      final weakTicket = ProxCrypto.faceTicketHash(
+        faceScore: 0.85,
+        faceValidAtMs: faceMs,
+        verifierVer: ver,
+        livenessScore: 0.31,
+        livenessVer: livVer,
+      );
+      Uint8List preWith({Uint8List? t, Uint8List? s, String? h}) =>
+          ProxCrypto.deviceProvePreimage(
+            sessionId: sess,
+            windowId: wid,
+            j: 1,
+            challenge: cj,
+            faceTicketHashBytes: t ?? ticket,
+            pkS: s ?? pkS,
+            integrityHash: h ?? '00000000',
+          );
+      for (final bad in [
+        preWith(t: weakTicket), // liveness downgrade transplant
+        preWith(s: randBytes(32)), // key transplant
+        preWith(h: 'deadbeef'), // tainted-verdict transplant
+        preWith(h: ''), // pre-binding preimage
+      ]) {
+        expect(
+            verifyDeviceSignature(
+                pkDRaw64: pkD, preimage: bad, sig64: sig),
+            isFalse);
+      }
     });
   });
 }
