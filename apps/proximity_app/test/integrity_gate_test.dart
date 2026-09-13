@@ -2,6 +2,7 @@
 // pre-enroll/prove helpers). Fake-probe units stay hermetic; the closing
 // group pins the REAL backends' fail-open contract (missing plugin →
 // debug-only signals; App Check activation never throws).
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -399,6 +400,17 @@ void main() {
       // App Check absence never blocks offline marking.
       await IntegrityAppCheck.ensureActivated();
       await IntegrityAppCheck.ensureActivated();
+    });
+
+    test('IntegrityAppCheck pins the 0.4.x provider call shape', () {
+      // Drift guard: the 0.3.x enum params (AndroidProvider.playIntegrity /
+      // AppleProvider.deviceCheck) are deprecated — activation must go
+      // through these provider-class constants.
+      expect(IntegrityAppCheck.providerAndroid,
+          isA<AndroidPlayIntegrityProvider>());
+      expect(IntegrityAppCheck.providerApple,
+          isA<AppleAppAttestWithDeviceCheckFallbackProvider>());
+      expect(IntegrityAppCheck.activateBudget, const Duration(seconds: 8));
     });
   });
 }

@@ -30,8 +30,8 @@
 //
 // Native backends (deps landed — pubspec owned outside this file, do NOT
 // edit it here):
-//     firebase_app_check: ^0.3.2+10 (exact 0.3.x enum API — see
-//       [IntegrityAppCheck]; do NOT assume 0.4.x provider classes)
+//     firebase_app_check: ^0.4.7 (0.4.x provider-class API — see
+//       [IntegrityAppCheck]; the 0.3.x enum params are deprecated)
 //     flutter_security_suite: ^1.1.1 ([SecureBankKit.runSecurityCheck] →
 //       [SecurityStatus]; the per-signal mapping lives on
 //       [PlatformIntegrityProbe])
@@ -357,27 +357,27 @@ class IntegrityGate {
 }
 
 /// Firebase App Check wiring (PROXIMITY_SECURITY.md §5) — REAL activation
-/// on the exact 0.3.x API (firebase_app_check ^0.3.2+10 — enum providers,
-/// NOT 0.4.x provider classes):
+/// on the 0.4.x API (firebase_app_check ^0.4.7 — provider classes; the 0.3.x
+/// `androidProvider` / `appleProvider` enum params are deprecated):
 /// ```dart
 /// await FirebaseAppCheck.instance.activate(
-///   androidProvider: AndroidProvider.playIntegrity,
-///   appleProvider: AppleProvider.deviceCheck,
+///   providerAndroid: IntegrityAppCheck.providerAndroid,
+///   providerApple: IntegrityAppCheck.providerApple,
 /// );
 /// ```
 /// Must run BEFORE the first Firestore read (main.dart calls this before
-/// ForceUpdate.checkNow and every provider read). Apple uses DeviceCheck
-/// (App Attest needs iOS 14+ plus entitlements per flavor — escalate per
-/// release once the floor is 14+; DeviceCheck is the safe default).
+/// ForceUpdate.checkNow and every provider read). Apple uses App Attest
+/// with DeviceCheck fallback (Attest needs iOS 14+ / macOS 14+; the
+/// fallback covers older floors without a separate build).
 /// Console enforcement is a console toggle (no rules syntax on Spark):
 ///   1. Play Console → your app → Play Integrity API → enable, set verdict
 ///      requirement DEVICE → STRONG (STRONG needs Android 13+ with
 ///      hardware-backed keystore + recent Play Services; DEVICE is the
 ///      rollout default, STRONG is the hardened target).
 ///   2. Firebase Console → App Check → Apps → register the Android app
-///      (Play Integrity provider) + the iOS app (DeviceCheck now, App
-///      Attest with DeviceCheck fallback once the iOS 14+ floor + entitle-
-///      ments land per flavor).
+///      (Play Integrity provider) + the iOS app (App Attest with
+///      DeviceCheck fallback — matches [providerApple]; the fallback
+///      covers pre-14 floors, no per-flavor entitlement dance).
 ///   3. Firebase Console → App Check → Firestore → Enforce — ONLY after the
 ///      0.2.0 min_version floor has rolled out (enforcing earlier bricks
 ///      legit installs that cannot attest yet; see commit body for timing).
@@ -388,6 +388,13 @@ class IntegrityAppCheck {
   IntegrityAppCheck._();
 
   static bool _activated = false;
+
+  /// 0.4.x provider set, pinned as constants so tests pin the call shape
+  /// (see integrity_gate_test): Play Integrity on Android; App Attest with
+  /// DeviceCheck fallback on Apple platforms.
+  static const providerAndroid = AndroidPlayIntegrityProvider();
+  static const providerApple =
+      AppleAppAttestWithDeviceCheckFallbackProvider();
 
   /// Activation budget: a hung native activate must never stall startup —
   /// past this the call degrades to a log line (same fail-soft posture as
@@ -404,12 +411,12 @@ class IntegrityAppCheck {
     try {
       await FirebaseAppCheck.instance
           .activate(
-            androidProvider: AndroidProvider.playIntegrity,
-            appleProvider: AppleProvider.deviceCheck,
+            providerAndroid: providerAndroid,
+            providerApple: providerApple,
           )
           .timeout(activateBudget);
       _activated = true;
-      BleLog.log('SEC', 'AppCheck activated (PlayIntegrity/DeviceCheck)');
+      BleLog.log('SEC', 'AppCheck activated (PlayIntegrity/AppAttest+DC)');
     } catch (e) {
       BleLog.log('SEC',
           'AppCheck activation skipped ($e) — marking stays offline-capable');
