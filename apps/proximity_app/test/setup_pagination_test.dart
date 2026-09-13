@@ -248,6 +248,7 @@ void main() {
           verifier: FakeFaceVerifier(),
           deviceKey: FakeDeviceKey());
       await ctl.signIn();
+      ctl.setRoll('R-123');
       await ctl.generateKey();
       // Pushed-route harness (production shape): Cancel pops + disposes
       // the session so no loop/sweep timer is pending at test end.

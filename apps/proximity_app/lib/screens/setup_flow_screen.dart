@@ -57,13 +57,18 @@ int setupStartIndex({
   required bool hasStudentRole,
   required bool hasKey,
   required EnrollPhase phase,
+  bool hasRoll = true,
 }) {
   if (!signedIn) return SetupStep.welcome;
   if (!hasStudentRole) return SetupStep.role;
   if (phase == EnrollPhase.uploaded || phase == EnrollPhase.faceDone) {
     return SetupStep.result;
   }
-  if (hasKey) return SetupStep.capture;
+  // Key without ID still needs the account & key step — the capture seals
+  // to the key and files under the ID, so skipping would land on the
+  // camera with no ID to save under.
+  if (hasKey && hasRoll) return SetupStep.capture;
+  if (hasKey && !hasRoll) return SetupStep.accountKey;
   return SetupStep.device;
 }
 
@@ -156,6 +161,7 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
           acct != null && roleHas(role, 'student', email: acct.email),
       hasKey: ctl.pkHex.isNotEmpty,
       phase: ctl.phase,
+      hasRoll: ctl.roll.trim().isNotEmpty,
     );
     BleLog.log('NAV', 'setup flow start at step $at');
     setState(() {

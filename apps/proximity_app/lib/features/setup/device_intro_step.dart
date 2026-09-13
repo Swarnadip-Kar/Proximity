@@ -121,6 +121,10 @@ class AccountKeyStep extends ConsumerWidget {
     }
     final st = ref.watch(enrollmentControllerProvider);
     final hasKey = st.pkHex.isNotEmpty;
+    final hasRoll = st.roll.trim().isNotEmpty;
+    // The scan seals to the key AND files under the ID — both required
+    // before leaving this step (fail-closed; Save re-checks too).
+    final canContinue = hasKey && hasRoll;
     return AdaptiveScaffold(
       title: 'Account & key',
       body: Center(
@@ -146,8 +150,8 @@ class AccountKeyStep extends ConsumerWidget {
                   ProxPrimaryButton(
                     icon: const Icon(Icons.face),
                     label: const Text('Continue to face scan'),
-                    // The scan needs the key first — never silently drop.
-                    onPressed: !hasKey
+                    // The scan needs the key + ID first — never silently drop.
+                    onPressed: !canContinue
                         ? null
                         : () {
                             EnrollLog.nav(
@@ -161,9 +165,11 @@ class AccountKeyStep extends ConsumerWidget {
                             }
                           },
                   ),
-                  if (!hasKey)
-                    const Text(
-                      'Sign in and generate the device key to continue.',
+                  if (!canContinue)
+                    Text(
+                      !hasKey
+                          ? 'Sign in and generate the device key to continue.'
+                          : 'Enter your ID number to continue.',
                       textAlign: TextAlign.center,
                     ),
                 ],
