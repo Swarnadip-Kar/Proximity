@@ -263,7 +263,7 @@ void main() {
               contains('restore detected — re-enroll'))));
     });
 
-    test('unsealEnrollment opens AAD seals; legacy seals fall back',
+    test('unsealEnrollment opens AAD seals; legacy seals fail closed',
         () async {
       final pkS = Uint8List.fromList(List.filled(32, 5));
       final d = _device();
@@ -286,8 +286,7 @@ void main() {
               installId: 'inst-1',
               pkS: pkS),
           seed);
-      // Wrong identity fails BOTH tags (AAD mismatch, then legacy tag) —
-      // never a raw fallback.
+      // Wrong identity fails the AAD tag — never a raw fallback.
       expect(
           () => d.unsealEnrollment(
               sealed: aadSealed,
@@ -296,15 +295,16 @@ void main() {
               pkS: pkS),
           throwsA(isStateError.having((e) => e.message, 'message',
               contains('restore detected — re-enroll'))));
-      // Legacy (empty-AAD) envelope still opens via the fallback.
+      // Legacy (empty-AAD) envelopes fail closed (re-enroll, never open).
       final legacySealed = await d.seal(seed);
       expect(
-          await d.unsealEnrollment(
+          () => d.unsealEnrollment(
               sealed: legacySealed,
               email: 's@x.in',
               installId: 'inst-1',
               pkS: pkS),
-          seed);
+          throwsA(isStateError.having((e) => e.message, 'message',
+              contains('restore detected — re-enroll'))));
     });
 
     test('sign returns 64B ES256 raw R||S', () async {

@@ -1019,10 +1019,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
               detail: 'restore detected — re-enroll',
               result: StudentResult.error);
         }
-        // AAD-first open (M7): new envelopes are AAD-bound
-        // (email/installId/pkS/pkD); pre-M7 envelopes open via the legacy
-        // empty-AAD fallback inside unsealEnrollment. Non-HW keys keep the
-        // legacy open (tests).
+        // AAD-only open (full-fresh): envelopes are AAD-bound
+        // (email/installId/pkS/pkD); legacy pre-M7 envelopes fail closed
+        // here as restore-detected (re-enroll). Non-HW keys keep the
+        // empty-AAD open for tests only.
         final dk = _deviceKey;
         final Uint8List seed;
         if (dk is HwDeviceKey) {

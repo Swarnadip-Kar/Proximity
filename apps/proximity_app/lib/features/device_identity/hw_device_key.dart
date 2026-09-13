@@ -548,10 +548,10 @@ class HwDeviceKey implements DeviceKey {
   }
 
   /// Seals the 32B SKey seed under the device DEK (AES-256-GCM, PXK2
-  /// envelope). Only ciphertext is ever persisted — the DEK never leaves
-  /// HW-backed secure storage. Legacy empty-AAD envelope (compat with
-  /// pre-M7 seals); new callers SHOULD prefer [sealWithAad] binding
-  /// email/installId/pkS/pkD so a transplanted envelope fails the tag.
+  /// envelope, empty AAD). Only ciphertext is ever persisted — the DEK never
+  /// leaves HW-backed secure storage. Test/interface-only: fresh enrollments
+  /// always use [sealWithAad] binding email/installId/pkS/pkD so a
+  /// transplanted envelope fails the tag; no production caller seals here.
   @override
   Future<Uint8List> seal(Uint8List seed32) async {
     requireMobileFace();
@@ -579,10 +579,11 @@ class HwDeviceKey implements DeviceKey {
     return sealWithDek(dek32: dek, seed32: seed32);
   }
 
-  /// Unseals a PXK2 envelope. Any failure — missing HW key (biometric
+  /// Unseals an empty-AAD PXK2 envelope (test/interface-only — fresh
+  /// enrollment envelopes are AAD-bound and open via [unsealEnrollment] /
+  /// [unsealWithAad]). Any failure — missing HW key (biometric
   /// invalidation), missing DEK, tampered envelope, AAD mismatch — throws
-  /// StateError('restore detected — re-enroll'). Legacy empty-AAD
-  /// envelopes open here; AAD-bound envelopes open via [unsealWithAad].
+  /// StateError('restore detected — re-enroll').
   @override
   Future<Uint8List> unseal(Uint8List sealed) async {
     requireMobileFace();
@@ -671,15 +672,13 @@ class HwDeviceKey implements DeviceKey {
     return unsealWithDek(dek32: dek, sealed: sealed, aad: aad);
   }
 
-  /// Opens an enrollment envelope sealed by EITHER [sealWithAad] (new) or
-  /// legacy [seal] (pre-M7, empty AAD): tries the AAD-bound open first
-  /// (AAD rebuilt from [email]/[installId]/[pkS] + the live pkD — the same
-  /// inputs [EnrollmentController.upload] sealed with), then falls back to
-  /// the legacy open. Without this, AAD-sealed enrollments fail the prove
-  /// path as restore-detected (GCM tag mismatch on empty AAD). A genuinely
-  /// corrupt/transplanted envelope fails BOTH tags with the standard
-  /// restore-detected StateError — never a raw fallback. Only this
-  /// device's own envelope under its DEK is ever opened.
+  /// Opens an AAD-bound enrollment envelope ([sealWithAad] only, full-fresh:
+  /// no empty-AAD legacy open). AAD is rebuilt from [email]/[installId]/[pkS]
+  /// + the live pkD — the same inputs [EnrollmentController.upload] sealed
+  /// with. Any failure (legacy pre-M7 envelope, transplant, corruption,
+  /// clone) throws the standard restore-detected StateError — re-enroll,
+  /// never a fallback open. Only this device's own envelope under its DEK
+  /// is ever opened.
   Future<Uint8List> unsealEnrollment({
     required Uint8List sealed,
     required String email,
@@ -687,27 +686,21 @@ class HwDeviceKey implements DeviceKey {
     required Uint8List pkS,
   }) async {
     final livePkD = _pkD != null ? Uint8List.fromList(_pkD!) : Uint8List(0);
-    if (livePkD.isNotEmpty &&
-        pkS.isNotEmpty &&
-        installId.isNotEmpty &&
-        email.trim().isNotEmpty) {
-      try {
-        return await unsealWithAad(
-          sealed,
-          aad: buildSealAad(
-            emailLower: email,
-            installId: installId,
-            pkS: pkS,
-            pkD: livePkD,
-          ),
-        );
-      } on StateError {
-        // Not an AAD envelope for this identity (or any open failure) —
-        // fall through to the legacy open below, which throws the same
-        // restore-detected error when the envelope is genuinely bad.
-      }
+    if (livePkD.isEmpty ||
+        pkS.isEmpty ||
+        installId.isEmpty ||
+        email.trim().isEmpty) {
+      throw StateError('restore detected — re-enroll');
     }
-    return unseal(sealed);
+    return unsealWithAad(
+      sealed,
+      aad: buildSealAad(
+        emailLower: email,
+        installId: installId,
+        pkS: pkS,
+        pkD: livePkD,
+      ),
+    );
   }
 
   @override

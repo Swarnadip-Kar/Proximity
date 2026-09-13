@@ -334,10 +334,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         return;
       }
       try {
-        // AAD-first open (M7): new envelopes are AAD-bound
-        // (email/installId/pkS/pkD); pre-M7 envelopes open via the legacy
-        // empty-AAD fallback inside unsealEnrollment. Non-HW keys keep the
-        // legacy open (tests).
+        // AAD-only open (full-fresh): envelopes are AAD-bound
+        // (email/installId/pkS/pkD); legacy pre-M7 envelopes fail closed
+        // here as restore-detected (re-enroll). Non-HW keys keep the
+        // empty-AAD open for tests only.
         final sealedBytes = hexDecode(stored.sealedKeyHex);
         final dk = _deviceKey;
         final Uint8List seed;
@@ -808,9 +808,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // never outlives the seal call on the heap.
         // Track A (M7): AAD-bound seal (email/installId/pkS/pkD via
         // buildSealAad) so a transplanted envelope fails the GCM tag.
-        // HW path uses sealWithAad; software/fake fall back to legacy
-        // seal (empty AAD, still verifies). No decryption of sealed
-        // bytes beyond this device's own envelope under its DEK.
+        // HW path uses sealWithAad; software/fake seal (empty AAD) is
+        // test-only. No decryption of sealed bytes beyond this device's
+        // own envelope under its DEK.
         final seedCopy = Uint8List.fromList(ed.seed(kp.privateKey));
         try {
           final dk = _deviceKey;
