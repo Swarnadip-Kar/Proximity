@@ -237,4 +237,148 @@ void main() {
       expect(a, hasLength(8));
     });
   });
+
+  group('spoof fail-closed end-to-end (never marked)', () {
+    Future<ProxServer> openTestServer() async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final server = ProxServer(
+        classLabel: 't',
+        profSk: prof.privateKey,
+        profPk: prof.publicKey,
+        sightings: (
+                {required peerW,
+                required expectedAirKey,
+                required expectedUuid}) =>
+            const RadioSighting(rssiDbm: -55, hop: 0),
+      );
+      await server.start(port: 0);
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 't',
+        ),
+        1,
+      );
+      return server;
+    }
+
+    Future<InMemoryDeviceStore> sealedTestStore() async {
+      final seed = randBytes(32);
+      final stuPk = ed.public(ed.newKeyFromSeed(seed));
+      final store = InMemoryDeviceStore();
+      await store.writeEnrollment(StoredEnrollment(
+        email: _email,
+        name: 'S',
+        roll: '1',
+        seedHex: '',
+        sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
+        pkHex: hexEncode(stuPk.bytes),
+        faceId: 'face-test-id',
+        enrolledAt: DateTime.now().toUtc(),
+        verifierVer: kFaceVerifierVer,
+      ));
+      return store;
+    }
+
+    void injectSighting(ProxBleEngine engine, ProxServer server) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        final w = server.window!;
+        engine.handleSighting(BleSighting(
+          type: kAirTypeChallenge,
+          token8: w.challengeFor(w.jForTime(DateTime.now().toUtc())),
+          ipHost: '127.0.0.1',
+          ipPort: server.port,
+          rssiDbm: -60,
+          at: DateTime.now().toUtc(),
+        ));
+      });
+    }
+
+    ClassBeacon testTarget(int port) => ClassBeacon(
+        classLabel: 't',
+        host: '127.0.0.1',
+        port: port,
+        rssiDbm: 0,
+        displayCode: 'X');
+
+    const testIdentity = LinkedIdentity(name: 'S', gmail: _email, roll: '1');
+
+    test('spoof (low liveness) then prove fails as faceFailed, never marked',
+        timeout: const Timeout(Duration(minutes: 2)), () async {
+      final server = await openTestServer();
+      try {
+        final engine = ProxBleEngine(radio: FakeBleRadio());
+        final d = RealStudentDriver(
+          store: await sealedTestStore(),
+          verifier: FakeFaceVerifier(match: true, score: 0.85),
+          deviceKey: FakeDeviceKey(),
+          engine: engine,
+          // Readable still of the enrolled holder, but not live: the
+          // matcher would hit, so the gate must stop it first.
+          livenessGate: FakeLivenessGate(score: 0.31),
+        )..silenceCap = const Duration(seconds: 10);
+        final check = await d.checkFace('photo-of-enrolled.jpg');
+        expect(check.match, FaceMatch.mismatch);
+        expect(check.score, 0);
+        expect(check.faceValidAtMs, 0);
+        injectSighting(engine, server);
+        // The spoof carried no holder evidence (score 0, stamp 0): the
+        // SK-use gate was never armed, so proving refuses terminally.
+        final res = await d.listenAndProve(
+          target: testTarget(server.port),
+          identity: testIdentity,
+          faceScore: check.score,
+          faceValidAtMs: check.faceValidAtMs,
+          verifierVer: check.verifierVer,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.faceFailed,
+            reason: 'detail=${res.detail}');
+        expect(server.tally.presentCount, 0);
+      } finally {
+        await server.stop();
+      }
+    });
+
+    test('explicit weak liveness is not masked by a strong cache',
+        timeout: const Timeout(Duration(minutes: 2)), () async {
+      final server = await openTestServer();
+      try {
+        final engine = ProxBleEngine(radio: FakeBleRadio());
+        final d = RealStudentDriver(
+          store: await sealedTestStore(),
+          verifier: FakeFaceVerifier(match: true, score: 0.85),
+          deviceKey: FakeDeviceKey(),
+          engine: engine,
+          livenessGate: FakeLivenessGate(score: 0.92),
+        )..silenceCap = const Duration(seconds: 10);
+        final check = await d.checkFace('still.jpg');
+        expect(check.match, FaceMatch.pass);
+        expect(check.livenessScore, 0.92);
+        injectSighting(engine, server);
+        // Explicit args win over the 0.92 checkFace cache: the signed
+        // ticket carries the weak claim, and the host (requireLiveness
+        // enforced) rejects it — never a silent cache upgrade.
+        final res = await d.listenAndProve(
+          target: testTarget(server.port),
+          identity: testIdentity,
+          faceScore: check.score,
+          faceValidAtMs: check.faceValidAtMs,
+          verifierVer: check.verifierVer,
+          livenessScore: 0.31,
+          livenessVer: kLivenessVer,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.error,
+            reason: 'detail=${res.detail}');
+        expect(res.detail, contains('liveness-below-threshold'));
+        expect(server.tally.presentCount, 0);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
 }
