@@ -19,6 +19,7 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 
 import '../features/entry/entry_flow.dart';
+import '../features/device_identity/hw_device_key.dart';
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart';
@@ -1018,7 +1019,22 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
               detail: 'restore detected — re-enroll',
               result: StudentResult.error);
         }
-        final seed = await _deviceKey.unseal(sealed);
+        // AAD-first open (M7): new envelopes are AAD-bound
+        // (email/installId/pkS/pkD); pre-M7 envelopes open via the legacy
+        // empty-AAD fallback inside unsealEnrollment. Non-HW keys keep the
+        // legacy open (tests).
+        final dk = _deviceKey;
+        final Uint8List seed;
+        if (dk is HwDeviceKey) {
+          seed = await dk.unsealEnrollment(
+            sealed: sealed,
+            email: stored.email,
+            installId: await _store.readInstallId() ?? '',
+            pkS: Uint8List.fromList(hexDecode(stored.pkHex)),
+          );
+        } else {
+          seed = await _deviceKey.unseal(sealed);
+        }
         sk = ed.newKeyFromSeed(seed);
       } on StateError catch (e) {
         if ('$e'.contains('restore detected')) {

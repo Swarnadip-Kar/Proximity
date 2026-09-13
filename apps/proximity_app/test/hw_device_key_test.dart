@@ -155,7 +155,7 @@ void main() {
       expect(d.chainDER, hasLength(1));
       expect(d.chainDERHex, hasLength(1));
       expect(d.lastChallenge,
-          deviceBindingChallenge(emailLower: 's@x.in', installId: 'inst-1', pkS: pkS));
+          deviceBindingChallengeV2(emailLower: 's@x.in', installId: 'inst-1', pkS: pkS));
       expect(backend.attestCalls, 1);
       final window = d.attestedUntil.difference(d.attestedAt);
       expect(window, kDeviceAttestedValidity);
@@ -262,6 +262,50 @@ void main() {
       expect(() => d.unseal(sealed),
           throwsA(isStateError.having((e) => e.message, 'message',
               contains('restore detected — re-enroll'))));
+    });
+
+    test('unsealEnrollment opens AAD seals; legacy seals fall back',
+        () async {
+      final pkS = Uint8List.fromList(List.filled(32, 5));
+      final d = _device();
+      await d.bindEnrollment(
+          email: 's@x.in', installId: 'inst-1', pkS: pkS);
+      final seed = Uint8List.fromList(List.generate(32, (i) => i));
+      // AAD-bound envelope opens via unsealEnrollment with the same identity.
+      final aadSealed = await d.sealWithAad(
+        seed,
+        aad: buildSealAad(
+            emailLower: 's@x.in',
+            installId: 'inst-1',
+            pkS: pkS,
+            pkD: d.pkD),
+      );
+      expect(
+          await d.unsealEnrollment(
+              sealed: aadSealed,
+              email: 's@x.in',
+              installId: 'inst-1',
+              pkS: pkS),
+          seed);
+      // Wrong identity fails BOTH tags (AAD mismatch, then legacy tag) —
+      // never a raw fallback.
+      expect(
+          () => d.unsealEnrollment(
+              sealed: aadSealed,
+              email: 'evil@x.in',
+              installId: 'inst-1',
+              pkS: pkS),
+          throwsA(isStateError.having((e) => e.message, 'message',
+              contains('restore detected — re-enroll'))));
+      // Legacy (empty-AAD) envelope still opens via the fallback.
+      final legacySealed = await d.seal(seed);
+      expect(
+          await d.unsealEnrollment(
+              sealed: legacySealed,
+              email: 's@x.in',
+              installId: 'inst-1',
+              pkS: pkS),
+          seed);
     });
 
     test('sign returns 64B ES256 raw R||S', () async {

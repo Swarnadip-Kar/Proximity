@@ -683,6 +683,45 @@ class HwDeviceKey implements DeviceKey {
     return unsealWithDek(dek32: dek, sealed: sealed, aad: aad);
   }
 
+  /// Opens an enrollment envelope sealed by EITHER [sealWithAad] (new) or
+  /// legacy [seal] (pre-M7, empty AAD): tries the AAD-bound open first
+  /// (AAD rebuilt from [email]/[installId]/[pkS] + the live pkD — the same
+  /// inputs [EnrollmentController.upload] sealed with), then falls back to
+  /// the legacy open. Without this, AAD-sealed enrollments fail the prove
+  /// path as restore-detected (GCM tag mismatch on empty AAD). A genuinely
+  /// corrupt/transplanted envelope fails BOTH tags with the standard
+  /// restore-detected StateError — never a raw fallback. Only this
+  /// device's own envelope under its DEK is ever opened.
+  Future<Uint8List> unsealEnrollment({
+    required Uint8List sealed,
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) async {
+    final livePkD = _pkD != null ? Uint8List.fromList(_pkD!) : Uint8List(0);
+    if (livePkD.isNotEmpty &&
+        pkS.isNotEmpty &&
+        installId.isNotEmpty &&
+        email.trim().isNotEmpty) {
+      try {
+        return await unsealWithAad(
+          sealed,
+          aad: buildSealAad(
+            emailLower: email,
+            installId: installId,
+            pkS: pkS,
+            pkD: livePkD,
+          ),
+        );
+      } on StateError {
+        // Not an AAD envelope for this identity (or any open failure) —
+        // fall through to the legacy open below, which throws the same
+        // restore-detected error when the envelope is genuinely bad.
+      }
+    }
+    return unseal(sealed);
+  }
+
   @override
   AttestationLevel get level => _level;
 

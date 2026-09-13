@@ -334,8 +334,23 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         return;
       }
       try {
-        final seed =
-            await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
+        // AAD-first open (M7): new envelopes are AAD-bound
+        // (email/installId/pkS/pkD); pre-M7 envelopes open via the legacy
+        // empty-AAD fallback inside unsealEnrollment. Non-HW keys keep the
+        // legacy open (tests).
+        final sealedBytes = hexDecode(stored.sealedKeyHex);
+        final dk = _deviceKey;
+        final Uint8List seed;
+        if (dk is HwDeviceKey) {
+          seed = await dk.unsealEnrollment(
+            sealed: sealedBytes,
+            email: stored.email,
+            installId: await getOrCreateInstallId(_store),
+            pkS: Uint8List.fromList(hexDecode(stored.pkHex)),
+          );
+        } else {
+          seed = await _deviceKey.unseal(sealedBytes);
+        }
         final sk = ed.newKeyFromSeed(seed);
         keys = ed.KeyPair(sk, ed.public(sk));
       } on StateError catch (e) {
