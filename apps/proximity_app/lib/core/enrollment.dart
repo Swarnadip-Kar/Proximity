@@ -766,8 +766,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         }
         // Security §5 pre-enroll gate (claim): re-probed fresh at upload
         // so a device tainted after the key ceremony still cannot claim.
+        // The verdict's advisory flag rides the claim (clean '' here —
+        // tainted throws above and never reaches the transaction).
+        String enrollIntegrityFlag = '';
         try {
-          await entryRequireEnrollIntegrity();
+          final enrollVerdict = await entryRequireEnrollIntegrity();
+          enrollIntegrityFlag = enrollVerdict.flagForMarking;
         } on StateError catch (e) {
           state = state.copyWith(phase: EnrollPhase.error, message: '$e');
           return null;
@@ -794,17 +798,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                       .toUtc()
                       .millisecondsSinceEpoch,
                   // Security §7: HW chain (leaf-first DER hex) + liveness
-                  // pipeline tag. integrityFlag stays '' (clean): the
-                  // entry integrity gate that would TAINT this on rooted
-                  // devices is not yet called pre-claim (audit 2026-09-12)
-                  // — enroll-time taint detection is pending work, so ''
-                  // here means "unchecked", not "verified clean". The
-                  // livenessVer tag names the pipeline that MEASURED the
-                  // centre still ([enrollFace] gates on it before the
-                  // gallery write — fail-closed, same idiom as marking).
+                  // pipeline tag. integrityFlag is the advisory
+                  // verdict.flagForMarking ('' clean — the fresh
+                  // pre-claim gate above throws on tainted, so a filed
+                  // claim always carries clean; the host still treats the
+                  // flag as advisory, never auto-absent). The livenessVer
+                  // tag names the pipeline that MEASURED the centre still
+                  // ([enrollFace] gates on it before the gallery write —
+                  // fail-closed, same idiom as marking).
                   attestationChain: chainDERHex,
                   livenessVer: kLivenessVer,
-                  integrityFlag: ''),
+                  integrityFlag: enrollIntegrityFlag),
               installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
