@@ -110,7 +110,12 @@ void main() {
       auth.seedAccount(_b); // raced switch, no refresh
       final id = await ctl.upload();
       expect(id, isNull);
+      // Atomic resync (behavior B): refusal adopts the live account AND
+      // wipes roll/key in the same op (same as refreshFromAuth), so the
+      // draft never sits half-migrated (new account + old roll/key).
       expect(ctl.state.account?.email, 'b@univ.edu');
+      expect(ctl.state.roll, isEmpty);
+      expect(ctl.state.pkHex, isEmpty);
       expect(ctl.state.message, contains('changed'));
       expect(await store.readEnrollment(), isNull);
     });

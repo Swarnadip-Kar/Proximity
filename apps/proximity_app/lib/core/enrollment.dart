@@ -238,6 +238,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// moved under an opened draft, adopting the current account fresh so a
   /// stale-account claim can never file. Returns the live account when it
   /// matches the draft, null after refusing (fail-closed).
+  ///
+  /// Mismatch is an ATOMIC resync (deliberate, behavior B): the fresh
+  /// [EnrollmentState] adopts `current` AND resets roll/pkHex/face/keys in
+  /// the same op (same wipe as [refreshFromAuth]), so the draft never sits
+  /// half-migrated (new account + old roll/key). The freeze-until-refresh
+  /// alternative was rejected: leaving the stale account visible after
+  /// detection invites a stale claim on retry, while the resync forces a
+  /// restart-as-new-account.
   SignedAccount? _requireLiveAccount() {
     SignedAccount? current;
     try {
