@@ -88,6 +88,8 @@ import 'package:flutter_security_suite/flutter_security_suite.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
+import '../platformx.dart';
+
 /// Sensitive operation under test. Startup uses [startup]; every other
 /// caller passes its own op so logs stay attributable.
 enum IntegrityOp { startup, enroll, host, prove }
@@ -240,8 +242,38 @@ class IntegrityGate {
   static IntegrityProbe probe = const PlatformIntegrityProbe();
   static IntegrityVerdict? _last;
 
+  /// H7 freshness bound for the startup cache: a cached verdict older than
+  /// this is STALE and must never decide — sensitive ops always re-probe
+  /// fresh via [verifyBeforeSensitiveOp], and startup consumers check
+  /// [lastVerdictFresh] before trusting [lastVerdict]. Structure only
+  /// (timestamps) — no sealed bytes involved.
+  static const lastVerdictMaxAge = Duration(minutes: 15);
+  static DateTime? _lastAt;
+
   /// Cached startup verdict (null before the first [performCheck]).
+  /// May be STALE — check [lastVerdictFresh] before trusting it for any
+  /// decision; sensitive ops never use it (they re-probe fresh).
   static IntegrityVerdict? get lastVerdict => _last;
+
+  /// Fetch time of [lastVerdict] (null until the first [performCheck]).
+  static DateTime? get lastVerdictAt => _last == null ? null : _lastAt;
+
+  /// True when a cached verdict exists AND is younger than
+  /// [lastVerdictMaxAge] at [now]. False (missing/stale) means re-probe —
+  /// never decide on a stale cache.
+  static bool lastVerdictFresh({DateTime? now}) {
+    final at = _lastAt;
+    if (_last == null || at == null) return false;
+    final n = (now ?? DateTime.now()).toUtc();
+    if (n.isBefore(at.toUtc())) return true; // clock skew → trust, re-probe next
+    return n.difference(at.toUtc()) <= lastVerdictMaxAge;
+  }
+
+  /// Test seam: clear the startup cache (freshness tests).
+  static void debugResetForTest() {
+    _last = null;
+    _lastAt = null;
+  }
 
   /// Pure verdict hash: first 8 hex of
   /// SHA256("v1|r|h|t|e|d") with 1/0 per signal. Stable across runs and
@@ -294,8 +326,59 @@ class IntegrityGate {
     }
     final verdict = _build(signals);
     _last = verdict;
+    _lastAt = DateTime.now().toUtc();
     BleLog.log('SEC',
         'integrity startup → $verdict${kIsWeb ? ' (web records-only)' : ''}');
+    return verdict;
+  }
+
+  /// H7 strict enroll gate (debug-closed): like [enrollBlockReason] but a
+  /// debug build ALSO blocks (debuggable builds are never production trust
+  /// — `flutter run` must not enroll as a clean device). Default
+  /// [enrollBlockReason] keeps debug-alone-passes for pinned dev/tests;
+  /// release enroll callers that must close the debug bypass use this.
+  static String enrollBlockReasonStrict(IntegrityVerdict verdict) {
+    final base = enrollBlockReason(verdict);
+    if (base.isNotEmpty) return base;
+    if (verdict.debug) {
+      return 'Debug builds cannot enroll as student devices — use a release '
+          'build from the official store build.';
+    }
+    return '';
+  }
+
+  /// H7 strict marking flag (debug-flagged): like [markingFlag] but a debug
+  /// build also flags (`integrity-flagged`). Marking never blocks offline;
+  /// the professor flags, never auto-absents.
+  static String markingFlagStrict(IntegrityVerdict verdict) =>
+      verdict.blocksEnroll || verdict.debug ? flaggedValue : '';
+
+  /// H7 combined gate: mobile domain + integrity in ONE call so enroll /
+  /// marking paths cannot pass one and skip the other. Records-only devices
+  /// (desktop/web) throw first via [requireMobileFace] (fail-closed
+  /// upstream, never an integrity verdict). Then a FRESH probe runs
+  /// (never the cached startup verdict — see [lastVerdictFresh]):
+  /// - [IntegrityOp.enroll] taint throws StateError (default law:
+  ///   privileged/hooked/tampered/emulator; debug alone passes — use
+  ///   [enrollBlockReasonStrict] via [strictDebug]=true to close it).
+  /// - host/prove ops never throw on taint (offline marking preserved) —
+  ///   the returned verdict's hash/flag ride into dSig/review.
+  /// Never throws for probe failures (fail-open probe → clean verdict).
+  static Future<IntegrityVerdict> requireMobileAndIntegrity(
+    IntegrityOp op, {
+    bool strictDebug = false,
+  }) async {
+    requireMobileFace();
+    final verdict = await verifyBeforeSensitiveOp(op);
+    if (op == IntegrityOp.enroll) {
+      final reason = strictDebug
+          ? enrollBlockReasonStrict(verdict)
+          : enrollBlockReason(verdict);
+      if (reason.isNotEmpty) {
+        BleLog.log('SEC', 'enroll integrity BLOCKED → ${verdict.hash}');
+        throw StateError(reason);
+      }
+    }
     return verdict;
   }
 
