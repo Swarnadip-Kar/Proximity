@@ -232,6 +232,17 @@ service cloud.firestore {
     // and chain-vs-pinned-roots + challenge containment lives in protocol
     // verifyAttestationChainPin on the professor phone (offline, no quota).
     // Rules keep the write surface narrow; crypto keeps the verdict.
+    // H3 install shape (mirrors claim.dart isValidInstallId: 8..128 chars
+    // of [A-Za-z0-9:_-]). The deviceInstalls DOC ID is the installId, so
+    // create/update gate on `id`; studentDevices gates its installId field.
+    // Spark limitation (documented): rules cannot join across docs, so a
+    // cloned installId claiming another Gmail is NOT stopped here — the
+    // claim transaction (email-equality) + post-hoc findDoublePkD audit
+    // own that; rules only stop malformed/empty installs.
+    function validInstallId(s) {
+      return s is string && s.size() >= 8 && s.size() <= 128 &&
+        s.matches('^[A-Za-z0-9:_-]+$');
+    }
     function validSecurityFields() {
       return (!('attestationChain' in request.resource.data) ||
           request.resource.data.attestationChain is list) &&
@@ -263,6 +274,8 @@ service cloud.firestore {
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
         && incomingStampsFresh()
+        && ((!('installId' in request.resource.data)) ||
+            validInstallId(request.resource.data.installId))
         && validSecurityFields();
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 30-day cooldown (server-enforced: clients cannot
@@ -309,9 +322,11 @@ service cloud.firestore {
         missingOrg(resource.data) || resource.data.org == tokenOrg());
       allow list: if false;
       allow create: if signedIn()
+        && validInstallId(id)
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg();
       allow update: if signedIn()
+        && validInstallId(id)
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
