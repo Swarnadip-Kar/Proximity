@@ -28,6 +28,7 @@ import 'design/app_theme.dart';
 import 'features/account/theme_mode.dart';
 import 'screens/setup_flow_screen.dart';
 import 'screens/shells.dart';
+import 'features/device_identity/hw_device_key.dart';
 import 'features/face_identity/device_key.dart';
 import 'features/face_identity/face_verifier.dart';
 import 'features/face_identity/pose_gate.dart';
@@ -185,17 +186,28 @@ Future<void> main() async {
     }
   };
   // Trust stack (Tracks 2+3 L3 DI): mobile-only plugin face verifier +
-  // software DKey (the HW keystore/Enclave backend plugs into the
-  // DeviceKey interface — deferred platform work; until then the level is
-  // NONE, which claims no tier but still marks via the flagged
-  // `device-none-fallback` — same ticket/Sig_s/face/sighting checks).
-  // Desktop/web records builds get the fail-closed stubs: every
+  // HW DKey (StrongBox→TEE / Secure Enclave via HwDeviceKey, ES256) in
+  // release/profile — the provider default (see deviceKeyProvider) — with
+  // the test-only SoftwareDeviceKey kept for debug only (constructor
+  // asserts kDebugMode + ensure() throws outside debug, so release can
+  // never silently enroll software; level NONE there still marks via the
+  // flagged `device-none-fallback` — same ticket/Sig_s/face/sighting
+  // checks). Desktop/web records builds get the fail-closed stubs: every
   // face/key op throws before anything signs — never a mock pass.
   final FaceVerifier faceVerifier;
   final DeviceKey deviceKey;
   if (canUseFace()) {
     faceVerifier = PluginFaceVerifier();
-    deviceKey = SoftwareDeviceKey();
+    if (kDebugMode) {
+      assert(kDebugMode,
+          'SoftwareDeviceKey is test-only — production uses HwDeviceKey.');
+      deviceKey = SoftwareDeviceKey();
+    } else {
+      deviceKey = HwDeviceKey(
+        backend: AttestedSecureKeysBackend(),
+        sealStore: const FlutterSealStore(),
+      );
+    }
   } else {
     faceVerifier = const UnavailableFaceVerifier();
     deviceKey = const UnavailableDeviceKey();
