@@ -51,6 +51,21 @@
 // Contract unchanged: fail-OPEN probe (unknown ⇒ clean, so a missing or
 // hung plugin can never brick offline marking) + fail-CLOSED gate
 // (tainted verdicts hard-block enroll, flag marking).
+//
+// KNOWN RESIDUAL — Magisk/Zygisk hiding (accepted, not silent): a rooted
+// device running Magisk + Zygisk + Shamiko/DenyList can (a) hide su
+// props and mount traces from RootBeer-style reads, (b) intercept or
+// block the `com.securebankkit/security` channel, or (c) stall the probe
+// past [PlatformIntegrityProbe.probeBudget] so it degrades to clean.
+// All three degrade to CLEAN by design (unknown ⇒ clean) to preserve
+// 100%-offline marking after one-time online setup. Accepted because no
+// local check can out-hide a kernel-level hider; the compensating gates
+// are ONLINE and fail-soft: (1) Play Integrity STRONG verdict via App
+// Check enforcement in console (steps in [IntegrityAppCheck] — the only
+// signal a hider cannot forge locally), (2) the online device-claim gate
+// (one Gmail = one device, 30d move cooldown), (3) HW dSig tiering
+// (FULL/STD require a genuine key signature over the live challenge).
+// Code stays fail-soft: App Check absence never blocks marking.
 library;
 
 import 'dart:async';
@@ -345,12 +360,20 @@ class IntegrityGate {
 /// (App Attest needs iOS 14+ plus entitlements per flavor — escalate per
 /// release once the floor is 14+; DeviceCheck is the safe default).
 /// Console enforcement is a console toggle (no rules syntax on Spark):
-/// register Play Integrity + DeviceCheck apps, set Play DEVICE→STRONG,
-/// THEN Enforce on Firestore — only after the 0.2.0 floor has rolled out
-/// (enforcing earlier bricks legit installs that cannot attest yet; see
-/// commit body for the timing). App Check absence never blocks offline
-/// marking (defense in depth, never the sole gate: HW dSig still
-/// required).
+///   1. Play Console → your app → Play Integrity API → enable, set verdict
+///      requirement DEVICE → STRONG (STRONG needs Android 13+ with
+///      hardware-backed keystore + recent Play Services; DEVICE is the
+///      rollout default, STRONG is the hardened target).
+///   2. Firebase Console → App Check → Apps → register the Android app
+///      (Play Integrity provider) + the iOS app (DeviceCheck now, App
+///      Attest with DeviceCheck fallback once the iOS 14+ floor + entitle-
+///      ments land per flavor).
+///   3. Firebase Console → App Check → Firestore → Enforce — ONLY after the
+///      0.2.0 min_version floor has rolled out (enforcing earlier bricks
+///      legit installs that cannot attest yet; see commit body for timing).
+/// App Check absence never blocks offline marking (defense in depth, never
+/// the sole gate: HW dSig still required). Spark-free: no Functions, no
+/// extra quota — attestation is a console toggle, not backend code.
 class IntegrityAppCheck {
   IntegrityAppCheck._();
 
