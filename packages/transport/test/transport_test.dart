@@ -343,7 +343,9 @@ void main() {
         face: face,
       );
       expect(res.decision, ProveDecision.confirmed);
-      expect(proved, ['$_email confirmed ok|direct-rssi']);
+      // First prove from an unpinned email marks via TOFU with a
+      // `first-seen` log token (log only — the wire verdict is unchanged).
+      expect(proved, ['$_email confirmed ok|direct-rssi|first-seen']);
       expect(
           res.verifyAck(
             profPk: prof.publicKey,
@@ -354,6 +356,101 @@ void main() {
           ),
           isTrue);
       expect(server.tally.presentCount, 1);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('early invalids carry signed ACKs; first-seen TOFU marks', () async {
+    // Field regression: `unknown-pkS` (and `org-mismatch`) used to return
+    // a ZERO sigAck, so the student logged `BAD prof signature` while the
+    // professor logged `unknown-pkS` — the same event, two stories. Every
+    // early invalid is now signed; unpinned first-seen emails still mark
+    // (TOFU, offline-first) with a `first-seen` log token.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
+    final proved = <String>[];
+    final server = await makeServer(
+      prof: prof,
+      stu: stu,
+      onProve: (e, d, r) {
+        proved.add('$e $d $r');
+      },
+      pins: [ProxCrypto.sha256Sync(fd.rootDer)],
+    );
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = server.window!.challengeFor(0);
+      final desc = await client.fetchWindow(cj);
+      // 1) First-seen (no pin for this email): marks normally (TOFU) with
+      // a signed ACK and a first-seen log token — offline is not fatal.
+      final first = await proveFresh(
+        client,
+        desc: desc,
+        cj: cj,
+        j: 0,
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: 0.9,
+      );
+      expect(first.decision, ProveDecision.confirmed);
+      expect(
+          first.verifyAck(
+            profPk: prof.publicKey,
+            sessionId: desc.sessionId,
+            windowId: desc.windowId,
+            j: 0,
+            studentId: _email,
+          ),
+          isTrue);
+      expect(proved.last, contains('first-seen'));
+      // 2) Stale pin (professor cached an older key, student re-enrolled):
+      // fails closed as unknown-pkS — but the ACK VERIFIES, so the student
+      // sees the true verdict instead of `BAD prof signature`.
+      server.pinStudentKey(_email, hexEncode(Uint8List(32)), force: true);
+      final cj2 = server.window!.challengeFor(0);
+      final desc2 = await client.fetchWindow(cj2);
+      final stale = await proveFresh(
+        client,
+        desc: desc2,
+        cj: cj2,
+        j: 0,
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: 0.9,
+      );
+      expect(stale.decision, ProveDecision.invalid);
+      expect(stale.reason, 'unknown-pkS');
+      expect(
+          stale.verifyAck(
+            profPk: prof.publicKey,
+            sessionId: desc2.sessionId,
+            windowId: desc2.windowId,
+            j: 0,
+            studentId: _email,
+          ),
+          isTrue,
+          reason: 'early invalids must verify — never BAD-sig');
+      expect(proved.last, contains('pin-mismatch'));
+      // 3) Closed window: unsigned by contract (nothing to bind), but the
+      // shape still parses — the driver maps it pre-ACK-check.
+      server.closeWindow();
+      final closed = await proveFresh(
+        client,
+        desc: desc2,
+        cj: cj2,
+        j: 0,
+        stu: stu,
+        email: _email,
+        fd: fd,
+        face: 0.9,
+      );
+      expect(closed.decision, ProveDecision.invalid);
+      expect(closed.reason, 'window-closed');
     } finally {
       client.close();
       await server.stop();

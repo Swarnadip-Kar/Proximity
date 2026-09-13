@@ -326,6 +326,24 @@ class EnrollCaptureBottomBar extends StatelessWidget {
               const EnrollCaptureSlotTopUp(),
             ] else if (saveError) ...[
               ...terminalChrome,
+            ] else if (saving) ...[
+              // Terminal write in flight (5-still liveness re-score +
+              // gallery write + self-checks take seconds): the button slot
+              // shows a disabled Processing state with a spinner instead
+              // of going empty — the set stays visibly "working", never
+              // hung. Same subtree height as the terminal variant (plus
+              // the shared top-up), so the feed never moves on the
+              // saving → validated/error transition.
+              ProxPrimaryButton(
+                icon: const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                label: const Text('Processing…'),
+                onPressed: null,
+              ),
+              const EnrollCaptureSlotTopUp(),
             ] else ...[
               // Area parity (field-verified 2026-09-13: terminal chrome
               // appearing visibly shifted the preview up under the oval

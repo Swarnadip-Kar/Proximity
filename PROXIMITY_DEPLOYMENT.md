@@ -12,7 +12,8 @@ Companions: `PROXIMITY_SECURITY.md` §9 (why the floor event exists),
 ## 0. Standing state (2026-09-13)
 
 - Firestore rules: `firestore.rules` carries the `pkS` type-lock
-  (`validDirectoryPkS`), `profDevices` pins, and App Attest locks.
+  (`validDirectoryPkS`), `profDevices` pins, App Attest locks, and the
+  same-phone reclaim gate (`isSamePhoneReclaim` + `deviceId` type-lock).
   **Not yet deployed** — deploy in §1.
 - Version floor: `app_config/min_version` must be `{minVersion:"0.1.0",
   latest:"0.1.0", force:true, ...}` alongside this release.

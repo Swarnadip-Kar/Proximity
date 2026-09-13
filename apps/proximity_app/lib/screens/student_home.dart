@@ -113,6 +113,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// Last (course → photo) pair written to the device cache: guards the
   /// 2s room poll from rewriting prefs on every tick.
   String _cachedPhotoKey = '';
+  // Provisional waiting-room pin verdict (issue-7 banner): the gated email
+  // is known but no proof has run yet (prove-time checkProfPin is what
+  // HONESTLY verifies — Sig_p against the pin — so a `verified` claim here
+  // would be early). When the pin cache holds NOTHING for this email, the
+  // professor is first-seen by definition: show the `unverified` banner
+  // now (queued for auto-verify online) instead of silence. When pins ARE
+  // cached, show nothing until prove verdicts (a cached pin is not a
+  // match). The prove-time driver verdict always wins when present.
+  ProfVerificationResult? _waitingCacheVerdict;
+  // Email the provisional verdict above was computed for (one pin-cache
+  // read per email per room — never per 2s tick).
+  String _waitingCacheEmail = '';
 
   /// Own Gmail profile photo for volunteered presence ('' = absent).
   /// Best-effort read; never blocks join/prove.
@@ -157,12 +169,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   String _manualStatus = '';
   // Instant face retries used this join (4 mismatch sessions, then review).
   int _faceAttempts = 0;
+  // True when the latest mismatch failed VITALITY (liveness gate) rather
+  // than identity (face matcher) — the needs-review verdict names
+  // photo/screen then, not the wrong face (see
+  // FaceCheckResult.livenessFailed). Reset on every face-check entry.
+  bool _faceMismatchLiveness = false;
   // Automatic re-scans after unreadable verdicts: time-boxed (10s window,
   // ~1s between scans — the holder just keeps holding still, never taps
   // retry), with a try-count backstop; Cancel/back exits via the teardown
-  // guards. Mismatch (readable wrong-face/spoof) never auto-retries — it
-  // burns an attempt and parks for review, so retries can't spend the
-  // attempt budget or hand an attacker free oracle queries.
+  // guards. The retries run INSIDE the open camera sheet (same preview,
+  // same controller — see the [accept] handoff in _scanFace), so the
+  // camera never tears down between bursts; the delayed re-push below is
+  // the legacy path for capturers without [accept] support. Mismatch
+  // (readable wrong-face/spoof) never auto-retries — it burns an attempt
+  // and parks for review, so retries can't spend the attempt budget or
+  // hand an attacker free oracle queries.
   int _autoFaceTries = 0;
   DateTime? _autoFaceDeadline;
   static const _autoFaceWindow = Duration(seconds: 10);
@@ -176,6 +197,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // camera sheets). Second caller no-ops; Scan stays as fallback after
   // the in-flight scan settles.
   bool _scanBusy = false;
+  // In-modal verify handoff (see _scanFace): the open camera sheet runs
+  // checkFaceAny per burst via its [accept] callback and caches the latest
+  // verdict here, so the preview never tears down between auto-retries.
+  // Null when the capturer ignored [accept] (legacy fakes) — the caller
+  // then verifies once itself, exactly as before.
+  FaceCheckResult? _modalResult;
+  // True when the modal's in-preview retries already spent the auto-retry
+  // window: a popped inconclusive resolves straight to the manual Scan
+  // notice instead of scheduling another sheet.
+  bool _modalExhausted = false;
   // Transient verdict note on the face-check screen (inconclusive scans).
   String faceNotice = '';
 
@@ -543,6 +574,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _roomProf = '';
     _roomProfEmail = '';
     _roomProfPhoto = '';
+    _waitingCacheVerdict = null;
+    _waitingCacheEmail = '';
     _cachedPhotoKey = '';
     _roomOrg = '';
     setState(() {
@@ -562,21 +595,56 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// never appears on a foreign-org phone).
   /// Waiting-room badge state: the driver's last pin verdict, but ONLY
   /// when it belongs to this room's gated email (a stale verdict from a
-  /// previous class must never badge the next room). Null renders nothing.
+  /// previous class must never badge the next room). Before the first
+  /// prove, the provisional cache verdict applies (first-seen unverified
+  /// banner when the pin cache is empty for this email; nothing otherwise).
+  /// Null renders nothing.
   ProfVerificationResult? _waitingVerification() {
+    ProfVerificationResult? provisional;
     try {
+      provisional = _waitingCacheVerdict;
       final driver = ref.read(studentDriverProvider);
-      if (driver is! RealStudentDriver) return null;
+      if (driver is! RealStudentDriver) return provisional;
       final v = driver.lastProfVerification;
-      if (v == null || v.profEmail.isEmpty) return null;
+      if (v == null || v.profEmail.isEmpty) return provisional;
       if (_roomProfEmail.trim().isNotEmpty &&
           v.profEmail != _roomProfEmail.trim().toLowerCase()) {
-        return null;
+        return provisional;
       }
       return v;
     } catch (_) {
-      return null;
+      return provisional;
     }
+  }
+
+  /// One pin-cache read per waiting-room email (see [_waitingCacheVerdict]):
+  /// empty cache ⇒ first-seen ⇒ provisional `unverified` banner. Called
+  /// when the gated email first lands; never on the 2s tick. Never throws.
+  Future<void> _refreshWaitingCacheVerdict(
+      String email, int run, ClassBeacon target) async {
+    try {
+      final driver = ref.read(studentDriverProvider);
+      if (driver is RealStudentDriver &&
+          driver.lastProfVerification != null) {
+        return; // prove already verdicts — provisional is obsolete.
+      }
+      final rows =
+          await ref.read(deviceStoreProvider).readProfPin(email);
+      if (!mounted || run != _runId || _waitingTarget != target) return;
+      if (_roomProfEmail.trim().toLowerCase() != email) return;
+      if (!mounted) return;
+      setState(() {
+        if (rows.isEmpty) {
+          _waitingCacheVerdict = ProfVerificationResult(
+            state: ProfEmailVerification.unverified,
+            liveFetch: false,
+            profEmail: email,
+          );
+        } else {
+          _waitingCacheVerdict = null;
+        }
+      });
+    } catch (_) {}
   }
 
   /// Offline-first auto-verify drain: first-seen prof emails queued while
@@ -1030,6 +1098,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       joinError = '';
       phase = StudentPhase.faceCheck;
       _faceAttempts = 0;
+      _faceMismatchLiveness = false;
       _autoFaceTries = 0;
       _autoFaceDeadline = null;
       faceNotice = '';
@@ -1127,13 +1196,24 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           (org == null || org.trim().isEmpty) ? target.org : org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
+      _faceMismatchLiveness = false;
       _autoFaceTries = 0;
       _autoFaceDeadline = null;
+      _waitingCacheVerdict = null;
+      _waitingCacheEmail = '';
       faceNotice = '';
     });
     // First back press from here returns to the class list (entry held
     // once per join; round rewaits re-enter safely via the null guard).
     _pushInnerBackEntry();
+    // Instant provisional banner when the gated email is already cached
+    // for this host (the 2s poll re-lands it anyway — this just skips the
+    // first-tick delay).
+    final entryEmail = _roomProfEmail.trim().toLowerCase();
+    if (entryEmail.isNotEmpty) {
+      _waitingCacheEmail = entryEmail;
+      unawaited(_refreshWaitingCacheVerdict(entryEmail, run, target));
+    }
     // Join identity for stale-switch guards below: timers/probes must never
     // file presence or flip state as a previous account after a rapid
     // switch/sign-out. [linked] is the CURRENT account's identity here
@@ -1294,6 +1374,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final email = probe.profEmail.trim().toLowerCase();
       if (email.isNotEmpty) {
         _gatedEmailByHost['${target.host}:${target.port}'] = email;
+        // First landing of this room's email: one pin-cache read for the
+        // provisional unverified banner (see _refreshWaitingCacheVerdict).
+        if (email != _waitingCacheEmail) {
+          _waitingCacheEmail = email;
+          unawaited(_refreshWaitingCacheVerdict(email, run, target));
+        }
       }
       // Same gated photo cached per host for the browse tiles (photo shows
       // iff the host published one — i.e. the per-course opt-in is on).
@@ -1409,10 +1495,65 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // Match→stamp+prove; readable mismatch→burn one of the 4 attempts
     // (whole 12s session); inconclusive (incl. the near-miss vitality
     // band)→rescan in the 12s session burning nothing.
-    final paths = await ref
-        .read(stillCapturerProvider)
-        .capture(context,
-            captures: kMarkingLivenessCaptures, autoFire: true);
+    //
+    // The verify runs INSIDE the open sheet ([accept]): inconclusive
+    // bursts re-capture on the SAME preview (~1s apart, 10s window — the
+    // holder just keeps holding still, never taps retry, never sees the
+    // camera flash). The sheet pops only on a terminal verdict (pass /
+    // mismatch / stale / blocked) or a spent window. Capturers without
+    // [accept] support (tests) pop at once and the caller verifies below.
+    _modalResult = null;
+    _modalExhausted = false;
+    final paths = await ref.read(stillCapturerProvider).capture(
+      context,
+      captures: kMarkingLivenessCaptures,
+      autoFire: true,
+      accept: (burst) async {
+        if (!mounted || phase != StudentPhase.faceCheck) return true;
+        var inModal = _readLinked();
+        var inModalAcct = _readAccount();
+        if (inModal == null ||
+            inModal.gmail.trim().toLowerCase() != scanEmail ||
+            !_identityMatchesCurrent(inModalAcct, inModal)) {
+          return true;
+        }
+        FaceCheckResult res;
+        try {
+          res = await ref.read(studentDriverProvider).checkFaceAny(burst);
+        } on StateError {
+          _modalResult = const FaceCheckResult(FaceMatch.blocked);
+          return true;
+        }
+        if (!mounted || phase != StudentPhase.faceCheck) return true;
+        inModal = _readLinked();
+        inModalAcct = _readAccount();
+        if (inModal == null ||
+            inModal.gmail.trim().toLowerCase() != scanEmail ||
+            !_identityMatchesCurrent(inModalAcct, inModal)) {
+          return true;
+        }
+        _modalResult = res;
+        if (res.match != FaceMatch.inconclusive) return true;
+        // No readable verdict (attempt kept): retry in place while the
+        // window holds; the sheet owns the gap, this owns the budget.
+        _autoFaceTries++;
+        final now = DateTime.now();
+        _autoFaceDeadline ??= now.add(_autoFaceWindow);
+        final gap = nextAutoFaceRetryDelay(
+          tries: _autoFaceTries,
+          tryCap: _autoFaceTryCap,
+          gap: _autoFaceGap,
+          now: now,
+          deadline: _autoFaceDeadline!,
+        );
+        BleLog.log(ProxLogTags.face,
+            'face inconclusive — auto-retry in place ($_autoFaceTries)');
+        if (gap == null) _modalExhausted = true;
+        return gap == null;
+      },
+      acceptWindow: _autoFaceWindow,
+      acceptGap: _autoFaceGap,
+    );
     // Mounted-before-ref + back/teardown guard: Cancel/Back/system-back
     // leaves faceCheck during the camera UI — never verify or prove after it.
     if (paths == null ||
@@ -1432,7 +1573,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     late final FaceCheckResult res;
     try {
-      res = await ref.read(studentDriverProvider).checkFaceAny(paths);
+      // In-modal verdict wins (verified while the preview stayed up);
+      // legacy capturers pop at once, so verify here exactly as before.
+      res = _modalResult ??
+          await ref.read(studentDriverProvider).checkFaceAny(paths);
+      _modalResult = null;
     } on StateError {
       if (!mounted) return;
       setState(() => faceNotice =
@@ -1458,14 +1603,30 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // above, and the listen binds this object's scores.
         await _listenWithCheck(target, fresh, res);
       case FaceMatch.mismatch:
-        // Readable session, somebody else: the ONLY outcome that consumes
-        // one of the 4 attempts (a whole 12s session, not one frame).
+        // Readable session, somebody else (or a readable spoof): the ONLY
+        // outcome that consumes one of the 4 attempts (a whole 12s
+        // session, not one frame).
         BleLog.log(
             ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
         if (!mounted) return;
         _faceAttempts++;
+        _faceMismatchLiveness = res.livenessFailed;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
+        // No readable verdict (attempt kept). The open sheet already
+        // retried in place until its window spent ([_modalExhausted]) —
+        // park on the manual Scan button then. Legacy capturers (no
+        // in-modal verify) keep the old re-push chain below.
+        if (_modalExhausted) {
+          _modalExhausted = false;
+          _autoFaceDeadline = null;
+          BleLog.log(ProxLogTags.face,
+              'face inconclusive — window spent in place, manual Scan');
+          if (!mounted) return;
+          setState(() => faceNotice =
+              'Could not read that scan — adjust light and tap Scan to try again.');
+          return;
+        }
         // No readable verdict (attempt kept): keep re-scanning hands-free
         // inside a 10s window (~1s apart) with a steady prompt, then fall
         // back to the manual Scan button. Cancel/back exits via the
@@ -2154,6 +2315,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               wrongMyOrg: wrongMyOrg,
               roundMarks: _roundMarks,
               attemptsLeft: 4 - _faceAttempts,
+              needsReviewDetail: _faceMismatchLiveness
+                  ? 'The scan did not look live (possible photo or screen) — hold still in good light and try again.'
+                  : '',
               onBackToBrowsing: _cancelToBrowsing,
               onRequestManual: _requestManual,
               onRetryFace: () {

@@ -60,6 +60,7 @@ import 'cloud_sync.dart';
 import 'device_store.dart';
 import 'platformx.dart';
 import 'security/revocation_cache.dart';
+import 'sync/device_hardware_id.dart';
 
 /// Enroll side-slot liveness bar (app-local policy, NOT a ticket break).
 /// The protocol Tl ([kLivenessThreshold] = 0.85) stays the decider for the
@@ -491,7 +492,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // prompt-tolerant (60s); the HW bind is programmatic (45s).
       const installIdBudget = Duration(seconds: 60);
       const bindBudget = Duration(seconds: 45);
-      BleLog.log('FACE', 'device key generate: keypair done');
+      // Keypair log (public half ONLY — the seed never logs): the SKey
+      // public key + install identity + HW bind each log under CRYPTO so
+      // the key ceremony is traceable in the log drawer (the private seed
+      // lives only in the sealed envelope, never in a log line).
+      BleLog.log('CRYPTO',
+          'SKey keypair generated pkS=${pkHex.substring(0, 12)}… (public half only)');
       late final String installId;
       try {
         installId =
@@ -503,7 +509,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 'Secure storage timed out — tap Generate device key again.');
         return;
       }
-      BleLog.log('FACE', 'device key generate: install identity ready');
+      BleLog.log('CRYPTO',
+          'SKey install identity ready install=${installId.substring(0, 8)}…');
       // iOS assertion path: same-install re-enroll yields an assertion, not
       // an object — carry the previous enrollment credential key forward
       // (same account only; anything else starts clean).
@@ -529,11 +536,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             phase: EnrollPhase.error,
             message:
                 'Secure hardware timed out — tap Generate device key again.');
-        BleLog.log('FACE', 'device key generate: bind timed out');
+        BleLog.log('CRYPTO', 'DKey bind timed out (keypair kept, bind first)');
         return;
       } on StateError catch (e) {
         state = state.copyWith(phase: EnrollPhase.error, message: '$e');
-        BleLog.log('FACE', 'device key generate: bind refused: $e');
+        BleLog.log('CRYPTO', 'DKey bind refused: $e');
         return;
       }
       if (_deviceKey.level == AttestationLevel.none) {
@@ -559,12 +566,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       _restoredRoll = null;
       state = state.copyWith(
           phase: EnrollPhase.keyReady, pkHex: pkHex, restored: false);
-      BleLog.log('FACE',
-          'device key ready (${attestationLevelName(_deviceKey.level)})');
+      BleLog.log('CRYPTO',
+          'DKey bound pkS=${pkHex.substring(0, 12)}… level=${attestationLevelName(_deviceKey.level)} — key ceremony complete');
     } catch (e) {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Key generation failed: $e');
-      BleLog.log('FACE', 'device key generate: failed: $e');
+      BleLog.log('CRYPTO', 'SKey/DKey generate failed: $e');
     }
   }
 
@@ -708,16 +715,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         _slotFail(slot, 'Liveness check failed on the $slot still: $e');
         return;
       }
-      // Box-vs-fallback path note (M1): the gate picks face-box vs
-      // centre-square internally (same scorer); log per-still that the
-      // vitality gate ran (the path itself is inside the gate — no silent
-      // downgrade). Bar is per-slot: centre holds the strict protocol Tl
+      // Gate contract: face-box crop only (no-box / too-blurry throws
+      // unreadable → slot-naming recapture above, never a scored
+      // background). Bar is per-slot: centre holds the strict protocol Tl
       // (the vitality decider), diversity slots hold [kEnrollSideLivenessThreshold].
       final bar = slot == 'centre'
           ? kLivenessThreshold
           : kEnrollSideLivenessThreshold;
       debugPrint(
-          'enroll liveness scored slot=$slot score=${live.score.toStringAsFixed(2)} bar=${bar.toStringAsFixed(2)} ver=${live.ver} (box-vs-fallback path inside gate)');
+          'enroll liveness scored slot=$slot score=${live.score.toStringAsFixed(2)} bar=${bar.toStringAsFixed(2)} ver=${live.ver}');
       if (live.score < bar) {
         BleLog.log('SEC',
             'enroll liveness FAIL slot=$slot score=${live.score.toStringAsFixed(2)} bar=${bar.toStringAsFixed(2)}');
@@ -1041,6 +1047,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           return null;
         }
         try {
+          // Stable phone id for the same-phone reclaim (fail-soft ''):
+          // a same-phone reinstall presents the stored deviceId and skips
+          // the 30-day move cooldown — Gmail auth + fresh face + fresh HW
+          // key still gate the claim, and the server re-checks the match.
+          final hardwareDeviceId = await getStableHardwareDeviceId();
           final outcome = await cloud.claimStudentDevice(
               doc: StudentDeviceDoc(
                   email: email,
@@ -1052,6 +1063,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   installId: installId,
                   platform: _platformName(),
                   org: org,
+                  deviceId: hardwareDeviceId,
                   pkDHex: hexEncode(pkDRaw),
                   attestationLevel:
                       attestationLevelName(_deviceKey.level),
@@ -1077,7 +1089,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   appAttestCredKeyHex: appAttestCredKeyHex),
               installId: installId);
           BleLog.log('SYNC',
-              'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
+              'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? (outcome.isReclaim ? 'same-phone reclaim' : 'device move') : 'same device'})');
         } on StateError catch (e) {
           BleLog.log('SYNC', 'device claim refused (see screen message)');
           state = state.copyWith(

@@ -598,6 +598,21 @@ class ProxClient {
         await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     if (resp.statusCode == 429) throw StateError('rate-limited, retry later');
     final m = jsonDecode(text) as Map<String, dynamic>;
+    // Tolerant verdict parse: the window-closed early verdict carries no
+    // signable context (there is no live window to bind), so its sigAck
+    // is zeros by contract — the driver maps `window-closed` to
+    // prove-the-next-rotation BEFORE any ACK check, never BAD-sig. Every
+    // other verdict carries a real Sig_p ACK (the server signs all early
+    // invalids); a missing/unparseable stamp or sig there degrades to
+    // now+zeros and fails the ACK check honestly instead of throwing a
+    // parse error that the retry loop would mislabel.
+    final stamp = DateTime.tryParse(m['serverTime'] as String? ?? '');
+    Uint8List ackSig;
+    try {
+      ackSig = Uint8List.fromList(hexDecode(m['sigAck'] as String));
+    } catch (_) {
+      ackSig = Uint8List(64);
+    }
     return ProveResult(
       decision: switch (m['decision']) {
         'confirmed' => ProveDecision.confirmed,
@@ -605,8 +620,8 @@ class ProxClient {
         _ => ProveDecision.invalid,
       },
       reason: m['reason'] as String? ?? '',
-      serverTime: DateTime.parse(m['serverTime'] as String),
-      sigAck: Uint8List.fromList(hexDecode(m['sigAck'] as String)),
+      serverTime: (stamp ?? DateTime.now()).toUtc(),
+      sigAck: ackSig,
       flags: [
         for (final f in (m['flags'] as List? ?? const [])) '$f',
       ],

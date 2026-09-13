@@ -54,11 +54,14 @@
 // header-dim mapping, so the crop and the box can never disagree; front
 // cameras that store upright pixels with a stale rotate flag used to
 // mis-crop background with confident spoof scores) + BILINEAR resize to
-// 80x80 (upstream test-time `cv2.resize`) + BGR-raw/NCHW packing. Fallback is the legacy
-// centre-square crop when detection is unavailable/ambiguous (0 or >1
-// faces, detector error / timeout, unparseable box) — same scorer + same
-// Tl, never a pass, never a throw for the fallback itself (comment at the
-// call-site).
+// 80x80 (upstream test-time `cv2.resize`) + BGR-raw/NCHW packing. There is
+// NO fallback scoring: no detected face (0 or >1 faces, detector error /
+// timeout, unparseable box), a below-floor sharpness
+// ([kLivenessMinSharpness]), or an out-of-band mean brightness
+// ([kLivenessMinMeanBrightness]/[kLivenessMaxMeanBrightness]) throws
+// unreadable INSTEAD of scoring background/blur/blank as confident spoof
+// (the 0.08-style field misses on live holders). Callers map the throw to
+// retry (free rescan / silent skip / slot recapture), never a burn.
 //
 // Honesty note (residuals, not immunity claims): the gate crops the face
 // box with the 2.7x training-distribution margin ([kLivenessContextScale])
@@ -164,9 +167,10 @@ double liveScoreFromProbs(List<double> probs) {
 /// distribution ([kLivenessContextScale] = 2.7 in production; 1.0 = legacy
 /// tight square, kept for unit-test stability). Returns null when the box
 /// is unusable (empty, inverted, zero-area, or larger than the frame after
-/// clamping, or <8px detail) — the caller falls back to the legacy
-/// centre-square crop (same scorer + Tl, never a throw for the fallback
-/// itself).
+/// clamping, or <8px detail) — the PACKER falls back to the legacy
+/// centre-square crop in that case, but the NATIVE gate never forwards a
+/// null box: no detected face throws unreadable instead of scoring
+/// background (see the file header).
 ({int left, int top, int edge})? squareCropFromFaceBox({
   required int frameWidth,
   required int frameHeight,
@@ -359,37 +363,23 @@ double liveScoreFromProbs(List<double> probs) {
   return null;
 }
 
-/// Pure pre-processing (no native calls, unit-tested): packs decoded RGBA
-/// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
-/// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels 0-255 raw).
-/// The crop is the squared face box ([faceBox] in the SAME pixel space as
-/// the frame, via [expandedSquareCropFromFaceBox] with [contextScale])
-/// when usable; otherwise the legacy centre square (fallback — same scorer
-/// + Tl, documented in the file header). Resized to [kLivenessInputSize] by
-/// BILINEAR sampling (verified 2026-09-13 against upstream
-/// minivision-ai/Silent-Face-Anti-Spoofing `CropImage.crop` test-time path,
-/// which is crop-then-`cv2.resize`). [contextScale] defaults to 1.0 (tight,
-/// legacy unit tests); production passes [kLivenessContextScale] (2.7,
-/// training distribution). The 0-255 raw range matches the vendored TFLite's
-/// verified contract (field + Lena probes 2026-09-13 — /255 collapses every
-/// live face to replay). Throws [ArgumentError] on size mismatches
-/// (fail-closed at the call-site).
-List<List<List<List<double>>>> minifasnetInputFromRgba({
-  required Uint8List rgba,
+/// Shared crop geometry (no native calls, unit-tested): the squared rect
+/// the scorer sees — the expanded face box ([faceBox] in the SAME pixel
+/// space as the frame, via [expandedSquareCropFromFaceBox] with
+/// [contextScale]) when usable, else the legacy centre square. Single
+/// source of truth for the packer ([minifasnetInputFromRgba]) and the
+/// sharpness gate ([cropSharpnessRgba]) so the measured region and the
+/// scored region can never diverge. Throws [ArgumentError] on size
+/// mismatches (fail-closed at the call-site).
+({int left, int top, int edge}) livenessCropRect({
   required int width,
   required int height,
   ({int left, int top, int right, int bottom})? faceBox,
   double contextScale = 1.0,
 }) {
-  const size = kLivenessInputSize;
   if (width <= 0 || height <= 0) {
     throw ArgumentError('Bad frame dims ${width}x$height');
   }
-  if (rgba.length != width * height * 4) {
-    throw ArgumentError(
-        'RGBA length ${rgba.length} != ${width}x$height frame');
-  }
-  // Face-box crop when usable, else the legacy centre-square fallback.
   var edge = width < height ? width : height;
   var ox = (width - edge) ~/ 2;
   var oy = (height - edge) ~/ 2;
@@ -411,6 +401,160 @@ List<List<List<List<double>>>> minifasnetInputFromRgba({
     // Null squared → centre-square fallback above (same scorer + Tl;
     // the Tl gate stays the decider, never a throw for the fallback).
   }
+  return (left: ox, top: oy, edge: edge);
+}
+
+/// Sharpness floor for the vitality pass (Laplacian variance on 0-255
+/// grayscale of the scored crop at decode resolution — the SAME rect
+/// [livenessCropRect] hands the packer). Calibrated 2026-09-13 on Lena
+/// resampled to the 160px gate decode: sharp 766, mild blur (σ0.5) 373,
+/// σ1.0 80, σ2.0 12, recapture-downscale 40→160 15 / 20→160 4, uniform 0.
+/// 10.0 refuses severe-blur + blank frames (the inputs that otherwise
+/// score confident-spoof on live holders — the 0.08-style field misses)
+/// while keeping sharp + mildly-soft genuine captures with wide margin.
+/// Below-floor stills throw unreadable (free rescan / silent skip), never
+/// a scored spoof — motion blur is transient evidence, not vitality
+/// evidence.
+const double kLivenessMinSharpness = 10.0;
+
+/// Exposure bounds for the vitality pass (mean 0-255 grayscale of the SAME
+/// scored crop [livenessCropRect] hands the packer — see
+/// [cropMeanBrightnessRgba]). Lens-covered near-black frames and
+/// flash-blown near-white frames otherwise score confident-spoof on live
+/// holders (the same 0.08-style field-miss family as blur: no facial
+/// texture reaches the scorer). 12.0 / 244.0 only refuse near-blank
+/// captures — no genuine face crop averages outside this band (dark skin
+/// in low light still averages well above 12 across a 2.7x-context crop;
+/// bright daylight stays well below 244), so genuine FRR cost is ~nil.
+/// Out-of-band stills throw unreadable (free rescan / silent skip), never
+/// a scored spoof.
+const double kLivenessMinMeanBrightness = 12.0;
+const double kLivenessMaxMeanBrightness = 244.0;
+
+/// Pure brightness probe (no native calls, unit-tested): mean 0-255
+/// grayscale over the scored crop (see [kLivenessMinMeanBrightness]).
+/// Grayscale is the inline (R+G+B)/3 mean — no color judgment, exposure
+/// only. Single pass (edge² ≤ 160² pixels — microseconds).
+double cropMeanBrightnessRgba({
+  required Uint8List rgba,
+  required int width,
+  required int height,
+  ({int left, int top, int right, int bottom})? faceBox,
+  double contextScale = 1.0,
+}) {
+  if (rgba.length != width * height * 4) {
+    throw ArgumentError(
+        'RGBA length ${rgba.length} != ${width}x$height frame');
+  }
+  final rc = livenessCropRect(
+      width: width,
+      height: height,
+      faceBox: faceBox,
+      contextScale: contextScale);
+  var sum = 0.0;
+  var n = 0;
+  for (var y = rc.top; y < rc.top + rc.edge; y++) {
+    for (var x = rc.left; x < rc.left + rc.edge; x++) {
+      final o = (y * width + x) * 4;
+      sum += (rgba[o] + rgba[o + 1] + rgba[o + 2]) / 3.0;
+      n++;
+    }
+  }
+  if (n == 0) return 0.0;
+  return sum / n;
+}
+
+/// Pure sharpness probe (no native calls, unit-tested): 4-neighbour
+/// Laplacian variance over the scored crop (see [kLivenessMinSharpness]).
+/// Grayscale is the inline (R+G+B)/3 mean — no color judgment, edges only.
+double cropSharpnessRgba({
+  required Uint8List rgba,
+  required int width,
+  required int height,
+  ({int left, int top, int right, int bottom})? faceBox,
+  double contextScale = 1.0,
+}) {
+  if (rgba.length != width * height * 4) {
+    throw ArgumentError(
+        'RGBA length ${rgba.length} != ${width}x$height frame');
+  }
+  final rc = livenessCropRect(
+      width: width,
+      height: height,
+      faceBox: faceBox,
+      contextScale: contextScale);
+  double grayAt(int x, int y) {
+    final o = (y * width + x) * 4;
+    return (rgba[o] + rgba[o + 1] + rgba[o + 2]) / 3.0;
+  }
+
+  // Two-pass variance (edge² ≤ 160² pixels — microseconds): first the
+  // Laplacian mean over the crop interior, then its variance.
+  var n = 0;
+  var mean = 0.0;
+  for (var y = rc.top + 1; y < rc.top + rc.edge - 1; y++) {
+    for (var x = rc.left + 1; x < rc.left + rc.edge - 1; x++) {
+      final lap = 4 * grayAt(x, y) -
+          grayAt(x - 1, y) -
+          grayAt(x + 1, y) -
+          grayAt(x, y - 1) -
+          grayAt(x, y + 1);
+      n++;
+      mean += (lap - mean) / n;
+    }
+  }
+  if (n == 0) return 0.0;
+  var m2 = 0.0;
+  for (var y = rc.top + 1; y < rc.top + rc.edge - 1; y++) {
+    for (var x = rc.left + 1; x < rc.left + rc.edge - 1; x++) {
+      final lap = 4 * grayAt(x, y) -
+          grayAt(x - 1, y) -
+          grayAt(x + 1, y) -
+          grayAt(x, y - 1) -
+          grayAt(x, y + 1);
+      final d = lap - mean;
+      m2 += d * d;
+    }
+  }
+  return m2 / n;
+}
+
+/// Pure pre-processing (no native calls, unit-tested): packs decoded RGBA
+/// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
+/// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels 0-255 raw).
+/// The crop is [livenessCropRect] (face box when usable, else the legacy
+/// centre square — the NATIVE gate never passes a null box: no detected
+/// face throws unreadable instead of scoring background, so the fallback
+/// below only serves unit tests + legacy callers). Resized to
+/// [kLivenessInputSize] by BILINEAR sampling (verified 2026-09-13 against
+/// upstream minivision-ai/Silent-Face-Anti-Spoofing `CropImage.crop`
+/// test-time path, which is crop-then-`cv2.resize`). [contextScale]
+/// defaults to 1.0 (tight, legacy unit tests); production passes
+/// [kLivenessContextScale] (2.7, training distribution). The 0-255 raw
+/// range matches the vendored TFLite's verified contract (field + Lena
+/// probes 2026-09-13 — /255 collapses every live face to replay). Throws
+/// [ArgumentError] on size mismatches (fail-closed at the call-site).
+List<List<List<List<double>>>> minifasnetInputFromRgba({
+  required Uint8List rgba,
+  required int width,
+  required int height,
+  ({int left, int top, int right, int bottom})? faceBox,
+  double contextScale = 1.0,
+}) {
+  const size = kLivenessInputSize;
+  if (rgba.length != width * height * 4) {
+    throw ArgumentError(
+        'RGBA length ${rgba.length} != ${width}x$height frame');
+  }
+  // Crop geometry is shared with the sharpness gate ([livenessCropRect]).
+  final rc = livenessCropRect(
+      width: width,
+      height: height,
+      faceBox: faceBox,
+      contextScale: contextScale);
+  var edge = rc.edge;
+  var ox = rc.left;
+  var oy = rc.top;
   // [c][y][x] accumulator in BGR order, 0-255 raw (vendored TFLite
   // contract — APK from_pixels / yakhyo to_tensor path, no Normalize step).
   // Bilinear with cv2's pixel-center mapping — nearest-neighbour here

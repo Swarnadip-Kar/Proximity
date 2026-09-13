@@ -643,26 +643,61 @@ class ProxServer {
     final now = DateTime.now().toUtc();
     final w = _window;
     if (w == null) {
-      return _json(
-          {'decision': 'invalid', 'reason': 'window-closed'}, 200);
+      // Window closed (or never opened): no session/window context exists
+      // to sign an ACK with, so this is the ONE unsigned invalid verdict
+      // (serverTime present, zero sig). The client maps `window-closed`
+      // to prove-the-next-rotation BEFORE any ACK check — never BAD-sig.
+      return _json({
+        'decision': 'invalid',
+        'reason': 'window-closed',
+        'serverTime': now.toUtc().toIso8601String(),
+        'sigAck': hexEncode(Uint8List(64)),
+      }, 200);
+    }
+    // Signed-invalid helper for the early gates below (org-mismatch,
+    // unknown-pkS): EVERY /prove verdict carries a real Sig_p ACK over
+    // (session||window||j||ID||invalid||time), so the student verifies the
+    // rejection as authentic instead of logging `BAD prof signature`.
+    // The wire `reason` stays bare; log-only tokens ride the onProve
+    // suffix (parsed by prefix, never shown).
+    Response signedInvalid(String id, int j, String reason,
+        {String logSuffix = ''}) {
+      final at = DateTime.now().toUtc();
+      final sig = ProxCrypto.sign(
+        profSk,
+        ProxCrypto.ackPreimage(
+          sessionId: w.sessionId,
+          windowId: w.windowId,
+          j: j,
+          studentId: id,
+          decision: decisionCode(ProveDecision.invalid),
+          serverTimeMs: at.millisecondsSinceEpoch,
+        ),
+      );
+      try {
+        onProve?.call(id, 'invalid',
+            logSuffix.isEmpty ? reason : '$reason|$logSuffix');
+      } catch (_) {}
+      return _json({
+        'decision': 'invalid',
+        'reason': reason,
+        'serverTime': at.toUtc().toIso8601String(),
+        'sigAck': hexEncode(sig),
+      }, 200);
     }
     try {
       final id = (body['ID'] as String).toLowerCase();
+      // j parses BEFORE the org gate: the early invalid verdicts below
+      // sign their ACKs, and the preimage needs j. Malformed bodies still
+      // fail as bad-body in the catch below.
+      final jEarly = body['j'] as int;
       // H2: session-stamped org gates /prove strictly — empty body org
       // fails closed (missingOrg grace sunset on the LAN path). The shape
       // mirrors _fail so ProxClient.prove parses without retrying.
       final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
       if (sessionOrg.isNotEmpty &&
           (bodyOrg.isEmpty || bodyOrg != sessionOrg)) {
-        try {
-          onProve?.call(id, 'invalid', 'org-mismatch');
-        } catch (_) {}
-        return _json({
-          'decision': 'invalid',
-          'reason': 'org-mismatch',
-          'serverTime': now.toUtc().toIso8601String(),
-          'sigAck': hexEncode(Uint8List(64)),
-        }, 200);
+        return signedInvalid(id, jEarly, 'org-mismatch');
       }
       // M5 per-ID+IP gate (after id parse, before crypto): one device
       // hammering many IDs behind one NAT IP is bounded per identity.
@@ -770,18 +805,19 @@ class ProxServer {
       // fails closed (unknown-pkS). Unpinned emails stay TOFU (first prove
       // pins implicitly only via explicit pinStudentKeys — never auto-pin
       // here, so a transient attacker cannot self-pin over the LAN).
+      // Offline-first reading: an UNPINNED email is NOT fatal for being
+      // offline — first-seen proves mark normally (TOFU) and the host log
+      // carries a `first-seen` token (see the flagged reason below). A
+      // PINNED mismatch (stale pin after a student re-enroll, or a second
+      // device) fails closed; the log suffix says `pin-mismatch` (not
+      // "unknown") and the ACK is signed, so the student sees the true
+      // `unknown-pkS` verdict instead of `BAD prof signature`.
       final presentedPkHex = hexEncode(presentedPk).toLowerCase();
       final pinned = _pinnedPkS[id];
       if (pinned != null && pinned != presentedPkHex) {
-        try {
-          onProve?.call(id, 'invalid', 'unknown-pkS');
-        } catch (_) {}
-        return _json({
-          'decision': 'invalid',
-          'reason': 'unknown-pkS',
-          'serverTime': now.toUtc().toIso8601String(),
-          'sigAck': hexEncode(Uint8List(64)),
-        }, 200);
+        return signedInvalid(id, jEarly, 'unknown-pkS',
+            logSuffix:
+                'pin-mismatch presented=${presentedPkHex.substring(0, 8)}…');
       }
       final stuPk = ed.PublicKey(presentedPk);
 
@@ -1144,6 +1180,13 @@ class ProxServer {
         outcome.reason,
         if (rule.isNotEmpty) rule,
         ...flags,
+        // First-seen TOFU marker (log only, never the wire verdict): this
+        // email had NO pin when it proved and marked normally anyway —
+        // offline first sight is not fatal. Lets the professor tell
+        // "marked on first sight (TOFU)" apart from "marked on a known
+        // pin" in the terminal, and from `unknown-pkS|pin-mismatch`
+        // (a STALE pin refusing a re-enrolled key) above.
+        if (marked && pinned == null) 'first-seen',
         // Dup pair rides the host log line (never the wire verdict): the
         // app parses it into roster flags + override. Peers only — the
         // prover is the callback's first arg. Neutral copy at the UI, not

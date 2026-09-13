@@ -129,6 +129,7 @@ dependencies:
   # build read a stale/missing default as "no floor". Floor bumps ship with
   # a rules deploy + min_version bump together, never silently.
   tflite_flutter: ^0.12.1
+  device_info_plus: ^13.2.0
 
 dev_dependencies:
   flutter_test:

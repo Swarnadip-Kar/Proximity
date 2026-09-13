@@ -29,7 +29,10 @@ rules_version = '2';
 //     old phone lost (request.time - lastSeenAtMillis > 60d — server clock
 //     only; a move-time "I've been offline" is worthless, and the stored
 //     value is trustworthy because every write stamping it must land within
-//     1h of request.time or the write is refused). Clients claim via a
+//     1h of request.time or the write is refused) or the write presents the
+//     STORED hardware id (isSamePhoneReclaim — same-phone reinstall skips
+//     the cooldown; Gmail auth + fresh face + fresh HW key still required).
+//     Clients claim via a
 //     transaction so racing devices resolve to exactly one winner. Face photos/templates
 //     are NEVER written here — only the device public key + install id +
 //     attestation material. NO face-derived data reaches ANY collection:
@@ -170,6 +173,23 @@ service cloud.firestore {
         request.time.toMillis() - resource.data.lastSeenAtMillis >
           60 * 24 * 60 * 60 * 1000;
     }
+    // Same-phone reclaim (server-enforced match — a bare client assertion
+    // moves nothing): a true uninstall wipes the installId, so a same-phone
+    // reinstall always looks like a device move. When the STORED binding
+    // carries a non-empty deviceId (Android ANDROID_ID / iOS
+    // identifierForVendor, stamped at claim) and the incoming write
+    // presents the SAME id, the 30-day cooldown is bypassed. '' on either
+    // side disables it. This bypasses ONLY the cooldown — every other gate
+    // (owner-only email, org, fresh stamps, security fields) still applies,
+    // so the reclaim still proves Gmail ownership + a fresh face + a fresh
+    // HW-bound key through the normal claim path.
+    function isSamePhoneReclaim() {
+      return resource.data.keys().hasAll(['deviceId']) &&
+        request.resource.data.keys().hasAll(['deviceId']) &&
+        resource.data.deviceId is string &&
+        resource.data.deviceId != '' &&
+        request.resource.data.deviceId == resource.data.deviceId;
+    }
     // Trust anchor for the stored lastSeen: any binding write carrying
     // lastSeen/updated stamps must place them within 1h of the server
     // clock, or the write is refused outright. Forging a 60d-stale
@@ -247,7 +267,10 @@ service cloud.firestore {
     function validSecurityFields() {
       return (!('attestationChain' in request.resource.data) ||
           (request.resource.data.attestationChain is list &&
-           request.resource.data.attestationChain.size() <= 8)) &&
+            request.resource.data.attestationChain.size() <= 8)) &&
+        (!('deviceId' in request.resource.data) ||
+          (request.resource.data.deviceId is string &&
+            request.resource.data.deviceId.size() <= 128)) &&
         (!('livenessVer' in request.resource.data) ||
           (request.resource.data.livenessVer is string &&
            request.resource.data.livenessVer.size() <= 128)) &&
@@ -298,7 +321,10 @@ service cloud.firestore {
       // Same-device re-key/heartbeat always allowed; a move to a different
       // device needs the 30-day cooldown (server-enforced: clients cannot
       // bypass it, even with a hand-built write) UNLESS the stored lastSeen
-      // proves the old phone lost (isLostPhone, 60d, server clock). A
+      // proves the old phone lost (isLostPhone, 60d, server clock) or the
+      // write presents the stored hardware id (isSamePhoneReclaim:
+      // same-phone reinstall — Gmail auth + fresh face + fresh HW key
+      // still required by the gates below). A
       // forged-stale lastSeen at move time still waits: the exemption reads
       // the stored value, and the fresh-stamp gate below refused the forgery
       // at write time.
@@ -310,7 +336,7 @@ service cloud.firestore {
         && request.resource.data.org == tokenOrg()
         && resource.data.org == tokenOrg()
         && (isSameDevice() || moveCooldownElapsed() ||
-            isLostPhone())
+            isLostPhone() || isSamePhoneReclaim())
         && incomingStampsFresh()
         && storedMoveKeptOrFresh()
         && validSecurityFields();

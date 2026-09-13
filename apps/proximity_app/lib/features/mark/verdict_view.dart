@@ -183,7 +183,14 @@ class MarkVerdictView extends StatelessWidget {
                 const VerdictBadge(status: ProxStatus.review),
                 const SizedBox(height: ProxSpacing.sm),
                 Text(
-                  'Face check didn\'t match the enrolled face — try again in good light, holding still.',
+                  // Vitality vs identity failures explain differently: a
+                  // liveness fail is a possible photo/screen (hold still,
+                  // good light), an identity fail is the wrong face. The
+                  // driver flags which via FaceCheckResult.livenessFailed;
+                  // empty detail keeps the frozen identity copy.
+                  detail.isNotEmpty
+                      ? detail
+                      : 'Face check didn\'t match the enrolled face — try again in good light, holding still.',
                   textAlign: TextAlign.center,
                   style: ProxType.body(color: c.contentPrimary),
                 ),

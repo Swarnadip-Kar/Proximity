@@ -412,25 +412,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // Anti-fake-student pin prefetch: persist the same-org directory
     // email→pkS map locally whenever online, then hydrate the live server
     // so offline `unknown-pkS` enforcement survives restarts. Best-effort.
-    unawaited(Future(() async {
-      try {
-        final cloud = ref.read(cloudSyncProvider);
-        if (!await cloud.isOnline()) return;
-        final store = ref.read(deviceStoreProvider);
-        final role = await store.readRole();
-        final org = roleOrg(role);
-        if (org.isEmpty) return;
-        final pins =
-            await cloud.fetchStudentKeyPins(org: org, limit: 200);
-        if (pins.isEmpty) return;
-        final prev = await store.readStudentKeyPins();
-        await store.writeStudentKeyPins({...prev, ...pins});
-        try {
-          await ref.read(hostDriverProvider).hydrateStudentPins(pins);
-        } catch (_) {}
-        BleLog.log('SEC', 'student key pins prefetched (${pins.length})');
-      } catch (_) {}
-    }));
+    unawaited(_prefetchStudentPins());
     if (!mounted) return;
     String? warn;
     try {
@@ -862,6 +844,31 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     } catch (_) {}
   }
 
+  /// Anti-fake-student pin prefetch (shared by hosting start + every
+  /// window start): persists the same-org directory email→pkS map locally
+  /// whenever online, then hydrates the live server. Re-running per window
+  /// converges mid-class enrollments and student re-keys (a pin cached at
+  /// hosting start would otherwise refuse a freshly re-enrolled key as
+  /// `unknown-pkS` for the whole session). Best-effort, never throws.
+  Future<void> _prefetchStudentPins() async {
+    try {
+      final cloud = ref.read(cloudSyncProvider);
+      if (!await cloud.isOnline()) return;
+      final store = ref.read(deviceStoreProvider);
+      final role = await store.readRole();
+      final org = roleOrg(role);
+      if (org.isEmpty) return;
+      final pins = await cloud.fetchStudentKeyPins(org: org, limit: 200);
+      if (pins.isEmpty) return;
+      final prev = await store.readStudentKeyPins();
+      await store.writeStudentKeyPins({...prev, ...pins});
+      try {
+        await ref.read(hostDriverProvider).hydrateStudentPins(pins);
+      } catch (_) {}
+      BleLog.log('SEC', 'student key pins prefetched (${pins.length})');
+    } catch (_) {}
+  }
+
   /// Single-flight leave: the bar BackButton, the PopScope intercept, and
   /// (its tail) End-attendance all funnel through here. Teardown throws
   /// stay caught so the pop still proceeds (same as `_leave` today).
@@ -919,6 +926,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     _setWake(true);
     BleLog.log(ProxLogTags.state,
         'window #$windowNo live (code ${session.displayCode})');
+    // Fresh pins per window (see _prefetchStudentPins): a student who
+    // enrolled or re-keyed mid-class must not prove against a stale pin
+    // for the rest of the session.
+    unawaited(_prefetchStudentPins());
     // Resume continues from the frozen elapsed at stop (start = now -
     // banked); fresh rounds (windowNo+1, no banked value) start at zero.
     // The comparison runs before _windowNo advances, so same-number

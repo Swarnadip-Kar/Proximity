@@ -92,7 +92,8 @@ class FakeCloudSync implements CloudSync {
             attestedUntilMillis: doc.attestedUntilMillis,
             attestationChain: List<String>.of(doc.attestationChain),
             livenessVer: doc.livenessVer,
-            integrityFlag: doc.integrityFlag);
+            integrityFlag: doc.integrityFlag,
+            deviceId: doc.deviceId);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -153,6 +154,7 @@ class FakeCloudSync implements CloudSync {
       attestationChain: List<String>.of(binding.attestationChain),
       livenessVer: binding.livenessVer,
       integrityFlag: binding.integrityFlag,
+      deviceId: binding.deviceId,
     );
     final row = dir[key];
     if (row != null) {
@@ -248,6 +250,7 @@ class FakeCloudSync implements CloudSync {
       integrityFlag: doc.integrityFlag,
       appAttestRawHex: doc.appAttestRawHex.trim().toLowerCase(),
       appAttestCredKeyHex: doc.appAttestCredKeyHex.trim().toLowerCase(),
+      deviceId: doc.deviceId.trim(),
     );
     installs[installId] = key;
     dir[key] = StudentDirectoryEntry(
@@ -257,7 +260,8 @@ class FakeCloudSync implements CloudSync {
         org: org,
         updatedAtMillis: atMillis,
         pkSHex: doc.pkHex.trim().toLowerCase());
-    return ClaimOutcome(isFirst: isFirst, isMove: isMove);
+    return ClaimOutcome(
+        isFirst: isFirst, isMove: isMove, isReclaim: claim.isReclaim);
   }
 
   @override
@@ -299,6 +303,7 @@ class FakeCloudSync implements CloudSync {
       attestationChain: List<String>.of(binding.attestationChain),
       livenessVer: binding.livenessVer,
       integrityFlag: binding.integrityFlag,
+      deviceId: binding.deviceId,
     );
     return true;
   }

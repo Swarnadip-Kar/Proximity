@@ -54,12 +54,19 @@ class FaceCheckResult {
   final double livenessScore;
   /// Liveness pipeline tag bound into Sig_s. '' unless [match] is pass.
   final String livenessVer;
+  /// True when a readable session failed the VITALITY gate (liveness
+  /// below Tl, outside the near-miss band) rather than the identity
+  /// matcher. Both consume one attempt, but the UI explains them
+  /// differently (possible photo/screen vs wrong face) — see the
+  /// needs-review verdict. False on every other outcome.
+  final bool livenessFailed;
   const FaceCheckResult(this.match,
       [this.score = 0,
       this.faceValidAtMs = 0,
       this.verifierVer = '',
       this.livenessScore = 0,
-      this.livenessVer = '']);
+      this.livenessVer = '',
+      this.livenessFailed = false]);
 }
 
 /// Marking vitality robustness (app-local policy, NOT a ticket break).
@@ -520,10 +527,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     if (win.score < kLivenessThreshold - kLivenessNearMissBand) {
       // Readable spoof territory (field probes ≤0.31): consumes one
       // attempt like matching somebody else — never auto-present, SK
-      // never signs.
+      // never signs. Flagged [livenessFailed] so the UI names vitality
+      // (possible photo/screen), not identity — see the needs-review
+      // verdict copy.
       BleLog.log('SEC',
           'liveness check FAIL score=${win.score.toStringAsFixed(2)}');
-      return const FaceCheckResult(FaceMatch.mismatch);
+      return const FaceCheckResult(FaceMatch.mismatch, 0, 0, '', 0, '', true);
     }
     if (win.score < kLivenessThreshold) {
       // Near-miss band: transient dip on a live holder, not a readable
@@ -1539,10 +1548,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
             'drift banner: median ${clockDrift.medianAbsSecs.toStringAsFixed(1)}s over ${clockDrift.sampleCount} verdicts');
       }
       // Verdicts that only a fresh token fixes (round changed under us,
-      // token aged out, professor never heard the response): prove the
-      // next rotation — the server was real and answering.
+      // token aged out, professor never heard the response, or the window
+      // closed between fetch and POST): prove the next rotation — the
+      // server was real and answering. `window-closed` carries no signable
+      // context (unsigned by contract), so it MUST resolve here before
+      // the ACK check below — otherwise a closed window reads as BAD-sig.
       if (res.decision == ProveDecision.invalid &&
           (res.reason == 'window-mismatch' ||
+              res.reason == 'window-closed' ||
               res.reason == 'bad-challenge' ||
               res.reason == 'no-ble-sighting')) {
         throw _TryNext('prove ${res.reason}');
@@ -1569,6 +1582,22 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           'ack verify ok code=${desc.display} j=$j (${res.decision.name})');
       BleLog.log(
           'NET', 'waiting for ACK… got ${res.decision.name} (${res.reason})');
+      // Prove-path org gate (the fetch path returns wrong-org earlier;
+      // this covers a session whose org flipped between fetch and POST):
+      // structured wrong-org receipt, no PII beyond the refused proof.
+      if (res.decision == ProveDecision.invalid &&
+          res.reason == 'org-mismatch') {
+        BleLog.log('NET',
+            'wrong org (prove verdict: class vs $myOrg) — no mark');
+        return MarkedReceipt(
+            detail:
+                'Wrong organization for this class — join your institute class',
+            result: StudentResult.error,
+            isWrongOrg: true,
+            classOrg: desc.org,
+            myOrg: myOrg,
+            attestationLevel: stored.attestationLevel);
+      }
       final time = res.serverTime;
       final stamp =
           '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';

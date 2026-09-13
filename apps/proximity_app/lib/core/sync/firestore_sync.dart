@@ -371,6 +371,7 @@ class FirestoreCloudSync implements CloudSync {
             (d?['appAttestRawHex'] as String? ?? '').trim().toLowerCase(),
         appAttestCredKeyHex:
             (d?['appAttestCredKeyHex'] as String? ?? '').trim().toLowerCase(),
+        deviceId: (d?['deviceId'] as String? ?? '').trim(),
       );
 
   @override
@@ -408,8 +409,7 @@ class FirestoreCloudSync implements CloudSync {
             moveIntent: moveIntent);
         final isFirst = claim.isFirst;
         final isMove = claim.isMove;
-        final org = doc.org.isNotEmpty ? doc.org : orgOf(key);
-        tx.set(devRef, {
+        final org = doc.org.isNotEmpty ? doc.org : orgOf(key);        tx.set(devRef, {
           'email': key,
           'uid': doc.uid,
           'pkHex': doc.pkHex,
@@ -439,6 +439,10 @@ class FirestoreCloudSync implements CloudSync {
           // parses appAttestRawHex; rules type-lock both, like the chain).
           'appAttestRawHex': doc.appAttestRawHex.trim().toLowerCase(),
           'appAttestCredKeyHex': doc.appAttestCredKeyHex.trim().toLowerCase(),
+          // Stable phone id for the same-phone reclaim ('' when unknown —
+          // desktop / pre-upgrade). Rules enforce the match server-side
+          // (isSamePhoneReclaim); the client assertion alone moves nothing.
+          'deviceId': doc.deviceId.trim(),
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {
@@ -460,7 +464,8 @@ class FirestoreCloudSync implements CloudSync {
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
-        outcome = ClaimOutcome(isFirst: isFirst, isMove: isMove);
+        outcome = ClaimOutcome(
+            isFirst: isFirst, isMove: isMove, isReclaim: claim.isReclaim);
       }).timeout(const Duration(seconds: 12));
       return outcome ?? const ClaimOutcome();
     } on StateError {

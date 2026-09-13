@@ -19,6 +19,7 @@ StudentDeviceDoc dev(
   List<String> chain = const [],
   String livenessVer = '',
   String integrityFlag = '',
+  String deviceId = '',
 }) {
   final now = DateTime.now().toUtc().millisecondsSinceEpoch;
   return StudentDeviceDoc(
@@ -38,6 +39,7 @@ StudentDeviceDoc dev(
     attestationChain: List<String>.of(chain),
     livenessVer: livenessVer,
     integrityFlag: integrityFlag,
+    deviceId: deviceId,
   );
 }
 
@@ -147,6 +149,115 @@ void main() {
             sigHex: hexEncode(sig)));
     expect(moved.isMove, isTrue);
     expect((await fake.fetchStudentDevice('s@x.in'))?.pkDHex, 'cc' * 32);
+  });
+
+  test('same-phone reclaim skips the cooldown; mismatch still waits', () async {
+    // Reinstall wipes the installId, so a same-phone reinstall looks like a
+    // device move. Presenting the STORED hardware id reclaims instantly;
+    // anything else (or nothing) waits the 30 days.
+    final fake = FakeCloudSync();
+    await fake.claimStudentDevice(
+        doc: dev('s@x.in', 'aa', 'iA', deviceId: 'phone-1'),
+        installId: 'iA');
+    // Same phone, fresh install (reinstall): instant move, flagged reclaim.
+    final reclaimed = await fake.claimStudentDevice(
+        doc: dev('s@x.in', 'bb', 'iB', deviceId: 'phone-1'),
+        installId: 'iB');
+    expect(reclaimed.isMove, isTrue);
+    expect(reclaimed.isReclaim, isTrue);
+    expect((await fake.fetchStudentDevice('s@x.in'))?.installId, 'iB');
+    // The reclaim restamps the move clock: a DIFFERENT phone now waits.
+    var refused = '';
+    try {
+      await fake.claimStudentDevice(
+          doc: dev('s@x.in', 'cc', 'iC', deviceId: 'phone-2'),
+          installId: 'iC');
+    } on StateError catch (e) {
+      refused = e.message;
+    }
+    expect(refused, contains('another device'));
+    // Unknown hardware id ('') never reclaims either.
+    refused = '';
+    try {
+      await fake.claimStudentDevice(
+          doc: dev('s@x.in', 'cc', 'iC'), installId: 'iC');
+    } on StateError catch (e) {
+      refused = e.message;
+    }
+    expect(refused, contains('another device'));
+  });
+
+  test('reclaim verdict is pure: evaluateStudentClaim matrix', () {
+    final now = DateTime.now().toUtc();
+    final base = now.millisecondsSinceEpoch - 24 * 60 * 60 * 1000;
+    // Cooldown-blocked without ids.
+    final bindingDoc = StudentDeviceDoc(
+      email: 's@x.in',
+      uid: 'u',
+      pkHex: 'aa',
+      name: 'S',
+      roll: '1',
+      modelVer: 'v',
+      installId: 'iA',
+      org: 'x.in',
+      lastMoveAtMillis: base,
+      lastSeenAtMillis: base,
+      deviceId: 'phone-1',
+    );
+    expect(
+        evaluateStudentClaim(
+            localInstallId: 'iB',
+            binding: bindingDoc,
+            installEmail: null,
+            email: 's@x.in',
+            now: now),
+        predicate<StudentClaimResult>(
+            (r) => r.claim == StudentClaim.cooldownBlocked && !r.isReclaim));
+    // Same hardware id reclaims.
+    expect(
+        evaluateStudentClaim(
+            localInstallId: 'iB',
+            binding: bindingDoc,
+            installEmail: null,
+            email: 's@x.in',
+            now: now,
+            localDeviceId: 'phone-1'),
+        predicate<StudentClaimResult>((r) =>
+            r.claim == StudentClaim.allowedMove && r.isReclaim && r.ok));
+    // Different hardware id still waits.
+    expect(
+        evaluateStudentClaim(
+            localInstallId: 'iB',
+            binding: bindingDoc,
+            installEmail: null,
+            email: 's@x.in',
+            now: now,
+            localDeviceId: 'phone-2'),
+        predicate<StudentClaimResult>(
+            (r) => r.claim == StudentClaim.cooldownBlocked && !r.isReclaim));
+    // Stored doc without an id never reclaims (pre-upgrade docs).
+    final legacy = StudentDeviceDoc(
+      email: 's@x.in',
+      uid: 'u',
+      pkHex: 'aa',
+      name: 'S',
+      roll: '1',
+      modelVer: 'v',
+      installId: 'iA',
+      org: 'x.in',
+      lastMoveAtMillis: base,
+      lastSeenAtMillis: base,
+    );
+    expect(
+        evaluateStudentClaim(
+            localInstallId: 'iB',
+            binding: legacy,
+            installEmail: null,
+            email: 's@x.in',
+            now: now,
+            localDeviceId: 'phone-1'),
+        predicate<StudentClaimResult>(
+            (r) => r.claim == StudentClaim.cooldownBlocked && !r.isReclaim));
   });
 
   test('findDoublePkD flags shared pkD across Gmails (clone signal)', () {

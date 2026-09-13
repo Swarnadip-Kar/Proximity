@@ -8,7 +8,11 @@
 // + face-box/BGR-raw/NCHW packing ([minifasnetInputFromRgba] with a box
 // detected ON the decoded frame via [InputImage.fromBitmap] — EXIF-blind,
 // so crop and box share one pixel space by construction — squared +
-// clamped crop, fallback centre-crop) + ONE `tflite_flutter` Interpreter
+// clamped crop; NO fallback scoring: no detected face, a below-floor
+// sharpness ([kLivenessMinSharpness]), or an out-of-band mean brightness
+// ([kLivenessMinMeanBrightness]/[kLivenessMaxMeanBrightness]) throws
+// unreadable instead of scoring background/blur/blank as confident
+// spoof) + ONE `tflite_flutter` Interpreter
 // invoke on the vendored weights ([kLivenessModelAsset]) + LIVE-class
 // post-processing ([liveScoreFromProbs]). See liveness_gate.dart header
 // for the model contract (BGR 0-255 raw — /255 collapses every live face
@@ -325,18 +329,57 @@ class HeuristicLivenessGate implements LivenessGate {
           // a mapping surprise must still fall back, never fail the pass.
           faceBox = null;
         }
-        // M1 box-vs-fallback log: field review must tell which crop scored
-        // (same scorer + same Tl either way — the Tl gate stays the decider;
-        // the plugin returns identity only, so the vitality score below is
-        // the gate output, never a distance). Logged per still alongside the
-        // callers' score lines (enroll self-check + marking face check).
-        // Geometry rides along (frame-space box on the decoded frame) so a
-        // confident-spoof on a live face is diagnosable as a mis-crop.
-        final boxNote = faceBox == null
-            ? 'fallback-centre'
-            : 'box=${faceBox.left},${faceBox.top},${faceBox.right},${faceBox.bottom}';
+        // No detected face → unreadable (fail-closed retry), NEVER a
+        // scored fallback: a faceless crop (background, motion-blur wash)
+        // scores confident-spoof on live holders — the 0.08-style field
+        // misses. Scoring background as "spoof" also burns a marking
+        // attempt; throwing maps to inconclusive (free rescan) at marking,
+        // silent skip in the enroll loop, and slot-naming recapture at the
+        // terminal enrollFace. Devices whose box detector systematically
+        // misses were already failing (fallback scored ~0.005 « Tl) — this
+        // changes the failure MODE (retryable, no burn), not the rate.
+        if (faceBox == null) {
+          throw StateError('Liveness check did not read clearly — no face '
+              'found, hold still in good light and try again.');
+        }
+        // Sharpness floor (see kLivenessMinSharpness calibration): severe
+        // motion blur is transient evidence, not vitality evidence — refuse
+        // it as unreadable instead of scoring a confident spoof.
+        final sharp = cropSharpnessRgba(
+          rgba: frame.rgba,
+          width: frame.width,
+          height: frame.height,
+          faceBox: faceBox,
+          contextScale: kLivenessContextScale,
+        );
+        if (sharp < kLivenessMinSharpness) {
+          throw StateError('Liveness check did not read clearly — too '
+              'blurry, hold still in good light and try again.');
+        }
+        // Exposure bounds (see kLivenessMinMeanBrightness): lens-covered
+        // near-black and flash-blown near-white crops carry no facial
+        // texture and score confident-spoof on live holders — refuse as
+        // unreadable, same mapping as blur above.
+        final meanBright = cropMeanBrightnessRgba(
+          rgba: frame.rgba,
+          width: frame.width,
+          height: frame.height,
+          faceBox: faceBox,
+          contextScale: kLivenessContextScale,
+        );
+        if (meanBright < kLivenessMinMeanBrightness ||
+            meanBright > kLivenessMaxMeanBrightness) {
+          throw StateError('Liveness check did not read clearly — adjust '
+              'the light and try again.');
+        }
+        // Discriminant log: box geometry + sharpness ride alongside the
+        // callers' score lines so any future low score on a live face is
+        // diagnosable as mis-crop vs soft capture (same scorer either way;
+        // the plugin returns identity only, so vitality below is the gate
+        // output, never a distance).
         debugPrint(
-            'liveness crop=$boxNote frame=${frame.width}x${frame.height} src=frame-bitmap');
+            'liveness crop=box=${faceBox.left},${faceBox.top},${faceBox.right},${faceBox.bottom} '
+            'sharp=${sharp.toStringAsFixed(1)} bright=${meanBright.toStringAsFixed(0)} frame=${frame.width}x${frame.height} src=frame-bitmap');
         final input = minifasnetInputFromRgba(
           rgba: frame.rgba,
           width: frame.width,

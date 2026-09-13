@@ -358,7 +358,9 @@ void main() {
       );
       expect(res.decision, ProveDecision.confirmed);
       expect(res.flags, isEmpty);
-      expect(proved, ['$_email confirmed ok|direct-rssi']);
+      // First prove from an unpinned email marks via TOFU with a
+      // `first-seen` log token (log only — the wire verdict is unchanged).
+      expect(proved, ['$_email confirmed ok|direct-rssi|first-seen']);
       expect(server.tally.presentCount, 1);
     } finally {
       client.close();

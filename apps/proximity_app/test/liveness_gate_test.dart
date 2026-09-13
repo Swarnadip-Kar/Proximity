@@ -589,8 +589,127 @@ void main() {
     });
   });
 
-  group('DI seam', () {
-    test('livenessGateProvider throws without override', () {
+  group('readability probes (sharpness + brightness, pure)', () {
+    // 16x16 frames: big enough for an interior crop, small enough to
+    // hand-verify. Both probes share [livenessCropRect] with the packer,
+    // so the measured region and the scored region can never diverge.
+    Uint8List solidFrame(int w, int h, int v) {
+      final rgba = Uint8List(w * h * 4);
+      for (var i = 0; i < w * h; i++) {
+        rgba[i * 4] = v;
+        rgba[i * 4 + 1] = v;
+        rgba[i * 4 + 2] = v;
+        rgba[i * 4 + 3] = 255;
+      }
+      return rgba;
+    }
+
+    test('uniform frames read ~zero sharpness (blank gate)', () {
+      final sharp = cropSharpnessRgba(
+          rgba: solidFrame(16, 16, 128), width: 16, height: 16);
+      expect(sharp, moreOrLessEquals(0.0));
+      expect(sharp < kLivenessMinSharpness, isTrue);
+    });
+
+    test('edged frames read high sharpness (genuine gate)', () {
+      // Left half black, right half white: every interior row crosses one
+      // hard edge, so Laplacian variance is large.
+      final rgba = Uint8List(16 * 16 * 4);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 16; x++) {
+          final o = (y * 16 + x) * 4;
+          final v = x < 8 ? 0 : 255;
+          rgba[o] = v;
+          rgba[o + 1] = v;
+          rgba[o + 2] = v;
+          rgba[o + 3] = 255;
+        }
+      }
+      final sharp =
+          cropSharpnessRgba(rgba: rgba, width: 16, height: 16);
+      expect(sharp > kLivenessMinSharpness, isTrue);
+    });
+
+    test('sharpness size mismatch throws (fail-closed)', () {
+      expect(
+          () => cropSharpnessRgba(
+              rgba: Uint8List(10), width: 4, height: 2),
+          throwsArgumentError);
+    });
+
+    test('mean brightness tracks the frame level', () {
+      expect(
+          cropMeanBrightnessRgba(
+              rgba: solidFrame(16, 16, 0), width: 16, height: 16),
+          moreOrLessEquals(0.0));
+      expect(
+          cropMeanBrightnessRgba(
+              rgba: solidFrame(16, 16, 200), width: 16, height: 16),
+          moreOrLessEquals(200.0));
+      expect(
+          cropMeanBrightnessRgba(
+              rgba: solidFrame(16, 16, 255), width: 16, height: 16),
+          moreOrLessEquals(255.0));
+    });
+
+    test('exposure bounds only refuse near-blank frames', () {
+      // Genuine mid-tone + dark-skin-in-low-light + bright-daylight means
+      // all sit inside the band; lens-covered black and flash-blown
+      // white sit outside it.
+      for (final v in [40, 64, 128, 200]) {
+        final m = cropMeanBrightnessRgba(
+            rgba: solidFrame(16, 16, v), width: 16, height: 16);
+        expect(m >= kLivenessMinMeanBrightness, isTrue,
+            reason: 'mean $v must pass the floor');
+        expect(m <= kLivenessMaxMeanBrightness, isTrue,
+            reason: 'mean $v must pass the ceiling');
+      }
+      expect(
+          cropMeanBrightnessRgba(
+              rgba: solidFrame(16, 16, 0), width: 16, height: 16) <
+              kLivenessMinMeanBrightness,
+          isTrue);
+      expect(
+          cropMeanBrightnessRgba(
+              rgba: solidFrame(16, 16, 255), width: 16, height: 16) >
+              kLivenessMaxMeanBrightness,
+          isTrue);
+    });
+
+    test('brightness size mismatch throws (fail-closed)', () {
+      expect(
+          () => cropMeanBrightnessRgba(
+              rgba: Uint8List(10), width: 4, height: 2),
+          throwsArgumentError);
+    });
+
+    test('probes share the packer crop geometry', () {
+      // Face box on the right side: both probes must observe the same
+      // rect the packer scores (the box region, not the centre).
+      const w = 20, h = 20;
+      final rgba = Uint8List(w * h * 4);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final o = (y * w + x) * 4;
+          final v = x < 10 ? 0 : 200;
+          rgba[o] = v;
+          rgba[o + 1] = v;
+          rgba[o + 2] = v;
+          rgba[o + 3] = 255;
+        }
+      }
+      const box = (left: 12, top: 6, right: 20, bottom: 14);
+      final rc = livenessCropRect(
+          width: w, height: h, faceBox: box, contextScale: 1.0);
+      // Tight 8px box on the bright side: the crop sits fully right.
+      expect(rc.left >= 10, isTrue);
+      final m = cropMeanBrightnessRgba(
+          rgba: rgba, width: w, height: h, faceBox: box, contextScale: 1.0);
+      expect(m, greaterThan(100.0));
+    });
+  });
+
+  group('DI seam', () {    test('livenessGateProvider throws without override', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
       expect(() => container.read(livenessGateProvider),

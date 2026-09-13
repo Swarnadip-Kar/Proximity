@@ -550,7 +550,8 @@ class RealHostDriver implements HostDriver {
       unawaited(Future(() async {
         try {
           await publish(emailLower: publishEmail, pkPHex: publishPk);
-          BleLog.log('SEC', 'prof key pin published ($publishEmail)');
+          BleLog.log('SEC',
+              'prof key pin published ($publishEmail pkP=${publishPk.substring(0, 12)}… — students verify Sig_p against this pin)');
         } catch (e) {
           BleLog.log('SEC', 'prof key pin publish deferred ($e)');
         }

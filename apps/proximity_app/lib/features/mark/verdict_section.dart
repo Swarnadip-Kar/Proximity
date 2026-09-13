@@ -30,6 +30,11 @@ Widget markVerdictSection({
   required VoidCallback onBackToBrowsing,
   required VoidCallback onRequestManual,
   required VoidCallback onRetryFace,
+  // Needs-review explanation override: non-empty replaces the frozen
+  // identity copy (liveness vitality failures name photo/screen instead
+  // of the wrong face — see FaceCheckResult.livenessFailed). Empty keeps
+  // the frozen copy verbatim.
+  String needsReviewDetail = '',
 }) {
   return switch (phase) {
     StudentPhase.marked => MarkVerdictView(
@@ -60,7 +65,7 @@ Widget markVerdictSection({
       ),
     StudentPhase.needsReview => MarkVerdictView(
         kind: MarkVerdict.needsReview,
-        detail: '',
+        detail: needsReviewDetail,
         roundMarks: const [],
         attemptsLeft: attemptsLeft,
         onRetryFace: onRetryFace,

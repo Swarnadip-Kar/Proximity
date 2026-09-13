@@ -70,6 +70,13 @@ class StudentDeviceDoc {
   final String livenessVer;
   /// Integrity flag at enroll (`''` | `'integrity-flagged'`, §5). Advisory.
   final String integrityFlag;
+  /// Stable phone id across reinstalls (Android ANDROID_ID / iOS
+  /// identifierForVendor — see device_hardware_id.dart). Stamped at every
+  /// claim; '' = unknown (desktop, pre-upgrade docs). Compared ONLY by the
+  /// same-phone reclaim (a cooldown-blocked move presenting the STORED
+  /// deviceId reclaims instantly); never a sole identity signal (Gmail
+  /// auth + fresh face + fresh HW key still gate every claim).
+  final String deviceId;
   const StudentDeviceDoc(
       {required this.email,
       required this.uid,
@@ -93,7 +100,8 @@ class StudentDeviceDoc {
       this.livenessVer = '',
       this.integrityFlag = '',
       this.appAttestRawHex = '',
-      this.appAttestCredKeyHex = ''});
+      this.appAttestCredKeyHex = '',
+      this.deviceId = ''});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.
@@ -163,7 +171,13 @@ class StudentClaimResult {
   final StudentClaim claim;
   final DateTime? retryAfter; // cooldownBlocked only
   final String? installEmail; // installConflict only
-  const StudentClaimResult(this.claim, {this.retryAfter, this.installEmail});
+  /// True when this allowedMove came from the same-phone reclaim (a
+  /// cooldown-blocked move presenting the stored [StudentDeviceDoc.deviceId]).
+  /// Drives the reclaim log line + [ClaimOutcome.isReclaim]; never a bypass
+  /// of its own (the verdict is still allowedMove with all claim gates).
+  final bool isReclaim;
+  const StudentClaimResult(this.claim,
+      {this.retryAfter, this.installEmail, this.isReclaim = false});
   bool get ok => claim == StudentClaim.firstBind ||
       claim == StudentClaim.sameDevice ||
       claim == StudentClaim.allowedMove;
@@ -188,6 +202,18 @@ class StudentClaimResult {
 /// for genuine phone changes, and every write still passes the rules
 /// gates). Verify-only here: no decryption, no interpretation of
 /// encrypted content — shape/signature plumbing only.
+///
+/// Same-phone reclaim ([localDeviceId]): a TRUE uninstall wipes the
+/// installId, so a same-phone reinstall always looks like a device move
+/// and would eat the 30-day cooldown. When the stored binding carries a
+/// non-empty [StudentDeviceDoc.deviceId] and the claimant presents the
+/// SAME id (Android ANDROID_ID / iOS identifierForVendor — stable across
+/// reinstalls, no permission), the move is authorized instantly. The id is
+/// verified, never trusted blindly: the claimant still proves Gmail
+/// ownership (rules owner-only write), a fresh face scan, and a fresh
+/// HW-bound key — and the server re-checks the match (rules
+/// isSamePhoneReclaim), so a bare client assertion moves nothing. '' on
+/// either side (desktop, pre-upgrade docs) disables the reclaim.
 StudentClaimResult evaluateStudentClaim({
   required String localInstallId,
   required StudentDeviceDoc? binding,
@@ -195,6 +221,7 @@ StudentClaimResult evaluateStudentClaim({
   required String email,
   DateTime? now,
   MoveIntent? moveIntent,
+  String localDeviceId = '',
 }) {
   final at = (now ?? DateTime.now()).toUtc();
   final want = email.toLowerCase();
@@ -251,6 +278,17 @@ StudentClaimResult evaluateStudentClaim({
   if (base > 0 &&
       at.millisecondsSinceEpoch - base <
           kStudentMoveCooldown.inMilliseconds) {
+    // Same-phone reclaim: the cooldown WOULD block, but the claimant
+    // presents the stored hardware id — same phone, fresh install
+    // (reinstall/fast-switch). Instant allow (a move: the new installId
+    // stamps below), flagged for the reclaim log line.
+    final storedDeviceId = binding.deviceId.trim();
+    if (storedDeviceId.isNotEmpty &&
+        localDeviceId.trim().isNotEmpty &&
+        localDeviceId.trim() == storedDeviceId) {
+      return const StudentClaimResult(StudentClaim.allowedMove,
+          isReclaim: true);
+    }
     return StudentClaimResult(StudentClaim.cooldownBlocked,
         retryAfter: DateTime.fromMillisecondsSinceEpoch(
             base + kStudentMoveCooldown.inMilliseconds,
@@ -412,7 +450,12 @@ bool isRulesDenialMessage(String message) {
 class ClaimOutcome {
   final bool isFirst;
   final bool isMove;
-  const ClaimOutcome({this.isFirst = false, this.isMove = false});
+
+  /// True when this move came from the same-phone reclaim (cooldown-blocked
+  /// move presenting the stored hardware id). Drives the reclaim log line
+  /// in the enrollment upload; never changes the write (a stamped move).
+  final bool isReclaim;
+  const ClaimOutcome({this.isFirst = false, this.isMove = false, this.isReclaim = false});
 }
 
 /// Pure verdict+write computation for a claim transaction.
@@ -433,6 +476,10 @@ class ClaimWrite {
   final int createdAtMillis;
   final int lastMoveAtMillis;
   final int moveCount;
+
+  /// Same-phone reclaim flag (see [StudentClaimResult.isReclaim]) — the
+  /// backends stamp it into [ClaimOutcome] for the reclaim log line.
+  bool get isReclaim => verdict.isReclaim;
   const ClaimWrite(
       {required this.verdict,
       required this.isFirst,
@@ -460,7 +507,11 @@ ClaimWrite resolveStudentClaimWrite({
       installEmail: installEmail,
       email: key,
       now: at,
-      moveIntent: moveIntent);
+      moveIntent: moveIntent,
+      // The claimant's hardware id rides the doc (stamped at upload by
+      // getStableHardwareDeviceId) — no signature change for the shared
+      // helper or either backend.
+      localDeviceId: doc.deviceId);
   if (!verdict.ok) {
     throw StateError(studentClaimMessage(verdict, binding));
   }

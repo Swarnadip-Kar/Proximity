@@ -33,23 +33,50 @@ import '../routes.dart';
 /// pushes [FaceCaptureScreen] (real camera plugin); widget tests override
 /// with [FakeStillCapturer] (canned paths — the camera plugin has no test
 /// double, and face verdicts come from the driver's FakeFaceVerifier).
+///
+/// In-preview retry (marking auto-retry stays on the SAME preview): when
+/// [accept] is provided, the sheet captures one burst, asks `accept(paths)`
+/// whether to keep it, and — on false — re-captures with the SAME camera
+/// controller inside [acceptWindow] ([acceptGap] between bursts) instead of
+/// popping and re-pushing the sheet. True pops with the burst; a spent
+/// window pops with the last burst so the caller resolves it terminally.
+/// Null [accept] keeps the legacy single-burst pop. Failures of `accept`
+/// itself accept (pop) — verification errors must never trap the sheet.
 abstract class StillCapturer {
   Future<List<String>?> capture(BuildContext context,
-      {required int captures, required bool autoFire, String? prompt});
+      {required int captures,
+      required bool autoFire,
+      String? prompt,
+      Future<bool> Function(List<String> paths)? accept,
+      Duration acceptWindow = const Duration(seconds: 10),
+      Duration acceptGap = const Duration(seconds: 1)});
 }
 
 class RealStillCapturer implements StillCapturer {
   const RealStillCapturer();
   @override
   Future<List<String>?> capture(BuildContext context,
-          {required int captures, required bool autoFire, String? prompt}) =>
+          {required int captures,
+          required bool autoFire,
+          String? prompt,
+          Future<bool> Function(List<String> paths)? accept,
+          Duration acceptWindow = const Duration(seconds: 10),
+          Duration acceptGap = const Duration(seconds: 1)}) =>
       Navigator.of(context).push<List<String>>(MaterialPageRoute(
           settings: const RouteSettings(name: ProxRoutes.faceCapture),
           builder: (_) => FaceCaptureScreen(
-              captures: captures, autoFire: autoFire, prompt: prompt)));
+              captures: captures,
+              autoFire: autoFire,
+              prompt: prompt,
+              accept: accept,
+              acceptWindow: acceptWindow,
+              acceptGap: acceptGap)));
 }
 
 /// Test-only: returns [captures] canned paths (or [result] verbatim).
+/// In-preview retry params are accepted for signature compat and ignored:
+/// the canned burst resolves immediately, so callers fall back to their
+/// legacy single-verify path.
 class FakeStillCapturer implements StillCapturer {
   final List<String>? Function(int captures)? result;
   const FakeStillCapturer([this.result]);
@@ -57,7 +84,10 @@ class FakeStillCapturer implements StillCapturer {
   Future<List<String>?> capture(BuildContext context,
           {required int captures,
           required bool autoFire,
-          String? prompt}) async =>
+          String? prompt,
+          Future<bool> Function(List<String> paths)? accept,
+          Duration acceptWindow = const Duration(seconds: 10),
+          Duration acceptGap = const Duration(seconds: 1)}) async =>
       result?.call(captures) ??
       List.generate(captures, (i) => 'test-still-$i.jpg');
 }
@@ -185,8 +215,26 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
   final int captures;
   final bool autoFire;
   final String? prompt;
+
+  /// In-preview retry verdict (see [StillCapturer]): true pops with the
+  /// burst, false re-captures on the SAME preview inside [acceptWindow].
+  /// Null keeps the legacy single-burst pop.
+  final Future<bool> Function(List<String> paths)? accept;
+
+  /// Total budget for in-preview retries from the first burst.
+  final Duration acceptWindow;
+
+  /// Pause between in-preview retry bursts (the holder keeps holding
+  /// still; the status line says so).
+  final Duration acceptGap;
   const FaceCaptureScreen(
-      {super.key, this.captures = 1, this.autoFire = true, this.prompt});
+      {super.key,
+      this.captures = 1,
+      this.autoFire = true,
+      this.prompt,
+      this.accept,
+      this.acceptWindow = const Duration(seconds: 10),
+      this.acceptGap = const Duration(seconds: 1)});
 
   @override
   ConsumerState<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
@@ -279,26 +327,69 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
       _busy = true;
       _status = 'Capturing… hold still';
     });
-    final paths = <String>[];
+    // In-preview retry loop: every burst reuses the SAME controller (the
+    // preview never tears down), so holder auto-retries never flash the
+    // camera. Legacy single-burst callers (accept == null) pop at once.
+    final accept = widget.accept;
+    final deadline =
+        accept == null ? null : DateTime.now().add(widget.acceptWindow);
     try {
-      for (var i = 0; i < widget.captures; i++) {
+      while (true) {
         if (_done) return;
-        final shot = await ctl.takePicture();
-        if (_done) return;
-        // Blank-frame guard: a capture that produced no path never leaves
-        // this screen (the plugin crashes on empty bytes below its catch).
-        if (shot.path.trim().isEmpty) {
-          throw StateError('Capture produced no image — try again.');
+        final paths = <String>[];
+        for (var i = 0; i < widget.captures; i++) {
+          if (_done) return;
+          final shot = await ctl.takePicture();
+          if (_done) return;
+          // Blank-frame guard: a capture that produced no path never leaves
+          // this screen (the plugin crashes on empty bytes below its catch).
+          if (shot.path.trim().isEmpty) {
+            throw StateError('Capture produced no image — try again.');
+          }
+          paths.add(shot.path);
+          if (_done) return;
+          setState(() => _taken = i + 1);
+          if (i + 1 < widget.captures) {
+            await Future.delayed(const Duration(milliseconds: 350));
+          }
         }
-        paths.add(shot.path);
         if (_done) return;
-        setState(() => _taken = i + 1);
-        if (i + 1 < widget.captures) {
-          await Future.delayed(const Duration(milliseconds: 350));
+        if (accept == null) {
+          if (!mounted) return;
+          Navigator.of(context).pop(paths);
+          return;
         }
+        if (!mounted) return;
+        setState(() => _status = 'Checking… hold still');
+        bool accepted = true;
+        try {
+          accepted = await accept(paths);
+        } catch (_) {
+          // Verification errors accept (pop): a throwing verifier must
+          // never trap the sheet in a retry loop.
+          accepted = true;
+        }
+        if (_done) return;
+        if (accepted) {
+          if (!mounted) return;
+          Navigator.of(context).pop(paths);
+          return;
+        }
+        // Rejected burst: spent window pops with the last burst (the
+        // caller resolves it terminally); otherwise the SAME preview
+        // re-captures after the gap — never a pop/re-push flash.
+        if (deadline == null || !DateTime.now().isBefore(deadline)) {
+          if (!mounted) return;
+          Navigator.of(context).pop(paths);
+          return;
+        }
+        if (_done) return;
+        setState(() {
+          _taken = 0;
+          _status = 'Scan unclear — hold still, retrying automatically…';
+        });
+        await Future.delayed(widget.acceptGap);
       }
-      if (!mounted) return;
-      Navigator.of(context).pop(paths);
     } catch (e) {
       if (_done) return;
       setState(() {
