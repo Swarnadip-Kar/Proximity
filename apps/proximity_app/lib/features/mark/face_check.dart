@@ -30,6 +30,12 @@
 // `totalAngles`/`currentAngle`/`progress` params are API-compat only (the
 // host + older call sites still pass/omit them) and have no visual effect
 // here — the overlay hides progress + beacon in this mode.
+// Marking liveness is PASSIVE-only by design (security §4): this view
+// shows no blink/smile challenge prompts — the holder just holds still
+// for the one still, and the driver runs the MiniFASNetV2 passive gate
+// before the matcher inside its ~1s budget (below-threshold → mismatch,
+// unreadable → inconclusive rescan). Active challenges live only in the
+// enrollment session, never here.
 //
 // Corner audit (2026-09-10): the preview background is an edge-to-edge
 // fill (no card/sheet corners to round); the Scan fallback is the shared

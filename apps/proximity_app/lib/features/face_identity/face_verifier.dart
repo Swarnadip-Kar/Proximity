@@ -34,13 +34,14 @@
 // these (it keys on >=1.0). Calibration note: FAR~0.01%/FRR<2% at the
 // 0.70 default is the plugin's published operating point, not a
 // Proximity-measured ROC — see residual risks. System operating point WITH
-// the §4 liveness gate (heuristic-v1 scorer, Tl=0.70): UNMEASURED — no
-// Proximity FAR/FRR ROC exists yet for the combined matcher+liveness
+// the §4 liveness gate (minifasnet-v2-27 scorer, Tl=0.70): UNMEASURED —
+// no Proximity FAR/FRR ROC exists yet for the combined matcher+liveness
 // decision (spoof FAR is strictly lower than face-only — a print must now
-// also clear the vitality gate — but the FRR cost of the heuristic on
-// genuine dim/blurry stills is unquantified). MiniFASNetV2-SE ONNX scorer
-// (~98.2% CelebA-Spoof target) + adversarial drill stay required
-// (sec-verify); never quote the plugin numbers as system numbers.
+// also clear the vitality gate — but the FRR cost of the vitality gate
+// on genuine dim/blurry stills is unquantified, and the shipped weights'
+// upstream accuracy number is not a Proximity ROC). The adversarial drill
+// + 2-phone relay stay required (sec-verify); never quote the plugin
+// numbers as system numbers.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
