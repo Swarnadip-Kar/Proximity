@@ -586,12 +586,12 @@ class ProxServer {
     }
     try {
       final id = (body['ID'] as String).toLowerCase();
-      // the tally. Legacy '' on either side passes (migration). The shape
+      // H2: session-stamped org gates /prove strictly — empty body org
+      // fails closed (missingOrg grace sunset on the LAN path). The shape
       // mirrors _fail so ProxClient.prove parses without retrying.
       final bodyOrg = (body['org'] as String? ?? '').trim().toLowerCase();
       if (sessionOrg.isNotEmpty &&
-          bodyOrg.isNotEmpty &&
-          bodyOrg != sessionOrg) {
+          (bodyOrg.isEmpty || bodyOrg != sessionOrg)) {
         try {
           onProve?.call(id, 'invalid', 'org-mismatch');
         } catch (_) {}
