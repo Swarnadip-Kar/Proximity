@@ -930,8 +930,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
               result: StudentResult.error);
         }
         await _deviceKey.ensure();
-        final seed =
-            await _deviceKey.unseal(hexDecode(stored.sealedKeyHex));
+        final Uint8List sealed;
+        try {
+          sealed = hexDecode(stored.sealedKeyHex);
+        } on FormatException {
+          BleLog.log('SEC', 'prove refused: corrupt sealed envelope — re-enroll');
+          return const MarkedReceipt(
+              detail: 'restore detected — re-enroll',
+              result: StudentResult.error);
+        }
+        final seed = await _deviceKey.unseal(sealed);
         sk = ed.newKeyFromSeed(seed);
       } on StateError catch (e) {
         if ('$e'.contains('restore detected')) {

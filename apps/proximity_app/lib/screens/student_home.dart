@@ -1349,7 +1349,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         if (!mounted) return;
         setState(() => faceNotice = '');
         _listen(target, fresh, res.score,
-            faceValidAtMs: res.faceValidAtMs, verifierVer: res.verifierVer);
+            faceValidAtMs: res.faceValidAtMs,
+            verifierVer: res.verifierVer,
+            livenessScore: res.livenessScore,
+            livenessVer: res.livenessVer);
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
@@ -1497,9 +1500,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
   }
 
-  Future<void> _listen(
-      ClassBeacon target, LinkedIdentity linked, double faceScore,
-      {int faceValidAtMs = 0, String verifierVer = ''}) async {
+  Future<void> _listen(ClassBeacon target, LinkedIdentity linked,
+      double faceScore,
+      {int faceValidAtMs = 0,
+      String verifierVer = '',
+      double? livenessScore,
+      String? livenessVer}) async {
     final run = ++_runId;
     _rewaitTimer?.cancel();
     _rewaitTimer = null;
@@ -1531,6 +1537,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           faceScore: faceScore,
           faceValidAtMs: faceValidAtMs,
           verifierVer: verifierVer,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
           onStatus: (s) {
             if (!mounted || run != _runId) return;
             final sLinked = _readLinked();

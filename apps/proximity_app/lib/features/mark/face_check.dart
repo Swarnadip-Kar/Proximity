@@ -60,7 +60,10 @@ import '../../widgets/prox_buttons.dart';
 /// (`captureGuidePrompt`), which is meaningless for an instant check.
 /// The host notice (inconclusive/retry signal) replaces this line when
 /// present — still exactly one line.
-const faceCheckPrompt = 'Look at the camera.';
+/// Passive vitality runs behind this line (MiniFASNetV2, ~1s, no prompts):
+/// the holder just holds still for the one still; below-threshold fails as
+/// mismatch, unreadable fails as inconclusive rescan.
+const faceCheckPrompt = 'Look at the camera — hold still.';
 
 class FaceCheckView extends StatelessWidget {
   final String faceNotice;
