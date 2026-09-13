@@ -18,6 +18,16 @@ void main() {
     }
   });
 
+  test('FakeDeviceKey is usable in the test env (debug guard intact)',
+      () async {
+    // kDebugMode is true under flutter test, so construction + ensure
+    // succeed here; the release branch (!kDebugMode throws) is pinned by
+    // construction — a release mis-wire fails closed, never proves.
+    final fake = FakeDeviceKey();
+    await fake.ensure();
+    expect(fake.pkD.length, 32);
+  });
+
   test('provider default is UnavailableDeviceKey off mobile', () {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     final container = ProviderContainer();

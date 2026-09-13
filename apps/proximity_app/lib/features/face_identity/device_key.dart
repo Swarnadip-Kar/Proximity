@@ -262,9 +262,12 @@ class SoftwareDeviceKey implements DeviceKey {
       ensure();
 }
 
-/// Test fake: scripted pkD/level/window, clone simulation via [dropKey]
-/// (unseal then throws 'restore detected — re-enroll', modelling a
-/// backup-restore clone that carried ciphertext to a new install).
+/// Test fake (debug-only, never production): scripted pkD/level/window,
+/// clone simulation via [dropKey] (unseal then throws 'restore detected —
+/// re-enroll', modelling a backup-restore clone that carried ciphertext
+/// to a new install). The constructor asserts debug and [ensure] throws
+/// outside debug, so a release mis-wire fails closed instead of proving
+/// with scripted bytes (mirrors [SoftwareDeviceKey]).
 class FakeDeviceKey implements DeviceKey {
   Uint8List pkDBytes;
   AttestationLevel attestLevel;
@@ -284,14 +287,22 @@ class FakeDeviceKey implements DeviceKey {
             attestedAt ?? DateTime.utc(2026, 9, 1),
         attestedUntilValue =
             attestedUntil ?? DateTime.utc(2026, 12, 1),
-        chainDERHexValue = List<String>.unmodifiable(chainDERHex ?? const []);
+        chainDERHexValue = List<String>.unmodifiable(chainDERHex ?? const []) {
+    assert(kDebugMode,
+        'FakeDeviceKey is test-only — production uses HwDeviceKey.');
+  }
 
   /// Simulates a backup-restore clone: the new install holds ciphertext
   /// its fresh key cannot open.
   void dropKey() => _dropped = true;
 
   @override
-  Future<void> ensure() async {}
+  Future<void> ensure() async {
+    if (!kDebugMode) {
+      throw StateError(
+          'FakeDeviceKey is test-only — production uses HwDeviceKey.');
+    }
+  }
 
   @override
   Uint8List get pkD => Uint8List.fromList(pkDBytes);
