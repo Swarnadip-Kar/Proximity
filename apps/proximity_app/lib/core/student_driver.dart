@@ -952,51 +952,70 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       }
       final pk = ed.public(sk);
       final pk32 = Uint8List.fromList(pk.bytes.sublist(0, 32));
-      // Device binding snapshot: live DKey is authoritative for the Sig_s
-      // bind + POST (opaque variable-length: HW 64B P-256 x||y vs Software
-      // 32B Ed25519 — never length-gated). Stored pkDHex is cross-checked;
-      // on mismatch the stored binding is rebound to live (pkDHex+chainDER
-      // only — level/window stay as enrolled, refreshed by heartbeat) and
-      // proving continues with live. Live-unavailable after a successful
-      // unseal falls back to the stored decode so marking stays
-      // offline-capable. Sealed-only: no seedHex raw path (empty sealed
-      // already returned above).
+      // Bound ticket shape (ticket present → Sig_s/dSig bind pkD; legacy
+      // unbound proofs carry no ticket and no pkD — see below).
+      final bound = verifierVer.isNotEmpty ||
+          livenessVer.isNotEmpty ||
+          livenessScore != 0.0;
+      // Device binding snapshot: for BOUND proofs the live DKey is
+      // authoritative for the Sig_s bind + POST (opaque variable-length:
+      // HW 64B P-256 x||y vs Software 32B Ed25519 — never length-gated).
+      // Stored pkDHex is cross-checked; on mismatch the stored binding is
+      // rebound to live (pkDHex+chainDER only — level/window stay as
+      // enrolled, refreshed by heartbeat) and proving continues with live.
+      // Live-unavailable after a successful unseal falls back to the stored
+      // decode so marking stays offline-capable. UNBOUND legacy proofs keep
+      // the stored decode with no rebind: injecting a live pkD there would
+      // force bound=true server-side (pkD non-empty gates bound) and fail
+      // `face-unbound` — migration callers prove unbound until they carry a
+      // ticket. Sealed-only: no seedHex raw path (empty sealed already
+      // returned above).
       Uint8List pkD = Uint8List(0);
       List<String> chainForProve = stored.chainDERHex;
-      try {
-        final livePkD = _deviceKey.pkD;
-        final liveHex = hexEncode(livePkD);
-        pkD = Uint8List.fromList(livePkD);
-        final liveChain = _deviceKey.chainDERHex;
-        if (liveChain.isNotEmpty) {
-          chainForProve = List<String>.of(liveChain);
+      if (bound) {
+        try {
+          final livePkD = _deviceKey.pkD;
+          final liveHex = hexEncode(livePkD);
+          pkD = Uint8List.fromList(livePkD);
+          final liveChain = _deviceKey.chainDERHex;
+          if (liveChain.isNotEmpty) {
+            chainForProve = List<String>.of(liveChain);
+          }
+          if (stored.pkDHex.trim().toLowerCase() !=
+              liveHex.trim().toLowerCase()) {
+            BleLog.log('SEC',
+                'prove pkD cross-check mismatch — rebound to live DKey');
+            try {
+              await _store.writeEnrollment(StoredEnrollment(
+                email: stored.email,
+                name: stored.name,
+                roll: stored.roll,
+                seedHex: '',
+                pkHex: stored.pkHex,
+                sealedKeyHex: stored.sealedKeyHex,
+                chainDERHex: List<String>.of(chainForProve),
+                faceId: stored.faceId,
+                enrolledAt: stored.enrolledAt,
+                verifierVer: stored.verifierVer,
+                org: stored.org,
+                pkDHex: liveHex,
+                attestationLevel: stored.attestationLevel,
+                attestedAt: stored.attestedAt,
+                attestedUntil: stored.attestedUntil,
+                lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+              ));
+            } catch (_) {}
+          }
+        } catch (_) {
+          if (stored.pkDHex.isNotEmpty) {
+            try {
+              pkD = Uint8List.fromList(hexDecode(stored.pkDHex));
+            } catch (_) {
+              pkD = Uint8List(0);
+            }
+          }
         }
-        if (stored.pkDHex.trim().toLowerCase() !=
-            liveHex.trim().toLowerCase()) {
-          BleLog.log(
-              'SEC', 'prove pkD cross-check mismatch — rebound to live DKey');
-          try {
-            await _store.writeEnrollment(StoredEnrollment(
-              email: stored.email,
-              name: stored.name,
-              roll: stored.roll,
-              seedHex: '',
-              pkHex: stored.pkHex,
-              sealedKeyHex: stored.sealedKeyHex,
-              chainDERHex: List<String>.of(chainForProve),
-              faceId: stored.faceId,
-              enrolledAt: stored.enrolledAt,
-              verifierVer: stored.verifierVer,
-              org: stored.org,
-              pkDHex: liveHex,
-              attestationLevel: stored.attestationLevel,
-              attestedAt: stored.attestedAt,
-              attestedUntil: stored.attestedUntil,
-              lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
-            ));
-          } catch (_) {}
-        }
-      } catch (_) {
+      } else {
         if (stored.pkDHex.isNotEmpty) {
           try {
             pkD = Uint8List.fromList(hexDecode(stored.pkDHex));
@@ -1005,9 +1024,6 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           }
         }
       }
-      final bound = verifierVer.isNotEmpty ||
-          livenessVer.isNotEmpty ||
-          livenessScore != 0.0;
       final ticket = bound
           ? ProxCrypto.faceTicketHash(
               faceScore: faceScore,
