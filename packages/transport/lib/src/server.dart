@@ -152,6 +152,39 @@ class ProxServer {
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
 
+  /// C1 TOFU pins (professor pre-fetch at online setup): emailLower →
+  /// lowercased pkS hex first seen while online. Empty = pure TOFU (no
+  /// roster lookup — studentDevices denies cross-Gmail get, so an online
+  /// pre-fetch of other Gmails' keys is impossible under current rules;
+  /// see host_driver TOFU note). When non-empty, an offline prove whose
+  /// presented pkS mismatches the pin for that email fails closed as
+  /// `unknown-pkS` (no silent re-key). Pins are structure-only hex
+  /// comparisons — sealed/attestation bytes are never decrypted here.
+  final Map<String, String> _pinnedPkS = {};
+
+  /// Pins [emailLower] → [pkSHex] (first-seen-wins; re-pin requires
+  /// explicit [force]). Returns true when the pin was (re)written.
+  bool pinStudentKey(String emailLower, String pkSHex, {bool force = false}) {
+    final email = emailLower.trim().toLowerCase();
+    final pk = pkSHex.trim().toLowerCase();
+    if (email.isEmpty || pk.isEmpty) return false;
+    if (_pinnedPkS.containsKey(email) && !force) return false;
+    _pinnedPkS[email] = pk;
+    return true;
+  }
+
+  /// Bulk pre-fetch helper for online setup: pins every entry of
+  /// [emailToPkSHex] first-seen-wins. Returns pinned count.
+  int pinStudentKeys(Map<String, String> emailToPkSHex) {
+    var n = 0;
+    emailToPkSHex.forEach((k, v) {
+      if (pinStudentKey(k, v)) n++;
+    });
+    return n;
+  }
+
+  int get pinnedKeyCount => _pinnedPkS.length;
+
   /// Security §4 rollout flip: TRUE since the liveness rollout completed
   /// (MiniFASNetV2 model vendored + enrollment gated — sec-liveness): every
   /// bound proof must carry a gated liveness ticket (score >= Tl +
@@ -663,6 +696,23 @@ class ProxServer {
       if (presentedPk.length != 32) {
         return _json(
             {'decision': 'invalid', 'reason': 'bad-body: pkS'}, 400);
+      }
+      // C1 TOFU enforcement: a pinned pkS mismatching the presented key
+      // fails closed (unknown-pkS). Unpinned emails stay TOFU (first prove
+      // pins implicitly only via explicit pinStudentKeys — never auto-pin
+      // here, so a transient attacker cannot self-pin over the LAN).
+      final presentedPkHex = hexEncode(presentedPk).toLowerCase();
+      final pinned = _pinnedPkS[id];
+      if (pinned != null && pinned != presentedPkHex) {
+        try {
+          onProve?.call(id, 'invalid', 'unknown-pkS');
+        } catch (_) {}
+        return _json({
+          'decision': 'invalid',
+          'reason': 'unknown-pkS',
+          'serverTime': now.toUtc().toIso8601String(),
+          'sigAck': hexEncode(Uint8List(64)),
+        }, 200);
       }
       final stuPk = ed.PublicKey(presentedPk);
 
