@@ -26,13 +26,14 @@ abstract class CloudSync {
   /// writes both docs (bumping lastSeen; stamping lastMove + moveCount on a
   /// move). Throws StateError with user-facing copy when refused
   /// (cooldown/install-conflict) — the second of two racing devices loses.
-  /// [moveIntentValid]: old-DKey-signed MoveIntent verified by the caller —
-  /// instant move even inside the 30d cooldown.
+  /// [moveIntent]: old-SKey-signed MoveIntent (Ed25519 over
+  /// newInstallId|atMillis, verified against the stored binding) —
+  /// instant move even inside the 30d cooldown. No boolean bypass exists.
   Future<ClaimOutcome> claimStudentDevice(
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false});
+      MoveIntent? moveIntent});
 
   /// Best-effort last-online heartbeat: bumps lastSeenAtMillis only when
   /// this device still holds the binding. Returns true when touched.

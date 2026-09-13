@@ -8,10 +8,14 @@
 //   and rules re-gate on request.time + the fresh-stamp chain.
 // - installConflict still refuses even when the binding is stale (the
 //   exemption frees the Gmail's cooldown, never the install's one-Gmail).
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 const _email = 's@x.in';
@@ -137,17 +141,45 @@ void main() {
 
     test('MoveIntent instant move preserved; legacy migration preserved',
         () {
+      // H5: real old-SKey signature over (newInstallId|atMillis) — the
+      // bare boolean bypass is deleted, so forge a genuine intent here.
+      final kp = ed.generateKey();
+      final prevPkHex =
+          hexEncode(Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32)));
+      final atMs = _now.millisecondsSinceEpoch;
+      final msg =
+          Uint8List.fromList(utf8.encode('i2|$atMs'));
+      final sig = ed.sign(kp.privateKey, msg);
       final intent = evaluateStudentClaim(
         localPkHex: 'zz',
         localInstallId: 'i2',
         binding: _binding(
-            lastMoveAgoMs: 5 * _dayMs, lastSeenAgoMs: 5 * _dayMs),
+            lastMoveAgoMs: 5 * _dayMs,
+            lastSeenAgoMs: 5 * _dayMs,
+            pk: prevPkHex),
         installEmail: null,
         email: _email,
         now: _now,
-        moveIntentValid: true,
+        moveIntent: MoveIntent(
+            prevPkSHex: prevPkHex,
+            newInstallId: 'i2',
+            atMillis: atMs,
+            sigHex: hexEncode(sig)),
       );
       expect(intent.claim, StudentClaim.allowedMove);
+      // Unsigned move inside the cooldown still refuses (no bypass).
+      final noSig = evaluateStudentClaim(
+        localPkHex: 'zz',
+        localInstallId: 'i2',
+        binding: _binding(
+            lastMoveAgoMs: 5 * _dayMs,
+            lastSeenAgoMs: 5 * _dayMs,
+            pk: prevPkHex),
+        installEmail: null,
+        email: _email,
+        now: _now,
+      );
+      expect(noSig.claim, StudentClaim.cooldownBlocked);
 
       const legacy = StudentDeviceDoc(
         email: _email,

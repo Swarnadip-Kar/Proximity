@@ -383,7 +383,7 @@ class FirestoreCloudSync implements CloudSync {
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false}) async {
+      MoveIntent? moveIntent}) async {
     _needAvailable();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -410,7 +410,7 @@ class FirestoreCloudSync implements CloudSync {
             installEmail: installEmail,
             email: key,
             now: at,
-            moveIntentValid: moveIntentValid);
+            moveIntent: moveIntent);
         final isFirst = claim.isFirst;
         final isMove = claim.isMove;
         final org = doc.org.isNotEmpty ? doc.org : orgOf(key);

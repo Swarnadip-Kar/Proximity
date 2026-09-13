@@ -205,7 +205,7 @@ class FakeCloudSync implements CloudSync {
       {required StudentDeviceDoc doc,
       required String installId,
       DateTime? now,
-      bool moveIntentValid = false}) async {
+      MoveIntent? moveIntent}) async {
     _needOnline();
     final at = (now ?? DateTime.now()).toUtc();
     final atMillis = at.millisecondsSinceEpoch;
@@ -220,7 +220,7 @@ class FakeCloudSync implements CloudSync {
         installEmail: installs[installId],
         email: key,
         now: at,
-        moveIntentValid: moveIntentValid);
+        moveIntent: moveIntent);
     final isFirst = claim.isFirst;
     final isMove = claim.isMove;
     final org = doc.org.isNotEmpty ? doc.org : orgOf(key);

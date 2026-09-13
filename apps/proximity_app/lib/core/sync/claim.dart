@@ -163,14 +163,14 @@ class StudentClaimResult {
 /// server refuses). [installEmail] is deviceInstalls[installId].email.
 ///
 /// H5 — MoveIntent MUST be signature-verified, never a bare boolean: the
-/// legacy [moveIntentValid] flag is UNVERIFIED plumbing and is IGNORED by
-/// the verdict (a self-asserted bool must never bypass the cooldown). An
-/// instant move inside the cooldown requires [moveIntent]: an old-SKey-
-/// signed authorization (see [MoveIntent]/[verifyMoveIntent]) whose
-/// signature verifies against the STORED binding's pkHex for THIS install.
-/// Without it the 30d cooldown stands, EXCEPT the lost-phone exemption:
-/// a binding whose STORED lastSeen is past [kStudentLostPhoneStale] moves
-/// immediately (lost/stolen path, manual attendance covers the gap).
+/// legacy boolean bypass is DELETED (no bool param exists — a self-asserted
+/// flag must never bypass the cooldown). An instant move inside the
+/// cooldown requires [moveIntent]: an old-SKey-signed authorization (see
+/// [MoveIntent]/[verifyMoveIntent]) whose signature verifies against the
+/// STORED binding's pkHex for THIS install. Without it the 30d cooldown
+/// stands, EXCEPT the lost-phone exemption: a binding whose STORED lastSeen
+/// is past [kStudentLostPhoneStale] moves immediately (lost/stolen path,
+/// manual attendance covers the gap).
 ///
 /// Rules need NO MoveIntent counterpart (server-side the 30-day cooldown
 /// still stands on request.time; the intent is a client-verdict fast path
@@ -184,7 +184,6 @@ StudentClaimResult evaluateStudentClaim({
   required String? installEmail,
   required String email,
   DateTime? now,
-  bool moveIntentValid = false,
   MoveIntent? moveIntent,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
@@ -215,9 +214,7 @@ StudentClaimResult evaluateStudentClaim({
   }
   // H5 verified MoveIntent: instant move ONLY when an old-SKey signature
   // over (newInstallId|atMillis) verifies against the STORED binding key
-  // for THIS install (verify-only, no decrypt). The ignored
-  // [moveIntentValid] boolean previously short-circuited here — removed:
-  // a self-asserted flag is worthless (any caller could set it).
+  // for THIS install (verify-only, no decrypt). No boolean bypass exists.
   if (moveIntent != null &&
       moveIntent.newInstallId == localInstallId &&
       binding.pkHex.isNotEmpty &&
@@ -443,7 +440,6 @@ ClaimWrite resolveStudentClaimWrite({
   required String? installEmail,
   required String email,
   DateTime? now,
-  bool moveIntentValid = false,
   MoveIntent? moveIntent,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
@@ -456,7 +452,6 @@ ClaimWrite resolveStudentClaimWrite({
       installEmail: installEmail,
       email: key,
       now: at,
-      moveIntentValid: moveIntentValid,
       moveIntent: moveIntent);
   if (!verdict.ok) {
     throw StateError(studentClaimMessage(verdict, binding));

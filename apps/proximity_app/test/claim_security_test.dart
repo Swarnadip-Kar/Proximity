@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
 StudentDeviceDoc dev(
@@ -107,9 +112,13 @@ void main() {
 
   test('MoveIntent instant move + 30d cooldown untouched by security fields',
       () async {
+    // H5: genuine old-SKey signature required — no boolean bypass.
+    final kp = ed.generateKey();
+    final prevPkHex =
+        hexEncode(Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32)));
     final fake = FakeCloudSync();
     await fake.claimStudentDevice(
-        doc: dev('s@x.in', 'aa', 'iA'), installId: 'iA');
+        doc: dev('s@x.in', prevPkHex, 'iA'), installId: 'iA');
     // Different device inside cooldown refuses without MoveIntent.
     var refused = '';
     try {
@@ -121,12 +130,19 @@ void main() {
       refused = e.message;
     }
     expect(refused, contains('another device'));
-    // Same move with a valid old-DKey MoveIntent succeeds instantly.
+    // Same move with a valid old-SKey MoveIntent succeeds instantly.
+    final atMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final sig = ed.sign(
+        kp.privateKey, Uint8List.fromList(utf8.encode('iB|$atMs')));
     final moved = await fake.claimStudentDevice(
         doc: dev('s@x.in', 'cc', 'iB',
             pkDHex: 'cc' * 32, level: 'FULL', chain: ['ff']),
         installId: 'iB',
-        moveIntentValid: true);
+        moveIntent: MoveIntent(
+            prevPkSHex: prevPkHex,
+            newInstallId: 'iB',
+            atMillis: atMs,
+            sigHex: hexEncode(sig)));
     expect(moved.isMove, isTrue);
     expect((await fake.fetchStudentDevice('s@x.in'))?.pkDHex, 'cc' * 32);
   });
