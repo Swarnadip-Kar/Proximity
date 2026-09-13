@@ -187,4 +187,59 @@ void main() {
       expect(ClassRecord.fromJson(m).faceFlags, isEmpty);
     });
   });
+
+  group('csvCell quoting + formula-injection guard', () {
+    test('plain fields pass through', () {
+      expect(csvCell('Asha'), 'Asha');
+      expect(csvCell('10000001'), '10000001');
+      expect(csvCell('a@x.in'), 'a@x.in'); // @ mid-string: untouched
+    });
+
+    test('leading = + - @ are tick-prefixed', () {
+      expect(csvCell('=CMD(1)'), "'=CMD(1)");
+      expect(csvCell('+1+2'), "'+1+2");
+      expect(csvCell('-2+3'), "'-2+3");
+      expect(csvCell('@evil'), "'@evil");
+    });
+
+    test('comma/quote/CRLF trigger RFC4180 quoting', () {
+      expect(csvCell('Doe, Jane'), '"Doe, Jane"');
+      expect(csvCell('Say "hi"'), '"Say ""hi"""');
+      expect(csvCell('a\nb'), '"a\nb"');
+    });
+
+    test('formula prefix composes with quoting', () {
+      expect(csvCell('=1,2'), '"\'=1,2"');
+    });
+
+    test('buildSimpleCsv hardens identity cells, keeps Status enum', () {
+      final csv = buildSimpleCsv(
+        names: {'a@x.in': '=EVIL(), Jr', 'b@x.in': 'B'},
+        rolls: {'a@x.in': '1', 'b@x.in': '2'},
+        windows: [
+          {'a@x.in': true, 'b@x.in': false}
+        ],
+      );
+      expect(csv, contains('"\'=EVIL(), Jr"'));
+      expect(csv, contains('B,2,b@x.in,Absent'));
+      expect(csv, contains(',Present'));
+    });
+
+    test('buildDateRangeMatrix hardens identity cells', () {
+      final s = ClassRecord(
+        id: 's1',
+        courseId: 'CS201',
+        classLabel: 'CS201',
+        dateIso: '2026-09-06',
+        timestampIso: '2026-09-06T10:00:00.000Z',
+        windows: [
+          {'a@x.in': true}
+        ],
+        names: {'a@x.in': '@x, y'},
+        rolls: {'a@x.in': '1'},
+      );
+      final m = buildDateRangeMatrix([s]);
+      expect(m, contains('"\'@x, y"'));
+    });
+  });
 }

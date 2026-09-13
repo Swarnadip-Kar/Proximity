@@ -295,6 +295,21 @@ class TallyStore {
       );
 }
 
+/// RFC4180 cell + formula-injection guard (audit LOW fix): fields
+/// containing `,` `"` CR LF are double-quoted (inner `"` doubled);
+/// fields starting with `=` `+` `-` `@` are `'`-prefixed so spreadsheet
+/// apps never evaluate stranger-controlled names/rolls/emails as
+/// formulas (quoting alone does NOT stop formula eval). Status/P/A
+/// cells are enum-safe and bypass this.
+String csvCell(String field) {
+  var cell = field;
+  if (cell.startsWith(RegExp(r'[=+\-@]'))) cell = "'$cell";
+  if (cell.contains(RegExp(r'[",\r\n]'))) {
+    cell = '"${cell.replaceAll('"', '""')}"';
+  }
+  return cell;
+}
+
 /// Simple per-session CSV: Name,ID Number,Email,Status.
 /// [windows] is the ordered list of window maps (email -> present).
 String buildSimpleCsv({
@@ -328,7 +343,7 @@ String buildSimpleCsv({
         ? 'Absent'
         : (pass ? 'Present' : 'Absent');
     sb.writeln(
-        '${names[email] ?? ''},${rolls[email] ?? ''},$email,$status');
+        '${csvCell(names[email] ?? '')},${csvCell(rolls[email] ?? '')},${csvCell(email)},$status');
   }
   return sb.toString();
 }
@@ -568,7 +583,8 @@ String buildDateRangeMatrix(List<ClassRecord> sessions) {
     final cells = [
       for (final s in sorted) s.isPresent(e) ? 'P' : 'A',
     ];
-    sb.writeln('${names[e] ?? ''},${rolls[e] ?? ''},$e,${cells.join(',')}');
+    sb.writeln(
+        '${csvCell(names[e] ?? '')},${csvCell(rolls[e] ?? '')},${csvCell(e)},${cells.join(',')}');
   }
   return sb.toString();
 }
