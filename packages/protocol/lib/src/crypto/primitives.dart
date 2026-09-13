@@ -375,16 +375,22 @@ class ProxCrypto {
     required Uint8List faceTicketHashBytes,
     required Uint8List pkS,
     String integrityHash = '',
-  }) =>
-      concat([
-        sessionId,
-        windowId,
-        j32(j),
-        challenge,
-        faceTicketHashBytes,
-        pkS,
-        utf8.encode(integrityHash),
-      ]);
+  }) {
+    // Fixed-size fields keep the concat unambiguous (P-256 contract:
+    // the HW DKey signs exactly these bytes with ES256 — see
+    // crypto/hardware_verify.dart verifyDeviceSignature).
+    assert(faceTicketHashBytes.length == 8);
+    assert(pkS.length == 32);
+    return concat([
+      sessionId,
+      windowId,
+      j32(j),
+      challenge,
+      faceTicketHashBytes,
+      pkS,
+      utf8.encode(integrityHash),
+    ]);
+  }
 
   /// Sig_ack preimage: sessionID || windowID || j32 || ID || decision || serverMsBE64.
   /// decision: 0=confirmed, 1=late, 2=invalid.
