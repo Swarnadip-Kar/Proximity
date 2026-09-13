@@ -424,6 +424,10 @@ class RealHostDriver implements HostDriver {
       // identity ephemerally. Corrupt hex falls back to ephemeral (never a
       // hosting crash); the transient seed copy is zeroed after use so it
       // never outlives this block on the heap.
+      // TODO(sec-keys): migrate legacy seedHex docs to the sealed DEK
+      // envelope (sealedKeyHex + pkDHex + chainDERHex via HwDeviceKey seal);
+      // this ephemeral fallback is delete-on-read migration cover only —
+      // do NOT expand raw-seed usage (no new readers/writers, no raw persist).
       Uint8List? seed;
       try {
         seed = hexDecode(stored.seedHex);
