@@ -1,5 +1,6 @@
 // 1B: force-update compare / verdict units (pure, no Firebase needed).
-import 'package:flutter/foundation.dart' show TargetPlatform;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:proximity_app/core/app_config/force_update.dart';
@@ -134,6 +135,62 @@ void main() {
       );
       expect(ForceUpdate.storeUrlFor(config, TargetPlatform.windows), isEmpty);
       expect(ForceUpdate.storeUrlFor(config, TargetPlatform.macOS), isEmpty);
+    });
+  });
+
+  group('ForceUpdate.showBarrier (verified-stale only)', () {
+    testWidgets(
+        'stale barrier is non-dismissible; offline Recheck keeps it up (fail-closed)',
+        (tester) async {
+      final stale = ForceUpdate.check(
+        currentVersion: '0.1.0',
+        config: floor(minVersion: '0.2.0'),
+      );
+      expect(stale.updateRequired, isTrue);
+      // Offline Recheck path: the version lookup throws (no plugin in
+      // widget tests — same as an unreadable build on device), so the
+      // real checkNow inside Recheck degrades to unchecked. Mocked to
+      // throw rather than pend on the unhandled channel.
+      const pkgChannel =
+          MethodChannel('dev.fluttercommunity.plus/package_info');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+              pkgChannel, (call) async => throw PlatformException(code: 'x'));
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pkgChannel, null);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: TextButton(
+                onPressed: () => ForceUpdate.showBarrier(ctx, stale),
+                child: const Text('show'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('show'));
+      await tester.pumpAndSettle();
+      expect(find.text('Update required'), findsOneWidget);
+      expect(find.textContaining('Required: 0.2.0'), findsOneWidget);
+      // Outside-tap cannot dismiss (barrierDismissible: false).
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(find.text('Update required'), findsOneWidget);
+      // Back/gesture pop cannot dismiss (PopScope canPop: false).
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Update required'), findsOneWidget);
+      // Recheck with no network/plugins: the real checkNow degrades to
+      // unchecked, which keeps the barrier up (only a verified-fresh
+      // recheck lifts it) with an explanatory snackbar.
+      await tester.tap(find.text('Recheck'));
+      await tester.pumpAndSettle();
+      expect(find.text('Update required'), findsOneWidget);
+      expect(find.textContaining('Still out of date'), findsOneWidget);
     });
   });
 

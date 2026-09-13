@@ -284,7 +284,20 @@ class ForceUpdate {
               ),
             FilledButton(
               onPressed: () async {
-                final fresh = await checkNow();
+                // Bounded like every other floor read (entry gates + main
+                // barrier): a hung version lookup must degrade to the
+                // "still out of date" snackbar, never a dead Recheck.
+                ForceUpdateResult fresh;
+                try {
+                  fresh = await checkNow()
+                      .timeout(const Duration(seconds: 10));
+                } catch (_) {
+                  fresh = const ForceUpdateResult(
+                    checked: false,
+                    updateRequired: false,
+                    currentVersion: '',
+                  );
+                }
                 if (fresh.checked && !fresh.updateRequired && ctx.mounted) {
                   Navigator.of(ctx).pop();
                 } else if (ctx.mounted) {
