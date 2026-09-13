@@ -42,7 +42,9 @@ import 'client.dart';
 
 const kDiscoveryPort = 54545;
 const kDiscoveryInterval = Duration(seconds: 2);
-const kDiscoveryExpiry = Duration(seconds: 6);
+// Beacon rotation is 10s (kSubEpochSeconds): expiry covers a missed
+// rotation + margin so listings never flap idle between ticks.
+const kDiscoveryExpiry = Duration(seconds: 12);
 const kDiscoveryMagic = 'PROX1';
 
 /// Known-session persistence (TCP-acked BLE-IP discoveries): once a hinted

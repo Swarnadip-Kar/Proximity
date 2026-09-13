@@ -10,7 +10,7 @@ Never _web() =>
 
 const kDiscoveryPort = 54545;
 const kDiscoveryInterval = Duration(seconds: 2);
-const kDiscoveryExpiry = Duration(seconds: 6);
+const kDiscoveryExpiry = Duration(seconds: 12);
 const kDiscoveryMagic = 'PROX1';
 
 const kSessionPersist = Duration(seconds: 120);

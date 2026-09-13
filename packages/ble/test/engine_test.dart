@@ -76,7 +76,7 @@ void main() {
     );
     await engine.startProfRotation(window);
     final first = unpackAir(radio.advertisingMfg!)!;
-    await Future.delayed(const Duration(seconds: 6));
+    await Future.delayed(const Duration(seconds: 11));
     final second = unpackAir(radio.advertisingMfg!)!;
     expect(first.host, '10.50.19.107');
     expect(first.port, 8443);
@@ -128,7 +128,7 @@ void main() {
     await engine.startIdleHintRotation(); // must NOT throw
     expect(radio.advertisingLegacyUuid, isNull); // first tick died
     expect(radio.advertiseCalls, 1);
-    await Future.delayed(const Duration(seconds: 6)); // one retry tick
+    await Future.delayed(const Duration(seconds: 11)); // one retry tick
     // The retry tick REALLY re-advertises (not the old nested-guard fake
     // success, which skipped the radio call and only logged): a second
     // radio call lands the hint bytes on air.
@@ -330,11 +330,11 @@ void main() {
       t0: DateTime.now().toUtc(),
       classLabel: 'C',
     );
-    // j=0 advertises the challenge; the next 5s tick (j=1, odd) carries
+    // j=0 advertises the challenge; the next 10s tick (j=1, odd) carries
     // the IP-hint UUID with the server address.
     await engine.startProfRotation(window);
     expect(UuidCodec.isChallengeUuid(radio.advertisingLegacyUuid!), isTrue);
-    await Future.delayed(const Duration(milliseconds: 5500));
+    await Future.delayed(const Duration(milliseconds: 10500));
     final ipUuid = radio.advertisingLegacyUuid!;
     expect(UuidCodec.isIpHintUuid(ipUuid), isTrue);
     final ip = UuidCodec.unpackIpHint(ipUuid)!;

@@ -88,7 +88,7 @@ class BluezAdvertiser {
     throw StateError('No BlueZ adapter with LEAdvertisingManager1 found.');
   }
 
-  /// Advertise one air packet (5s rotation: call again to republish;
+  /// Advertise one air packet (10s rotation: call again to republish;
   /// previous registration is released first).
   Future<void> advertise(String airServiceUuid,
       {required Uint8List airMfg}) async {

@@ -1,8 +1,8 @@
 // Window timing + single-use + freshness per §5.1, §5.3, §6.1.
 //s
 // The window opens when the professor taps Start and stays open until
-// they tap Stop: challenges rotate every 5s (j=0,1,2… unbounded) and any
-// proof whose sub-epoch is fresh (0 <= now - t_j < 5s + 7s) marks. There is no
+// they tap Stop: challenges rotate every 10s (j=0,1,2… unbounded) and any
+// proof whose sub-epoch is fresh (0 <= now - t_j < 10s + 7s) marks. There is no
 // round clock on either side — the student never races a countdown, and
 // stopping the window only ends acceptance (after a short grace on the
 // host). Single-use is per (ID,j); a new window carries fresh secrets so

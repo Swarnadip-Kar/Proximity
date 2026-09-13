@@ -1,7 +1,7 @@
 // UUID-only over-air encoding per §5.2 (universal: Android/iOS/macOS/Windows/Linux).
 //
-//   UUID_P(j)    = BaseP64 || C_j            (professor challenge, 5s rotation)
-//   UUID_S(ID,j) = BaseS64 || R_IDj          (student response, 5s rotation)
+//   UUID_P(j)    = BaseP64 || C_j            (professor challenge, 10s rotation)
+//   UUID_S(ID,j) = BaseS64 || R_IDj          (student response, 10s rotation)
 //
 // Fixed PROX_SVC always advertised alongside for scan filtering.
 // Scan-response carries peerW(ID) 8 bytes (no stable MAC, no cross-lecture link).

@@ -699,7 +699,7 @@ class RealHostDriver implements HostDriver {
     }
     try {
       await _engine.startProfRotation(window);
-      BleLog.log('BLE', 'prof advertising challenges (5s rotation)');
+      BleLog.log('BLE', 'prof advertising challenges (10s rotation)');
     } catch (e) {
       BleLog.log('BLE', 'prof ADV start FAILED: $e');
       // Half-open cleanup: the window + scan above succeeded, so unwind
@@ -907,7 +907,7 @@ class RealHostDriver implements HostDriver {
   /// `livenessAllowlist` + [livenessThreshold] gate `liveness.{score,ver}`
   /// (`>=Tl`, fail-closed `liveness-unbound`/`unknown-liveness-verifier`/
   /// `liveness-below-threshold` in the server). `faceValidAt` freshness
-/// (5-min window) + fresh `dSig` per 5s rotation are likewise server-gated;
+/// (5-min window) + fresh `dSig` per 10s rotation are likewise server-gated;
 /// NONE proofs never confirm (`device-none-requires-approval` → manual
 /// path, never a mark) and tainted proofs ride `integrity-flagged` into
 /// [_applyIntegrityFlag] below (never auto-absent).

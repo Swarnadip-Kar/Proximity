@@ -20,8 +20,8 @@ import '../../widgets/verdict_badge.dart';
 /// Signal bars (3-bar glyph) from beacon/hint recency — never raw dBm.
 ///
 /// 3 = window open right now; 2 = heard within [kDiscoveryExpiry] (the same
-/// 6s budget the listener prunes on); else 1 (session-acked hint listing,
-/// idle). Pure for unit tests.
+/// 12s budget the listener prunes on — one missed 10s rotation + margin);
+/// else 1 (session-acked hint listing, idle). Pure for unit tests.
 int signalBarsFor({
   required bool windowOpen,
   required DateTime lastSeen,

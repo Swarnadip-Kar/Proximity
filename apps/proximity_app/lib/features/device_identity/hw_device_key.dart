@@ -13,7 +13,7 @@
 //   Secure Enclave and anything lower throws `HwKeyUnsupportedError` →
 //   `Software-no-enroll`, never a silent software key), userAuth
 //   `UserAuthPolicy.timeBound(4h)` (= [kHwDeviceKeyAuthValidity]: one
-//   strong-biometric per school block; per-use would prompt every 5s
+//   strong-biometric per school block; per-use would prompt every 10s
 //   rotation and strand marking),
 //   attestationChallenge = the enrollment challenge
 //   (`SHA256(emailLower || installId || pkS32)` via [enrollmentChallenge]).
@@ -80,7 +80,7 @@ const String kHwDeviceKeyAlias = 'prox.deviceKey.v1';
 const String kHwSealDekVersion = 'v1';
 
 /// Lecture-block biometric validity (one strong-biometric per school block;
-/// per-use would prompt every 5s rotation and strand marking).
+/// per-use would prompt every 10s rotation and strand marking).
 const Duration kHwDeviceKeyAuthValidity = Duration(hours: 4);
 
 /// Production backend surface (mirrors `AttestedSecureKeys` 1:1 so the
@@ -364,7 +364,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
 /// blob): Android Keystore-backed AES-GCM storage / iOS Keychain
 /// this-device-only, with NO per-use biometric prompt (use is already gated
 /// by the 4h HW-key grant + the face check; a per-read prompt would strand
-/// every 5s prove rotation). A backup-restore clone loses the DEK
+/// every 10s prove rotation). A backup-restore clone loses the DEK
 /// (Keystore/Keychain keys never migrate) so unseal fails closed.
 abstract class HwSealStore {
   /// Stored DEK, or null when absent (fresh install / wiped storage).

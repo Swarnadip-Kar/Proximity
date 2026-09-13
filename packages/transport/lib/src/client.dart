@@ -308,7 +308,7 @@ class ProxClient {
 
   /// Fetches + verifies the window descriptor (Sig_p over the live C_j…
   /// verified against the C_j the caller heard over BLE radio). The fetch
-  /// can land just after the 5s rotation tick, when the live challenge is
+  /// can land just after the 10s rotation tick, when the live challenge is
   /// already C_{j} but the radio copy is C_{j-1}: the server ships the
   /// previous signature too, and either token verifies (both stay fresh
   /// for a full rotation + drift). Only a token matching NEITHER is a

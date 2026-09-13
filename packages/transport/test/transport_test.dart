@@ -554,14 +554,14 @@ void main() {
     final server = await makeServer(prof: prof, stu: stu);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     try {
-      // Simulate the fetch landing one 5s tick after the hear: the radio
+      // Simulate the fetch landing one 10s tick after the hear: the radio
       // copy is C_0 but /window already signs C_1.
       server.openWindow(
         WindowParams(
           sessionId: server.window!.sessionId,
           windowId: randBytes(6),
           secret: randBytes(32),
-          t0: DateTime.now().toUtc().subtract(const Duration(seconds: 6)),
+          t0: DateTime.now().toUtc().subtract(const Duration(seconds: 11)),
           classLabel: 'CS201-Room301',
         ),
         1,
@@ -740,7 +740,7 @@ void main() {
           sessionId: server.window!.sessionId,
           windowId: randBytes(6),
           secret: randBytes(32),
-          t0: DateTime.now().toUtc().subtract(const Duration(seconds: 6)),
+          t0: DateTime.now().toUtc().subtract(const Duration(seconds: 11)),
           classLabel: 'CS201-Room301',
         ),
         2,
@@ -1177,7 +1177,7 @@ void main() {
       );
       final w = server.window!;
       final j = w.jForTime(DateTime.now().toUtc());
-      expect(j, greaterThan(30)); // long past the old 30s expiry
+      expect(j, greaterThan(15)); // 3min at 10s rotation; unbounded anyway
       expect(w.isFresh(j, DateTime.now().toUtc()), isTrue);
       final desc = await client.fetchWindow(w.challengeFor(j));
       expect(desc.jNow, j);

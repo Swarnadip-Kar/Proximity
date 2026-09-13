@@ -373,7 +373,7 @@ class ProxBleEngine {
     } catch (_) {}
   }
 
-  /// Professor: rotate challenge token C_j every 5s for as long as the
+  /// Professor: rotate challenge token C_j every 10s for as long as the
   /// window is open (j=0,1,2… unbounded — the window closes only when the
   /// professor stops it, never on a clock). Rotation stops with [stop];
   /// the host keeps accepting proofs briefly afterwards (grace), so a

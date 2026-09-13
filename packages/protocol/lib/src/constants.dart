@@ -23,15 +23,17 @@ final int kBaseS64 = _u64(0xB7E4A921, 0x5C6D8093);
 /// Bytes read "IPHINT01".
 final int kBaseI64 = _u64(0x49504849, 0x4E543031);
 
-/// Rotation period per sub-epoch (s). Challenges rotate every 5s for as
+/// Rotation period per sub-epoch (s). Challenges rotate every 10s for as
 /// long as the window is open (unbounded j); the window closes only when
-/// the professor stops it. 5s bounds replay to a radio-plausible window
-/// (a forwarded screenshot arrives stale) while staying cheap on BLE
-/// stacks that rate-limit scan restarts — shorter costs radio churn,
-/// longer widens the wormhole.
-const int kSubEpochSeconds = 5;
+/// the professor stops it. 10s gives slow phones/networks the full prove
+/// round-trip (fetch → face already done → POST + retries + ACK) inside
+/// one rotation + the 7s grace, and halves BLE rotation churn — while
+/// still bounding replay to a radio-plausible window (a forwarded
+/// screenshot arrives stale). Shorter costs radio churn and strands slow
+/// provers; longer widens the wormhole.
+const int kSubEpochSeconds = 10;
 
-/// Freshness acceptance: 0 <= now - t_j < 5s + 7s (one-sided; a future
+/// Freshness acceptance: 0 <= now - t_j < 10s + 7s (one-sided; a future
 /// sub-epoch is never fresh, so tokens cannot pre-play). §5.3
 const Duration kFreshness = Duration(seconds: 7);
 

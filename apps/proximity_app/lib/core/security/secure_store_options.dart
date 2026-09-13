@@ -29,7 +29,7 @@
 //   deliberately prompt-free (plain AES-GCM FSS, unsynced this-device-only
 //   iOS) — use is already gated by the 4h HW-key grant
 //   (`UserAuthPolicy.timeBound(4h)`) + the face check, and a per-read prompt
-//   would strand every 5s prove rotation.
+//   would strand every 10s prove rotation.
 // - Desktop/web fail-closed: [newStorage]/[requireSupportedPlatform] throw
 //   [StateError] off Android/iOS (mirrors `requireMobileFace`). Records-only
 //   targets must never silently persist enrollment secrets in weak storage.
