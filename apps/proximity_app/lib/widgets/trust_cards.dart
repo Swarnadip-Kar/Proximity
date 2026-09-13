@@ -39,11 +39,11 @@ String trustPkDFingerprint(String pkDHex) {
 /// trust decisions happen on the professor's side per proof (dSig +
 /// ticket + sighting), not here.
 ///
-/// Tiers (protocol evaluateDeviceProof + verifyProve NONE fallback):
+/// Tiers (protocol evaluateDeviceProof + fresh-only verifyProve):
 /// FULL/STD fresh → confirmed; STALE (14d grace) → confirmed + banner;
-/// NONE claims no tier but still marks via the flagged
-/// `device-none-fallback` (same ticket/Sig_s/face/sighting checks) until
-/// HW keys ship — the badge below stays honest about the claim.
+/// NONE claims no tier and never auto-marks
+/// (`device-none-requires-approval` → manual path) — the badge below
+/// stays honest about the claim.
 class DeviceTrustBadge extends StatelessWidget {
   final String level;
   final int attestedUntilMillis;

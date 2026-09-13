@@ -190,9 +190,10 @@ Future<void> main() async {
   // release/profile — the provider default (see deviceKeyProvider) — with
   // the test-only SoftwareDeviceKey kept for debug only (constructor
   // asserts kDebugMode + ensure() throws outside debug, so release can
-  // never silently enroll software; level NONE there still marks via the
-  // flagged `device-none-fallback` — same ticket/Sig_s/face/sighting
-  // checks). Desktop/web records builds get the fail-closed stubs: every
+  // never silently enroll software; level NONE there never marks
+  // (`device-none-requires-approval` → manual path — same
+  // ticket/Sig_s/face/sighting checks). Desktop/web records builds get
+  // the fail-closed stubs: every
   // face/key op throws before anything signs — never a mock pass.
   final FaceVerifier faceVerifier;
   final DeviceKey deviceKey;

@@ -6,18 +6,16 @@
 // {pkS,pkD,installId,attestationLevel,self-asserted,attestedAt,
 // attestedUntil=+90d}; /prove adds pkD + dSig=Sign(DKey, session||
 // window||j||C_j||faceTicketHash||pkS); the professor verifies the fresh
-// signature offline (dSig + Sig_s + ticket + existing checks) and reads
-// the claimed level for tiering — chain→root verification exists
-// nowhere in this system (see the caveat below).
+// signature offline (dSig + Sig_s + ticket + existing checks) and pins the
+// claimed level to a verified chain — pure-Dart chain→root verification
+// runs in the professor path (see the caveat below).
 // Tiers FULL/STD→confirmed, STALE (14d grace)→confirmed+banner;
-// NONE claims no tier — until HW keys ship, the host applies the graceful
-// `device-none-fallback` (same ticket/Sig_s/face/sighting checks, flagged
-// confirm) so software-key students mark normally. Heartbeat rolls
-// attestedUntil; old-DKey-signed MoveIntent = instant move else 30-day
-// cooldown kept; backup-restore clone fails unwrap→'restore detected —
-// re-enroll' (on HW keys; software keys copy with their files —
-// SoftwareDeviceKey below is level `none` for exactly this reason, which
-// is why its proofs carry the fallback flag rather than a tier).
+// NONE claims no tier and never confirms (`device-none-requires-approval`
+// → manual path, never a mark). Heartbeat rolls attestedUntil; old-DKey-signed
+// MoveIntent = instant move else 30-day cooldown kept; backup-restore clone
+// fails unwrap→'restore detected — re-enroll' (on HW keys; software keys copy
+// with their files — SoftwareDeviceKey below is level `none` for exactly this
+// reason, which is why its proofs route to approval rather than a tier).
 //
 // What this file IS: the narrow Dart interface + [UnavailableDeviceKey]
 // (desktop/web fail-closed) + test-only [SoftwareDeviceKey]/[FakeDeviceKey]

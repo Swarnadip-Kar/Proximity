@@ -855,10 +855,10 @@ class RealHostDriver implements HostDriver {
   /// `livenessAllowlist` + [livenessThreshold] gate `liveness.{score,ver}`
   /// (`>=Tl`, fail-closed `liveness-unbound`/`unknown-liveness-verifier`/
   /// `liveness-below-threshold` in the server). `faceValidAt` freshness
-  /// (5-min window) + fresh `dSig` per 5s rotation are likewise server-gated;
-  /// NONE proofs confirm only via the logged `device-none-fallback` (never
-  /// hard-invalid live marking until HW ships) and tainted proofs ride
-  /// `integrity-flagged` into [_applyIntegrityFlag] below (never auto-absent).
+/// (5-min window) + fresh `dSig` per 5s rotation are likewise server-gated;
+/// NONE proofs never confirm (`device-none-requires-approval` → manual
+/// path, never a mark) and tainted proofs ride `integrity-flagged` into
+/// [_applyIntegrityFlag] below (never auto-absent).
   static const List<String> hostVerifierAllowlist = [kVerifierVerPrefix];
   static const List<String> hostLivenessAllowlist = [kLivenessVerPrefix];
   static const double hostLivenessThreshold = kLivenessThreshold;
@@ -876,11 +876,11 @@ class RealHostDriver implements HostDriver {
   /// Maps a tainted prove into the roster-visible FLAGGED state WITHOUT
   /// touching presence (never auto-absent offline — the server already
   /// marked confirmed/late; we only add the flag). Invalid proofs plant
-  /// nothing ([TallyStore.setFaceFlag] no-ops without a row, same as the
-  /// dup path). `device-none-fallback` is deliberately NOT mapped here:
-  /// every genuine software-key proof carries it until HW ships, so
-  /// flagging it would mark the whole room — it stays a log-line signal
-  /// (plus the post-hoc double-pkD audit in `claim.dart`), not a roster flag.
+/// nothing ([TallyStore.setFaceFlag] no-ops without a row, same as the
+/// dup path). `device-none-requires-approval` is deliberately NOT mapped
+/// here: NONE proofs never confirm server-side, so no roster row exists
+/// to flag — approval lives on the manual path (plus the post-hoc
+/// double-pkD audit in `claim.dart`), not as a roster flag.
   ///
   /// TOFU note (§2): professor-side pinning is per-class first-seen (no
   /// roster lookup — `studentDevices` denies list + cross-Gmail get, so an

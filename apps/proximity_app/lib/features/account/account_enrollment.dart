@@ -83,7 +83,7 @@ class AccountEnrollmentSection extends ConsumerWidget {
                 child: Text(
                   'FULL and STD mean this phone holds a hardware-backed device key — attendance is confirmed automatically. '
                   'STALE means the attestation is older than the 14-day grace period — attendance still confirms, re-attest soon. '
-                  'NONE means a software key with no hardware tier claimed — attendance still marks through the flagged device-none-fallback, with every other check still run.',
+                  'NONE means a software key with no hardware tier claimed — attendance never auto-marks (manual approval path, every other check still run).',
                   style: ProxType.body(),
                 ),
               ),

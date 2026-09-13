@@ -15,13 +15,11 @@
 //   FULL/STD → confirmed,
 //   STALE (14d grace past attestedUntil) → confirmed+banner,
 //   NONE → device-unproven (no tier claimed).
-// Live-marking note: `verifyProve` (crypto/verify.dart) applies a graceful
-// NONE fallback until HW keys ship — a bound-NONE proof still runs every
-// ticket/Sig_s/face/sighting check and confirms with a
-// `device-none-fallback` flag instead of verdicting device-unproven, so
-// genuine software-key students mark normally. The pure tier above is
-// unchanged (NONE still never *tiers*); only the live verify path falls
-// back, loudly.
+// Live-marking note: `verifyProve` (crypto/verify.dart) is fresh-only —
+// a bound proof claiming level NONE never confirms
+// (`device-none-requires-approval`, routed to the manual path, never a
+// mark). The pure tier above is unchanged (NONE never *tiers*); the live
+// verify path rejects NONE closed, loudly.
 // Heartbeat rolls attestedUntil; old-DKey-signed MoveIntent = instant move
 // else 30-day cooldown kept; backup-restore clone fails unwrap → 'restore
 // detected — re-enroll'; double-pkD audit flag on sync.
