@@ -38,6 +38,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
+import '../features/entry/entry_flow.dart' show entryRequireEnrollIntegrity;
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart'
@@ -382,6 +383,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     }
     try {
       requireMobileFace();
+    } on StateError catch (e) {
+      state = state.copyWith(phase: EnrollPhase.error, message: '$e');
+      return;
+    }
+    // Security §5 pre-enroll gate (key ceremony): privileged / hooked /
+    // tampered / emulator devices cannot create HW keys. StateError
+    // carries the actionable copy; debug alone passes.
+    try {
+      await entryRequireEnrollIntegrity();
     } on StateError catch (e) {
       state = state.copyWith(phase: EnrollPhase.error, message: '$e');
       return;
@@ -753,6 +763,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
               return null;
             }
           }
+        }
+        // Security §5 pre-enroll gate (claim): re-probed fresh at upload
+        // so a device tainted after the key ceremony still cannot claim.
+        try {
+          await entryRequireEnrollIntegrity();
+        } on StateError catch (e) {
+          state = state.copyWith(phase: EnrollPhase.error, message: '$e');
+          return null;
         }
         try {
           final outcome = await cloud.claimStudentDevice(

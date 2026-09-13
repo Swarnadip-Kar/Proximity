@@ -27,6 +27,7 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
+import '../features/entry/entry_flow.dart' show entryHostIntegrity;
 import 'device_store.dart';
 import 'net_if.dart';
 import 'platformx.dart' as platformx;
@@ -392,6 +393,17 @@ class RealHostDriver implements HostDriver {
   Future<HostSession> _startHostingInner(
       {required String classLabel, int port = 8443}) async {
     await _endHostingInner();
+    // Security §5 pre-host gate: ADVISORY only — hosting stays
+    // offline-capable by law; a tainted professor device logs its verdict
+    // hash (tainted-student proves still flag via their own dSig-bound
+    // hashes). Never throws by contract; belt-and-braces catch anyway.
+    try {
+      final hv = await entryHostIntegrity();
+      if (hv.flagForMarking.isNotEmpty) {
+        BleLog.log('SEC',
+            'host integrity flagged (${hv.flagForMarking}) → ${hv.hash} — hosting continues, student verdicts carry their own hashes');
+      }
+    } catch (_) {}
     final stored = await _store.readEnrollment();
     String manual = '';
     try {
