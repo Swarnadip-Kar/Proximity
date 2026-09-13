@@ -561,6 +561,10 @@ void main() {
             revoked: false,
             freshWindow: true,
             singleUseOk: true,
+            // C3(a): bound-NONE confirms only via the explicit fallback
+            // allowance (never by default) — this pins that path; the
+            // default-closed path is pinned in verify_test.dart.
+            allowNoneFallback: true,
           );
       // Weak liveness on NONE still rejects.
       final weakT = ticketFor(0.2);
@@ -590,6 +594,95 @@ void main() {
       final good = run(0.92, goodT, sigFor(goodT));
       expect(good.decision, ProveDecision.confirmed);
       expect(good.attestationFlags, contains('device-none-fallback'));
+    });
+
+    test('NONE fails closed by default (device-none-requires-approval)',
+        () {
+      final s = _setup(1);
+      final now = DateTime.now().toUtc();
+      final t = ProxCrypto.faceTicketHash(
+        faceScore: 0.85,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+        livenessScore: 0.92,
+        livenessVer: _livVer,
+      );
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: s.stu.privateKey,
+        sessionId: s.sess,
+        windowId: s.wid,
+        j: 1,
+        challenge: s.cj,
+        studentId: 'a@x.in',
+        faceScore: 0.85,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: _ver,
+        faceTicketHashBytes: t,
+      );
+      final out = verifyProve(
+        req: _liveReq(
+            id: 'a@x.in',
+            wid: s.wid,
+            j: 1,
+            cj: s.cj,
+            sigS: sig,
+            score: 0.85,
+            faceValidAt: now,
+            ticket: t,
+            now: now,
+            level: AttestationLevel.none,
+            dSigValid: false),
+        expectedCj: s.cj,
+        sessionId: s.sess,
+        windowIdExpected: s.wid,
+        studentPk: s.stu.publicKey,
+        revoked: false,
+        freshWindow: true,
+        singleUseOk: true,
+      );
+      expect(out.decision, ProveDecision.invalid);
+      expect(out.reason, 'device-none-requires-approval');
+    });
+
+    test('legacy unbound fails liveness-unbound post-floor (C3b)', () {
+      final s = _setup(1);
+      final now = DateTime.now().toUtc();
+      // Legacy 6-field Sig_s (no ticket at all).
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: s.stu.privateKey,
+        sessionId: s.sess,
+        windowId: s.wid,
+        j: 1,
+        challenge: s.cj,
+        studentId: 'a@x.in',
+        faceScore: 0.85,
+      );
+      VerifyOutcome run({required bool legacyAllow}) => verifyProve(
+            req: VerifyRequest(
+              id: 'a@x.in',
+              windowId: s.wid,
+              j: 1,
+              cClaimed: s.cj,
+              sigS: sig,
+              faceScore: 0.85,
+              faceValidAt: now,
+              peerW: Uint8List(8),
+              rssiDbm: -55,
+              relayHop: 0,
+              now: now,
+            ),
+            expectedCj: s.cj,
+            sessionId: s.sess,
+            windowIdExpected: s.wid,
+            studentPk: s.stu.publicKey,
+            revoked: false,
+            freshWindow: true,
+            singleUseOk: true,
+            requireLiveness: true,
+            legacyAllow: legacyAllow,
+          );
+      expect(run(legacyAllow: false).reason, 'liveness-unbound');
+      expect(run(legacyAllow: true).decision, ProveDecision.confirmed);
     });
   });
 
@@ -672,7 +765,7 @@ void main() {
       // Pin-pre-gate unit (fake DER, not X.509): sig verification is
       // explicitly skipped here; full-chain sig coverage lives in
       // test/chain_verify_test.dart (genuine + forged fixtures).
-      final r = verifyAttestationChainPin(
+      final r = verifyAttestationChainPinForTest(
           chain: chain,
           pinnedRootHashes: [rootHash],
           expectedChallenge: challenge,
@@ -745,11 +838,12 @@ void main() {
     test('unknown root fails (TOFU pin mismatch)', () {
       final challenge = randBytes(16);
       final (chain, _, _) = fakeChain(challenge);
-      final r = verifyAttestationChainPin(
+      final r = verifyAttestationChainPinForTest(
           chain: chain,
           pinnedRootHashes: [randBytes(32)],
           expectedChallenge: challenge,
-          level: AttestationLevel.full);
+          level: AttestationLevel.full,
+          verifySignatures: false);
       expect(r.ok, isFalse);
       expect(r.reason, 'unknown-root');
     });
@@ -764,7 +858,7 @@ void main() {
       // Pin-pre-gate unit (fake DER): OID skip is what is under test;
       // sig verification is explicitly skipped (full iOS-chain sig
       // coverage lives in test/chain_verify_test.dart).
-      final r = verifyAttestationChainPin(
+      final r = verifyAttestationChainPinForTest(
           chain: chain,
           pinnedRootHashes: [ProxCrypto.sha256Sync(root)],
           expectedChallenge: challenge,

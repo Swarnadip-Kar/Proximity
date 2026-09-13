@@ -34,7 +34,8 @@ void main() {
       profPk: prof.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
           const RadioSighting(rssiDbm: -60, hop: 0),
-    );
+      // ignore: cascade_invocations
+    )..allowLegacyUnbound = true; // legacy-fleet load shape (see transport_test makeServer)
     await server.start(port: 0);
   server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);

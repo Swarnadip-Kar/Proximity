@@ -516,10 +516,11 @@ void main() {
     });
 
     test('NONE at verifyProve falls back to legacy-equivalent confirm', () {
-      // Graceful fallback (HW keys don't ship): bound fields present but
-      // level NONE verifies like the legacy unbound proof — same
-      // ticket-bound Sig_s + sighting checks, no tier claimed. Logged via
-      // the fallback flag, never silent.
+      // C3(a) explicit fallback: bound fields present but level NONE
+      // verifies like the legacy unbound proof ONLY with
+      // allowNoneFallback:true — same ticket-bound Sig_s + sighting
+      // checks, no tier claimed. Logged via the fallback flag, never
+      // silent. Default (no flag) fails device-none-requires-approval.
       final s = _setup(1);
       final now = DateTime.now().toUtc();
       const score = 0.85;
@@ -563,6 +564,7 @@ void main() {
         revoked: false,
         freshWindow: true,
         singleUseOk: true,
+        allowNoneFallback: true,
       );
       expect(out.decision, ProveDecision.confirmed);
       expect(out.reason, 'ok');
@@ -671,6 +673,7 @@ void main() {
             revoked: false,
             freshWindow: true,
             singleUseOk: true,
+            allowNoneFallback: true,
           );
       expect(v(hop: 0, rssi: -55).decision, ProveDecision.confirmed);
       expect(v(hop: 99, rssi: -127).reason, 'no-ble-sighting');

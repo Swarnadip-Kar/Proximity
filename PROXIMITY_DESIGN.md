@@ -828,38 +828,86 @@ one-liner idioms and intentional seams (below).
 - **Acct-only org one-liners** (export/flagged): values arrive
   normalized from sign-in; a helper saves nothing net.
 
-### 13.3 Honest residual weaknesses
+### 13.3 Honest residual weaknesses (as-built — HW shipped, trust still TOFU)
 
-1. **Face trust is local and vendor-calibrated.** 0.70 FAR/FRR is the
-   plugin's published point, never Proximity-measured; no active
-   liveness — a good printed photo can pass the matcher. Behind it:
-   4-mismatch budget → needs-review → human override, 5-min holder
-   gate, cross-ticket replay impossible by construction.
-2. **Device trust is software until HW lands, and self-asserted even
-   then at the claim layer.** No keystore/Enclave backend yet →
-   DKey level `none` in practice; no server re-check exists at all
-   (§3.4), so a claimed FULL/STD is consistency-checked, never proven.
-    Anti-clone strength today = sealed envelope + install UUID + 30d move
-    bound + offline double-pkD audit, not silicon. Live NONE marks carry
-    the `device-none-fallback` flag so the lack of silicon stays visible
-    per proof.
+1. **Face + liveness trust is local and uncalibrated.** `T=0.70` (face) and
+   `Tl=0.70` (liveness) are shipped operating points, uncalibrated on
+   Proximity captures — no FAR/FRR numbers claimed anywhere in this doc.
+   Passive MiniFASNetV2 + 5 pose gates raise spoof cost but a good print/
+   replay at each angle can still pass. Behind it: 4-mismatch budget →
+   needs-review → human override, 5-min holder gate, cross-ticket replay
+   impossible, server `requireLivenessEnforced=true` (protocol default false
+   for migration). Calibrate via §13.5 before tightening.
+2. **Device trust is HW-backed but still client-asserted TOFU at first join
+   (§3.4).** `HwDeviceKey` ships (StrongBox→TEE / Secure Enclave,
+   `attested_secure_keys ^0.1.1`, PXK2 AES-GCM, offline chain pin incl. full
+   X.509 verify); no server re-check exists by constraint. A claimed FULL/STD
+   verifies as fresh `dSig` + offline chain pin + challenge match — never as
+   server provenance. Anti-clone strength = silicon seal + install UUID + 30d
+   move bound + offline double-pkD audit + revocation snapshot. Live NONE
+   marks carry `device-none-fallback` so the lack of silicon stays visible
+   per proof (hard NONE no-confirm ships with the HW-fleet + `min_version`
+   flip).
 3. **Network failure modes:** isolating APs kill UDP (measured 0/5 on
    institute /18) → BLE hint + manual IP carry join; the /24 sweep was
    deleted for kicking phones off WiFi; hotspot is excluded by design
-   (never a fallback). Wormhole vs a real-time accomplice pair stands (§7.3).
+   (never a fallback). TLS is per-hosting (not per-window — stale
+   `server:21`/`tls:38` comments say per-window); bearer is `?token=` query
+   (Track B/D owns the `Authorization: Bearer` header move). Wormhole vs a
+   real-time accomplice pair stands (§7.3, §3.4 — needs UWB).
 4. **Sync failure modes:** history↔outbox crash window heals on next
    mutation; tombstones beat older upserts (monotonic `timestampIso`
    bounds the skew damage); student-pull bypasses single-flight (same
-   reader, converges, but concurrent pulls can overlap).
-5. **Stored-material gaps:** no CRL/revocation (validity-at-enrollment +
-   bound + manual); no key sync to a new phone except MoveIntent /
-   re-enroll; backup-restore clones fail closed into re-enroll (correct
-   but a support cost).
+   reader, converges, but concurrent pulls can overlap). CSV exports quote +
+   formula-guard (`_csvField`: RFC-4180 quoting + `'` prefix on `=+—@`
+   leaders) in both `verify.dart` (W1/W2) and `storage.dart` (tally) —
+   opaque handling, never interpreted.
+5. **Stored-material gaps:** CRL is snapshot-only (7d TTL,
+   `RevocationCache` at enroll/host setup; stale/revoked stay review flags);
+   no key sync to a new phone except MoveIntent / re-enroll; backup-restore
+   clones fail closed into re-enroll (correct but a support cost). Rate
+   limits are in-memory per professor (`RateLimiter`, 10k-IP bound, resets
+   on restart — documented, never silent). Logs are PII-minimal:
+   `student_driver` carries no email/score (host `prove $email` is the known
+   verbose line — Track B/D owns the hash-prefix redaction; integrity/server
+   log changes are Track B/D — this pass documents only).
 
 ### 13.4 Explicitly deferred
 
-HW keystore/Enclave + material persistence · Apple root file ·
-SQLite/drift · background modes · privacy manifest / foreground-service /
-snap plug · CoreML export · UWB distance bounding · CRL · student-pull
-engine entry · README decision 9 still names the deleted EdgeFace stack
-(flagged, README out of scope for this pass).
+Apple root file · SQLite/drift · background modes · privacy manifest /
+foreground-service / snap plug · CoreML export · UWB distance bounding ·
+true push CRL (needs backend, excluded by Spark-free) · student-pull engine
+entry · bearer query→header move (Track B/D) · strict semver pre-release
+handling (needs `force_update_test` golden update + `min_version` bump) ·
+README decision 9 still names the deleted EdgeFace stack (flagged, README out
+of scope for this pass). HW keystore/Enclave + material persistence SHIPPED
+(removed from deferred — see §3.2).
+
+### 13.5 Residual procedures (run these, not just read)
+
+- TOFU review: professor review queue shows `DUPLICATE_FLAGGED` +
+  `audit-double-pkD` groups + ticket anomaly flags + `revocation-stale|revoked`
+  + `integrity-flagged` + `device-none-fallback` / `device-stale` banners.
+  Action: 1-tap resolve pairs (never auto-absent), manual attendance covers
+  gaps, 30d move bound + MoveIntent for genuine moves.
+- Evil-Twin / relay drill: forwarded code, off-site VPN, lent phone, photo
+  spoof, dual-phone wormhole attempt. Ship bar: wormhole needs an active
+  accomplice present across both full windows + live face.
+- Future-ticket / indefinite-offline: reconnect + `flushNow` before
+  high-stakes sessions; `revocation-stale` + `device-stale` banners clear on
+  fresh snapshot/heartbeat (`attestedUntil=+90d` roll, `RevocationCache` 7d).
+- CRL snapshot: refresh best-effort at online setup (`enrollment.dart:724`,
+  `host_driver.dart:412`); stale/missing → `revocation-stale` review flag.
+- Magisk / console runbook: Play Console SHA-256/bundleID → Play Integrity
+  DEVICE→STRONG → Firebase Console App Check → Firestore Enforce (+ iOS App
+  Attest w/ DeviceCheck fallback) → `app_config/min_version` bump with
+  `force:true` + copyable store links (barrier, no silent downgrade).
+  Requires console access. `FLAG_SECURE` already set in `MainActivity`
+  (screenshots blanked); iOS capture note: Keychain
+  `first_unlock_this_device_only` + `synchronizable:false` + `allowBackup=false`
+  + `data_extraction_rules.xml` (no clone via backup).
+- Calibration harness: `apps/proximity_app/test/liveness_calibration_test.dart`
+  (`sweepTl`/`recommendTl`/`formatCalibrationTable`) on field captures (live
+  + print/replay, varied light/phones). Ship only as threshold +
+  `kLivenessVer` + `min_version` bump; never claim FAR/FRR without a Proximity
+  ROC.

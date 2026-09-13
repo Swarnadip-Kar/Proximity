@@ -16,6 +16,10 @@ Future<ProxServer> makeServer({
   required ed.KeyPair stu,
   int windowNo = 1,
   void Function(String email, String decision, String reason)? onProve,
+  // C3(a): bound proofs without HW keys (no pkD) confirm only with the
+  // explicit NONE fallback (dup-path tests use bound pipeline tags without
+  // device keys). Default false (production closed).
+  bool allowNoneFallback = false,
 }) async {
   final window = WindowParams(
     sessionId: randBytes(16),
@@ -31,7 +35,14 @@ Future<ProxServer> makeServer({
     sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
         const RadioSighting(rssiDbm: -55, hop: 0),
     onProve: onProve,
-  );
+    // Legacy-fleet simulation: this suite proves legacy (unbound) bodies
+    // for sighting/duplicate/retake/dup-path behavior. Production default
+    // is closed (allowLegacyUnbound=false → liveness-unbound); the closed
+    // default is pinned by 'legacy unbound fails liveness-unbound by
+    // default' below + protocol C3b tests.
+  )
+    ..allowLegacyUnbound = true
+    ..allowNoneFallback = allowNoneFallback;
   await server.start(port: 0);
   server.openWindow(window, windowNo);
   return server;
@@ -219,7 +230,9 @@ void main() {
       profSk: prof.privateKey,
       profPk: prof.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => held,
-    )..sightingGrace = const Duration(seconds: 2);
+    )
+      ..sightingGrace = const Duration(seconds: 2)
+      ..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
     await server.start(port: 0);
     server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
@@ -233,6 +246,45 @@ void main() {
       final res = await proveOnce(client, desc, cj, desc.jNow, stu);
       expect(res.decision, ProveDecision.confirmed);
       expect(server.tally.presentCount, 1);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('legacy unbound fails liveness-unbound by default (C3b closed)',
+      () async {
+    // Production default: allowLegacyUnbound=false (host_driver never sets
+    // it). A legacy (unbound, pre-liveness) proof fails closed once the
+    // liveness floor is enforced — never a silent confirm. Mixed-fleet
+    // tests opt in explicitly (see makeServer).
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final window = WindowParams(
+      sessionId: randBytes(16),
+      windowId: randBytes(6),
+      secret: randBytes(32),
+      t0: DateTime.now().toUtc(),
+      classLabel: 'CS201-Room301',
+    );
+    final server = ProxServer(
+      classLabel: 'CS201-Room301',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
+          const RadioSighting(rssiDbm: -55, hop: 0),
+    );
+    expect(server.allowLegacyUnbound, isFalse);
+    await server.start(port: 0);
+    server.openWindow(window, 1);
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = window.challengeFor(window.jForTime(DateTime.now().toUtc()));
+      final desc = await client.fetchWindow(cj);
+      final res = await proveOnce(client, desc, cj, desc.jNow, stu);
+      expect(res.decision, ProveDecision.invalid);
+      expect(res.reason, 'liveness-unbound');
+      expect(server.tally.presentCount, 0);
     } finally {
       client.close();
       await server.stop();
@@ -254,7 +306,9 @@ void main() {
       profSk: prof.privateKey,
       profPk: prof.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
-    )..sightingGrace = const Duration(milliseconds: 300);
+    )
+      ..sightingGrace = const Duration(milliseconds: 300)
+      ..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
     await server.start(port: 0);
     server.openWindow(window, 1);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
@@ -456,7 +510,8 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      // ignore: cascade_invocations
+    )..allowLegacyUnbound = true; // legacy-fleet simulation (see makeServer)
     await server.start(port: 0);
     final client = ProxClient(host: '127.0.0.1', port: server.port);
     Future<ProveResult> proveAt(int j) async {
@@ -1381,8 +1436,14 @@ void main() {
       final ka = ProxCrypto.generateEdKeypair();
       final kb = ProxCrypto.generateEdKeypair();
       final log = <String>[];
+      // Bound-NONE proofs (no HW keys in this suite): the dup path is the
+      // behavior under test, so the explicit NONE fallback is passed —
+      // production leaves it closed (professor tap).
       final server = await makeServer(
-          prof: prof, stu: ka, onProve: (e, d, r) => log.add('$e|$d|$r'));
+          prof: prof,
+          stu: ka,
+          onProve: (e, d, r) => log.add('$e|$d|$r'),
+          allowNoneFallback: true);
       final client = ProxClient(host: '127.0.0.1', port: server.port);
       try {
         final cj = server.window!.challengeFor(0);

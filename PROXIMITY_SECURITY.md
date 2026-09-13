@@ -19,17 +19,29 @@
 - Design §3.4 honest: no chain verification anywhere. `attestationLevel` written by client in `firestore_sync.dart:claimStudentDevice:426`, trusted by `protocol/device_binding.dart:evaluateDeviceProof` + `crypto/verify.dart:verifyProve`.
 - Patched client claims `FULL` with software key. Only mitigations today: `device-none-fallback` flag + `audit-double-pkD` + ticket binding. Fix: §2 (HW keys + offline chain-vs-pinned-roots).
 
-### F3 — Default secure storage (HIGH)
-- `core/sync/store/secure_store.dart:30 const FlutterSecureStorage()` — no `AndroidOptions.biometric`, no `IOSOptions(synchronizable:false, thisDeviceOnly, biometryCurrentSet)`, `allowBackup` not disabled.
-- History/outbox in plaintext `SharedPreferences`. Rooted read trivial. Fix: §3.
+### F3 — Default secure storage (HIGH, fixed — historical)
+- Was: `core/sync/store/secure_store.dart:30 const FlutterSecureStorage()` — no `AndroidOptions.biometric`, no `IOSOptions(synchronizable:false, thisDeviceOnly, biometryCurrentSet)`, `allowBackup` not disabled.
+- Now: `SecureStoreOptions` (`aOpts` biometric Class-3 only + `iOpts`
+  `first_unlock_this_device_only`/`synchronizable:false`/`biometryCurrentSet`)
+  + `allowBackup=false`/`fullBackupContent=false`/`data_extraction_rules.xml`
+  + `Info.plist` `NSFaceIDUsageDescription` ship. History/outbox in plaintext
+  `SharedPreferences` remains (rooted read residual — HW seal DEK never lives
+  there). Fix: §3.
 
 ### F4 — No liveness classifier (HIGH)
 - `features/face_identity/face_verifier.dart`: passive FaceNet matcher only. 5 pose gates raise cost but photo-at-each-angle still passes (design §4 residual).
 - `student_driver.dart:308,536 livenessPass:true` hardcoded. Score is decision-boundary constant (`score==threshold` on match) — host cannot grade strength. Fix: §4.
 
 ### F5 — No root/hook/emulator/tamper/AppCheck (HIGH)
-- No `firebase_app_check`, no root/jailbreak/Frida/Xposed/debugger/emulator/tamper package. `AndroidManifest.xml` lacks `allowBackup=false`, no `FLAG_SECURE`.
+- No `firebase_app_check`, no root/jailbreak/Frida/Xposed/debugger/emulator/tamper package. `AndroidManifest.xml` lacks `allowBackup=false`, screenshots not blanked.
 - Frida hook on `verify()`→`true` or `seedHex` read undetected. Fix: §5.
+- Status (2026-09-13 docs close-out): FIXED in code — `allowBackup=false` +
+  `fullBackupContent=false` + `data_extraction_rules.xml` ship;
+  `FLAG_SECURE` set in `MainActivity.kt` (window blanked in screenshots —
+  manifest never holds it, so "manifest lacks FLAG_SECURE" notes are stale);
+  `IntegrityGate` + `IntegrityAppCheck` (`firebase_app_check ^0.4.7`,
+  `flutter_security_suite ^1.1.1`) ship with console runbook in
+  `integrity.dart`. Residual: Magisk/Zygisk hiding (see §5 + DESIGN §13.5).
 
 ### F6 — No force-update (MEDIUM)
 - No `app_config/min_version`, no `package_info_plus` gate. Ticket/rules/verifier breaks fail as cryptic `bad-sig`/`face-unbound`; attacker pins old APK to bypass new gates. Fix: §6.
@@ -42,7 +54,7 @@
 
 ## 2. HW-bound device keys (`HwDeviceKey`)
 
-**Research:** Android Keystore StrongBox→TEE + key attestation (`developer.android.com/privacy-and-security/security-key-attestation`, AOSP `source.android.com/docs/security/features/keystore/attestation`, KeyMint/StrongBox CDD 9.11.2); `KeyGenParameterSpec.setUserAuthenticationRequired(true)+setInvalidatedByBiometricEnrollment(true)` + `BiometricPrompt.CryptoObject` (`developer.android.com/identity/sign-in/biometric-auth`); iOS Secure Enclave + App Attest/DeviceCheck; Flutter plugin `attested_secure_keys ^0.1.0` (exilonX, stable 2026-08-10, device-verified StrongBox/TEE + Secure Enclave, P-256 ES256, chain passthrough). M1 gap (in-app biometric CryptoObject prompt + server-nonce-as-challenge) → bind `challenge=SHA256(emailLower||installId||pkS32)` client-side for now.
+**Research:** Android Keystore StrongBox→TEE + key attestation (`developer.android.com/privacy-and-security/security-key-attestation`, AOSP `source.android.com/docs/security/features/keystore/attestation`, KeyMint/StrongBox CDD 9.11.2); `KeyGenParameterSpec.setUserAuthenticationRequired(true)+setInvalidatedByBiometricEnrollment(true)` + `BiometricPrompt.CryptoObject` (`developer.android.com/identity/sign-in/biometric-auth`); iOS Secure Enclave + App Attest/DeviceCheck; Flutter plugin `attested_secure_keys ^0.1.1` (StrongBox→TEE / Secure Enclave, P-256 ES256, challenge-bound, chain passthrough — pubspec pins `^0.1.1`; `^0.1.0` references elsewhere in older notes are stale). M1 gap (in-app biometric CryptoObject prompt + server-nonce-as-challenge) → bind `challenge=SHA256(emailLower||installId||pkS32)` client-side for now.
 
 **New file (only importer of the plugin):**
 - `apps/proximity_app/lib/features/device_identity/hw_device_key.dart` — `class HwDeviceKey implements DeviceKey` (P-256, non-exportable, ES256; Android StrongBox→TEE with `setUserAuthenticationRequired`, iOS Secure Enclave `biometryCurrentSet`; exposes `pkDHex+chainDER+level/window`; `Software=no enroll`).
@@ -64,9 +76,9 @@
 
 ## 4. Face liveness (`LivenessGate`)
 
-**Research:** `flutter_face_liveness` (MIT, May 2026: 7 actions, MiniFASNet-V2 1.7MB + FaceAntiSpoofing 3.9MB, 8-signal replay, Fisher-Yates shuffle, offline isolates); `face_anti_spoofing_detector ^0.0.5` (MIT, Silent-Face-Anti-Spoofing MiniVision passive); `MiniFASNetV2-SE 600KB ONNX ~98.2% CelebA-Spoof` via `tflite_flutter` for vendored passive. Reject commercial license-key SDKs.
+**Research:** vendored MiniFASNetV2 (`2.7_80x80`, Apache-2.0 Silent-Face-Anti-Spoofing, TFLite via `tflite_flutter ^0.12.1`, 1.85MB at `assets/models/silentface-minifasnetv2-27-80x80.tflite`) + ML Kit face-box crop; active enroll walk (blink+smile shuffled order binds presence, NOT measured vitality). Rejected: commercial license-key SDKs; `flutter_face_liveness` / `face_anti_spoofing_detector` plugin references in older notes are stale — no such deps ship (pubspec has neither).
 
-**New file:** `lib/features/face_identity/liveness_gate.dart` — `LivenessGate.detect(File,box)→{score,ver}` fail-closed.
+**Shipped API (not the `detect(File,box)` sketch in older notes):** `lib/features/face_identity/liveness_gate.dart` — `LivenessGate.detectPassive(imagePath)→LivenessResult{score,ver}` fail-closed + `HeuristicLivenessGate` fallback + `EnrollLivenessPlan` shuffle; tag `kLivenessVer = liveness/minifasnet-v2-27-80x80+<weightsHash8>`; input `[1,3,80,80]` float32 NCHW BGR/255, output `[1,3]` LIVE index 1.
 
 **Diffs:** gate in `face_verifier.dart / student_driver.dart:checkFace` before `verify()`; enroll = active blink+smile shuffled + passive centre-still; marking = passive only (~1s). Extend `ProxCrypto.faceTicketHash` → `SHA256(scoreMilli||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8)[0:8]`; `Sig_s+dSig` bind it; `VerifyRequest` adds `livenessScore/livenessVer`; host gates `>=T_l` + allowlist. Old tickets fail `bad-sig` (no silent downgrade).
 
@@ -74,7 +86,7 @@
 
 **Research:** `firebase_app_check ^0.4.7` (firebase.google.com, Aug 2026: 0.4.x provider-class API — `AndroidPlayIntegrityProvider` + `AppleAppAttestWithDeviceCheckFallbackProvider` via `IntegrityAppCheck.ensureActivated()` / `activate(providerAndroid:/providerApple:)`; the 0.3.x enum params are deprecated; Spark-compatible, console enforcement); `flutter_security_suite` (MIT: RootBeer/su + IOSSecuritySuite + emulator + Frida port/maps + Xposed/debugger + tamper SHA-256 + `FLAG_SECURE`) superset of `jailbreak_root_detection ^1.2.3` / `trust_fall` / `security_plus`. Console: SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump (requires console access; ordered runbook in `integrity.dart` `IntegrityAppCheck` docs).
 
-**New file:** `lib/core/security/integrity.dart` — `performCheck()` (startup) + `verifyBeforeSensitiveOp(op)` (enroll/host/prove) → `IntegrityVerdict{rooted,hooked,tampered,emulator,debug,hash}`.
+**New file:** `lib/core/security/integrity.dart` — `performCheck()` (startup) + `verifyBeforeSensitiveOp(op)` (enroll/host/prove) → `IntegrityVerdict{rooted,hooked,tampered,emulator,debug,hash}`. Probe is `PlatformIntegrityProbe` over `flutter_security_suite ^1.1.1` (`SecureBankKit.runSecurityCheck` → `SecurityStatus`; 8s `probeBudget`; per-signal mapping in file docs; `com.securebankkit/security` `feature#action` channel pinned by `integrity_gate_test:291-322`; debug-alone never blocks enroll — `isAppIntegrityValid` gated `&& !kDebugMode` so dev/sideloaded builds don't false-taint).
 
 **Diffs:** `main/entry_flow`: `activate(AppCheck)` before Firestore, `performCheck()` at startup; enroll hard-blocks `privileged/hooked/tampered/emulator`; marking binds `verdictHash` into `dSig`, professor flags `integrity-flagged` (never auto-absent offline).
 
@@ -82,34 +94,35 @@
 
 **New:** `lib/core/app_config/force_update.dart` + Firestore `app_config/min_version {minVersion,latest,force,msg,storeAndroid,storeIos}` (`allow get:true`).
 
-**Diffs:** check in `entry_flow/host/enroll` via `package_info_plus`; `force && current<minVersion` → non-dismissible barrier with store buttons. Bump on any ticket/rules/verifier break. Remote Config rejected (extra dep, same guarantee, extra quota).
+**Diffs:** check in `entry_flow/host/enroll` via `package_info_plus`; `force && current<minVersion` → non-dismissible barrier (`barrierDismissible:false` + `PopScope(canPop:false)`) with copyable store links (copy-to-clipboard text, no `url_launcher` — "store buttons" in older notes = copy-link + Recheck actions, never auto-launch). Bump on any ticket/rules/verifier break. Remote Config rejected (extra dep, same guarantee, extra quota). `force` is strict bool (strings incl. `"true"` never gate); `compareVersions` currently strips pre/build for migration leniency (`1.2.3-beta == 1.2.3` pinned by test) — strict pre<release ships with the golden update + `min_version` bump.
 
 ## 7. Schema / offline (additive only)
 
 Keep `studentDevices/directory/{emailLower}, users/{uid}, deviceInstalls/{uuid}, classSessions/{randomId}`. Only adds: `attestationChain (list<string> DER hex), livenessVer (string), integrityFlag (string)`. Marking stays `BLE Cj(5s)+Sig_s+dSig(HW)+face/liveness+pin+sighting→ACK`; sync later `PRESENT/ABSENT/FLAGGED` only. Zero face vectors/images to cloud.
 
-**Rules diff (append, existing gates untouched):**
+**Rules diff (append, existing gates untouched — matches `firestore.rules:234-242 + 395-397`):**
 ```
 match /app_config/{id} { allow get: if true; allow list,write: if false; }
 match /studentDevices/{id} { // create/update: + pkDHex is string
   && (!('attestationChain' in request.resource.data) || request.resource.data.attestationChain is list)
   && (!('livenessVer' in request.resource.data) || request.resource.data.livenessVer is string)
-  && (!('integrityFlag' in request.resource.data) || request.resource.data.integrityFlag is string) }
+  && (!('integrityFlag' in request.resource.data) || request.resource.data.integrityFlag == '' || request.resource.data.integrityFlag == 'integrity-flagged')
+  && (!('pkDHex' in request.resource.data) || request.resource.data.pkDHex is string) }
 ```
 App Check enforcement is console toggle (no rules syntax on Spark).
+Opaque handling: chain/pkD bytes are type-checked only here — never
+decrypted/interpreted server-side (no backend exists to do so).
 
-**Pubspec (app):**
+**Pubspec (app — as-built, `apps/proximity_app/pubspec.yaml`):**
 ```yaml
-attested_secure_keys: ^0.1.0
+attested_secure_keys: ^0.1.1 # HW DKey (StrongBox→TEE / Secure Enclave)
 flutter_secure_storage: ^11.0.0
-firebase_app_check: ^0.4.7
-flutter_security_suite: ^latest
-flutter_face_liveness: ^latest
-face_anti_spoofing_detector: ^0.0.5
+firebase_app_check: ^0.4.7 # 0.4.x provider-class API
+flutter_security_suite: ^1.1.1 # PINNED (not ^latest)
+tflite_flutter: ^0.12.1 # vendored MiniFASNetV2 only (no flutter_face_liveness / face_anti_spoofing_detector — older notes naming them are stale)
 package_info_plus: ^10.2.1 # (was ^8: win32 ^5→^6 split with fss ^11)
 share_plus: ^13.3.0 # (was ^12: same win32 split)
 file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
-tflite_flutter: ^0.11.0 # only if vendoring MiniFASNet
 ```
 
 **Migration order:** (1) deploy rules + `app_config` doc; (2) ship dual-read build (new fields default `''/NONE`); (3) first online open: SE migration + `seedHex→''` wipe + heartbeat rolls `attestedUntil`; (4) stale-pipeline → re-face only (key kept); (5) software enrollments → `Software=no enroll` + re-enroll via `MoveIntent` fast path. No wipe, no cloud face backfill.

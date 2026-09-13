@@ -209,6 +209,42 @@ class ProxServer {
   /// between WiFi latency and scan intervals. Tests shrink it.
   Duration sightingGrace = const Duration(seconds: 4);
 
+  /// C3(b) legacy allowance (migration only, default CLOSED): false fails a
+  /// legacy (unbound, pre-liveness) proof as `liveness-unbound` once the
+  /// liveness floor is enforced (requireLivenessEnforced=true + min_version
+  /// 0.2.0/force:true). True preserves the legacy confirm path for
+  /// mixed-fleet tests (mirrors verifyProve's [legacyAllow] — same
+  /// pattern). Production (host_driver) leaves this false; tests simulating
+  /// the legacy fleet pass true explicitly.
+  bool allowLegacyUnbound = false;
+
+  /// C3(a) NONE-fallback allowance (default CLOSED — NONE never confirms
+  /// without professor tap): true restores the flagged
+  /// (`device-none-fallback`) confirm for ticket-bound NONE proofs, for
+  /// tests exercising non-device paths (e.g. the local dup detector) with
+  /// bound proofs but no HW keys. Mirrors verifyProve's [allowNoneFallback].
+  /// Production (host_driver) leaves this false.
+  bool allowNoneFallback = false;
+
+  /// Test-only chain-gate override (HW transport tests use fake-DER chains
+  /// carrying the OID + challenge bytes but no X.509 signatures — the
+  /// production [verifyAttestationChainPin] with checkValidity:true rejects
+  /// them as bad-chain-der. The test stub reuses the REAL byte-helpers for
+  /// challenge containment and approximates the leaf-pkD bind as
+  /// byte-containment of the raw pkD (exact SPKI equality is covered at the
+  /// protocol level on genuine Google fixtures in chain_verify_test).
+  /// X.509 signature math is therefore NOT exercised here — only the
+  /// dSig + challenge-recompute + tier wiring. Null = production gate.
+  /// Never set outside tests.
+  ChainPinResult Function({
+    required AttestationChain chain,
+    required List<Uint8List> pinnedRootHashes,
+    required Uint8List expectedChallenge,
+    required Uint8List? alternateChallenge,
+    required Uint8List? expectedLeafPkD,
+    required AttestationLevel level,
+  })? testChainGate;
+
   HttpServer? _http;
   WindowParams? _window;
   int _windowNo = 1;
@@ -877,6 +913,12 @@ class ProxServer {
           // face-bound pre-liveness proofs fail closed (`liveness-unbound`
           // with actionable copy) via [requireLivenessEnforced] above.
           requireLiveness: requireLivenessEnforced,
+          // C3(b): legacy (unbound) proofs fail `liveness-unbound` unless
+          // this server explicitly allows the legacy fleet (tests only).
+          legacyAllow: allowLegacyUnbound,
+          // C3(a): bound-NONE proofs confirm with the fallback flag only
+          // when explicitly allowed (tests only — production taps manual).
+          allowNoneFallback: allowNoneFallback,
         );
       }
 
@@ -970,15 +1012,24 @@ class ProxServer {
                 ok: false,
                 reason: 'empty-chain',
                 flags: ['attest-empty-chain'])
-            : verifyAttestationChainPin(
-                chain: proveChain,
-                pinnedRootHashes: pinnedAttestationRoots,
-                expectedChallenge: expectedAttChallengeV2,
-                alternateChallenge: expectedAttChallengeV1,
-                expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
-                level: attLevel,
-                checkValidity: true,
-              );
+            : testChainGate != null
+                ? testChainGate!(
+                    chain: proveChain,
+                    pinnedRootHashes: pinnedAttestationRoots,
+                    expectedChallenge: expectedAttChallengeV2,
+                    alternateChallenge: expectedAttChallengeV1,
+                    expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+                    level: attLevel,
+                  )
+                : verifyAttestationChainPin(
+                    chain: proveChain,
+                    pinnedRootHashes: pinnedAttestationRoots,
+                    expectedChallenge: expectedAttChallengeV2,
+                    alternateChallenge: expectedAttChallengeV1,
+                    expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+                    level: attLevel,
+                    checkValidity: true,
+                  );
         if (!pin.ok) {
           outcome = VerifyOutcome(ProveDecision.invalid, 'device-unproven',
               [...outcome.attestationFlags, ...pin.flags]);

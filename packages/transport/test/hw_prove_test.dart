@@ -54,14 +54,77 @@ Uint8List _p256Sign(BigInt d, Uint8List preimage, [int salt = 7]) {
   return Uint8List.fromList([...be(sig.r), ...be(sig.s)]);
 }
 
-/// Leaf embeds the attestation OID + [challenge]; root is random bytes.
-/// Returns (chainHex, rootDer) — the caller pins sha256(rootDer).
-(List<String>, Uint8List) _chainFor(Uint8List challenge, [int salt = 9]) {
+/// Leaf embeds the attestation OID + [challenge] + raw pkD bytes; root is
+/// random bytes. Returns (chainHex, rootDer) — the caller pins
+/// sha256(rootDer). The pkD embedding lets the test chain-gate stub
+/// approximate the production leaf-pkD bind as byte-containment (exact SPKI
+/// equality is covered at protocol level on genuine Google fixtures —
+/// see chain_verify_test leaf-pkD round-trip).
+(List<String>, Uint8List) _chainFor(Uint8List challenge, Uint8List pkD,
+    [int salt = 9]) {
   final leaf = Uint8List.fromList(
-      [...kKeyAttestationOidDer, ...challenge, 0xAA, 0xBB]);
+      [...kKeyAttestationOidDer, ...challenge, ...pkD, 0xAA, 0xBB]);
   final root = Uint8List.fromList(
       List.generate(64, (i) => (i * 13 + salt) & 0xFF));
   return ([hexEncode(leaf), hexEncode(root)], root);
+}
+
+/// Test-only chain gate for fake-DER fixtures: reuses the REAL challenge
+/// byte-helper, approximates the leaf-pkD bind as pkD byte-containment
+/// (fake leaves carry no parseable SPKI), checks level/emptiness/pin.
+/// X.509 signature math + validity dates are NOT exercised here — covered
+/// by protocol chain_verify_test on genuine fixtures. Mirrors the
+/// production gate's reason/flag vocabulary so wiring asserts stay honest.
+ChainPinResult _fakeChainGate({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required Uint8List? alternateChallenge,
+  required Uint8List? expectedLeafPkD,
+  required AttestationLevel level,
+}) {
+  if (level == AttestationLevel.none) {
+    return const ChainPinResult(
+        ok: false, reason: 'level-none', flags: ['attest-level-none']);
+  }
+  if (chain.isEmpty) {
+    return const ChainPinResult(
+        ok: false, reason: 'empty-chain', flags: ['attest-empty-chain']);
+  }
+  final leaf = chain.leaf!;
+  if (!attestationLeafHasKeyOid(leaf)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'missing-attestation-oid',
+        flags: ['attest-missing-oid']);
+  }
+  // Leaf-pkD bind approximation (see _chainFor): the proving pkD must be
+  // contained in the leaf. A key transplant across devices fails here.
+  if (expectedLeafPkD != null &&
+      expectedLeafPkD.isNotEmpty &&
+      !attestationLeafContainsChallenge(leaf, expectedLeafPkD)) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'leaf-pkd-mismatch',
+        flags: ['attest-leaf-pkd-mismatch']);
+  }
+  final challengeOk =
+      attestationLeafContainsChallenge(leaf, expectedChallenge) ||
+          (alternateChallenge != null &&
+              alternateChallenge.isNotEmpty &&
+              attestationLeafContainsChallenge(leaf, alternateChallenge));
+  if (!challengeOk) {
+    return const ChainPinResult(
+        ok: false,
+        reason: 'challenge-mismatch',
+        flags: ['attest-challenge-mismatch']);
+  }
+  final rootHash = ProxCrypto.sha256Sync(chain.root!);
+  if (!pinnedRootHashes.any((h) => bytesEqual(h, rootHash))) {
+    return const ChainPinResult(
+        ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
+  }
+  return const ChainPinResult(ok: true, reason: 'ok');
 }
 
 Future<ProxServer> _makeHwServer({
@@ -84,7 +147,7 @@ Future<ProxServer> _makeHwServer({
         const RadioSighting(rssiDbm: -55, hop: 0),
     onProve: onProve,
     pinnedRoots: pinnedRoots,
-  );
+  )..testChainGate = _fakeChainGate;
   await server.start(port: 0);
   server.openWindow(window, 1);
   return server;
@@ -198,7 +261,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
@@ -239,7 +302,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
@@ -279,7 +342,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
@@ -304,7 +367,58 @@ void main() {
       );
       expect(res.decision, ProveDecision.invalid);
       expect(res.reason, 'device-unproven');
+      // Gate order mirrors production (leaf-pkD bind before challenge):
+      // the proving pkD matches the leaf here, so the lie surfaces as a
+      // challenge mismatch (installId bind). A transplanted pkD fails
+      // earlier as leaf-pkd-mismatch (covered at protocol level +
+      // 'transplanted pkD' below).
       expect(proved.single, contains('attest-challenge-mismatch'));
+      expect(server.tally.presentCount, 0);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('transplanted pkD (valid chain, attacker key) → leaf-pkd-mismatch',
+      () async {
+    // C2 key-substitution: the chain is genuine for the victim device and
+    // the attacker's dSig is valid under the ATTACKER's P-256 key — every
+    // check passes except the leaf-pkD bind (leaf carries the victim pkD,
+    // the proof carries the attacker pkD). Must fail closed, never a tier.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final device = _p256Key();
+    final attacker = _p256Key(99);
+    final proved = <String>[];
+    final enrollChallenge = deviceBindingChallenge(
+        emailLower: _email,
+        installId: _installId,
+        pkS: _pk32(stu.publicKey));
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
+    final server = await _makeHwServer(
+      prof: prof,
+      pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
+      onProve: (e, d, r) => proved.add('$e $d $r'),
+    );
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      final cj = server.window!.challengeFor(0);
+      final desc = await client.fetchWindow(cj);
+      final res = await _proveHw(
+        client: client,
+        desc: desc,
+        cj: cj,
+        j: 0,
+        stu: stu,
+        pkD: attacker.pkD,
+        dKey: attacker.d,
+        chainHex: chainHex,
+        installId: _installId,
+      );
+      expect(res.decision, ProveDecision.invalid);
+      expect(res.reason, 'device-unproven');
+      expect(proved.single, contains('attest-leaf-pkd-mismatch'));
       expect(server.tally.presentCount, 0);
     } finally {
       client.close();
@@ -322,7 +436,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
@@ -365,7 +479,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],
@@ -407,7 +521,7 @@ void main() {
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
-    final (chainHex, rootDer) = _chainFor(enrollChallenge);
+    final (chainHex, rootDer) = _chainFor(enrollChallenge, device.pkD);
     final server = await _makeHwServer(
       prof: prof,
       pinnedRoots: [ProxCrypto.sha256Sync(rootDer)],

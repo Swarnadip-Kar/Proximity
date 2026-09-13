@@ -253,6 +253,40 @@ void main() {
     });
   });
 
+  group('leaf-pkD bind (C2 key-substitution)', () {
+    test('extracted leaf SPKI round-trips as expectedLeafPkD', () {
+      final certs = _genuineChain();
+      final rootHash = ProxCrypto.sha256Sync(certs.last);
+      final leafPkD = extractLeafEcPublicKeyRaw(certs.first);
+      expect(leafPkD, isNotNull);
+      expect(leafPkD, hasLength(64));
+      final r = verifyAttestationChainPin(
+        chain: AttestationChain(certs),
+        pinnedRootHashes: [rootHash],
+        expectedChallenge: Uint8List.fromList('challenge'.codeUnits),
+        level: AttestationLevel.full,
+        expectedLeafPkD: leafPkD,
+      );
+      expect(r.ok, isTrue, reason: r.reason);
+    });
+
+    test('wrong pkD fails leaf-pkd-mismatch before challenge/pin', () {
+      final certs = _genuineChain();
+      final rootHash = ProxCrypto.sha256Sync(certs.last);
+      final leafPkD = extractLeafEcPublicKeyRaw(certs.first)!;
+      final wrong = Uint8List.fromList(leafPkD)..[0] ^= 0xFF;
+      final r = verifyAttestationChainPin(
+        chain: AttestationChain(certs),
+        pinnedRootHashes: [rootHash],
+        expectedChallenge: Uint8List.fromList('challenge'.codeUnits),
+        level: AttestationLevel.full,
+        expectedLeafPkD: wrong,
+      );
+      expect(r.ok, isFalse);
+      expect(r.reason, 'leaf-pkd-mismatch');
+    });
+  });
+
   group('current EC P-384 root (self-signed)', () {
     test('self-signature verifies with its own P-384 key', () {
       final root = _pemToDer(_currentEcRootPem);
