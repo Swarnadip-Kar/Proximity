@@ -40,16 +40,25 @@
 //   input  [1,3,80,80] float32 NCHW, BGR order, pixels /255 (face crop).
 //   output [1,3] float32 softmax [spoof-print, LIVE, spoof-replay].
 //   score  output[1] ([kMinifasnetLiveIndex]) via [liveScoreFromProbs].
-// Pre-processing ([minifasnetInputFromRgba]): centre-square crop of the
-// still + nearest-neighbour resize to 80x80 + BGR/255/NCHW packing.
+// Pre-processing ([minifasnetInputFromRgba]): face-box square crop (ML Kit
+// bbox via google_mlkit_face_detection, squared + clamped — see
+// liveness_gate_native.dart) + nearest-neighbour resize to 80x80 +
+// BGR/255/NCHW packing. Fallback is the legacy centre-square crop when
+// detection is unavailable/ambiguous (0 or >1 faces, detector error /
+// timeout, unparseable dims) — same scorer + same Tl, never a pass, never
+// a throw for the fallback itself (comment at the call-site).
 //
-// Honesty note (residuals, not immunity claims): the gate crops the whole
-// still's centre — it does NOT run a face detector for the 2.7x face-box
-// crop the weights were trained on, and it runs only the primary 2.7-scale
-// model (upstream ensembles a second 4.0-scale model). FAR/FRR are
-// UNMEASURED on Proximity captures (no Proximity ROC yet); the host
-// threshold Tl=0.70 ([kLivenessThreshold], protocol-owned) applies to the
-// OUTPUT. The adversarial drill + 2-phone relay (sec-verify) stay
+// Honesty note (residuals, not immunity claims): the gate now crops the
+// face box but runs only the primary 2.7-scale model (upstream ensembles
+// a second 4.0-scale model), and the box is a tight square with no 2.7x
+// context expansion the weights were trained with. FAR/FRR are UNMEASURED
+// on Proximity captures (no Proximity ROC yet); Tl=0.70
+// ([kLivenessThreshold], protocol-owned) is the shipped operating point,
+// NOT a calibrated Proximity threshold.
+// TODO(sec-face): calibrate box expansion + Tl on a Proximity ROC
+// (genuine dim/blurry stills vs print/replay spoofs), then pin the
+// calibrated expansion + threshold with a [kLivenessVer] bump (re-face,
+// key kept). The adversarial drill + 2-phone relay (sec-verify) stay
 // required. The gate FAILS CLOSED on unreadable stills, missing assets,
 // and interpreter errors — never a pass, never a heuristic fallback.
 //
@@ -122,17 +131,164 @@ double liveScoreFromProbs(List<double> probs) {
   return probs[kMinifasnetLiveIndex].clamp(0.0, 1.0);
 }
 
+/// Pure face-box helper (no native calls, unit-tested): squares an ML Kit
+/// bbox ([faceLeft]/[faceTop]/[faceRight]/[faceBottom] in the SAME pixel
+/// space as the frame) around its centre (max side, tight — no 2.7x
+/// context expansion; see the file header calibration TODO) and clamps it
+/// to the frame. Returns null when the box is unusable (empty, inverted,
+/// zero-area, or larger than the frame after clamping, or <8px detail) —
+/// the caller falls back to the legacy centre-square crop (same scorer +
+/// Tl, never a throw for the fallback itself).
+({int left, int top, int edge})? squareCropFromFaceBox({
+  required int frameWidth,
+  required int frameHeight,
+  required int faceLeft,
+  required int faceTop,
+  required int faceRight,
+  required int faceBottom,
+}) {
+  if (frameWidth <= 0 || frameHeight <= 0) return null;
+  final l = faceLeft.clamp(0, frameWidth);
+  final t = faceTop.clamp(0, frameHeight);
+  final r = faceRight.clamp(0, frameWidth);
+  final b = faceBottom.clamp(0, frameHeight);
+  final w = r - l;
+  final h = b - t;
+  if (w <= 0 || h <= 0) return null;
+  final edge = w > h ? w : h;
+  if (edge < 8) return null;
+  final cx = l + w ~/ 2;
+  final cy = t + h ~/ 2;
+  var sl = cx - edge ~/ 2;
+  var st = cy - edge ~/ 2;
+  if (sl < 0) sl = 0;
+  if (st < 0) st = 0;
+  if (sl + edge > frameWidth) sl = frameWidth - edge;
+  if (st + edge > frameHeight) st = frameHeight - edge;
+  if (sl < 0 || st < 0) return null;
+  return (left: sl, top: st, edge: edge);
+}
+
+/// Pure box-mapping helper (no native calls, unit-tested): maps an ML Kit
+/// bbox in ORIGINAL file pixels to DECODED frame pixels via the header
+/// dims ([originalDimsFromBytes]) and the decoded size. Returns null on
+/// any invalid geometry (the caller falls back to centre-square).
+({int left, int top, int right, int bottom})? mapFaceBoxToFrame({
+  required double origLeft,
+  required double origTop,
+  required double origRight,
+  required double origBottom,
+  required int origWidth,
+  required int origHeight,
+  required int frameWidth,
+  required int frameHeight,
+}) {
+  if (origWidth <= 0 ||
+      origHeight <= 0 ||
+      frameWidth <= 0 ||
+      frameHeight <= 0) {
+    return null;
+  }
+  if (!(origRight > origLeft && origBottom > origTop)) return null;
+  final sx = frameWidth / origWidth;
+  final sy = frameHeight / origHeight;
+  var l = (origLeft * sx).floor();
+  var t = (origTop * sy).floor();
+  var r = (origRight * sx).ceil();
+  var b = (origBottom * sy).ceil();
+  if (l < 0) l = 0;
+  if (t < 0) t = 0;
+  if (r > frameWidth) r = frameWidth;
+  if (b > frameHeight) b = frameHeight;
+  if (r <= l || b <= t) return null;
+  return (left: l, top: t, right: r, bottom: b);
+}
+
+/// Pure header parser (no native calls, unit-tested): recovers the ORIGINAL
+/// still dimensions from JPEG/PNG headers without a full decode, so the
+/// native gate can map the ML Kit bbox (original space) onto the 160px
+/// decoded frame. Returns null when the headers do not parse (the caller
+/// falls back to centre-square — never a throw for the fallback itself).
+/// Offline, no new dep. Bounds: PNG IHDR at 16..23; JPEG SOF0..SOF3 scan
+/// capped at 256KB / stops at SOS (SOF always precedes SOS in valid JPEG).
+({int width, int height})? originalDimsFromBytes(Uint8List bytes) {
+  if (bytes.length < 32) return null;
+  // PNG: 8-byte signature + IHDR chunk (width 16..19, height 20..23 BE).
+  if (bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4E &&
+      bytes[3] == 0x47) {
+    if (bytes.length < 24) return null;
+    if (bytes[12] != 0x49 ||
+        bytes[13] != 0x48 ||
+        bytes[14] != 0x44 ||
+        bytes[15] != 0x52) {
+      return null;
+    }
+    final w =
+        (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+    final h =
+        (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null;
+    return (width: w, height: h);
+  }
+  // JPEG: FF D8 ... SOF0 (C0)..SOF3 (C3) carry h/w.
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xFF &&
+      bytes[1] == 0xD8 &&
+      bytes[2] == 0xFF) {
+    final cap = bytes.length < 262144 ? bytes.length : 262144;
+    var i = 2;
+    while (i + 4 < cap) {
+      if (bytes[i] != 0xFF) {
+        i++;
+        continue;
+      }
+      var j = i + 1;
+      while (j < cap && bytes[j] == 0xFF) {
+        j++;
+      }
+      if (j >= cap) return null;
+      final marker = bytes[j];
+      if (marker == 0xD9) return null; // EOI before SOF.
+      // Standalone markers without a length field.
+      if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD8)) {
+        i = j + 1;
+        continue;
+      }
+      if (j + 2 >= cap) return null;
+      final len = (bytes[j + 1] << 8) | bytes[j + 2];
+      if (len < 2) return null;
+      // SOS starts the entropy-coded scan — SOF always precedes it, so a
+      // scan that reaches SOS without an SOF is unparseable for our use.
+      if (marker == 0xDA) return null;
+      if (marker >= 0xC0 && marker <= 0xC3) {
+        if (j + 7 >= cap) return null;
+        final h = (bytes[j + 4] << 8) | bytes[j + 5];
+        final w = (bytes[j + 6] << 8) | bytes[j + 7];
+        if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null;
+        return (width: w, height: h);
+      }
+      i = j + len + 1;
+    }
+    return null;
+  }
+  return null;
+}
+
 /// Pure pre-processing (no native calls, unit-tested): packs decoded RGBA
 /// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
 /// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels /255).
-/// The crop is the frame's centre square (see the file header: NOT a
-/// face-detector crop — documented residual), resized to
-/// [kLivenessInputSize] by nearest neighbour. Throws [ArgumentError] on
-/// size mismatches (fail-closed at the call-site).
+/// The crop is the squared face box ([faceBox] in the SAME pixel space as
+/// the frame, via [squareCropFromFaceBox]) when usable; otherwise the
+/// legacy centre square (fallback — same scorer + Tl, documented in the
+/// file header). Resized to [kLivenessInputSize] by nearest neighbour.
+/// Throws [ArgumentError] on size mismatches (fail-closed at the call-site).
 List<List<List<List<double>>>> minifasnetInputFromRgba({
   required Uint8List rgba,
   required int width,
   required int height,
+  ({int left, int top, int right, int bottom})? faceBox,
 }) {
   const size = kLivenessInputSize;
   if (width <= 0 || height <= 0) {
@@ -142,10 +298,27 @@ List<List<List<List<double>>>> minifasnetInputFromRgba({
     throw ArgumentError(
         'RGBA length ${rgba.length} != ${width}x$height frame');
   }
-  // Centre-square crop box.
-  final edge = width < height ? width : height;
-  final ox = (width - edge) ~/ 2;
-  final oy = (height - edge) ~/ 2;
+  // Face-box crop when usable, else the legacy centre-square fallback.
+  var edge = width < height ? width : height;
+  var ox = (width - edge) ~/ 2;
+  var oy = (height - edge) ~/ 2;
+  if (faceBox != null) {
+    final squared = squareCropFromFaceBox(
+      frameWidth: width,
+      frameHeight: height,
+      faceLeft: faceBox.left,
+      faceTop: faceBox.top,
+      faceRight: faceBox.right,
+      faceBottom: faceBox.bottom,
+    );
+    if (squared != null) {
+      ox = squared.left;
+      oy = squared.top;
+      edge = squared.edge;
+    }
+    // Null squared → centre-square fallback above (same scorer + Tl;
+    // the Tl gate stays the decider, never a throw for the fallback).
+  }
   // [c][y][x] accumulator in BGR order.
   final planes = List.generate(
       3, (_) => List.generate(size, (_) => List.filled(size, 0.0)));

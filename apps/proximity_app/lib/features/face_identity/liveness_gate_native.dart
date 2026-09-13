@@ -5,14 +5,16 @@
 //
 // Passive MiniFASNetV2 (offline, ~1s, no license-key SDK): file sanity
 // (missing/empty/tiny/unknown-magic fail closed) + dart:ui decode at 160px
-// + centre-crop/BGR/NCHW packing ([minifasnetInputFromRgba]) + ONE
-// `tflite_flutter` Interpreter invoke on the vendored weights
-// ([kLivenessModelAsset]) + LIVE-class post-processing
+// + face-box/BGR/NCHW packing ([minifasnetInputFromRgba] with an ML Kit
+// bbox, fallback centre-crop) + ONE `tflite_flutter` Interpreter invoke on
+// the vendored weights ([kLivenessModelAsset]) + LIVE-class post-processing
 // ([liveScoreFromProbs]). See liveness_gate.dart header for the model
-// contract and the honesty note (centre crop, no detector; single 2.7
-// model, no ensemble; FAR/FRR unmeasured). Every failure — unreadable
-// still, missing asset, interpreter/shape error, timeout — throws
-// StateError (fail-closed); there is NO heuristic fallback, by design.
+// contract and the honesty note (face-box crop, single 2.7 model, no
+// ensemble; FAR/FRR unmeasured + calibration TODO). Every failure —
+// unreadable still, missing asset, interpreter/shape error, timeout —
+// throws StateError (fail-closed); there is NO heuristic fallback, by
+// design. The face-box fallback (centre-crop) is NOT a heuristic pass:
+// both paths feed the SAME scorer + Tl decider.
 //
 // Class-name note: the historical `HeuristicLivenessGate` name is kept so
 // the shared wiring (`RealStudentDriver` default, web stub mirror) keeps
@@ -25,6 +27,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../../core/platformx.dart';
@@ -178,6 +181,63 @@ class HeuristicLivenessGate implements LivenessGate {
     }
   }
 
+  /// Face-box detector for the pre-TFLite crop (bbox only, no landmarks /
+  /// contours — minimal latency, offline, no new dep: the same
+  /// `google_mlkit_face_detection` binary the pose gate already ships).
+  /// Fast mode (pose gate uses accurate for Euler; the box needs only
+  /// existence + rect). Process-wide singleton like the interpreter below;
+  /// never closed (lives for the app lifetime). Runs on the MAIN isolate
+  /// only (MethodChannel reply — same SIGABRT rule as pose_gate_mlkit.dart;
+  /// [detectPassive] callers already run on main).
+  static FaceDetector? _boxDetector;
+
+  static FaceDetector _boxDetectorInstance() {
+    var d = _boxDetector;
+    if (d == null) {
+      d = FaceDetector(
+        options: FaceDetectorOptions(
+          enableLandmarks: false,
+          enableContours: false,
+          performanceMode: FaceDetectorMode.fast,
+        ),
+      );
+      _boxDetector = d;
+    }
+    return d;
+  }
+
+  /// One bbox pass in ORIGINAL file pixels. Returns null on every
+  /// non-usable outcome (0 or >1 faces, detector/channel error, timeout,
+  /// unparseable box) — the caller falls back to the legacy centre-square
+  /// crop (same scorer + Tl, never a throw for the fallback itself).
+  /// Never throws: detection failure must not block the scorer fallback.
+  static Future<
+      ({double left, double top, double right, double bottom})?>
+      _detectFaceBoxOriginal(String imagePath, Duration remaining) async {
+    try {
+      final faces = await _boxDetectorInstance()
+          .processImage(InputImage.fromFilePath(imagePath))
+          .timeout(remaining);
+      if (faces.length != 1) return null;
+      final b = faces.first.boundingBox;
+      if (!(b.right > b.left && b.bottom > b.top)) return null;
+      if (!b.left.isFinite ||
+          !b.top.isFinite ||
+          !b.right.isFinite ||
+          !b.bottom.isFinite) {
+        return null;
+      }
+      return (
+        left: b.left,
+        top: b.top,
+        right: b.right,
+        bottom: b.bottom,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Single-flight turnstile for full passes: `tflite_flutter`
   /// interpreters are NOT safe for concurrent `run` — overlapping passes
   /// (rapid rescan taps, enroll+marking overlap) would share one
@@ -185,7 +245,8 @@ class HeuristicLivenessGate implements LivenessGate {
   /// wait here but still fail closed on the shared [budget] deadline in
   /// [detectPassive] (rescan-safe throw, never a hang). The slot never
   /// completes with an error (see the `finally` below), so the chain stays
-  /// healthy across failures.
+  /// healthy across failures. The ML Kit bbox pass above also runs inside
+  /// this turnstile (serialized channel calls, no concurrent detects).
   static Future<void> _flight = Future.value();
 
   @override
@@ -214,8 +275,51 @@ class HeuristicLivenessGate implements LivenessGate {
       try {
         final bytes = await within(_readStillBytes(imagePath));
         final frame = await within(_decodeRgba(bytes));
+        // Face-box crop before TFLite (sec-face hardening): ML Kit bbox in
+        // ORIGINAL file pixels → map onto the 160px decoded frame via the
+        // header dims → squared + clamped crop inside the packer. Fallback
+        // is the legacy centre-square crop when detection is
+        // unavailable/ambiguous (0 or >1 faces, detector error/timeout,
+        // unparseable dims) — same scorer + same Tl, never a throw for the
+        // fallback itself (the Tl gate stays the decider; no silent
+        // downgrade — both paths feed the identical MiniFASNet scorer).
+        ({int left, int top, int right, int bottom})? faceBox;
+        try {
+          final remaining = deadline.difference(DateTime.now());
+          if (remaining > Duration.zero) {
+            final orig =
+                await _detectFaceBoxOriginal(imagePath, remaining);
+            if (orig != null) {
+              final dims = originalDimsFromBytes(bytes);
+              if (dims != null) {
+                faceBox = mapFaceBoxToFrame(
+                  origLeft: orig.left,
+                  origTop: orig.top,
+                  origRight: orig.right,
+                  origBottom: orig.bottom,
+                  origWidth: dims.width,
+                  origHeight: dims.height,
+                  frameWidth: frame.width,
+                  frameHeight: frame.height,
+                );
+              }
+              // Null dims or null mapped box → centre-square fallback below.
+            }
+            // Null orig (0/>1 faces, detector error/timeout) → fallback.
+          }
+          // Expired remaining → fallback (inference still races the shared
+          // deadline below and fails closed on timeout, never a hang).
+        } catch (_) {
+          // Belt-and-braces: the bbox helper never throws by contract, but
+          // a mapping surprise must still fall back, never fail the pass.
+          faceBox = null;
+        }
         final input = minifasnetInputFromRgba(
-            rgba: frame.rgba, width: frame.width, height: frame.height);
+          rgba: frame.rgba,
+          width: frame.width,
+          height: frame.height,
+          faceBox: faceBox,
+        );
         final output = List.generate(1, (_) => List.filled(3, 0.0));
         final it = await within(_interpreter());
         // Synchronous invoke (MiniFASNetV2 is ~5ms/frame on-device — the

@@ -144,6 +144,211 @@ void main() {
               rgba: Uint8List(0), width: 0, height: 0),
           throwsArgumentError);
     });
+
+    test('faceBox crops the face region (not the centre)', () {
+      // 20x20 frame: left 10 cols red, right 10 cols blue.
+      const w = 20, h = 20;
+      final rgba = Uint8List(w * h * 4);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final o = (y * w + x) * 4;
+          final left = x < 10;
+          rgba[o] = left ? 255 : 0; // R
+          rgba[o + 1] = 0; // G
+          rgba[o + 2] = left ? 0 : 255; // B
+          rgba[o + 3] = 255; // A
+        }
+      }
+      // Face box on the blue right side (8x8 square).
+      final input = minifasnetInputFromRgba(
+        rgba: rgba,
+        width: w,
+        height: h,
+        faceBox: (left: 12, top: 6, right: 20, bottom: 14),
+      );
+      // Entire 80x80 crop is blue (B channel 1.0 everywhere).
+      expect(input[0][0][0][0], moreOrLessEquals(1.0));
+      expect(input[0][0][kLivenessInputSize - 1][kLivenessInputSize - 1],
+          moreOrLessEquals(1.0));
+    });
+
+    test('invalid faceBox falls back to centre-square (same scorer)', () {
+      // 4x2 frame: left red, right blue (same fixture as the centre test).
+      final rgba = Uint8List(4 * 2 * 4);
+      for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 4; x++) {
+          final o = (y * 4 + x) * 4;
+          final left = x < 2;
+          rgba[o] = left ? 255 : 0; // R
+          rgba[o + 1] = 0; // G
+          rgba[o + 2] = left ? 0 : 255; // B
+          rgba[o + 3] = 255; // A
+        }
+      }
+      final centre =
+          minifasnetInputFromRgba(rgba: rgba, width: 4, height: 2);
+      // Empty box → squared helper returns null → centre fallback, bit-equal.
+      final fallback = minifasnetInputFromRgba(
+        rgba: rgba,
+        width: 4,
+        height: 2,
+        faceBox: (left: 0, top: 0, right: 0, bottom: 0),
+      );
+      expect(fallback[0][0][0][0], centre[0][0][0][0]);
+      expect(fallback[0][0][0][kLivenessInputSize - 1],
+          centre[0][0][0][kLivenessInputSize - 1]);
+    });
+  });
+
+  group('squareCropFromFaceBox (pure face-box)', () {
+    test('squares around the centre and clamps to the frame', () {
+      // Wide box in a 100x80 frame → 60px square centred on the box.
+      final c = squareCropFromFaceBox(
+        frameWidth: 100,
+        frameHeight: 80,
+        faceLeft: 10,
+        faceTop: 10,
+        faceRight: 70,
+        faceBottom: 40,
+      );
+      expect(c, isNotNull);
+      expect(c!.edge, 60);
+      // Centre of (10..70, 10..40) is (40, 25); 60-square from (10, -5)
+      // clamps top to 0.
+      expect(c.left, 10);
+      expect(c.top, 0);
+    });
+
+    test('invalid boxes return null (caller falls back)', () {
+      expect(
+          squareCropFromFaceBox(
+              frameWidth: 100,
+              frameHeight: 100,
+              faceLeft: 0,
+              faceTop: 0,
+              faceRight: 0,
+              faceBottom: 0),
+          isNull);
+      expect(
+          squareCropFromFaceBox(
+              frameWidth: 100,
+              frameHeight: 100,
+              faceLeft: 50,
+              faceTop: 50,
+              faceRight: 10,
+              faceBottom: 10),
+          isNull);
+      // <8px detail is detection noise → fallback.
+      expect(
+          squareCropFromFaceBox(
+              frameWidth: 100,
+              frameHeight: 100,
+              faceLeft: 10,
+              faceTop: 10,
+              faceRight: 15,
+              faceBottom: 15),
+          isNull);
+      // Box larger than the frame on a non-square sensor → cannot fit a
+      // square → fallback (square frames clamp to the whole frame, which
+      // equals the centre crop, so the null path needs a wide frame).
+      expect(
+          squareCropFromFaceBox(
+              frameWidth: 20,
+              frameHeight: 10,
+              faceLeft: -100,
+              faceTop: -100,
+              faceRight: 200,
+              faceBottom: 200),
+          isNull);
+    });
+  });
+
+  group('mapFaceBoxToFrame (pure box mapping)', () {
+    test('scales original pixels onto the decoded frame', () {
+      // 640x480 original → 160x120 decoded (0.25x each axis).
+      final m = mapFaceBoxToFrame(
+        origLeft: 100,
+        origTop: 100,
+        origRight: 300,
+        origBottom: 300,
+        origWidth: 640,
+        origHeight: 480,
+        frameWidth: 160,
+        frameHeight: 120,
+      );
+      expect(m, isNotNull);
+      expect(m!.left, 25);
+      expect(m.top, 25);
+      expect(m.right, 75);
+      expect(m.bottom, 75);
+    });
+
+    test('invalid geometry returns null (caller falls back)', () {
+      expect(
+          mapFaceBoxToFrame(
+              origLeft: 10,
+              origTop: 10,
+              origRight: 5,
+              origBottom: 5,
+              origWidth: 100,
+              origHeight: 100,
+              frameWidth: 40,
+              frameHeight: 40),
+          isNull);
+      expect(
+          mapFaceBoxToFrame(
+              origLeft: 0,
+              origTop: 0,
+              origRight: 10,
+              origBottom: 10,
+              origWidth: 0,
+              origHeight: 100,
+              frameWidth: 40,
+              frameHeight: 40),
+          isNull);
+    });
+  });
+
+  group('originalDimsFromBytes (pure header parser)', () {
+    test('parses PNG IHDR without a full decode', () {
+      // Minimal PNG: sig + len(13) + 'IHDR' + 640x480 + padding to 32B.
+      final bytes = Uint8List.fromList([
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x02, 0x80, // 640
+        0x00, 0x00, 0x01, 0xE0, // 480
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      ]);
+      final dims = originalDimsFromBytes(bytes);
+      expect(dims, isNotNull);
+      expect(dims!.width, 640);
+      expect(dims.height, 480);
+    });
+
+    test('parses JPEG SOF0 without a full decode', () {
+      // Minimal JPEG: SOI + APP0 + SOF0 (320x240, 1 component) + pad.
+      final bytes = Uint8List.fromList([
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10,
+        0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+        0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+        0xFF, 0xC0, 0x00, 0x0B, 0x08,
+        0x00, 0xF0, // height 240
+        0x01, 0x40, // width 320
+        0x01, 0x01, 0x11, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      ]);
+      final dims = originalDimsFromBytes(bytes);
+      expect(dims, isNotNull);
+      expect(dims!.width, 320);
+      expect(dims.height, 240);
+    });
+
+    test('garbage returns null (caller falls back)', () {
+      expect(originalDimsFromBytes(Uint8List.fromList(List.filled(64, 0x41))),
+          isNull);
+      expect(originalDimsFromBytes(Uint8List(0)), isNull);
+    });
   });
 
   group('FakeLivenessGate (test double)', () {
