@@ -769,7 +769,17 @@ class ProxServer {
       } catch (_) {
         proveChain = null;
       }
-      final expectedAttChallenge = deviceBindingChallenge(
+      // Track A: V2 primary (domain-separated + length-prefixed) with V1
+      // as migration alternate — new enrollments bind V2 at key creation
+      // (HwDeviceKey.bindEnrollment), already-issued V1 chains verify via
+      // the alternate. Structure/length/challenge containment only — the
+      // leaf bytes are never decrypted or interpreted.
+      final expectedAttChallengeV2 = deviceBindingChallengeV2(
+        emailLower: id,
+        installId: bodyInstallId,
+        pkS: presentedPk,
+      );
+      final expectedAttChallengeV1 = deviceBindingChallenge(
         emailLower: id,
         installId: bodyInstallId,
         pkS: presentedPk,
@@ -944,11 +954,14 @@ class ProxServer {
 
       // Security §2 chain gate (sec-hwkey): a confirming FULL/STD proof
       // must carry a chain that (a) is well-formed with the attestation
-      // OID, (b) embeds the recomputed enrollment challenge, and (c) pins
-      // to the Google roots. Any failure verdicts device-unproven (never
-      // a tier, never a silent presence flag). NONE proofs skip this
-      // (fallback path owns them); legacy unbound proofs never reach it
-      // (their level parses as none).
+      // OID, (b) embeds the recomputed enrollment challenge (V2 primary,
+      // V1 alternate), (c) binds the leaf SPKI to the proving pkD
+      // (expectedLeafPkD — structure-only compare, no decryption), (d)
+      // validates X.509 signatures + validity dates, and (e) pins to the
+      // Google roots. Any failure verdicts device-unproven (never a tier,
+      // never a silent presence flag). NONE proofs skip this (fallback
+      // path owns them); legacy unbound proofs never reach it (their
+      // level parses as none).
       if ((outcome.decision == ProveDecision.confirmed ||
               outcome.decision == ProveDecision.late) &&
           attLevel != AttestationLevel.none) {
@@ -960,8 +973,11 @@ class ProxServer {
             : verifyAttestationChainPin(
                 chain: proveChain,
                 pinnedRootHashes: pinnedAttestationRoots,
-                expectedChallenge: expectedAttChallenge,
+                expectedChallenge: expectedAttChallengeV2,
+                alternateChallenge: expectedAttChallengeV1,
+                expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
                 level: attLevel,
+                checkValidity: true,
               );
         if (!pin.ok) {
           outcome = VerifyOutcome(ProveDecision.invalid, 'device-unproven',

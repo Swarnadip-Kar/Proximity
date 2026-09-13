@@ -41,6 +41,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
+import '../features/device_identity/hw_device_key.dart';
 import '../features/entry/entry_flow.dart' show entryRequireEnrollIntegrity;
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
@@ -790,9 +791,29 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // Cheap hygiene (best-effort in Dart — GC copies may linger):
         // the transient 32B seed copy is zeroed right after sealing so it
         // never outlives the seal call on the heap.
+        // Track A (M7): AAD-bound seal (email/installId/pkS/pkD via
+        // buildSealAad) so a transplanted envelope fails the GCM tag.
+        // HW path uses sealWithAad; software/fake fall back to legacy
+        // seal (empty AAD, still verifies). No decryption of sealed
+        // bytes beyond this device's own envelope under its DEK.
         final seedCopy = Uint8List.fromList(ed.seed(kp.privateKey));
         try {
-          sealed = await _deviceKey.seal(seedCopy);
+          final dk = _deviceKey;
+          if (dk is HwDeviceKey) {
+            final pkSBytes =
+                Uint8List.fromList(hexDecode(pkHex));
+            sealed = await dk.sealWithAad(
+              seedCopy,
+              aad: buildSealAad(
+                emailLower: acct.email.toLowerCase(),
+                installId: await getOrCreateInstallId(_store),
+                pkS: pkSBytes,
+                pkD: dk.pkD,
+              ),
+            );
+          } else {
+            sealed = await _deviceKey.seal(seedCopy);
+          }
         } finally {
           seedCopy.fillRange(0, seedCopy.length, 0);
         }

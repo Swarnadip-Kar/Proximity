@@ -463,9 +463,13 @@ class HwDeviceKey implements DeviceKey {
   }
 
   /// Generates (or re-binds) the HW key for one enrollment, embedding
-  /// `SHA256(email || installId || pkS)` as the attestation challenge and
-  /// caching the chain. Idempotent per enrollment (same inputs → same
-  /// challenge; a new key replaces the old under [alias]).
+  /// the V2 enrollment challenge (domain-separated + length-prefixed —
+  /// see [enrollmentChallengeV2]) as the attestation challenge and caching
+  /// the chain. Idempotent per enrollment (same inputs → same challenge; a
+  /// new key replaces the old under [alias]). The professor verifies V2
+  /// primary with V1 as migration alternate, so already-issued V1 chains
+  /// keep verifying. Structure/length/challenge bytes only — sealed bytes
+  /// are never decrypted or interpreted here.
   ///
   /// Attestation MUST succeed: any attest failure (or empty chain) throws
   /// `StateError` — enrollment never proceeds with an unbound key.
@@ -476,7 +480,7 @@ class HwDeviceKey implements DeviceKey {
     required Uint8List pkS,
   }) async {
     requireMobileFace();
-    final challenge = enrollmentChallenge(
+    final challenge = enrollmentChallengeV2(
         email: email, installId: installId, pkS: pkS);
     final handle = await _backend.generateKey(
         alias: alias, attestationChallenge: challenge);
