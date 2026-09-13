@@ -198,6 +198,23 @@ void main() {
       const g = HeuristicLivenessGate();
       expect(() => g.detectPassive('/any.jpg'), throwsStateError);
     });
+
+    test('concurrent passes serialize and fail closed (no hang)', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      // The interpreter is single-flight: overlapping passes (rapid rescan
+      // taps) must queue behind the turnstile, never share one invoke.
+      // All three stills are unreadable, so every pass must throw
+      // StateError promptly — never a pass, never a hung Future.
+      const g = HeuristicLivenessGate();
+      final results = await Future.wait([
+        g.detectPassive('/nonexistent-prox-still-a.jpg')
+            .then((_) => 'pass', onError: (_) => 'throw'),
+        g.detectPassive('/nonexistent-prox-still-b.jpg')
+            .then((_) => 'pass', onError: (_) => 'throw'),
+        g.detectPassive('   ').then((_) => 'pass', onError: (_) => 'throw'),
+      ]).timeout(const Duration(seconds: 30));
+      expect(results, everyElement('throw'));
+    });
   });
 
   group('DI seam', () {
