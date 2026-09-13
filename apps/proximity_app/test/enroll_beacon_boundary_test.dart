@@ -208,12 +208,14 @@ void main() {
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      // Cover-fit removed the parity reservation: no hidden placeholder
-      // and no button (visible or hidden) mid-flow.
+      // Cover-fit removed visible mid-flow buttons; area parity is a
+      // HIDDEN same-subtree replica (shell + its inner slot top-up: two
+      // maintainSize Visibilities — field-verified: terminal chrome
+      // appearing shifted the preview up) — reserves area, nothing else.
       expect(
           find.byWidgetPredicate(
               (w) => w is Visibility && !w.visible && w.maintainSize),
-          findsNothing);
+          findsWidgets);
       expect(find.byType(FilledButton), findsNothing);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -276,21 +278,22 @@ void main() {
       expect(_previewStackFinder(), findsOneWidget);
       // All 5 stills accepted, gallery write throws → fail-closed error bar
       // (loop + sweep stopped — settle-safe), progress kept.
-      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again').hitTestable());
       await t.pumpAndSettle();
       // Fail-closed chrome kept: error shown, retry offered, no advance.
       expect(find.textContaining('No face detected'), findsOneWidget);
       expect(find.text('Save enrollment'), findsNothing);
-      // Notice rides as a toast overlay (zero layout — message length never
-      // moves the feed); retry lives in the bottom bar; the overlay-owned
-      // prompt stays mounted underneath.
+      // Notice rides as a banner in the overlay's prompt slot (zero
+      // layout — message length never moves the feed); retry lives in the
+      // bottom bar; the rotating prompt yields while the banner owns the
+      // slot (keeping both stacked them on small preview areas).
       expect(
           find.ancestor(
               of: find.byType(EnrollNotice),
               matching: find.byType(Positioned)),
           findsOneWidget);
       expect(_previewStackFinder(), findsOneWidget);
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollCapturePrompt), findsNothing);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);

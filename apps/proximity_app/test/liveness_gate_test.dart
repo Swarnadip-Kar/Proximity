@@ -90,7 +90,7 @@ void main() {
   });
 
   group('minifasnetInputFromRgba (pure pre-processing)', () {
-    test('packs NCHW BGR /255 with the [1,3,80,80] model shape', () {
+    test('packs NCHW BGR raw255 with the [1,3,80,80] model shape', () {
       // 4x2 frame: R=255,G=128,B=64,A=255 everywhere.
       final rgba = Uint8List(4 * 2 * 4);
       for (var i = 0; i < 4 * 2; i++) {
@@ -105,10 +105,28 @@ void main() {
       expect(input[0].length, 3);
       expect(input[0][0].length, kLivenessInputSize);
       expect(input[0][0][0].length, kLivenessInputSize);
-      // BGR order, /255.
-      expect(input[0][0][0][0], moreOrLessEquals(64 / 255));
-      expect(input[0][1][0][0], moreOrLessEquals(128 / 255));
-      expect(input[0][2][0][0], moreOrLessEquals(1.0));
+      // BGR order, 0-255 raw (vendored TFLite contract — /255 collapses
+      // every live face to replay, verified 2026-09-13).
+      expect(input[0][0][0][0], moreOrLessEquals(64.0));
+      expect(input[0][1][0][0], moreOrLessEquals(128.0));
+      expect(input[0][2][0][0], moreOrLessEquals(255.0));
+    });
+
+    test('packer never normalizes to 0..1 (raw255 regression guard)', () {
+      // A white frame must pack as 255.0, never 1.0: the /255 pipeline
+      // scored every live face as confident replay (2026-09-13 root cause).
+      final rgba = Uint8List(4 * 2 * 4);
+      for (var i = 0; i < 4 * 2 * 4; i++) {
+        rgba[i] = 255;
+      }
+      final input =
+          minifasnetInputFromRgba(rgba: rgba, width: 4, height: 2);
+      expect(input[0][0][0][0], moreOrLessEquals(255.0));
+      expect(input[0][1][0][0], moreOrLessEquals(255.0));
+      expect(input[0][2][0][0], moreOrLessEquals(255.0));
+      // And the pipeline tag must name the raw255 scale (stale-pipeline
+      // re-face contract).
+      expect(kLivenessVer, contains('raw255'));
     });
 
     test('centre-square crop drops the side margins of wide frames', () {
@@ -127,11 +145,11 @@ void main() {
       final input =
           minifasnetInputFromRgba(rgba: rgba, width: 4, height: 2);
       // Centre 2x2 square straddles the seam: left half of the crop is
-      // red (B channel 0), right half is blue (B channel 1).
+      // red (B channel 0), right half is blue (B channel 255 raw).
       final b00 = input[0][0][0][0];
       final bLast = input[0][0][0][kLivenessInputSize - 1];
       expect(b00, moreOrLessEquals(0.0));
-      expect(bLast, moreOrLessEquals(1.0));
+      expect(bLast, moreOrLessEquals(255.0));
     });
 
     test('size mismatch throws (fail-closed)', () {
@@ -166,10 +184,10 @@ void main() {
         height: h,
         faceBox: (left: 12, top: 6, right: 20, bottom: 14),
       );
-      // Entire 80x80 crop is blue (B channel 1.0 everywhere).
-      expect(input[0][0][0][0], moreOrLessEquals(1.0));
+      // Entire 80x80 crop is blue (B channel 255 raw everywhere).
+      expect(input[0][0][0][0], moreOrLessEquals(255.0));
       expect(input[0][0][kLivenessInputSize - 1][kLivenessInputSize - 1],
-          moreOrLessEquals(1.0));
+          moreOrLessEquals(255.0));
     });
 
     test('invalid faceBox falls back to centre-square (same scorer)', () {

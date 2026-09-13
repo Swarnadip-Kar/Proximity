@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart'
+    show kLivenessVer;
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 
@@ -47,7 +49,7 @@ void main() {
           pkDHex: 'bb' * 32,
           level: 'FULL',
           chain: ['ab12', 'cd34'],
-          livenessVer: 'liveness/minifasnet-v2-27-80x80+4ff758f4',
+          livenessVer: kLivenessVer,
           integrityFlag: ''),
       installId: 'iA',
     );
@@ -56,7 +58,7 @@ void main() {
     expect(back.attestationLevel, 'FULL');
     expect(back.attestedUntilMillis, greaterThan(0));
     expect(back.attestationChain, ['ab12', 'cd34']);
-    expect(back.livenessVer, 'liveness/minifasnet-v2-27-80x80+4ff758f4');
+    expect(back.livenessVer, kLivenessVer);
     expect(back.integrityFlag, '');
   });
 
@@ -90,7 +92,7 @@ void main() {
           pkDHex: 'bb' * 32,
           level: 'STD',
           chain: ['ab12'],
-          livenessVer: 'liveness/minifasnet-v2-27-80x80+4ff758f4',
+          livenessVer: kLivenessVer,
           integrityFlag: 'integrity-flagged'),
       installId: 'iA',
     );
@@ -102,7 +104,7 @@ void main() {
     // Touch bumps lastSeen only — binding + security audit fields survive.
     expect(back.pkDHex, 'bb' * 32);
     expect(back.attestationChain, ['ab12']);
-    expect(back.livenessVer, 'liveness/minifasnet-v2-27-80x80+4ff758f4');
+    expect(back.livenessVer, kLivenessVer);
     expect(back.integrityFlag, 'integrity-flagged');
     expect(
         await fake.touchStudentDevice(

@@ -36,17 +36,25 @@
 // stale-pipeline check (key kept) — same versioning contract as
 // [kFaceVerifierVer].
 //
-// Model contract (verified against the vendored file, 2026-09-12):
-//   input  [1,3,80,80] float32 NCHW, BGR order, pixels /255 (face crop).
+// Model contract (verified against the vendored file, 2026-09-13):
+//   input  [1,3,80,80] float32 NCHW, BGR order, pixels 0-255 raw (face crop).
 //   output [1,3] float32 softmax [spoof-print, LIVE, spoof-replay].
 //   score  output[1] ([kMinifasnetLiveIndex]) via [liveScoreFromProbs].
+// The raw-255 range is load-bearing: the vendored TFLite (torch Wrap
+// conversion) expects unnormalized BGR like the reference APK `from_pixels`
+// path and yakhyo `to_tensor` (no /255). Feeding /255 (upstream test.py
+// ToTensor) collapses EVERY input — live faces, uniforms, noise — to
+// confident replay (~[0.000,0.005,0.995]); feeding raw restores
+// discrimination (Lena face BGR-raw live 0.984 vs BGR-/255 live 0.005;
+// moire-replay raw 0.026; recapture-blur raw 0.243; field shadow on a live
+// enrolment centre still raw 0.975 vs production-/255 0.005).
 // Pre-processing ([minifasnetInputFromRgba]): face-box square crop (the
 // box is detected ON the decoded frame via [InputImage.fromBitmap] —
 // EXIF-blind by construction: no file path, no orientation flag, no
 // header-dim mapping, so the crop and the box can never disagree; front
 // cameras that store upright pixels with a stale rotate flag used to
-// mis-crop background with confident spoof scores) + nearest-neighbour
-// resize to 80x80 + BGR/255/NCHW packing. Fallback is the legacy
+// mis-crop background with confident spoof scores) + BILINEAR resize to
+// 80x80 (upstream test-time `cv2.resize`) + BGR-raw/NCHW packing. Fallback is the legacy
 // centre-square crop when detection is unavailable/ambiguous (0 or >1
 // faces, detector error / timeout, unparseable box) — same scorer + same
 // Tl, never a pass, never a throw for the fallback itself (comment at the
@@ -86,8 +94,12 @@ export 'liveness_gate_native.dart'
 /// tag (new weights) invalidates old tickets — re-face only, key kept.
 ///
 /// `4ff758f4` = first 8 hex of the SHA-256 of the vendored TFLite file
-/// (see [kLivenessModelAsset]).
-const kLivenessVer = 'liveness/minifasnet-v2-27-80x80+4ff758f4';
+/// (see [kLivenessModelAsset]). The `-raw255` pipeline suffix names the
+/// input scaling the vendored file actually expects (BGR 0-255 raw —
+/// field-verified 2026-09-13; the previous `/255` pipeline scored every
+/// live face as confident replay). A scorer/pipeline swap ships as a new
+/// tag and forces re-face via the stale-pipeline check (key kept).
+const kLivenessVer = 'liveness/minifasnet-v2-27-80x80-raw255+4ff758f4';
 
 /// Bundled anti-spoof weights (declared via `assets/models/` in pubspec —
 /// no per-file entry needed). MiniFASNetV2 `2.7_80x80`, TFLite, 1.85MB.
@@ -349,15 +361,19 @@ double liveScoreFromProbs(List<double> probs) {
 
 /// Pure pre-processing (no native calls, unit-tested): packs decoded RGBA
 /// bytes ([width]x[height], 4 bytes/px, row-major) into the model input —
-/// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels /255).
+/// a nested [1,3,80,80] list of doubles (NCHW, BGR order, pixels 0-255 raw).
 /// The crop is the squared face box ([faceBox] in the SAME pixel space as
 /// the frame, via [expandedSquareCropFromFaceBox] with [contextScale])
 /// when usable; otherwise the legacy centre square (fallback — same scorer
 /// + Tl, documented in the file header). Resized to [kLivenessInputSize] by
-/// nearest neighbour. [contextScale] defaults to 1.0 (tight, legacy unit
-/// tests); production passes [kLivenessContextScale] (2.7, training
-/// distribution). Throws [ArgumentError] on size mismatches (fail-closed
-/// at the call-site).
+/// BILINEAR sampling (verified 2026-09-13 against upstream
+/// minivision-ai/Silent-Face-Anti-Spoofing `CropImage.crop` test-time path,
+/// which is crop-then-`cv2.resize`). [contextScale] defaults to 1.0 (tight,
+/// legacy unit tests); production passes [kLivenessContextScale] (2.7,
+/// training distribution). The 0-255 raw range matches the vendored TFLite's
+/// verified contract (field + Lena probes 2026-09-13 — /255 collapses every
+/// live face to replay). Throws [ArgumentError] on size mismatches
+/// (fail-closed at the call-site).
 List<List<List<List<double>>>> minifasnetInputFromRgba({
   required Uint8List rgba,
   required int width,
@@ -395,18 +411,44 @@ List<List<List<List<double>>>> minifasnetInputFromRgba({
     // Null squared → centre-square fallback above (same scorer + Tl;
     // the Tl gate stays the decider, never a throw for the fallback).
   }
-  // [c][y][x] accumulator in BGR order.
+  // [c][y][x] accumulator in BGR order, 0-255 raw (vendored TFLite
+  // contract — APK from_pixels / yakhyo to_tensor path, no Normalize step).
+  // Bilinear with cv2's pixel-center mapping — nearest-neighbour here
+  // injected stair-step resampling artifacts that read as replay texture
+  // (field: confident class-2 on live faces at both 2.7 and tight scales).
   final planes = List.generate(
       3, (_) => List.generate(size, (_) => List.filled(size, 0.0)));
-  for (var y = 0; y < size; y++) {
-    final sy = oy + (y * edge ~/ size);
-    for (var x = 0; x < size; x++) {
-      final sx = ox + (x * edge ~/ size);
-      final o = (sy * width + sx) * 4;
-      // RGBA bytes → BGR channels, /255.
-      planes[0][y][x] = rgba[o + 2] / 255.0;
-      planes[1][y][x] = rgba[o + 1] / 255.0;
-      planes[2][y][x] = rgba[o] / 255.0;
+  double channelAt(int c, int x, int y) {
+    final o = (y * width + x) * 4;
+    // RGBA bytes → BGR channels (cv2 BGR order the weights expect).
+    final r = rgba[o];
+    final g = rgba[o + 1];
+    final b = rgba[o + 2];
+    final v = c == 0 ? b : c == 1 ? g : r;
+    return v.toDouble();
+  }
+
+  for (var c = 0; c < 3; c++) {
+    for (var y = 0; y < size; y++) {
+      var sy = (y + 0.5) * edge / size - 0.5;
+      if (sy < 0) sy = 0;
+      if (sy > edge - 1) sy = edge - 1.0;
+      final y0 = sy.floor();
+      final y1 = y0 + 1 < edge ? y0 + 1 : y0;
+      final wy = sy - y0;
+      for (var x = 0; x < size; x++) {
+        var sx = (x + 0.5) * edge / size - 0.5;
+        if (sx < 0) sx = 0;
+        if (sx > edge - 1) sx = edge - 1.0;
+        final x0 = sx.floor();
+        final x1 = x0 + 1 < edge ? x0 + 1 : x0;
+        final wx = sx - x0;
+        final top = channelAt(c, ox + x0, oy + y0) * (1 - wx) +
+            channelAt(c, ox + x1, oy + y0) * wx;
+        final bottom = channelAt(c, ox + x0, oy + y1) * (1 - wx) +
+            channelAt(c, ox + x1, oy + y1) * wx;
+        planes[c][y][x] = top * (1 - wy) + bottom * wy;
+      }
     }
   }
   return [planes];

@@ -539,13 +539,14 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.byType(FaceCaptureOvalOverlay), findsNothing);
       expect(find.byType(ProxCard), findsNothing);
-      // No VISIBLE buttons mid-flow and no hidden parity reservation (the
-      // cover-fit fix removed it — area constancy is unnecessary).
+      // No VISIBLE buttons mid-flow; area parity is a hidden same-subtree
+      // replica (two maintainSize Visibilities: the replica shell + its
+      // inner slot top-up), so terminal chrome never moves the feed.
       expect(find.byType(FilledButton), findsNothing);
       expect(
           find.byWidgetPredicate(
               (w) => w is Visibility && !w.visible && w.maintainSize),
-          findsNothing);
+          findsWidgets);
       // Exactly one instructional text during capture (overlay-owned)…
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       // …and no per-angle titles, hints, or status narration anywhere.
@@ -852,13 +853,13 @@ void main() {
       final ctl = await _keyReady(verifier: _EnrollBoom());
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again').hitTestable());
       expect(find.textContaining('No face detected'), findsOneWidget);
       // Still on capture (no auto-advance), all 5 accepted stills kept.
       expect(find.text('Save enrollment'), findsNothing);
       // Retrying a poisoned gallery fails closed again — never a save.
-      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Try again'));
-      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again'));
+      await t.tap(find.widgetWithText(ProxPrimaryButton, 'Try again').hitTestable());
+      await _pumpUntil(t, find.widgetWithText(ProxPrimaryButton, 'Try again').hitTestable());
       expect(find.text('Save enrollment'), findsNothing);
       await _drain(t);
       expect(t.takeException(), isNull);

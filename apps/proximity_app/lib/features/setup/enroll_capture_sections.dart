@@ -213,40 +213,35 @@ class EnrollCapturePreview extends StatelessWidget {
           previewAspectRatio: previewAspect,
           topInset: overlayTopInset,
           showStatusLine: promptVisible,
+          // Save-error banner takes the prompt slot inside the overlay
+          // (same geometry, zero layout effect on the feed). SafeArea
+          // ancestor pinned (notch-aware) with all sides off: the slot is
+          // geometry-placed mid-screen, so this moves zero pixels.
+          errorBanner: saveError
+              ? SafeArea(
+                  top: false,
+                  bottom: false,
+                  left: false,
+                  right: false,
+                  child: IgnorePointer(
+                    child:
+                        EnrollNotice(message: saveMessage, isError: true),
+                  ),
+                )
+              : null,
         ),
-        // Fail-closed error banner (save-error only):
-        // toast-pattern overlay — same Notice widget and
-        // message, zero layout effect, so the feed area
-        // never moves on the error transition and long
-        // messages wrap without resizing anything.
-        // Touch-transparent (info only; retry lives in
-        // the bottom bar); semantics kept so readers
-        // still announce the error.
-        if (saveError)
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 12,
-            // Edge-to-edge: the toast avoids the nav-bar/gesture inset
-            // while the video fills under it (zero effect in tests).
-            child: SafeArea(
-              top: false,
-              child: IgnorePointer(
-                child: EnrollNotice(message: saveMessage, isError: true),
-              ),
-            ),
-          ),
-        ],
+      ],
       ),
     );
   }
 }
 
 /// Bottom action bar. Single purpose: terminal chrome only — validated
-/// shows Continue, save-error shows Try-again (+ the shared hidden top-up
-/// so back-nav stays stable), mid-flow stays empty (the overlay owns the
-/// single prompt; nothing here duplicates it). Keyboard: N/A — this page
-/// has no editable text, so viewInsets stay zero in every variant.
+/// shows Continue, save-error shows ONE action (slot-naming refusal:
+/// Recapture; plain transient: Try-again), mid-flow stays empty (the
+/// overlay owns the single prompt; nothing here duplicates it).
+/// Keyboard: N/A — this page has no editable text, so viewInsets stay
+/// zero in every variant.
 class EnrollCaptureBottomBar extends StatelessWidget {
   /// Set validated (faceDone/uploaded) — Continue replaces the bar.
   final bool validated;
@@ -261,8 +256,8 @@ class EnrollCaptureBottomBar extends StatelessWidget {
   final Future<void> Function() onRetry;
 
   /// Slot recapture after a slot-naming refusal (controller.lastFailedSlot):
-  /// secondary `Recapture <slot>` next to Try-again. Null hides it (plain
-  /// transient-error chrome).
+  /// `Recapture <slot>` INSTEAD of Try-again (retrying identical stills
+  /// re-fails identically). Null hides it (plain transient-error chrome).
   final String? recaptureSlot;
   final Future<void> Function(String slot)? onRecapture;
 
@@ -282,6 +277,39 @@ class EnrollCaptureBottomBar extends StatelessWidget {
     // Edge-to-edge: terminal chrome avoids the nav-bar/gesture inset while
     // the video fills under it (zero effect in tests — no notch there).
     // Mid-flow stays empty — the overlay carries the single prompt.
+    // Terminal chrome is one action, never two: a slot-naming refusal
+    // (liveness/Euler FAIL) offers Recapture only — Try-again would rerun
+    // the identical stills into the identical refusal. Plain transient
+    // errors (no slot) offer Try-again only.
+    final hasRecapture = recaptureSlot != null && onRecapture != null;
+    final terminalChrome = <Widget>[
+      if (hasRecapture)
+        ProxPrimaryButton(
+          label: Text('Recapture $recaptureSlot'),
+          onPressed: saving
+              ? null
+              : () {
+                  final slot = recaptureSlot;
+                  final fn = onRecapture;
+                  if (slot != null && fn != null) {
+                    unawaited(fn(slot));
+                  }
+                },
+        )
+      else
+        ProxPrimaryButton(
+          icon: saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : null,
+          label: const Text('Try again'),
+          onPressed: saving ? null : onRetry,
+        ),
+      const EnrollCaptureSlotTopUp(),
+    ];
     return SafeArea(
       top: false,
       child: Padding(
@@ -297,41 +325,26 @@ class EnrollCaptureBottomBar extends StatelessWidget {
               ),
               const EnrollCaptureSlotTopUp(),
             ] else if (saveError) ...[
-              // Slot-naming refusal (liveness/Euler FAIL): the toast names
-              // the slot and the copy promises single-slot recapture —
-              // this is that action (other buckets kept). Plain transient
-              // errors show Try-again only.
-              if (recaptureSlot != null && onRecapture != null) ...[
-                ProxSecondaryButton(
-                  label: Text('Recapture $recaptureSlot'),
-                  expanded: true,
-                  onPressed: saving
-                      ? null
-                      : () {
-                          final slot = recaptureSlot;
-                          final fn = onRecapture;
-                          if (slot != null && fn != null) {
-                            unawaited(fn(slot));
-                          }
-                        },
-                ),
-                const SizedBox(height: 8),
-              ],
-              ProxPrimaryButton(
-                icon: saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : null,
-                label: const Text('Try again'),
-                onPressed: saving ? null : onRetry,
-              ),
-              const EnrollCaptureSlotTopUp(),
+              ...terminalChrome,
             ] else ...[
-              // Mid-flow: overlay owns the prompt — nothing here.
-              const SizedBox.shrink(),
+              // Area parity (field-verified 2026-09-13: terminal chrome
+              // appearing visibly shifted the preview up under the oval
+              // mid-positioning): a hidden replica of the terminal variant,
+              // so the feed never moves on the mid-flow → terminal
+              // transition. Same subtree ⇒ pixel-identical height at any
+              // text scale; hit-test/semantics excluded while hidden, so
+              // it reserves area and nothing else.
+              Visibility(
+                visible: false,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: terminalChrome,
+                ),
+              ),
             ],
           ],
         ),

@@ -5,13 +5,14 @@
 //
 // Passive MiniFASNetV2 (offline, ~1s, no license-key SDK): file sanity
 // (missing/empty/tiny/unknown-magic fail closed) + dart:ui decode at 160px
-// + face-box/BGR/NCHW packing ([minifasnetInputFromRgba] with a box
+// + face-box/BGR-raw/NCHW packing ([minifasnetInputFromRgba] with a box
 // detected ON the decoded frame via [InputImage.fromBitmap] — EXIF-blind,
 // so crop and box share one pixel space by construction — squared +
 // clamped crop, fallback centre-crop) + ONE `tflite_flutter` Interpreter
 // invoke on the vendored weights ([kLivenessModelAsset]) + LIVE-class
 // post-processing ([liveScoreFromProbs]). See liveness_gate.dart header
-// for the model contract and the honesty note (face-box crop, single 2.7
+// for the model contract (BGR 0-255 raw — /255 collapses every live face
+// to replay) and the honesty note (face-box crop, single 2.7
 // model, no ensemble; FAR/FRR unmeasured + calibration TODO). Every failure —
 // unreadable still, missing asset, interpreter/shape error, timeout —
 // throws StateError (fail-closed); there is NO heuristic fallback, by
@@ -351,8 +352,15 @@ class HeuristicLivenessGate implements LivenessGate {
         // deadline above guards read/decode/load; inference itself never
         // blocks on I/O, so no timeout can pre-empt it, by FFI design).
         // Runs under the turnstile above: never concurrent, by construction.
+        // Single inference on the BGR-raw input (the scale/channel shadows
+        // that settled the 2026-09-13 /255 root cause are removed — one pass,
+        // one score, Tl decides).
         it.run(input, output);
-        final score = liveScoreFromProbs(output.first);
+        final probs = output.first;
+        debugPrint(
+            'liveness probs=[${probs.map((p) => p.toStringAsFixed(3)).join(', ')}]');
+        debugPrint('liveness sampler=bilinear-bgr-raw255');
+        final score = liveScoreFromProbs(probs);
         return LivenessResult(score: score, ver: kLivenessVer);
       } on StateError {
         rethrow;

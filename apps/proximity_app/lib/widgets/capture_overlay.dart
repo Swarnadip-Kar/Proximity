@@ -124,9 +124,15 @@ class CaptureOverlay extends StatefulWidget {
   final double topInset;
 
   /// Prompt-line visibility (default true): enroll hides the rotating
-  /// prompt while the save-error toast owns the message down below, so
+  /// prompt while the save-error banner owns the message down below, so
   /// the two never stack on small preview areas. Mark/face untouched.
   final bool showStatusLine;
+
+  /// Error banner slot (default none): when non-null it takes the prompt
+  /// line's place below the oval (same geometry) instead of stacking a
+  /// second text. Enroll passes its save-error Notice here; mark/face
+  /// leave null. Generic widget — the overlay never names enroll copy.
+  final Widget? errorBanner;
 
   const CaptureOverlay({
     super.key,
@@ -142,6 +148,7 @@ class CaptureOverlay extends StatefulWidget {
     this.showBeacon = true,
     this.topInset = 0.0,
     this.showStatusLine = true,
+    this.errorBanner,
   });
 
   /// Default target direction for angle [index] of [total]: spread around
@@ -464,9 +471,25 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 ),
               // (3) ONE short guiding prompt line below the oval. White
               // for the same on-scrim reason as the guide ring above.
-              // Hidden while an error toast owns the message (enroll
-              // save-error) so the two never stack on small screens.
-              if (widget.showStatusLine && promptTop != null)
+              // Error banner XOR prompt: on save-error the banner takes
+              // this exact slot (the rotating instruction is meaningless
+              // once the loop stopped; rendering both stacked them on
+              // small preview areas, field-verified).
+              if (widget.errorBanner != null && promptTop != null)
+                Positioned(
+                  top: promptTop,
+                  left: ProxSpacing.screenMargin,
+                  right: ProxSpacing.screenMargin,
+                  child: widget.errorBanner!,
+                )
+              else if (widget.errorBanner != null)
+                Positioned(
+                  left: ProxSpacing.screenMargin,
+                  right: ProxSpacing.screenMargin,
+                  bottom: ProxSpacing.xl,
+                  child: widget.errorBanner!,
+                )
+              else if (widget.showStatusLine && promptTop != null)
                 Positioned(
                   top: promptTop,
                   left: ProxSpacing.screenMargin,
