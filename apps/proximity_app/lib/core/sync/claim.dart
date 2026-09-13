@@ -6,6 +6,7 @@ library;
 
 import 'dart:math';
 
+import '../security/revocation_cache.dart';
 import 'store/record_helpers.dart';
 import 'store/store_base.dart';
 
@@ -436,12 +437,16 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
 // layer calls it after pulling studentDevices and surfaces the groups.
 //
 // Companion review signal (security §2 residual): the offline CRL snapshot
-// cache (`core/security/revocation_cache.dart`) contributes the advisory
-// `revocation-stale` flag (`RevocationCache.flagFor` / `reviewFlagsFor` —
-// stale/missing snapshot, fail-open, never blocks marking). Professor
-// review shows both together: `findDoublePkD` groups (clone signal) +
-// the revocation flag (CRL freshness signal) + the ticket anomaly flags —
-// presence is never changed offline because of either.
+// cache (`core/security/revocation_cache.dart`) contributes advisory flags
+// (`RevocationCache.flagFor` freshness-only, or the chain-aware
+// `reviewFlagsForChainHex` / [revocationReviewFlagsForDevice] below — leaf
+// + intermediate serials extracted offline via `chain_serial.dart` and
+// matched against a FRESH snapshot only; stale/missing snapshots and
+// unparseable chains degrade to `revocation-stale`, never to an
+// accusation). Professor review shows both together: `findDoublePkD`
+// groups (clone signal) + the revocation flags (CRL freshness/revocation
+// signal) + the ticket anomaly flags — presence is never changed offline
+// because of any of them.
 Map<String, List<String>> findDoublePkD(
     Map<String, StudentDeviceDoc> devices) {
   final byPkD = <String, List<String>>{};
@@ -455,3 +460,18 @@ Map<String, List<String>> findDoublePkD(
       if (e.value.length > 1) e.key: (e.value..sort()),
   };
 }
+
+/// Chain-aware revocation review flags for one synced binding (post-hoc
+/// professor review companion to [findDoublePkD]). Extracts the binding's
+/// `attestationChain` serials offline and matches them against a FRESH
+/// [snap]; stale/missing snapshots, empty chains (`[]` = unbound legacy),
+/// and undecodable chains degrade to the stale/clean semantics of
+/// `RevocationCache.reviewFlagsForChainHex` (fail-open — never blocks
+/// marking, never accuses from stale/garbage). Pure.
+List<String> revocationReviewFlagsForDevice(
+  RevocationSnapshot snap,
+  StudentDeviceDoc doc, {
+  DateTime? now,
+}) =>
+    RevocationCache.reviewFlagsForChainHex(snap, doc.attestationChain,
+        now: now);

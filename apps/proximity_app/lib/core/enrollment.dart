@@ -694,6 +694,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             phase: EnrollPhase.error, message: '$e');
         return null;
       }
+      // Advisory revocation review for this chain (security §2 residual):
+      // offline serial-vs-CRL flags for the professor review screen, log
+      // only — never blocks the claim or marking (fail-open; empty chains
+      // keep the existing stale-flag behavior).
+      unawaited(logChainRevocationReview(chainDERHex, 'enroll'));
       final rolled = await _deviceKey.heartbeat();
       if (rolled) {
         BleLog.log('SEC', 'device attestation heartbeat ok');

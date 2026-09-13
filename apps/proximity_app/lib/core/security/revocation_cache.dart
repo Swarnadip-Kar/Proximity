@@ -21,11 +21,14 @@
 //     flags; the roster keeps presence, review happens post-hoc).
 //
 // Serial matching (`isSerialRevoked`): lenient JSON scan of the `entries`
-// map (serial-hex keys, case-insensitive; status containing REVOK/SUSPEND
-// counts as revoked). X.509 serial extraction from chain DER stays with the
-// platform adapter (app layer owns ASN.1) — until it lands, the freshness
-// flag above is the review signal, not per-cert verdicts. Unknown/garbage
-// bodies never report revoked (fail-open), only stale.
+// map (serial-hex keys, case-insensitive, leading-zero-insensitive; status
+// containing REVOK/SUSPEND counts as revoked). X.509 serial extraction from
+// chain DER is pure-Dart offline (`chain_serial.dart`: Certificate/TBS
+// parse via asn1lib, never throws) — `reviewFlagsForChain[Hex]` extracts
+// leaf/all serials and delegates to `reviewFlagsFor`/`isSerialRevoked`.
+// Unparseable chains degrade to the freshness flag (fail-open), never to an
+// accusation. Unknown/garbage bodies never report revoked (fail-open),
+// only stale.
 //
 // What this file does NOT do (other tracks own it — do not expand here):
 //   - device_binding signature math / chain-pin gates (sec-protocol).
@@ -36,9 +39,12 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:proximity_ble/ble.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'chain_serial.dart';
 
 /// Google's published attestation status list (revoked/suspended cert
 /// serials). Fetched directly — never via Firestore/Functions.
@@ -205,12 +211,49 @@ class RevocationCache {
     return const [];
   }
 
+  /// Review flags for one chain (leaf-first DER, as carried in
+  /// `chainDERHex` / `attestationChain`): stale flag when the snapshot is
+  /// missing/stale; revoked flag when ANY parseable chain serial matches a
+  /// revoked entry in a FRESH snapshot. Fail-open: stale snapshots report
+  /// ONLY the stale flag (never accuse from a stale CRL); empty or
+  /// unparseable chains report nothing beyond staleness (a fresh snapshot +
+  /// no serials is clean — garbage DER never accuses). Pure — the offline
+  /// professor review path calls this without any fetch (never blocks
+  /// marking). Delegates to [reviewFlagsFor]/[allSerialsHex].
+  static List<String> reviewFlagsForChain(
+    RevocationSnapshot snap,
+    List<Uint8List> certsDer, {
+    DateTime? now,
+  }) {
+    final at = (now ?? DateTime.now()).toUtc();
+    if (snap.isStale(at)) return const [kRevocationStaleFlag];
+    for (final serial in allSerialsHex(certsDer)) {
+      if (isSerialRevoked(snap, serial)) {
+        return const [kRevocationRevokedFlag];
+      }
+    }
+    return const [];
+  }
+
+  /// Hex-string convenience over [reviewFlagsForChain] for the stored wire
+  /// form (leaf-first DER hex). Lenient decode (bad entries skipped,
+  /// fail-open); an empty/undecodable chain degrades to [flagFor]
+  /// semantics (stale flag iff the snapshot is stale, else clean).
+  static List<String> reviewFlagsForChainHex(
+    RevocationSnapshot snap,
+    List<String> chainHex, {
+    DateTime? now,
+  }) =>
+      reviewFlagsForChain(snap, certsDerFromHexList(chainHex), now: now);
+
   /// Lenient revoked check over the cached body: parses the `entries` map
-  /// (serial-hex keys → {status}) case-insensitively; any status containing
-  /// `revok`/`suspend` counts. Falls back to false on unparseable bodies
-  /// (fail-open — garbage never accuses; staleness is the signal there).
+  /// (serial-hex keys → {status}) case-insensitively and
+  /// leading-zero-insensitively (`'01'` ≡ `'1'` ≡ `'0x01'` — same integer);
+  /// any status containing `revok`/`suspend` counts. Falls back to false on
+  /// unparseable bodies (fail-open — garbage never accuses; staleness is
+  /// the signal there).
   static bool isSerialRevoked(RevocationSnapshot snap, String serialHex) {
-    final want = serialHex.trim().toLowerCase().replaceFirst('0x', '');
+    final want = _normSerial(serialHex);
     if (snap.rawBody.isEmpty || want.isEmpty) return false;
     try {
       final doc = jsonDecode(snap.rawBody);
@@ -219,9 +262,7 @@ class RevocationCache {
           : null;
       if (entries != null) {
         for (final e in entries.entries) {
-          final key =
-              '${e.key}'.trim().toLowerCase().replaceFirst('0x', '');
-          if (key != want) continue;
+          if (_normSerial('${e.key}') != want) continue;
           final status = e.value is Map
               ? '${(e.value as Map)['status'] ?? ''}'.toLowerCase()
               : '$e'.toLowerCase();
@@ -240,6 +281,16 @@ class RevocationCache {
     final body = snap.rawBody.toLowerCase();
     return body.contains(want) &&
         (body.contains('revok') || body.contains('suspend'));
+  }
+
+  /// Canonical serial form for CRL comparison: lowercase, no `0x`, leading
+  /// zeros trimmed (keeps one digit, so `'0'` stays `'0'` and `''` stays
+  /// `''`). Pure — never throws.
+  static String _normSerial(String serialHex) {
+    var n = serialHex.trim().toLowerCase();
+    if (n.startsWith('0x')) n = n.substring(2);
+    n = n.replaceFirst(RegExp(r'^0+(?=[0-9a-f])'), '');
+    return n;
   }
 
   /// One refresh attempt over Firestore-independent HTTPS. Returns the new
@@ -334,5 +385,27 @@ class RevocationCache {
     } finally {
       client.close(force: true);
     }
+  }
+}
+
+/// Fire-and-forget advisory review log for one chain (enrollment/host setup
+/// call sites `unawaited(...)` this where chain DER hex is available):
+/// loads the cached snapshot locally (no fetch) and logs non-empty
+/// `reviewFlagsForChainHex` flags for the professor review screen. Empty
+/// chains log nothing (existing stale-flag behavior is unchanged — the
+/// review screen still derives it via `flagFor`). Bounded local read only,
+/// never throws, never blocks marking.
+Future<void> logChainRevocationReview(
+    List<String> chainHex, String where) async {
+  try {
+    if (chainHex.isEmpty) return;
+    final snap = await RevocationCache.load();
+    final flags =
+        RevocationCache.reviewFlagsForChainHex(snap, chainHex);
+    if (flags.isNotEmpty) {
+      BleLog.log('SEC', '$where chain revocation review (${flags.join(',')})');
+    }
+  } catch (_) {
+    // Best-effort advisory only — setup paths must never observe a throw.
   }
 }

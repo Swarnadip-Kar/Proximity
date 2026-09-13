@@ -411,6 +411,13 @@ class RealHostDriver implements HostDriver {
     // core/security/revocation_cache.dart). Hosting stays offline-capable.
     unawaited(RevocationCache.refreshBestEffort());
     final stored = await _store.readEnrollment();
+    // Advisory revocation review for the host binding's chain (security §2
+    // residual): offline serial-vs-CRL flags, log only — hosting stays
+    // offline-capable (fail-open; missing/empty chains keep the existing
+    // stale-flag behavior).
+    if (stored != null && stored.chainDERHex.isNotEmpty) {
+      unawaited(logChainRevocationReview(stored.chainDERHex, 'host'));
+    }
     String manual = '';
     try {
       manual = await _store.readHostName();
@@ -861,10 +868,13 @@ class RealHostDriver implements HostDriver {
   /// current rules). The chain-vs-pinned-Google-roots + challenge-match
   /// gate runs per prove inside the server; clone pairs surface post-hoc
   /// via `findDoublePkD` on synced bindings (TOFU→pin-check on mismatch
-  /// is manual review until a roster source exists). CRL freshness rides
-  /// alongside as the advisory `revocation-stale` flag (see
-  /// `core/security/revocation_cache.dart` — refreshed at host setup,
-  /// never blocking) — same review screen, never auto-absent offline.
+  /// is manual review until a roster source exists). CRL review rides
+  /// alongside as advisory flags (`revocation-stale` when the snapshot is
+  /// stale/missing, `revocation-revoked` when a chain serial matches a
+  /// FRESH snapshot — see `core/security/revocation_cache.dart`
+  /// `reviewFlagsForChainHex` + `revocationReviewFlagsForDevice` in
+  /// `core/sync/claim.dart`; refreshed at host setup, never blocking) —
+  /// same review screen, never auto-absent offline.
   void _applyIntegrityFlag(String email, String reason) {
     if (!isIntegrityFlaggedReason(reason)) return;
     final me = email.trim().toLowerCase();
