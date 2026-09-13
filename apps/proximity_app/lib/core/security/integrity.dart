@@ -66,6 +66,16 @@
 // (one Gmail = one device, 30d move cooldown), (3) HW dSig tiering
 // (FULL/STD require a genuine key signature over the live challenge).
 // Code stays fail-soft: App Check absence never blocks marking.
+// Floor rotation runbook (no behavior change — console + Firestore only):
+//   1. Deploy rules + bump `app_config/min_version` TOGETHER (the floor is
+//      world-readable `get:true`; stale builds self-block at online gates).
+//   2. Play Console → Play Integrity API → verdict DEVICE → STRONG once the
+//      fleet is 13+ with current Play Services (DEVICE is the rollout
+//      default, STRONG the hardened target).
+//   3. Firebase Console → App Check → Firestore → Enforce (after the floor
+//      above has rolled out) + iOS App Attest (DeviceCheck fallback).
+// Never enforce before the floor ships — legit installs that cannot attest
+// yet would brick.
 library;
 
 import 'dart:async';
