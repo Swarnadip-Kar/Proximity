@@ -101,6 +101,21 @@ abstract class CloudSync {
       {required String profUid, required String oldName, required String newName});
   Future<void> deleteSessionsCloud(
       {required String profUid, required List<String> ids});
+
+  /// Professor lecture-key pin (anti-fake-professor, anybody-can-host):
+  /// appends [pkPHex] (Ed25519 32B hex) to `profDevices/{emailLower}`.
+  /// Owner-only write (rules); best-effort from the host (offline → throw
+  /// offline copy, never blocks hosting).
+  Future<void> uploadProfKey(
+      {required String emailLower,
+      required String uid,
+      required String org,
+      required String pkPHex,
+      DateTime? now});
+
+  /// Fetches the cached pin list for [emailLower] (`[]` = no pin yet).
+  /// Same-org get; missing doc reads as not-found, never denied.
+  Future<List<Map<String, dynamic>>> fetchProfKeys(String emailLower);
 }
 
 /// Professor push identity: null when offline / skipped sign-in / no prof

@@ -278,4 +278,20 @@ class InMemoryDeviceStore implements DeviceStore {
   /// does not inherit the interface default.
   @override
   RevocationHashStore? get revocationHashStore => null;
+
+  final Map<String, List<Map<String, dynamic>>> _profPins = {};
+
+  @override
+  Future<List<Map<String, dynamic>>> readProfPin(String emailLower) async {
+    final v = _profPins[emailLower.trim().toLowerCase()];
+    if (v == null) return const [];
+    return [for (final e in v) Map<String, dynamic>.of(e)];
+  }
+
+  @override
+  Future<void> writeProfPin(
+      String emailLower, List<Map<String, dynamic>> keys) async {
+    _profPins[emailLower.trim().toLowerCase()] =
+        [for (final e in keys) Map<String, dynamic>.of(e)];
+  }
 }

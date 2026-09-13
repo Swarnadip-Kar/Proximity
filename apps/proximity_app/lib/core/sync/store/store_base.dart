@@ -272,4 +272,12 @@ abstract class DeviceStore {
   /// prefs-only edit cannot go undetected. Callers pass this straight
   /// into `RevocationCache.load/refreshBestEffort` (null = sidecar).
   RevocationHashStore? get revocationHashStore => null;
+
+  /// Professor lecture-key pins (anti-fake-professor, anybody-can-host):
+  /// cached `profDevices/{email}` pin lists, keyed by lowercased prof email.
+  /// Each entry is `{pkP, createdAtMillis}`. Prefs-backed (non-sensitive —
+  /// public keys only). Empty list = no cache for that email (first-seen).
+  Future<List<Map<String, dynamic>>> readProfPin(String emailLower);
+  Future<void> writeProfPin(
+      String emailLower, List<Map<String, dynamic>> keys);
 }

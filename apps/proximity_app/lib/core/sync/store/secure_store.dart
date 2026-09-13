@@ -577,6 +577,42 @@ class SecureDeviceStore implements DeviceStore {
   @override
   RevocationHashStore get revocationHashStore =>
       SecureRevocationHashStore(_secure);
+
+  static const _kProfPins = 'prox.profPins.v1';
+
+  @override
+  Future<List<Map<String, dynamic>>> readProfPin(String emailLower) async {
+    final prefs = await _prefs();
+    final raw = prefs.getString(_kProfPins);
+    if (raw == null) return const [];
+    try {
+      final all = jsonDecode(raw) as Map<String, dynamic>;
+      final list = all[emailLower.trim().toLowerCase()];
+      if (list is! List) return const [];
+      return [
+        for (final e in list)
+          if (e is Map) Map<String, dynamic>.from(e)
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Future<void> writeProfPin(
+      String emailLower, List<Map<String, dynamic>> keys) async {
+    final prefs = await _prefs();
+    Map<String, dynamic> all = {};
+    try {
+      final raw = prefs.getString(_kProfPins);
+      if (raw != null) all = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      all = {};
+    }
+    all[emailLower.trim().toLowerCase()] =
+        [for (final e in keys) Map<String, dynamic>.from(e)];
+    await prefs.setString(_kProfPins, jsonEncode(all));
+  }
 }
 
 /// H8 [RevocationHashStore] backend (secure-store wiring): the CRL body

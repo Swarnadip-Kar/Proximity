@@ -782,6 +782,101 @@ class FirestoreCloudSync implements CloudSync {
     ];
   }
 
+  static bool _isHex64(String s) {
+    if (s.length != 64) return false;
+    for (var i = 0; i < s.length; i++) {
+      final c = s.codeUnitAt(i);
+      if (!((c >= 48 && c <= 57) ||
+          (c >= 97 && c <= 102) ||
+          (c >= 65 && c <= 70))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @override
+  Future<void> uploadProfKey(
+      {required String emailLower,
+      required String uid,
+      required String org,
+      required String pkPHex,
+      DateTime? now}) async {
+    _needAvailable();
+    final key = emailLower.trim().toLowerCase();
+    final pk = pkPHex.trim().toLowerCase();
+    if (key.isEmpty || uid.isEmpty || !_isHex64(pk)) return;
+    final at = (now ?? DateTime.now()).toUtc();
+    final atMillis = at.millisecondsSinceEpoch;
+    final ref = _db.collection('profDevices').doc(key);
+    try {
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        final List<Map<String, dynamic>> list = [
+          for (final e in (snap.exists
+                  ? (snap.data()?['pubKeys'] as List? ?? const [])
+                  : const []))
+            if (e is Map) Map<String, dynamic>.from(e)
+        ];
+        if (!list.any((e) => '${e['pkP']}'.toLowerCase() == pk)) {
+          list.add({'pkP': pk, 'createdAtMillis': atMillis});
+          list.sort((a, b) =>
+              ((a['createdAtMillis'] as num?)?.toInt() ?? 0).compareTo(
+                  (b['createdAtMillis'] as num?)?.toInt() ?? 0));
+          while (list.length > 8) {
+            list.removeAt(0);
+          }
+        }
+        tx.set(ref, {
+          'email': key,
+          'uid': uid,
+          'org': org,
+          'pubKeys': list,
+          'updatedAtMillis': atMillis,
+          'updatedAt': at.toIso8601String(),
+        }, SetOptions(merge: true));
+      }).timeout(const Duration(seconds: 12));
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw _rulesError('prof key publish');
+      if (_isOfflineError(e)) {
+        throw StateError('You appear offline — connect to the internet.');
+      }
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) {
+        throw StateError('You appear offline — connect to the internet.');
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchProfKeys(String emailLower) async {
+    _needAvailable();
+    final key = emailLower.trim().toLowerCase();
+    if (key.isEmpty) return const [];
+    try {
+      final snap = await _db
+          .collection('profDevices')
+          .doc(key)
+          .get(const GetOptions(source: Source.serverAndCache))
+          .timeout(const Duration(seconds: 8));
+      if (!snap.exists) return const [];
+      final list = snap.data()?['pubKeys'] as List? ?? const [];
+      return [
+        for (final e in list)
+          if (e is Map) Map<String, dynamic>.from(e)
+      ];
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') throw _rulesError('prof key fetch');
+      if (_isOfflineError(e)) return const [];
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) return const [];
+      rethrow;
+    }
+  }
+
   @override
   Future<List<StudentDirectoryEntry>> searchStudents(
       {String emailPrefix = '',

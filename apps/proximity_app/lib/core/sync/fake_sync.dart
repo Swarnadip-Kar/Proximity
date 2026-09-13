@@ -409,4 +409,52 @@ class FakeCloudSync implements CloudSync {
       sessions.remove(id);
     }
   }
+
+  final Map<String, Map<String, dynamic>> profPins = {};
+
+  @override
+  Future<void> uploadProfKey(
+      {required String emailLower,
+      required String uid,
+      required String org,
+      required String pkPHex,
+      DateTime? now}) async {
+    _needOnline();
+    final key = emailLower.trim().toLowerCase();
+    final pk = pkPHex.trim().toLowerCase();
+    if (key.isEmpty || uid.isEmpty || pk.length != 64) return;
+    final at = (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch;
+    final prev = profPins[key];
+    final List<Map<String, dynamic>> list = [
+      for (final e in (prev?['pubKeys'] as List? ?? const []))
+        if (e is Map) Map<String, dynamic>.from(e)
+    ];
+    if (!list.any((e) => '${e['pkP']}'.toLowerCase() == pk)) {
+      list.add({'pkP': pk, 'createdAtMillis': at});
+      list.sort((a, b) => ((a['createdAtMillis'] as num?)?.toInt() ?? 0)
+          .compareTo((b['createdAtMillis'] as num?)?.toInt() ?? 0));
+      while (list.length > 8) {
+        list.removeAt(0);
+      }
+    }
+    profPins[key] = {
+      'email': key,
+      'uid': uid,
+      'org': org,
+      'pubKeys': list,
+      'updatedAtMillis': at,
+    };
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchProfKeys(String emailLower) async {
+    _needOnline();
+    final doc = profPins[emailLower.trim().toLowerCase()];
+    if (doc == null) return const [];
+    final list = doc['pubKeys'] as List? ?? const [];
+    return [
+      for (final e in list)
+        if (e is Map) Map<String, dynamic>.from(e)
+    ];
+  }
 }
