@@ -56,6 +56,7 @@ import '../features/face_identity/pose_gate.dart'
     show EnrollPoseWindows, PoseGate;
 import '../mode.dart';
 import 'auth.dart';
+import 'attestation_self_check.dart';
 import 'cloud_sync.dart';
 import 'device_store.dart';
 import 'platformx.dart';
@@ -1045,6 +1046,35 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         } on StateError catch (e) {
           state = state.copyWith(phase: EnrollPhase.error, message: '$e');
           return null;
+        }
+        // Security §2 self-check (claim): run the professor's chain gate
+        // LOCALLY before the binding is written — an unrecognized chain
+        // would fail every future marking as `device-unproven`, so refuse
+        // the enroll NOW with the named cause instead of stranding the
+        // holder later (and instead of filing a useless binding). The
+        // server verdict stays final; this mirrors its gate exactly.
+        // HW keys only: Fake/Software keys carry synthetic chains with no
+        // verifiable HW attestation (tests + blocked paths) — the server
+        // stays the authority there.
+        if (_deviceKey is HwDeviceKey) {
+          final chainCheck = checkAttestationChain(
+            chainHex: chainDERHex,
+            attestationLevel: attestationLevelName(_deviceKey.level),
+            emailLower: email,
+            installId: installId,
+            pkSHex: pkHex,
+            pkDHex: hexEncode(pkDRaw),
+            iosBranch: appAttestRawHex.trim().isNotEmpty,
+          );
+          BleLog.log('CRYPTO',
+              'attestation self-check ${chainCheck.ok ? 'ok' : 'FAIL ${chainCheck.reason}'} '
+              'chain=${chainCheck.chainLen} root=${chainCheck.rootPrefix.isEmpty ? 'none' : chainCheck.rootPrefix}');
+          if (!chainCheck.ok) {
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                message: attestationSelfCheckCopy(chainCheck));
+            return null;
+          }
         }
         try {
           // Stable phone id for the same-phone reclaim (fail-soft ''):

@@ -48,9 +48,15 @@ class RoundTick {
 }
 
 /// Initials (max 2) from a display name. Pure for unit tests.
+/// Parts without a single alphanumeric (a bare `-` separator in
+/// `DSL506 - Intro…`) are SKIPPED, never initialled — separators are not
+/// names. Single-part names read the first 2 chars (`plato` → `PL`).
 String studentInitials(String name) {
-  final parts =
-      name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty && RegExp(r'[A-Za-z0-9]').hasMatch(p))
+      .toList();
   if (parts.isEmpty) return '?';
   if (parts.length == 1) {
     final p = parts.first;
@@ -402,6 +408,12 @@ class StudentCard extends StatefulWidget {
   /// True (every other caller) keeps the classic avatar.
   final bool showAvatar;
 
+  /// True when [name] is a COURSE title (`DSL506 - Intro…`), not a person:
+  /// the avatar disc uses [courseInitials] (`DS`) + course hues instead of
+  /// person initials. Mark browse class tiles pass true; every person row
+  /// keeps false (default — pixel-identical).
+  final bool isCourse;
+
   const StudentCard({
     super.key,
     required this.name,
@@ -420,6 +432,7 @@ class StudentCard extends StatefulWidget {
     this.padding,
     this.avatarSize = 40,
     this.showAvatar = true,
+    this.isCourse = false,
   });
 
   @override
@@ -499,8 +512,13 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final avatarLabel = widget.avatarName ?? widget.name;
-    final avatarColor = studentAvatarColor(c, avatarLabel);
-    final avatarFg = studentAvatarForeground(c, avatarLabel);
+    final avatarColor = widget.isCourse
+        ? courseAvatarColor(c, avatarLabel)
+        : studentAvatarColor(c, avatarLabel);
+    // Course discs draw the initial IN the base hue (same as CourseLogo /
+    // ProxAvatar.course); person discs keep the identity foreground.
+    final avatarFg =
+        widget.isCourse ? avatarColor : studentAvatarForeground(c, avatarLabel);
     final ringOn = widget.selected || _pressed;
 
     // No-shadow-geometry hover rule (see ProxCard): hover never touches
@@ -586,6 +604,7 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                             avatarFg: avatarFg,
                             c: c,
                             size: widget.avatarSize,
+                            isCourse: widget.isCourse,
                           ),
                         ),
                       )
@@ -597,6 +616,7 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                         avatarFg: avatarFg,
                         c: c,
                         size: widget.avatarSize,
+                        isCourse: widget.isCourse,
                       ),
               ),
             if (widget.showAvatar) const SizedBox(width: ProxSpacing.md),
@@ -711,6 +731,10 @@ class _CardAvatar extends StatelessWidget {
   final ProximityColors c;
   final double size;
 
+  /// True when [name] is a course title: the disc shows [courseInitials]
+  /// (`DS`), not person initials.
+  final bool isCourse;
+
   const _CardAvatar({
     required this.name,
     required this.photoUrl,
@@ -719,6 +743,7 @@ class _CardAvatar extends StatelessWidget {
     required this.avatarFg,
     required this.c,
     this.size = 40,
+    this.isCourse = false,
   });
 
   @override
@@ -731,7 +756,7 @@ class _CardAvatar extends StatelessWidget {
           ),
           alignment: Alignment.center,
           child: Text(
-            studentInitials(name),
+            isCourse ? courseInitials(name) : studentInitials(name),
             // Same disc-initials proportion as CourseLogo (size * 0.34).
             style:
                 ProxType.label(color: avatarFg).copyWith(fontSize: size * 0.34),

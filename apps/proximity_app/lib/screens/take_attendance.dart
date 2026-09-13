@@ -380,25 +380,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     }
     // Anti-fake-professor pin publish: the lecture key is appended to
     // `profDevices/{email}` (owner-only write) so students verify the
-    // email→key binding offline. Wired here (auth + role + cloud live
-    // together) — the driver calls it fire-and-forget, never blocking.
-    try {
-      final driver = ref.read(hostDriverProvider);
-      driver.profKeyPublisher = ({required emailLower, required pkPHex}) async {
-        try {
-          final acct = ref.read(authServiceProvider).current;
-          if (acct == null) return;
-          final role = await ref.read(deviceStoreProvider).readRole();
-          final org = roleOrg(role);
-          await ref.read(cloudSyncProvider).uploadProfKey(
-                emailLower: emailLower,
-                uid: acct.uid.isNotEmpty ? acct.uid : acct.email.toLowerCase(),
-                org: org,
-                pkPHex: pkPHex,
-              );
-        } catch (_) {}
-      };
-    } catch (_) {}
+    // email→key binding offline. Armed here (auth + role + cloud live
+    // together; also armed at prof registration) — the driver calls it
+    // fire-and-forget, never blocking.
+    armProfKeyPublisher(ref);
     HostSession session;
     try {
       session = await ref

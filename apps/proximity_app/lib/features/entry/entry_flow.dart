@@ -69,18 +69,17 @@ Future<SignedAccount?> entrySignIn(WidgetRef ref) async {
 /// Welcome — never on the previous account's home, and the enroll card
 /// can never rebuild from a stale preseed.
 ///
-/// Offline switch-account path (no account at entry, prof mode set): also
-/// unsets the mode so the landing router shows Welcome with a working
-/// sign-in button. Without this the Account tab stays on the offline page
-/// (dead tap). Offline-safe: [setMode] touches only local providers + the
-/// device store, no network. Idempotent: no-op when already unset, so
-/// rapid taps cannot double-navigate. Signed-in callers are untouched
-/// (no mode change when an account was present at entry).
+/// One-click landing: the mode is unset whenever NO session remains after
+/// the clear — signed-in and offline callers alike. A lingering prof/
+/// student mode remounts that shell with a null account ('?' logo on a
+/// dead home, e.g. desktop prof → stray shell) and needs a SECOND
+/// sign-out to reach Welcome. Unsetting here lands on the sign-in page in
+/// one tap; a fresh sign-in re-drives the mode from Landing (which is
+/// account-driven, so no flow can strand). Offline-safe: [setMode]
+/// touches only local providers + the device store, no network.
+/// Idempotent: no-op when already unset, so rapid taps cannot
+/// double-navigate.
 Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
-  bool hadAccount = false;
-  try {
-    hadAccount = ref.read(authServiceProvider).current != null;
-  } catch (_) {}
   String email = '';
   try {
     email = ref.read(authServiceProvider).current?.email.toLowerCase() ?? '';
@@ -106,7 +105,13 @@ Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
     ref.read(linkedIdentityProvider.notifier).state = null;
   } catch (_) {}
   BleLog.log('STATE', 'entry role cache cleared; landing next');
-  if (!hadAccount) {
+  // Post-clear session check (not entry-time): sign-out is complete only
+  // when no session remains — then the mode must go too (see doc above).
+  var signedOut = true;
+  try {
+    signedOut = ref.read(authServiceProvider).current == null;
+  } catch (_) {}
+  if (signedOut) {
     // Mounted-guarded idempotent mode exit (same law as [entryGoto]: the
     // mode flip unmounts the caller mid-flight). No Navigator push here —
     // the mode switch itself drives `home` to the landing router.

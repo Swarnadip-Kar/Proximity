@@ -10,8 +10,9 @@
 //    another Gmail is never rendered as current, before or after the tap.
 // 3. Double-tap safe: rapid taps cannot double-navigate (mounted + busy
 //    guard, idempotent mode write — a home switch, never a push).
-// 4. Signed-in sign-out is untouched (no mode change when an account was
-//    present at entry).
+// 4. Signed-in sign-out ALSO unsets the mode (one-click landing): leaving
+//    mode=prof remounted the prof shell with a null account ('?' logo on
+//    a dead home — desktop needed a second sign-out to reach Welcome).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,7 +215,7 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('signed-in sign-out leaves mode untouched', (t) async {
+    testWidgets('signed-in sign-out lands in one tap (mode unset)', (t) async {
       const acct = SignedAccount(
           email: 'prof@example.com',
           displayName: 'Prof User',
@@ -251,8 +252,10 @@ void main() {
 
       await entrySignOut(ref);
 
-      // Byte-identical signed-in behavior: caches clear, mode stays.
-      expect(container.read(appModeProvider), AppMode.prof);
+      // One-click landing: caches clear AND the mode unsets — the prof
+      // shell never remounts account-less (no '?' logo on a dead home),
+      // so Welcome arrives on the first tap, never the second.
+      expect(container.read(appModeProvider), AppMode.unset);
       expect(container.read(linkedIdentityProvider), isNull);
     });
   });

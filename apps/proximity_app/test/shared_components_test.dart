@@ -38,6 +38,11 @@ void main() {
     expect(studentInitials('  a  '), 'A');
     expect(studentInitials(''), '?');
     expect(studentInitials('Mary Jane Watson'), 'MJ');
+    // Bare separators are never initialled (`DSL506 - Intro…` → `DI`,
+    // not `D-`); course discs use courseInitials (`DS`) instead.
+    expect(studentInitials('DSL506 - introduction to machine learning'),
+        'DI');
+    expect(studentInitials(' - '), '?');
   });
 
   test('course discs read CS-style initials on every surface', () {

@@ -28,10 +28,12 @@ import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
 import '../features/entry/entry_flow.dart' show entryHostIntegrity;
+import 'auth.dart';
 import 'device_store.dart';
 import 'net_if.dart';
 import 'platformx.dart' as platformx;
 import 'security/revocation_cache.dart';
+import 'sync/cloud_api.dart';
 import 'sync/roles.dart';
 
 class HostSession {
@@ -134,14 +136,25 @@ abstract class HostDriver {
   /// (anti-fake-professor); never blocks hosting offline.
   String get currentProfPkHex => '';
 
-  /// Best-effort publisher for the lecture-key pin (wired by the Take
-  /// screen to `CloudSync.uploadProfKey`; null in tests/offline hosts).
+  /// Best-effort publisher for the lecture-key pin (armed by
+  /// [armProfKeyPublisher] at prof registration + Take open, targeting
+  /// `CloudSync.uploadProfKey`; null in tests/offline hosts).
   /// Called fire-and-forget after the server is ready — never blocks
   /// hosting, never throws out.
   set profKeyPublisher(
       Future<void> Function(
               {required String emailLower, required String pkPHex})?
           fn) {}
+
+  /// Publishes the CURRENT in-memory lecture key pin now (best-effort,
+  /// never throws). Called at first hosting AND at prof
+  /// registration/signin: a fresh registration usually has no lecture key
+  /// yet (ephemeral per hosting — see startHosting), which logs an
+  /// explicit deferral instead of silence, so the terminal always shows
+  /// WHY no publish happened. Every outcome logs (published / skipped /
+  /// deferred) — a missing publish line always means this method never
+  /// ran, never a silent skip.
+  Future<void> publishCurrentProfKey() async {}
 
   /// Hydrates the server's student-key pins from the professor's persistent
   /// directory cache (email → pkS) so offline `unknown-pkS` enforcement
@@ -152,6 +165,32 @@ abstract class HostDriver {
   /// Returns pinned count.
   Future<int> hydrateStudentPins(Map<String, String> emailToPkSHex) async =>
       0;
+}
+
+/// Arms the lecture-key pin publisher (idempotent — re-arming replaces
+/// the closure): the driver calls it fire-and-forget with the current
+/// lecture key whenever [HostDriver.publishCurrentProfKey] runs. Armed at
+/// prof registration (role hub) AND Take open so the pin publishes at the
+/// earliest online moment in both orders (register→host, host→re-signin).
+/// Never throws (offline/cloud failures stay inside the closure).
+void armProfKeyPublisher(WidgetRef ref) {
+  try {
+    ref.read(hostDriverProvider).profKeyPublisher =
+        ({required emailLower, required pkPHex}) async {
+      try {
+        final acct = ref.read(authServiceProvider).current;
+        if (acct == null) return;
+        final role = await ref.read(deviceStoreProvider).readRole();
+        final org = roleOrg(role);
+        await ref.read(cloudSyncProvider).uploadProfKey(
+              emailLower: emailLower,
+              uid: acct.uid.isNotEmpty ? acct.uid : acct.email.toLowerCase(),
+              org: org,
+              pkPHex: pkPHex,
+            );
+      } catch (_) {}
+    };
+  } catch (_) {}
 }
 
 class WaitingRow {
@@ -239,6 +278,44 @@ class RealHostDriver implements HostDriver {
   String get currentProfPkHex => _profKeys == null
       ? ''
       : hexEncode(_profKeys!.publicKey.bytes.sublist(0, 32)).toLowerCase();
+
+  @override
+  Future<void> publishCurrentProfKey() async {
+    final publish = _profKeyPublisher;
+    final pk = currentProfPkHex;
+    var email = '';
+    try {
+      email = (_server?.sessionProfEmail ?? '').trim().toLowerCase();
+    } catch (_) {}
+    if (email.isEmpty) {
+      try {
+        final role = await _store.readRole();
+        email = (role?['email'] ?? '').trim().toLowerCase();
+      } catch (_) {}
+    }
+    if (publish == null) {
+      BleLog.log('SEC',
+          'prof key publish skipped (publisher not armed — arm at registration/Take open)');
+      return;
+    }
+    if (email.isEmpty) {
+      BleLog.log(
+          'SEC', 'prof key publish skipped (no prof email yet — email unknown)');
+      return;
+    }
+    if (pk.isEmpty) {
+      BleLog.log('SEC',
+          'prof key publish skipped (no lecture key yet — publishes at first hosting)');
+      return;
+    }
+    try {
+      await publish(emailLower: email, pkPHex: pk);
+      BleLog.log('SEC',
+          'prof key pin published ($email pkP=${pk.substring(0, 12)}… — students verify Sig_p against this pin)');
+    } catch (e) {
+      BleLog.log('SEC', 'prof key pin publish deferred ($e)');
+    }
+  }
 
   @override
   Future<int> hydrateStudentPins(
@@ -549,21 +626,9 @@ class RealHostDriver implements HostDriver {
     // appended best-effort to `profDevices/{email}` so students pin it
     // online and verify Sig_p against the pin offline (TOFU). Fire-and-
     // forget — never blocks hosting, never throws out (offline hosts
-    // simply skip; students then see first-seen unverified).
-    final publishEmail = sessionProfEmail;
-    final publishPk = currentProfPkHex;
-    final publish = _profKeyPublisher;
-    if (publish != null && publishEmail.isNotEmpty && publishPk.isNotEmpty) {
-      unawaited(Future(() async {
-        try {
-          await publish(emailLower: publishEmail, pkPHex: publishPk);
-          BleLog.log('SEC',
-              'prof key pin published ($publishEmail pkP=${publishPk.substring(0, 12)}… — students verify Sig_p against this pin)');
-        } catch (e) {
-          BleLog.log('SEC', 'prof key pin publish deferred ($e)');
-        }
-      }));
-    }
+    // simply skip; students then see first-seen unverified). Every
+    // outcome logs inside publishCurrentProfKey — including skips.
+    unawaited(publishCurrentProfKey());
     // Hydrate student-key pins from the persistent directory cache so
     // offline `unknown-pkS` enforcement survives restarts (in-memory TOFU
     // alone forgot everything on reboot).
@@ -1137,6 +1202,9 @@ class FakeHostDriver implements HostDriver {
           Future<void> Function(
                   {required String emailLower, required String pkPHex})?
               fn) {}
+
+  @override
+  Future<void> publishCurrentProfKey() async {}
 
   @override
   Future<int> hydrateStudentPins(

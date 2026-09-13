@@ -103,20 +103,26 @@ class _ProveSteps extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
-    // §10.1: the row is width-BOUNDED (max) with loose flexibles per step,
-    // so long step words ellipsize inside their third instead of striping
-    // a RenderFlex at narrow widths × large system type (measured 38px
-    // overflow at 350dp/130% before this). Loose fit keeps the huddled
-    // centered look at normal sizes — flex only caps, never stretches.
-    // Full words survive via the Semantics label (screen readers); the
-    // visible degradation is truncate (ellipsis), never clip (§9).
+    // §10.1: the row is width-BOUNDED (320) with TIGHT equal flexibles per
+    // step, so the three dots sit equidistant and the row centers exactly —
+    // loose flexes sized columns by label width ('Confirmed' widest), which
+    // pushed the last dot off-center with a stray trailing gap. The 320 cap
+    // keeps the huddled look at normal sizes; below it the tight thirds
+    // shrink and long step words ellipsize inside their third instead of
+    // striping a RenderFlex at narrow widths × large system type (measured
+    // 38px overflow at 350dp/130% before the bound). Full words survive via
+    // the Semantics label (screen readers); the visible degradation is
+    // truncate (ellipsis), never clip (§9).
     return Semantics(
       label: 'Step ${active + 1} of 3: ${_labels[active.clamp(0, 2)]}',
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
           for (var i = 0; i < _labels.length; i++) ...[
             if (i > 0)
               Container(
@@ -132,7 +138,7 @@ class _ProveSteps extends StatelessWidget {
                     : c.contentTertiary.withValues(alpha: 0.4),
               ),
             Flexible(
-              fit: FlexFit.loose,
+              fit: FlexFit.tight,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -184,7 +190,9 @@ class _ProveSteps extends StatelessWidget {
               ),
             ),
           ],
-        ],
+          ],
+        ),
+      ),
       ),
     );
   }

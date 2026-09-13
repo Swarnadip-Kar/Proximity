@@ -138,7 +138,14 @@ class ProxServer {
   // Tracks 2+3 anomaly context (server-kept, bounded): seen face-ticket
   // stamps (reused-face flag), recent scores (1.000-repeat flag), last
   // pipeline tag (verifier-flapping flag).
-  final Set<int> _seenFaceStamps = {};
+  //
+  // Stamp map (stamp → FIRST ID that presented it), WINDOW-scoped like the
+  // vector map: a legitimate retry re-presents its own ticket across
+  // rotations (same ID, new j — the encouraged path), so same-ID repeats
+  // must NOT flag. Only a DIFFERENT ID presenting an already-seen stamp
+  // flags (one face check transplanted across Gmails — the actual hook
+  // signal). The anomaly call below receives other-IDs' stamps only.
+  final Map<int, String> _seenFaceStamps = {};
   final List<double> _recentScores = [];
   String _lastVerifierVer = '';
   // Local same-face dup path (RAM-only, window-scoped): email → canonical
@@ -324,6 +331,9 @@ class ProxServer {
     // close must not compare against the previous window's vectors).
     // Exemptions survive: the professor's override is session-scoped.
     _faceVecs.clear();
+    // Same window scope for ticket stamps (a new window's face checks mint
+    // new stamps; old entries would only false-flag).
+    _seenFaceStamps.clear();
   }
 
   /// Closes the window. Proofs are rejected as `window-closed`; the HTTPS
@@ -339,6 +349,8 @@ class ProxServer {
     // Detection for the closing window is already complete (compare runs
     // per prove, including stop-grace proofs) — vectors must not outlive it.
     _faceVecs.clear();
+    // Ticket stamps share the window scope (see openWindow).
+    _seenFaceStamps.clear();
   }
   int get windowNo => _windowNo;
 
@@ -932,7 +944,13 @@ class ProxServer {
             attestationLevel: bound ? attLevel : AttestationLevel.none,
             attestedUntil: attUntil,
             dSigValid: bound && dSigValidReal,
-            seenFaceValidAtMs: _seenFaceStamps,
+            // Transplant-only scope (see _seenFaceStamps): this ID's own
+            // earlier stamps are excluded, so legitimate same-ticket
+            // retries across rotations never flag reused-face.
+            seenFaceValidAtMs: {
+              for (final e in _seenFaceStamps.entries)
+                if (e.value != id) e.key
+            },
             priorScores: List.of(_recentScores),
             lastVerifierVer: _lastVerifierVer,
           ),
@@ -1082,8 +1100,29 @@ class ProxServer {
           );
         }
         if (!pin.ok) {
-          outcome = VerifyOutcome(ProveDecision.invalid, 'device-unproven',
-              [...outcome.attestationFlags, ...pin.flags]);
+          // Root diagnostic (log only): WHICH unrecognized anchor refused
+          // the chain — the host log carries `root=<sha256-prefix>` so one
+          // glance distinguishes a software/emulator/ROM root (fail-closed
+          // by design — compare against the two pinned Google HW roots)
+          // from a truncated chain. Public anchor hash, never key material.
+          var rootToken = '';
+          if (pin.reason == 'unknown-root' && proveChain != null) {
+            try {
+              final root = proveChain.root;
+              if (root != null && root.isNotEmpty) {
+                rootToken =
+                    'root=${hexEncode(ProxCrypto.sha256Sync(root)).substring(0, 8)}';
+              }
+            } catch (_) {}
+          }
+          outcome = VerifyOutcome(
+              ProveDecision.invalid,
+              'device-unproven',
+              [
+                ...outcome.attestationFlags,
+                ...pin.flags,
+                if (rootToken.isNotEmpty) rootToken
+              ]);
         }
       }
 
@@ -1169,7 +1208,9 @@ class ProxServer {
         if (integrityFlag == 'integrity-flagged') 'integrity-flagged',
       ];
       if (bound) {
-        _seenFaceStamps.add(ticketStampMs);
+        // First presenter wins the stamp (transplant scope: a LATER
+        // different ID re-presenting it flags; same-ID retries never do).
+        _seenFaceStamps.putIfAbsent(ticketStampMs, () => id);
         _recentScores.add(ticketScore);
         if (_recentScores.length > 8) _recentScores.removeAt(0);
         if (verifierVer.isNotEmpty) _lastVerifierVer = verifierVer;

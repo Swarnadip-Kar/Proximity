@@ -23,6 +23,7 @@ import '../features/device_identity/hw_device_key.dart';
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart';
+import 'attestation_self_check.dart';
 import 'prof_pin_check.dart';
 import '../mode.dart';
 import 'device_store.dart';
@@ -1467,6 +1468,34 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // (SHA256(email || installId || pkS)). Both are app UUIDs/cert bytes
       // already shared with the professor via Firestore — never IMEI.
       final installId = await _store.readInstallId() ?? '';
+      // Self-check (UX fail-fast — never authority): run the professor's
+      // chain gate LOCALLY on the exact body values below, so an
+      // unrecognized chain fails HERE with the named cause instead of
+      // burning a POST + rate budget for a certain `device-unproven`.
+      // The server verdict stays final; this mirrors its gate exactly.
+      // HW keys only (see enrollment upload): test/Software keys carry
+      // synthetic chains the production gate cannot parse.
+      if (_deviceKey is HwDeviceKey) {
+        final chainCheck = checkAttestationChain(
+          chainHex: chainForProve,
+          attestationLevel: stored.attestationLevel,
+          emailLower: identity.gmail.toLowerCase(),
+          installId: installId,
+          pkSHex: hexEncode(pk32),
+          pkDHex: hexEncode(pkD),
+          iosBranch: appAttestRawForProve.trim().isNotEmpty,
+        );
+        BleLog.log('SEC',
+            'attestation self-check ${chainCheck.ok ? 'ok' : 'FAIL ${chainCheck.reason}'} '
+            'chain=${chainCheck.chainLen} root=${chainCheck.rootPrefix.isEmpty ? 'none' : chainCheck.rootPrefix}');
+        if (!chainCheck.ok) {
+          return MarkedReceipt(
+              detail:
+                  'Not marked [device-unproven: ${chainCheck.reason}] — ${attestationSelfCheckCopy(chainCheck)}',
+              result: StudentResult.error,
+              attestationLevel: stored.attestationLevel);
+        }
+      }
       final res = await client.prove(
         desc: desc,
         studentId: identity.gmail.toLowerCase(),

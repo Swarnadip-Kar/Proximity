@@ -21,6 +21,8 @@ import 'package:proximity_ble/ble.dart';
 
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
+import '../../core/host_driver.dart'
+    show armProfKeyPublisher, hostDriverProvider;
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../mode.dart';
@@ -79,8 +81,18 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
     }
   }
 
-  Future<void> _registerProf() => _run(() => entryRegisterProf(
-      ref, () => mounted, widget.account, _profNameCtrl.text));
+  Future<void> _registerProf() => _run(() async {
+        await entryRegisterProf(
+            ref, () => mounted, widget.account, _profNameCtrl.text);
+        // Publish the lecture-key pin at registration itself (when online
+        // with a key from an earlier hosting this run — fresh installs log
+        // the deferral and publish at first hosting). Best-effort: never
+        // throws into the hub status.
+        try {
+          armProfKeyPublisher(ref);
+          await ref.read(hostDriverProvider).publishCurrentProfKey();
+        } catch (_) {}
+      });
 
   Future<void> _registerStudent() =>
       _run(() => entryRegisterStudent(ref, () => mounted, widget.account));

@@ -835,7 +835,12 @@ void main() {
 
       Future.delayed(const Duration(milliseconds: 300), injectCurrent);
       // Next rotation (j advanced): new token, answer heard this time.
-      Future.delayed(const Duration(seconds: 6),
+      // Rotations are 10s (kSubEpochSeconds — was 5s when this test was
+      // written): the re-announce must land PAST the boundary, or the
+      // retry keeps waiting for a token different from the tried one
+      // (same-token echoes never resolve) and the test stalls to its
+      // timeout. ~12s keeps the whole test (~15s) far under the 2min cap.
+      Future.delayed(const Duration(seconds: 12),
           () => injectCurrent(withResponse: true));
       final d = RealStudentDriver(
         store: store,

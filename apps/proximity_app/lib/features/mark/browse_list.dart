@@ -46,6 +46,21 @@ bool browseRingFor({required bool windowOpen}) => windowOpen;
 String gatedPhotoFor(Map<String, String> byHost, String key) =>
     (byHost[key] ?? '').trim();
 
+/// Verification TAG for a browse tile (highlight pill in the status
+/// slot — green Verified on a prove-time key match, yellow Unverified on
+/// first-seen/unverified, red Blocked on mismatch). 'known' (pins cached
+/// but unmatched yet) stays caption-only: a cached pin is not a match.
+/// ''/unknown renders nothing. Pure for unit tests.
+Widget? browseVerifyTag(String label) => switch (label) {
+      'verified' || 'verified-live' =>
+        const VerdictBadge(status: ProxStatus.marked, label: 'Verified'),
+      'unverified' || 'first-seen' =>
+        const VerdictBadge(status: ProxStatus.review, label: 'Unverified'),
+      'mismatch' =>
+        const VerdictBadge(status: ProxStatus.wrongOrg, label: 'Blocked'),
+      _ => null,
+    };
+
 /// One discovered class: the lightweight `StudentCard` variant (§6.1) —
 /// course name, professor display name when given, tap → waiting — with the
 /// 3-bar recency glyph + open chevron / `idle` trailing it. The card avatar
@@ -100,7 +115,21 @@ class BrowseTile extends StatelessWidget {
       lastSeen: live.lastSeen,
       now: DateTime.now().toUtc(),
     );
+    // Status slot: the verification highlight tag (Verified green /
+    // Unverified yellow / Blocked red) rides with the Open pill — tag
+    // first, then Open. Both absent renders exactly as before (null).
+    final tag = browseVerifyTag(verifyLabel);
+    final openTag = a.windowOpen
+        ? const VerdictBadge(
+            status: ProxStatus.waiting,
+            label: 'Open',
+          )
+        : null;
     final card = StudentCard(
+      // Course-titled card: the avatar disc is a COURSE disc
+      // ([courseInitials] — `DSL506 - Intro…` → `DS`), with the prof's
+      // gated Gmail photo on top when published.
+      isCourse: true,
       // Gated prof Gmail (org-checked /window unicast only — never
       // beacons/BLE). Empty on legacy/unknown: the card reads as
       // before. Institute org rides the announcement already.
@@ -132,12 +161,17 @@ class BrowseTile extends StatelessWidget {
           : (browseVerifyCaption(verifyLabel).isEmpty
               ? null
               : browseVerifyCaption(verifyLabel)),
-      status: a.windowOpen
-          ? const VerdictBadge(
-              status: ProxStatus.waiting,
-              label: 'Open',
-            )
-          : null,
+      status: (tag == null && openTag == null)
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (tag != null) tag,
+                if (tag != null && openTag != null)
+                  const SizedBox(width: ProxSpacing.xs),
+                if (openTag != null) openTag,
+              ],
+            ),
       onTap: onTap,
     );
     final row = Row(

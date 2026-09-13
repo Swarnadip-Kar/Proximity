@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/design/tokens.dart' show ProxStatus;
 import 'package:proximity_app/features/live/live_roster.dart';
 import 'package:proximity_app/features/live/manual_inbox.dart';
 import 'package:proximity_app/features/mark/browse_classes.dart';
@@ -26,6 +27,7 @@ import 'package:proximity_app/widgets/course_attendance.dart';
 import 'package:proximity_app/widgets/host_preview_card.dart';
 import 'package:proximity_app/widgets/student_card.dart'
     show StudentCard, courseInitials;
+import 'package:proximity_app/widgets/verdict_badge.dart' show VerdictBadge;
 import 'package:proximity_app/widgets/partial_list.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
@@ -478,6 +480,43 @@ void main() {
       expect(courseInitials('Quantum Computing'), 'QU');
       expect(courseInitials(''), '?');
       expect(courseInitials('  '), '?');
+      // Course-titled browse cards read the course disc, not person
+      // initials: `DSL506 - Intro…` → `DS` (was `D-` via the person path).
+      expect(courseInitials('DSL506 - introduction to machine learning'),
+          'DS');
+    });
+
+    test('browseVerifyTag: highlight pill per pin verdict, none when neutral',
+        () {
+      VerdictBadge tag(String label) =>
+          browseVerifyTag(label) as VerdictBadge;
+      expect(tag('verified').label, 'Verified');
+      expect(tag('verified').status, ProxStatus.marked);
+      expect(tag('verified-live').label, 'Verified');
+      expect(tag('unverified').label, 'Unverified');
+      expect(tag('unverified').status, ProxStatus.review);
+      expect(tag('first-seen').label, 'Unverified');
+      expect(tag('mismatch').label, 'Blocked');
+      expect(tag('mismatch').status, ProxStatus.wrongOrg);
+      // 'known' (cached pins, unmatched yet) stays caption-only: a cached
+      // pin is not a match. Unknown hosts render exactly as before.
+      expect(browseVerifyTag('known'), isNull);
+      expect(browseVerifyTag(''), isNull);
+    });
+
+    testWidgets('course-titled tile renders DS disc + Unverified tag',
+        (t) async {
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'DSL506 - introduction to machine learning'),
+        profEmail: 'prof@univ.edu',
+        verifyLabel: 'first-seen',
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.text('DS'), findsOneWidget);
+      expect(find.text('D-'), findsNothing);
+      expect(find.text('Unverified'), findsOneWidget);
+      expect(t.takeException(), isNull);
     });
 
     testWidgets('idle tile renders class letters, no ring, no photo',
