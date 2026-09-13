@@ -232,6 +232,8 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
               attestedAt: stored.attestedAt,
               attestedUntil: stored.attestedUntil,
               lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+              appAttestRawHex: stored.appAttestRawHex,
+              appAttestCredKeyHex: stored.appAttestCredKeyHex,
             ));
           }
         } catch (_) {}

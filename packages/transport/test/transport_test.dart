@@ -76,6 +76,7 @@ ChainPinResult _fakeChainGate({
   required Uint8List expectedChallenge,
   required Uint8List? expectedLeafPkD,
   required AttestationLevel level,
+  String appAttestRawHex = '',
 }) {
   if (level == AttestationLevel.none) {
     return const ChainPinResult(

@@ -149,6 +149,8 @@ class ProxClient {
     // LAN-only session vector (`face:{vec}` — mirror of client.dart;
     // web never proves).
     String faceVecB64 = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) =>
       _web();
 }

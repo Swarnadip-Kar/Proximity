@@ -204,6 +204,11 @@ class ProxServer {
   /// ([defaultPinnedAttestationRoots]); tests inject throwaway pins.
   final List<Uint8List> pinnedAttestationRoots;
 
+  /// Pinned Apple App Attest roots for the iOS branch (SHA-256 digests of
+  /// trusted root DERs). Defaults to [defaultPinnedAppAttestRoots]; tests
+  /// inject throwaway pins.
+  final List<Uint8List> pinnedAppAttestRoots;
+
   /// Sighting grace: the student's response ADV precedes its POST, but the
   /// host BLE scan delivers sightings seconds later — a POST that is valid
   /// in every way EXCEPT a missing sighting waits this long for the radio
@@ -227,6 +232,9 @@ class ProxServer {
     required Uint8List expectedChallenge,
     required Uint8List? expectedLeafPkD,
     required AttestationLevel level,
+    // iOS branch only: the enrollment App Attest CBOR raw hex ('' on the
+    // Android path). Stubs ignore it unless they assert the branch.
+    String appAttestRawHex,
   })? testChainGate;
 
   HttpServer? _http;
@@ -247,9 +255,12 @@ class ProxServer {
     this.sessionProfEmail = '',
     this.sessionProfName = '',
     List<Uint8List>? pinnedRoots,
+    List<Uint8List>? pinnedAppleRoots,
   })  : tally = tally ?? TallyStore(),
         pinnedAttestationRoots =
-            pinnedRoots ?? defaultPinnedAttestationRoots() {
+            pinnedRoots ?? defaultPinnedAttestationRoots(),
+        pinnedAppAttestRoots =
+            pinnedAppleRoots ?? defaultPinnedAppAttestRoots() {
     // Waiting/manual registry lives in LiveRoom; the server keeps the same
     // public API by delegation (approve still marks current window/1 idle).
     room = LiveRoom(tally: this.tally, windowNoOf: () => _windowNo);
@@ -975,30 +986,58 @@ class ProxServer {
       // never a silent presence flag). NONE proofs never reach this as
       // confirms (verify fails them first); unbound proofs never reach it
       // (their level parses as none).
+      //
+      // iOS branch (Apple App Attest CBOR in `appAttestRaw`, '' on
+      // Android): the Android OID gate cannot apply (App Attest leaves
+      // carry the Apple nonce extension, never the Google OID), so Apple
+      // proofs verify via `verifyAppAttestChainPin` (object path: x5c vs
+      // Apple roots + SE-key/challenge nonce binding, STD tier) or
+      // `verifyAppAttestAssertionProof` (assertion path: signature under
+      // the enrollment credential key + recomputed clientDataHash — the
+      // credential key itself is TOFU there, see app_attest.dart). The
+      // branch is selected by artifact presence, never by a claimed
+      // platform string (unspoofable routing: an Android chain fails the
+      // Apple pin and vice versa). The Android path below is unchanged.
+      final appAttestRawHex =
+          ((body['appAttestRaw'] as String?) ?? '').trim().toLowerCase();
+      final appAttestCredKeyHex =
+          ((body['appAttestCredKey'] as String?) ?? '').trim().toLowerCase();
+      final iosBranch = appAttestRawHex.isNotEmpty;
       if ((outcome.decision == ProveDecision.confirmed ||
               outcome.decision == ProveDecision.late) &&
           attLevel != AttestationLevel.none) {
-        final pin = proveChain == null
-            ? const ChainPinResult(
-                ok: false,
-                reason: 'empty-chain',
-                flags: ['attest-empty-chain'])
-            : testChainGate != null
-                ? testChainGate!(
-                    chain: proveChain,
-                    pinnedRootHashes: pinnedAttestationRoots,
-                    expectedChallenge: expectedAttChallenge,
-                    expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
-                    level: attLevel,
-                  )
-                : verifyAttestationChainPin(
-                    chain: proveChain,
-                    pinnedRootHashes: pinnedAttestationRoots,
-                    expectedChallenge: expectedAttChallenge,
-                    expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
-                    level: attLevel,
-                    checkValidity: true,
-                  );
+        final ChainPinResult pin;
+        if (!iosBranch) {
+          pin = proveChain == null
+              ? const ChainPinResult(
+                  ok: false,
+                  reason: 'empty-chain',
+                  flags: ['attest-empty-chain'])
+              : testChainGate != null
+                  ? testChainGate!(
+                      chain: proveChain,
+                      pinnedRootHashes: pinnedAttestationRoots,
+                      expectedChallenge: expectedAttChallenge,
+                      expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+                      level: attLevel,
+                    )
+                  : verifyAttestationChainPin(
+                      chain: proveChain,
+                      pinnedRootHashes: pinnedAttestationRoots,
+                      expectedChallenge: expectedAttChallenge,
+                      expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+                      level: attLevel,
+                      checkValidity: true,
+                    );
+        } else {
+          pin = _verifyIosBranch(
+            appAttestRawHex: appAttestRawHex,
+            appAttestCredKeyHex: appAttestCredKeyHex,
+            expectedAttChallenge: expectedAttChallenge,
+            pkD: pkD,
+            attLevel: attLevel,
+          );
+        }
         if (!pin.ok) {
           outcome = VerifyOutcome(ProveDecision.invalid, 'device-unproven',
               [...outcome.attestationFlags, ...pin.flags]);
@@ -1157,6 +1196,75 @@ class ProxServer {
       }
     } catch (_) {}
     return await fn(body);
+  }
+
+  /// iOS App Attest branch of the §2 chain gate (see the call site for the
+  /// routing + trust contract). Object path verifies the x5c chain vs the
+  /// Apple roots with the SE-key/challenge nonce binding (STD tier);
+  /// assertion path verifies the signature under the enrollment credential
+  /// key with the recomputed clientDataHash (credential key TOFU there).
+  /// Malformed CBOR/hex fails closed as `device-unproven` (never throws).
+  ChainPinResult _verifyIosBranch({
+    required String appAttestRawHex,
+    required String appAttestCredKeyHex,
+    required Uint8List expectedAttChallenge,
+    required Uint8List pkD,
+    required AttestationLevel attLevel,
+  }) {
+    late final ParsedAppAttestRaw parsed;
+    try {
+      parsed = ParsedAppAttestRaw.parse(hexDecode(appAttestRawHex));
+    } catch (_) {
+      return const ChainPinResult(
+          ok: false,
+          reason: 'bad-appattest-cbor',
+          flags: ['attest-bad-appattest-cbor']);
+    }
+    if (parsed.kind == AppAttestRawKind.attestationObject) {
+      final iosChain = AttestationChain(parsed.x5c);
+      if (testChainGate != null) {
+        return testChainGate!(
+          chain: iosChain,
+          pinnedRootHashes: pinnedAppAttestRoots,
+          expectedChallenge: expectedAttChallenge,
+          expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+          level: attLevel,
+          appAttestRawHex: appAttestRawHex,
+        );
+      }
+      return verifyAppAttestChainPin(
+        chain: iosChain,
+        pinnedRootHashes: pinnedAppAttestRoots,
+        expectedChallenge: expectedAttChallenge,
+        expectedPkD: pkD,
+        appAttestAuthData: parsed.authData,
+        level: attLevel,
+        checkValidity: true,
+      );
+    }
+    Uint8List credKey;
+    try {
+      credKey = hexDecode(appAttestCredKeyHex);
+    } catch (_) {
+      credKey = Uint8List(0);
+    }
+    if (testChainGate != null) {
+      return testChainGate!(
+        chain: AttestationChain(const []),
+        pinnedRootHashes: pinnedAppAttestRoots,
+        expectedChallenge: expectedAttChallenge,
+        expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
+        level: attLevel,
+        appAttestRawHex: appAttestRawHex,
+      );
+    }
+    return verifyAppAttestAssertionProof(
+      assertionAuthData: parsed.authData,
+      assertionSignature: parsed.signature,
+      expectedChallenge: expectedAttChallenge,
+      expectedPkD: pkD,
+      credentialPubKey64: credKey,
+    );
   }
 
   Future<Response> _postWaiting(Request req) async {

@@ -84,7 +84,7 @@ class TestHwBackend implements HwKeyBackend {
   }
 
   @override
-  Future<List<Uint8List>> attest(
+  Future<HwAttestation> attest(
       {required String alias, required Uint8List serverNonce}) async {
     final pkD = _pkD;
     if (pkD == null) throw StateError('no key (test)');
@@ -93,7 +93,8 @@ class TestHwBackend implements HwKeyBackend {
     _rootDer = Uint8List.fromList(
         List.generate(64, (i) => (i * 13 + salt) & 0xFF));
     _chain = [leaf, _rootDer!];
-    return [for (final c in _chain) Uint8List.fromList(c)];
+    return HwAttestation(
+        chainDER: [for (final c in _chain) Uint8List.fromList(c)]);
   }
 
   @override

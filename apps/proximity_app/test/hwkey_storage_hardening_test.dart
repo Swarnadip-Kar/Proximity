@@ -74,10 +74,11 @@ class _Backend implements HwKeyBackend {
   }
 
   @override
-  Future<List<Uint8List>> attest(
+  Future<HwAttestation> attest(
       {required String alias, required Uint8List serverNonce}) async {
     chain = [Uint8List.fromList([...serverNonce, 0x06])];
-    return [for (final c in chain) Uint8List.fromList(c)];
+    return HwAttestation(
+        chainDER: [for (final c in chain) Uint8List.fromList(c)]);
   }
 
   @override

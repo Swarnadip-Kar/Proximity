@@ -443,9 +443,24 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final pkS = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pkS);
       final installId = await getOrCreateInstallId(_store);
+      // iOS assertion path: same-install re-enroll yields an assertion, not
+      // an object — carry the previous enrollment credential key forward
+      // (same account only; anything else starts clean).
+      var prevAppAttestCred = '';
+      try {
+        final prevStored = await _store.readEnrollment();
+        if (prevStored != null &&
+            prevStored.email.trim().toLowerCase() ==
+                acct.email.toLowerCase()) {
+          prevAppAttestCred = prevStored.appAttestCredKeyHex;
+        }
+      } catch (_) {}
       try {
         await _deviceKey.bindEnrollment(
-            email: acct.email.toLowerCase(), installId: installId, pkS: pkS);
+            email: acct.email.toLowerCase(),
+            installId: installId,
+            pkS: pkS,
+            prevAppAttestCredKeyHex: prevAppAttestCred);
       } on StateError catch (e) {
         state = state.copyWith(phase: EnrollPhase.error, message: '$e');
         return;
@@ -807,6 +822,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       Uint8List sealed;
       Uint8List pkDRaw;
       List<String> chainDERHex;
+      // Apple App Attest artifacts (iOS only; '' on Android — stamped into
+      // the claim doc + local enrollment for the professor iOS branch).
+      String appAttestRawHex = '';
+      String appAttestCredKeyHex = '';
       try {
         requireMobileFace();
         await _deviceKey.ensure();
@@ -845,6 +864,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         }
         pkDRaw = _deviceKey.pkD;
         chainDERHex = _deviceKey.chainDERHex;
+        final dkApple = _deviceKey;
+        if (dkApple is HwDeviceKey) {
+          appAttestRawHex = dkApple.appAttestRawHex;
+          appAttestCredKeyHex = dkApple.appAttestCredKeyHex;
+        }
       } on StateError catch (e) {
         state = state.copyWith(
             phase: EnrollPhase.error, message: '$e');
@@ -984,7 +1008,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   // fail-closed, same idiom as marking).
                   attestationChain: chainDERHex,
                   livenessVer: kLivenessVer,
-                  integrityFlag: enrollIntegrityFlag),
+                  integrityFlag: enrollIntegrityFlag,
+                  appAttestRawHex: appAttestRawHex,
+                  appAttestCredKeyHex: appAttestCredKeyHex),
               installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? 'device move' : 'same device'})');
@@ -1039,6 +1065,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         pkHex: pkHex,
         sealedKeyHex: hexEncode(sealed),
         chainDERHex: chainDERHex,
+        appAttestRawHex: appAttestRawHex,
+        appAttestCredKeyHex: appAttestCredKeyHex,
         faceId: faceId,
         enrolledAt: now,
         verifierVer: _verifier.verifierVer,
@@ -1125,6 +1153,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       attestedAt: stored.attestedAt,
       attestedUntil: stored.attestedUntil,
       lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+      appAttestRawHex: stored.appAttestRawHex,
+      appAttestCredKeyHex: stored.appAttestCredKeyHex,
     ));
     // Keep the draft consistent when it tracks the same Gmail.
     final acctEmail = state.account?.email.toLowerCase() ?? '';

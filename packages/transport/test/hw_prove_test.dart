@@ -81,6 +81,7 @@ ChainPinResult _fakeChainGate({
   required Uint8List expectedChallenge,
   required Uint8List? expectedLeafPkD,
   required AttestationLevel level,
+  String appAttestRawHex = '',
 }) {
   if (level == AttestationLevel.none) {
     return const ChainPinResult(
@@ -123,10 +124,41 @@ ChainPinResult _fakeChainGate({
   return const ChainPinResult(ok: true, reason: 'ok');
 }
 
+/// iOS-branch stub: asserts the Apple route was taken (raw present) and
+/// approves — the REAL Apple math (nonce/signature/pin) is covered at the
+/// protocol level in app_attest_test (python-oracle vectors + assertion
+/// round-trip); here only the server routing + body plumbing is pinned.
+ChainPinResult _iosChainGate({
+  required AttestationChain chain,
+  required List<Uint8List> pinnedRootHashes,
+  required Uint8List expectedChallenge,
+  required Uint8List? expectedLeafPkD,
+  required AttestationLevel level,
+  String appAttestRawHex = '',
+}) {
+  if (appAttestRawHex.isEmpty) {
+    return const ChainPinResult(
+        ok: false, reason: 'ios-stub-no-raw', flags: ['ios-stub-no-raw']);
+  }
+  if (level != AttestationLevel.standard) {
+    return const ChainPinResult(
+        ok: false, reason: 'attest-level-mismatch', flags: []);
+  }
+  return const ChainPinResult(ok: true, reason: 'ok');
+}
+
 Future<ProxServer> _makeHwServer({
   required ed.KeyPair prof,
   required List<Uint8List> pinnedRoots,
   void Function(String email, String decision, String reason)? onProve,
+  ChainPinResult Function({
+    required AttestationChain chain,
+    required List<Uint8List> pinnedRootHashes,
+    required Uint8List expectedChallenge,
+    required Uint8List? expectedLeafPkD,
+    required AttestationLevel level,
+    String appAttestRawHex,
+  })? chainGate,
 }) async {
   final window = WindowParams(
     sessionId: randBytes(16),
@@ -143,7 +175,7 @@ Future<ProxServer> _makeHwServer({
         const RadioSighting(rssiDbm: -55, hop: 0),
     onProve: onProve,
     pinnedRoots: pinnedRoots,
-  )..testChainGate = _fakeChainGate;
+  )..testChainGate = chainGate ?? _fakeChainGate;
   await server.start(port: 0);
   server.openWindow(window, 1);
   return server;
@@ -172,6 +204,9 @@ Future<ProveResult> _proveHw({
   // pre-liveness client (fails closed `liveness-unbound`).
   double livenessScore = 0.92,
   String livenessVer = _liveVer,
+  // iOS App Attest artifacts (hex; '' = Android path).
+  String appAttestRaw = '',
+  String appAttestCredKey = '',
 }) {
   final peerW = ProxCrypto.peerAlias(_pk32(stu.publicKey), desc.windowId);
   final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -232,6 +267,8 @@ Future<ProveResult> _proveHw({
         .millisecondsSinceEpoch,
     attestationChain: chainHex,
     installId: installId,
+    appAttestRaw: appAttestRaw,
+    appAttestCredKey: appAttestCredKey,
   );
 }
 
@@ -627,5 +664,228 @@ void main() {
       client.close();
       await server.stop();
     }
+  });
+
+  group('iOS App Attest branch (STD tier, Apple route)', () {
+    // Hand-built Apple attestation object (definite-length CBOR):
+    // A3{1:'apple', 2:authData(37B), 3:{'x5c':[<0x30..>]}}.
+    String appleObjectHex() {
+      final auth = Uint8List.fromList(
+          [...List.filled(32, 0x11), 0x45, 0x00, 0x00, 0x00, 0x07]);
+      final cert = Uint8List.fromList([0x30, 0x03, 0x01, 0x02, 0x03]);
+      return hexEncode(Uint8List.fromList([
+        0xA3,
+        0x01,
+        0x65,
+        0x61,
+        0x70,
+        0x70,
+        0x6C,
+        0x65,
+        0x02,
+        0x58,
+        auth.length,
+        ...auth,
+        0x03,
+        0xA1,
+        0x63,
+        0x78,
+        0x35,
+        0x63,
+        0x81,
+        0x45,
+        ...cert,
+      ]));
+    }
+
+    // Assertion shape: authData(37B) ‖ sig(64B).
+    String appleAssertionHex() => hexEncode(Uint8List.fromList([
+          ...List.filled(37, 0x33),
+          ...List.filled(64, 0x44),
+        ]));
+
+    Future<ProveResult> proveIos({
+      required ProxClient client,
+      required WindowDescriptor desc,
+      required Uint8List cj,
+      required ed.KeyPair stu,
+      required Uint8List pkD,
+      required BigInt dKey,
+      required String appAttestRaw,
+      String appAttestCredKey = '',
+    }) =>
+        _proveHw(
+          client: client,
+          desc: desc,
+          cj: cj,
+          j: 0,
+          stu: stu,
+          pkD: pkD,
+          dKey: dKey,
+          chainHex: const [],
+          installId: _installId,
+          attestationLevel: 'STD',
+          appAttestRaw: appAttestRaw,
+          appAttestCredKey: appAttestCredKey,
+        );
+
+    test('object path routes to Apple branch and confirms (STD)', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final stu = ProxCrypto.generateEdKeypair();
+      final device = _p256Key();
+      final server = await _makeHwServer(
+        prof: prof,
+        pinnedRoots: [ProxCrypto.sha256Sync(randBytes(64))],
+        chainGate: _iosChainGate,
+      );
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final res = await proveIos(
+          client: client,
+          desc: desc,
+          cj: cj,
+          stu: stu,
+          pkD: device.pkD,
+          dKey: device.d,
+          appAttestRaw: appleObjectHex(),
+        );
+        expect(res.decision, ProveDecision.confirmed);
+        expect(server.tally.presentCount, 1);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('assertion path routes with credential key and confirms', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final stu = ProxCrypto.generateEdKeypair();
+      final device = _p256Key();
+      final server = await _makeHwServer(
+        prof: prof,
+        pinnedRoots: [ProxCrypto.sha256Sync(randBytes(64))],
+        chainGate: _iosChainGate,
+      );
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final res = await proveIos(
+          client: client,
+          desc: desc,
+          cj: cj,
+          stu: stu,
+          pkD: device.pkD,
+          dKey: device.d,
+          appAttestRaw: appleAssertionHex(),
+          appAttestCredKey: hexEncode(Uint8List(64)),
+        );
+        expect(res.decision, ProveDecision.confirmed);
+        expect(server.tally.presentCount, 1);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('malformed CBOR fails closed device-unproven (no stub)', () async {
+      final prof = ProxCrypto.generateEdKeypair();
+      final stu = ProxCrypto.generateEdKeypair();
+      final device = _p256Key();
+      // No chain gate stub: the production iOS branch must fail the
+      // garbage artifact closed on its own (parse, never a pass).
+      final window = WindowParams(
+        sessionId: randBytes(16),
+        windowId: randBytes(6),
+        secret: randBytes(32),
+        t0: DateTime.now().toUtc(),
+        classLabel: 'CS201-Room301',
+      );
+      final server = ProxServer(
+        classLabel: 'CS201-Room301',
+        profSk: prof.privateKey,
+        profPk: prof.publicKey,
+        sightings: (
+                {required peerW,
+                required expectedAirKey,
+                required expectedUuid}) =>
+            const RadioSighting(rssiDbm: -55, hop: 0),
+        pinnedRoots: [ProxCrypto.sha256Sync(randBytes(64))],
+      );
+      await server.start(port: 0);
+      server.openWindow(window, 1);
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final res = await proveIos(
+          client: client,
+          desc: desc,
+          cj: cj,
+          stu: stu,
+          pkD: device.pkD,
+          dKey: device.d,
+          appAttestRaw: hexEncode(Uint8List.fromList(List.filled(40, 0x99))),
+        );
+        expect(res.decision, ProveDecision.invalid);
+        expect(res.reason, 'device-unproven');
+        expect(server.tally.presentCount, 0);
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
+
+    test('Android path unchanged: Apple-shaped body without raw stays OID-shaped',
+        () async {
+      // A proof with no appAttestRaw routes to the Android gate even when
+      // the chain is Apple-shaped-but-OID-less → missing-attestation-oid.
+      // Uses the REAL Android production gate (no stub) with a throwaway
+      // root so only the OID refusal is asserted.
+      final prof = ProxCrypto.generateEdKeypair();
+      final stu = ProxCrypto.generateEdKeypair();
+      final device = _p256Key();
+      final window = WindowParams(
+        sessionId: randBytes(16),
+        windowId: randBytes(6),
+        secret: randBytes(32),
+        t0: DateTime.now().toUtc(),
+        classLabel: 'CS201-Room301',
+      );
+      final server = ProxServer(
+        classLabel: 'CS201-Room301',
+        profSk: prof.privateKey,
+        profPk: prof.publicKey,
+        sightings: (
+                {required peerW,
+                required expectedAirKey,
+                required expectedUuid}) =>
+            const RadioSighting(rssiDbm: -55, hop: 0),
+        pinnedRoots: [ProxCrypto.sha256Sync(randBytes(64))],
+      );
+      await server.start(port: 0);
+      server.openWindow(window, 1);
+      final client = ProxClient(host: '127.0.0.1', port: server.port);
+      try {
+        final cj = server.window!.challengeFor(0);
+        final desc = await client.fetchWindow(cj);
+        final res = await proveIos(
+          client: client,
+          desc: desc,
+          cj: cj,
+          stu: stu,
+          pkD: device.pkD,
+          dKey: device.d,
+          appAttestRaw: '',
+        );
+        expect(res.decision, ProveDecision.invalid);
+        expect(res.reason, 'device-unproven');
+      } finally {
+        client.close();
+        await server.stop();
+      }
+    });
   });
 }

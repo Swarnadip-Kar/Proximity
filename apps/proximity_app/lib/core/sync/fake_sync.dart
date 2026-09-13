@@ -246,6 +246,8 @@ class FakeCloudSync implements CloudSync {
       attestationChain: List<String>.of(doc.attestationChain),
       livenessVer: doc.livenessVer,
       integrityFlag: doc.integrityFlag,
+      appAttestRawHex: doc.appAttestRawHex.trim().toLowerCase(),
+      appAttestCredKeyHex: doc.appAttestCredKeyHex.trim().toLowerCase(),
     );
     installs[installId] = key;
     dir[key] = StudentDirectoryEntry(

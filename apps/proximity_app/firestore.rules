@@ -267,7 +267,20 @@ service cloud.firestore {
         (!('attestedAtMillis' in request.resource.data) ||
           request.resource.data.attestedAtMillis is int) &&
         (!('attestedUntilMillis' in request.resource.data) ||
-          request.resource.data.attestedUntilMillis is int);
+          request.resource.data.attestedUntilMillis is int) &&
+        // iOS App Attest artifacts ('' on Android): CBOR raw hex (object or
+        // assertion, ≤8KB hex) + credential-key hex ('' or 128 hex chars).
+        // Content (nonce/signature/pin) is professor-side app_attest.dart.
+        (!('appAttestRawHex' in request.resource.data) ||
+          (request.resource.data.appAttestRawHex is string &&
+           request.resource.data.appAttestRawHex.size() <= 8192 &&
+           (request.resource.data.appAttestRawHex == '' ||
+            request.resource.data.appAttestRawHex.matches('^[0-9a-fA-F]+$')))) &&
+        (!('appAttestCredKeyHex' in request.resource.data) ||
+          (request.resource.data.appAttestCredKeyHex is string &&
+           (request.resource.data.appAttestCredKeyHex == '' ||
+            (request.resource.data.appAttestCredKeyHex.size() == 128 &&
+             request.resource.data.appAttestCredKeyHex.matches('^[0-9a-fA-F]+$')))));
     }
     match /studentDevices/{id} {
       // Doc id IS the lowercased Gmail (client writes it so): the owner can

@@ -56,7 +56,16 @@ class StudentDeviceDoc {
   // binding for offline professor verification + post-hoc audit.
   /// HW attestation chain, leaf-first DER hex (security §2). [] = unbound.
   /// Never IMEI/serial — X.509 certs only, verified offline vs pinned roots.
+  /// (iOS assertion-path re-enrolls carry [] here — the App Attest proof
+  /// rides [appAttestRawHex] instead; the iOS branch never reads this.)
   final List<String> attestationChain;
+  /// Apple App Attest CBOR raw hex (iOS only; '' on Android). Object or
+  /// assertion — the professor iOS branch parses it (x5c chain / nonce /
+  /// signature). Optional-with-type-lock in rules, like the chain.
+  final String appAttestRawHex;
+  /// Apple credential-key hex, 128 chars (iOS only; '' otherwise). Set at
+  /// the first (object) enroll, carried forward for the assertion path.
+  final String appAttestCredKeyHex;
   /// Liveness pipeline tag (`liveness/...`, security §4). '' = pre-liveness.
   final String livenessVer;
   /// Integrity flag at enroll (`''` | `'integrity-flagged'`, §5). Advisory.
@@ -82,7 +91,9 @@ class StudentDeviceDoc {
       this.attestedUntilMillis = 0,
       this.attestationChain = const [],
       this.livenessVer = '',
-      this.integrityFlag = ''});
+      this.integrityFlag = '',
+      this.appAttestRawHex = '',
+      this.appAttestCredKeyHex = ''});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.

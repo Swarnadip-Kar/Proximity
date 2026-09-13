@@ -104,10 +104,10 @@ abstract class HwKeyBackend {
   /// ES256-signs [payload] inside secure hardware (64B raw R||S).
   Future<Uint8List> sign({required String alias, required Uint8List payload});
 
-  /// Verbatim attestation chain (DER bytes, leaf-first) bound to
-  /// [serverNonce] (here: the enrollment challenge). MUST throw when no
-  /// chain can be produced (never an empty-chain proceed).
-  Future<List<Uint8List>> attest({
+  /// Verbatim attestation artifact bound to [serverNonce] (here: the
+  /// enrollment challenge). MUST throw when no artifact can be produced
+  /// (never an empty proceed — see [HwAttestation]).
+  Future<HwAttestation> attest({
     required String alias,
     required Uint8List serverNonce,
   });
@@ -121,7 +121,9 @@ class HwKeyHandle {
   /// P-256 public bytes (x||y, 64B).
   final Uint8List pkDRaw;
 
-  /// Mapped HW level (strongBox/SE → full, TEE → standard, else none).
+  /// Mapped HW level (strongBox → full, TEE → standard, Secure Enclave →
+  /// standard on iOS (App Attest standard assertion — see the iOS note on
+  /// [AttestedSecureKeysBackend]), else none).
   final AttestationLevel level;
 
   /// Whether the OS gates use behind biometrics.
@@ -134,9 +136,46 @@ class HwKeyHandle {
   });
 }
 
+/// Verbatim attestation artifact returned by [HwKeyBackend.attest].
+///
+/// Android carries an X.509 chain ([chainDER] from x5c, Apple fields null).
+/// iOS carries the App Attest CBOR ([appAttestRaw]) whose x5c (first
+/// registration per install) is decoded into [chainDER]; later calls on
+/// the same install yield assertion CBOR ([chainDER] empty —
+/// [HwDeviceKey.bindEnrollment] carries the enrollment credential key
+/// forward for that path). Sealed bytes are never decrypted — structure
+/// and bindings only.
+class HwAttestation {
+  /// Chain DER bytes, leaf-first ([] until bound / assertion path).
+  final List<Uint8List> chainDER;
+
+  /// Apple CBOR raw (attestation object or assertion), null on Android.
+  final Uint8List? appAttestRaw;
+
+  /// authData parsed from [appAttestRaw] (Apple only, null on Android).
+  final Uint8List? appAttestAuthData;
+
+  /// Credential public key x‖y (64B) from the attestation object
+  /// (Apple first-registration path; null on Android + assertion path).
+  final Uint8List? appAttestCredKey;
+
+  /// True when the artifact is Apple App Attest CBOR (either shape).
+  final bool isApple;
+
+  const HwAttestation({
+    this.chainDER = const [],
+    this.appAttestRaw,
+    this.appAttestAuthData,
+    this.appAttestCredKey,
+    this.isApple = false,
+  });
+}
+
 /// Maps a plugin [KeySecurityLevel] to the protocol [AttestationLevel]:
 /// strongBox/secureEnclave → full, trustedEnvironment → standard,
 /// software/unknown → none (callers throw `Software-no-enroll` on none).
+/// iOS callers pass the result through [_iosTier] (SE + App Attest proves
+/// at the standard tier — the backend applies it centrally).
 AttestationLevel mapKeySecurityLevel(KeySecurityLevel level) =>
     switch (level) {
       KeySecurityLevel.strongBox => AttestationLevel.full,
@@ -145,6 +184,16 @@ AttestationLevel mapKeySecurityLevel(KeySecurityLevel level) =>
       KeySecurityLevel.software => AttestationLevel.none,
       KeySecurityLevel.unknown => AttestationLevel.none,
     };
+
+/// iOS tier rule: a Secure Enclave key proves via App Attest (standard
+/// assertion — see the `AttestationLevel.standard` docs), so SE tiers STD
+/// on iOS; Android keeps StrongBox→FULL / TEE→STD. Centralized so
+/// generateKey/getKeyInfo/ensure agree on every path (the professor iOS
+/// branch requires STD — see protocol `verifyAppAttestChainPin`).
+AttestationLevel _iosTier(AttestationLevel level) =>
+    (isIOS && level == AttestationLevel.full)
+        ? AttestationLevel.standard
+        : level;
 
 /// Production [HwKeyBackend] over `attested_secure_keys` (StrongBox→TEE /
 /// Secure Enclave, ES256, challenge-bound). The ONLY importer of the
@@ -181,7 +230,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
       throw StateError(
           'Software-no-enroll: secure hardware unavailable (${e.bestAvailable ?? 'none'}) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
     }
-    final level = mapKeySecurityLevel(key.effectiveLevel);
+    final level = _iosTier(mapKeySecurityLevel(key.effectiveLevel));
     if (level == AttestationLevel.none || !key.isHardwareBacked) {
       throw StateError(
           'Software-no-enroll: device key is not hardware-backed (level ${key.effectiveLevel.name}) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
@@ -201,7 +250,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     return HwKeyHandle(
       pkDRaw: HwDeviceKey.pkDFromXY(
           info.publicJwk.x, info.publicJwk.y),
-      level: mapKeySecurityLevel(info.securityLevel),
+      level: _iosTier(mapKeySecurityLevel(info.securityLevel)),
       gatedByUserAuth: info.gatedByUserAuth,
     );
   }
@@ -243,7 +292,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
   }
 
   @override
-  Future<List<Uint8List>> attest({
+  Future<HwAttestation> attest({
     required String alias,
     required Uint8List serverNonce,
   }) async {
@@ -251,7 +300,57 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     // [HwDeviceKey.bindEnrollment] wraps it as StateError (fail-closed).
     final attestation =
         await keys.attest(alias: alias, serverNonce: serverNonce);
-    return decodeX5c(attestation.x5c);
+    final t = attestation.type;
+    if (t == KeyAttestationType.appleAppAttest ||
+        t == KeyAttestationType.appleAppAssert) {
+      return attestApple(attestation.raw);
+    }
+    return HwAttestation(chainDER: decodeX5c(attestation.x5c));
+  }
+
+  /// Apple CBOR branch (test seam: pure parse over plugin `raw` bytes).
+  /// Attestation objects yield the x5c chain + authData + credential key;
+  /// assertions yield authData with an empty chain (the credential key
+  /// rides forward from the previous enrollment — see
+  /// [HwDeviceKey.bindEnrollment]). Throws [StateError] on missing or
+  /// malformed CBOR (fail-closed, same as the Android empty-chain path).
+  static HwAttestation attestApple(Uint8List? raw) {
+    if (raw == null || raw.isEmpty) {
+      throw StateError('empty App Attest artifact (fail-closed).');
+    }
+    late final ParsedAppAttestRaw parsed;
+    try {
+      parsed = ParsedAppAttestRaw.parse(raw);
+    } catch (e) {
+      throw StateError('bad App Attest CBOR (fail-closed).');
+    }
+    if (parsed.kind == AppAttestRawKind.attestationObject) {
+      for (final c in parsed.x5c) {
+        if (c.isEmpty || c[0] != 0x30) {
+          throw StateError('bad App Attest DER (fail-closed).');
+        }
+      }
+      late final Uint8List credKey;
+      try {
+        credKey = extractAppAttestCredentialKey(parsed.authData);
+      } catch (_) {
+        throw StateError('bad App Attest authData (fail-closed).');
+      }
+      return HwAttestation(
+        chainDER: [
+          for (final c in parsed.x5c) Uint8List.fromList(c),
+        ],
+        appAttestRaw: Uint8List.fromList(raw),
+        appAttestAuthData: Uint8List.fromList(parsed.authData),
+        appAttestCredKey: credKey,
+        isApple: true,
+      );
+    }
+    return HwAttestation(
+      appAttestRaw: Uint8List.fromList(raw),
+      appAttestAuthData: Uint8List.fromList(parsed.authData),
+      isApple: true,
+    );
   }
 
   @override
@@ -384,6 +483,12 @@ class HwDeviceKey implements DeviceKey {
   DateTime _attestedUntil =
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   Uint8List? _lastChallenge;
+  // Apple App Attest stash (iOS only; null on Android): the enrollment
+  // CBOR raw + parsed authData + credential key ride into StoredEnrollment
+  // and the claim/prove bodies for the professor iOS branch.
+  Uint8List? _appAttestRaw;
+  Uint8List? _appAttestAuthData;
+  Uint8List? _appAttestCredKey;
 
   /// Heartbeat roll budget (M7): at most this many `heartbeat()` rolls per
   /// enrollment before a fresh attestation is required. 8 × 90d ≈ 2y of
@@ -528,11 +633,17 @@ class HwDeviceKey implements DeviceKey {
   ///
   /// Attestation MUST succeed: any attest failure (or empty chain) throws
   /// `StateError` — enrollment never proceeds with an unbound key.
+  ///
+  /// [prevAppAttestCredKeyHex] carries the enrollment credential key
+  /// forward on the iOS assertion path (same-install re-enroll yields an
+  /// assertion, not an object — the plugin caches the App Attest keyId per
+  /// install). Empty there fails closed with a reinstall pointer.
   @override
   Future<void> bindEnrollment({
     required String email,
     required String installId,
     required Uint8List pkS,
+    String prevAppAttestCredKeyHex = '',
   }) async {
     requireMobileFace();
     final challenge = enrollmentChallenge(
@@ -543,19 +654,80 @@ class HwDeviceKey implements DeviceKey {
       throw StateError(
           'Software-no-enroll: secure hardware unavailable (level none) — enroll on a mobile device with StrongBox/TEE or Secure Enclave.');
     }
-    late final List<Uint8List> chain;
+    late final HwAttestation att;
     try {
-      chain = await _backend.attest(alias: alias, serverNonce: challenge);
+      att = await _backend.attest(alias: alias, serverNonce: challenge);
     } catch (e) {
       throw StateError(
           'attestation failed — re-enroll on a device with secure hardware (${e.runtimeType}).');
     }
-    if (chain.isEmpty || chain.any((c) => c.isEmpty)) {
-      throw StateError(
-          'attestation failed — empty attestation chain (no hardware proof).');
+    late final List<Uint8List> chain;
+    if (!att.isApple) {
+      chain = att.chainDER;
+      if (chain.isEmpty || chain.any((c) => c.isEmpty)) {
+        throw StateError(
+            'attestation failed — empty attestation chain (no hardware proof).');
+      }
+      _appAttestRaw = null;
+      _appAttestAuthData = null;
+      _appAttestCredKey = null;
+    } else {
+      // Apple CBOR (see attestApple): object path carries the x5c chain +
+      // credential key; assertion path carries authData with an empty
+      // chain and the credential key rides forward from the previous
+      // enrollment.
+      if (att.appAttestRaw == null ||
+          att.appAttestRaw!.isEmpty ||
+          att.appAttestAuthData == null ||
+          att.appAttestAuthData!.isEmpty) {
+        throw StateError(
+            'attestation failed — empty App Attest artifact (no hardware proof).');
+      }
+      if (att.chainDER.isNotEmpty) {
+        if (att.chainDER.any((c) => c.isEmpty)) {
+          throw StateError(
+              'attestation failed — empty App Attest certificate (no hardware proof).');
+        }
+        if (att.appAttestCredKey == null ||
+            att.appAttestCredKey!.length != 64) {
+          throw StateError(
+              'attestation failed — App Attest credential key missing.');
+        }
+        chain = att.chainDER;
+        _appAttestCredKey = Uint8List.fromList(att.appAttestCredKey!);
+      } else {
+        final prev = prevAppAttestCredKeyHex.trim().toLowerCase();
+        if (prev.length != 128) {
+          throw StateError(
+              're-enroll needs the previous App Attest credential — reinstall the app to re-attest, then enroll again.');
+        }
+        late final Uint8List prevKey;
+        try {
+          prevKey = hexDecode(prev);
+        } catch (_) {
+          throw StateError(
+              're-enroll needs the previous App Attest credential — reinstall the app to re-attest, then enroll again.');
+        }
+        chain = const [];
+        _appAttestCredKey = prevKey;
+      }
+      _appAttestRaw = Uint8List.fromList(att.appAttestRaw!);
+      _appAttestAuthData = Uint8List.fromList(att.appAttestAuthData!);
     }
     _adopt(handle, chain: chain, challenge: challenge);
   }
+
+  /// Apple App Attest CBOR raw hex ('' on Android / until bound).
+  String get appAttestRawHex =>
+      _appAttestRaw == null ? '' : hexEncode(_appAttestRaw!);
+
+  /// Apple authData hex ('' on Android / until bound).
+  String get appAttestAuthDataHex =>
+      _appAttestAuthData == null ? '' : hexEncode(_appAttestAuthData!);
+
+  /// Apple credential-key hex, 128 chars ('' on Android / until bound).
+  String get appAttestCredKeyHex =>
+      _appAttestCredKey == null ? '' : hexEncode(_appAttestCredKey!);
 
   void _adopt(HwKeyHandle h,
       {required List<Uint8List> chain, Uint8List? challenge}) {

@@ -100,6 +100,9 @@ abstract class DeviceKey {
     required String email,
     required String installId,
     required Uint8List pkS,
+    // iOS assertion path: previous enrollment credential key hex (carried
+    // forward for same-install re-enroll; ignored on all other paths).
+    String prevAppAttestCredKeyHex = '',
   }) =>
       ensure();
 }
@@ -151,6 +154,9 @@ class UnavailableDeviceKey implements DeviceKey {
     required String email,
     required String installId,
     required Uint8List pkS,
+    // iOS assertion path: previous enrollment credential key hex (carried
+    // forward for same-install re-enroll; ignored on all other paths).
+    String prevAppAttestCredKeyHex = '',
   }) async =>
       throw _blocked();
 }
@@ -258,6 +264,9 @@ class SoftwareDeviceKey implements DeviceKey {
     required String email,
     required String installId,
     required Uint8List pkS,
+    // iOS assertion path: previous enrollment credential key hex (carried
+    // forward for same-install re-enroll; ignored on all other paths).
+    String prevAppAttestCredKeyHex = '',
   }) async =>
       ensure();
 }
@@ -358,6 +367,9 @@ class FakeDeviceKey implements DeviceKey {
     required String email,
     required String installId,
     required Uint8List pkS,
+    // iOS assertion path: previous enrollment credential key hex (carried
+    // forward for same-install re-enroll; ignored on all other paths).
+    String prevAppAttestCredKeyHex = '',
   }) async =>
       ensure();
 }

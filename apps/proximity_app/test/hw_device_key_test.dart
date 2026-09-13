@@ -51,13 +51,14 @@ class _FakeHwBackend implements HwKeyBackend {
   }
 
   @override
-  Future<List<Uint8List>> attest(
+  Future<HwAttestation> attest(
       {required String alias, required Uint8List serverNonce}) async {
     attestCalls++;
     if (throwAttest) throw StateError('no attestation (test)');
-    if (emptyChain) return const [];
+    if (emptyChain) return const HwAttestation();
     chain = [Uint8List.fromList([...serverNonce, 0x06, 0x09])];
-    return [for (final c in chain) Uint8List.fromList(c)];
+    return HwAttestation(
+        chainDER: [for (final c in chain) Uint8List.fromList(c)]);
   }
 
   @override
@@ -65,6 +66,58 @@ class _FakeHwBackend implements HwKeyBackend {
     lastChallenge = null;
     chain = const [];
   }
+}
+
+/// Apple-shaped fake backend: generateKey reports STD (the iOS tier —
+/// Secure Enclave + App Attest standard), attest returns the canned Apple
+/// artifact (object with x5c, or assertion with an empty chain).
+class _AppleBackend implements HwKeyBackend {
+  final Uint8List raw;
+  final List<Uint8List> chain;
+  final Uint8List? credKey;
+  final Uint8List pkD =
+      Uint8List.fromList(List.generate(64, (i) => (i * 5 + 1) & 0xFF));
+
+  _AppleBackend({required this.raw, required this.chain, this.credKey});
+
+  @override
+  Future<HwKeyHandle> generateKey(
+          {required String alias,
+          required Uint8List attestationChallenge}) async =>
+      HwKeyHandle(
+          pkDRaw: Uint8List.fromList(pkD),
+          level: AttestationLevel.standard);
+
+  @override
+  Future<HwKeyHandle?> getKeyInfo({required String alias}) async =>
+      HwKeyHandle(
+          pkDRaw: Uint8List.fromList(pkD),
+          level: AttestationLevel.standard);
+
+  @override
+  Future<bool> containsKey({required String alias}) async => true;
+
+  @override
+  Future<Uint8List> sign(
+          {required String alias, required Uint8List payload}) async =>
+      Uint8List(64);
+
+  @override
+  Future<HwAttestation> attest(
+      {required String alias, required Uint8List serverNonce}) async {
+    final parsed = AttestedSecureKeysBackend.attestApple(raw);
+    return HwAttestation(
+      chainDER: [for (final c in chain) Uint8List.fromList(c)],
+      appAttestRaw: parsed.appAttestRaw,
+      appAttestAuthData: parsed.appAttestAuthData,
+      appAttestCredKey:
+          credKey == null ? null : Uint8List.fromList(credKey!),
+      isApple: true,
+    );
+  }
+
+  @override
+  Future<void> deleteKey({required String alias}) async {}
 }
 
 /// In-memory DEK store: one instance per device — a fresh instance models a
@@ -354,6 +407,139 @@ void main() {
           pkS: Uint8List.fromList(List.filled(32, 1)));
       final sig = await d.sign(Uint8List.fromList([1, 2, 3]));
       expect(sig.length, 64);
+    });
+  });
+
+  group('Apple App Attest branch (iOS)', () {
+    // Hand-built attestation object: A3{1:'apple',2:authData,3:{'x5c':[cert]}}
+    // with authData carrying a COSE ES256 P-256 credential key.
+    (Uint8List, Uint8List) appleObject() {
+      final x = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final y = Uint8List.fromList(List.generate(32, (i) => i + 33));
+      final auth = Uint8List.fromList([
+        ...List.filled(32, 0xAA),
+        0x45,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        ...List.filled(16, 0xBB),
+        0x00,
+        0x02,
+        0xCC,
+        0xDD,
+        0xA5,
+        0x01,
+        0x02,
+        0x03,
+        0x26,
+        0x20,
+        0x01,
+        0x21,
+        0x58,
+        0x20,
+        ...x,
+        0x22,
+        0x58,
+        0x20,
+        ...y,
+      ]);
+      final cert = Uint8List.fromList([0x30, 0x03, 0x01, 0x02, 0x03]);
+      final raw = Uint8List.fromList([
+        0xA3,
+        0x01,
+        0x65,
+        0x61,
+        0x70,
+        0x70,
+        0x6C,
+        0x65,
+        0x02,
+        0x58,
+        auth.length,
+        ...auth,
+        0x03,
+        0xA1,
+        0x63,
+        0x78,
+        0x35,
+        0x63,
+        0x81,
+        0x45,
+        ...cert,
+      ]);
+      return (raw, Uint8List.fromList([...x, ...y]));
+    }
+
+    test('attestApple parses object (chain + authData + credKey)', () {
+      final (raw, credKey) = appleObject();
+      final att = AttestedSecureKeysBackend.attestApple(raw);
+      expect(att.isApple, isTrue);
+      expect(att.chainDER, hasLength(1));
+      expect(att.chainDER.single[0], 0x30);
+      expect(att.appAttestAuthData, isNotNull);
+      expect(att.appAttestCredKey, credKey);
+      expect(att.appAttestRaw, raw);
+    });
+
+    test('attestApple parses assertion (empty chain, authData kept)', () {
+      final auth = Uint8List.fromList(List.filled(37, 0x11));
+      final sig = Uint8List.fromList(List.filled(64, 0x22));
+      final att = AttestedSecureKeysBackend.attestApple(
+          Uint8List.fromList([...auth, ...sig]));
+      expect(att.isApple, isTrue);
+      expect(att.chainDER, isEmpty);
+      expect(att.appAttestAuthData, auth);
+      expect(att.appAttestCredKey, isNull);
+    });
+
+    test('attestApple fails closed on missing/malformed CBOR', () {
+      expect(() => AttestedSecureKeysBackend.attestApple(null),
+          throwsStateError);
+      expect(() => AttestedSecureKeysBackend.attestApple(Uint8List(10)),
+          throwsStateError);
+    });
+
+    test('bindEnrollment Apple object path binds STD + stash', () async {
+      final (raw, credKey) = appleObject();
+      final backend = _AppleBackend(
+          raw: raw,
+          chain: [Uint8List.fromList([0x30, 0x03, 0x01, 0x02, 0x03])],
+          credKey: credKey);
+      final d = _device(backend: backend);
+      await d.bindEnrollment(
+          email: 's@x.in', installId: 'inst-1', pkS: Uint8List(32));
+      expect(d.level, AttestationLevel.standard);
+      expect(d.chainDER, hasLength(1));
+      expect(d.appAttestRawHex, hexEncode(raw));
+      expect(d.appAttestCredKeyHex, hexEncode(credKey));
+      expect(d.appAttestAuthDataHex.isNotEmpty, isTrue);
+    });
+
+    test('bindEnrollment assertion path needs prev credKey, else reinstall',
+        () async {
+      final auth = Uint8List.fromList(List.filled(37, 0x11));
+      final sig = Uint8List.fromList(List.filled(64, 0x22));
+      final backend = _AppleBackend(
+          raw: Uint8List.fromList([...auth, ...sig]), chain: const []);
+      final d = _device(backend: backend);
+      // No previous credential -> clear reinstall pointer, never a bind.
+      expect(
+          () => d.bindEnrollment(
+              email: 's@x.in', installId: 'inst-1', pkS: Uint8List(32)),
+          throwsA(isStateError.having((e) => e.message, 'message',
+              contains('reinstall'))));
+      // Previous credential rides forward; chain stays empty (iOS only).
+      final prev = hexEncode(Uint8List.fromList(List.filled(64, 0x07)));
+      await d.bindEnrollment(
+          email: 's@x.in',
+          installId: 'inst-1',
+          pkS: Uint8List(32),
+          prevAppAttestCredKeyHex: prev);
+      expect(d.level, AttestationLevel.standard);
+      expect(d.chainDER, isEmpty);
+      expect(d.appAttestCredKeyHex, prev);
+      expect(d.appAttestRawHex.isNotEmpty, isTrue);
     });
   });
 

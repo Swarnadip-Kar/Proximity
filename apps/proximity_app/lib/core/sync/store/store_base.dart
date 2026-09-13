@@ -48,6 +48,16 @@ class StoredEnrollment {
   /// existing template); first enrollment leaves 0, started-but-unsaved
   /// rescans never stamp. Additive migration: old docs parse with 0.
   final int lastFaceRescanAtMillis;
+  /// Apple App Attest CBOR raw hex (iOS only; '' on Android / pre-upgrade
+  /// docs). Attestation object (first registration per install) or
+  /// assertion (same-install re-enroll) — the professor iOS branch parses
+  /// it for the x5c chain / nonce / signature. Additive: old docs parse
+  /// with '' (pre-upgrade iOS docs re-enroll to gain it).
+  final String appAttestRawHex;
+  /// Apple credential-key hex, 128 chars x‖y (iOS only; '' otherwise).
+  /// Set at the first (object) enroll, carried forward across re-enrolls
+  /// for the assertion path. Additive migration like above.
+  final String appAttestCredKeyHex;
   StoredEnrollment({
     required this.email,
     required this.name,
@@ -64,6 +74,8 @@ class StoredEnrollment {
     DateTime? attestedAt,
     DateTime? attestedUntil,
     this.lastFaceRescanAtMillis = 0,
+    this.appAttestRawHex = '',
+    this.appAttestCredKeyHex = '',
   })  : chainDERHex = List.unmodifiable(chainDERHex ?? const <String>[]),
         attestedAt = attestedAt ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
@@ -100,6 +112,8 @@ class StoredEnrollment {
         'attestedAt': attestedAt.toIso8601String(),
         'attestedUntil': attestedUntil.toIso8601String(),
         'lastFaceRescanAtMillis': lastFaceRescanAtMillis,
+        'appAttestRawHex': appAttestRawHex,
+        'appAttestCredKeyHex': appAttestCredKeyHex,
       };
 
   factory StoredEnrollment.fromJson(Map<String, dynamic> j) {
@@ -140,6 +154,8 @@ class StoredEnrollment {
           : DateTime.parse(j['attestedUntil'] as String),
       lastFaceRescanAtMillis:
           (j['lastFaceRescanAtMillis'] as num?)?.toInt() ?? 0,
+      appAttestRawHex: j['appAttestRawHex'] as String? ?? '',
+      appAttestCredKeyHex: j['appAttestCredKeyHex'] as String? ?? '',
     );
   }
 }

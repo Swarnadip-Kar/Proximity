@@ -367,6 +367,10 @@ class FirestoreCloudSync implements CloudSync {
         ],
         livenessVer: d?['livenessVer'] as String? ?? '',
         integrityFlag: d?['integrityFlag'] as String? ?? '',
+        appAttestRawHex:
+            (d?['appAttestRawHex'] as String? ?? '').trim().toLowerCase(),
+        appAttestCredKeyHex:
+            (d?['appAttestCredKeyHex'] as String? ?? '').trim().toLowerCase(),
       );
 
   @override
@@ -431,6 +435,10 @@ class FirestoreCloudSync implements CloudSync {
           'attestationChain': List<String>.of(doc.attestationChain),
           'livenessVer': doc.livenessVer,
           'integrityFlag': doc.integrityFlag,
+          // iOS App Attest artifacts ('' on Android — professor iOS branch
+          // parses appAttestRawHex; rules type-lock both, like the chain).
+          'appAttestRawHex': doc.appAttestRawHex.trim().toLowerCase(),
+          'appAttestCredKeyHex': doc.appAttestCredKeyHex.trim().toLowerCase(),
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {

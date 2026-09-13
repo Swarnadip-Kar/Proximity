@@ -441,6 +441,8 @@ class ProxClient {
     String integrityHash = '',
     List<String> attestationChain = const [],
     String installId = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -474,6 +476,8 @@ class ProxClient {
           integrityHash: integrityHash,
           attestationChain: attestationChain,
           installId: installId,
+          appAttestRaw: appAttestRaw,
+          appAttestCredKey: appAttestCredKey,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -510,6 +514,8 @@ class ProxClient {
     String integrityHash = '',
     List<String> attestationChain = const [],
     String installId = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
@@ -563,6 +569,8 @@ class ProxClient {
       integrityHash: integrityHash,
       attestationChain: attestationChain,
       installId: installId,
+      appAttestRaw: appAttestRaw,
+      appAttestCredKey: appAttestCredKey,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =

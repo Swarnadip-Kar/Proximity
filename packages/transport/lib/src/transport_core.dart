@@ -93,6 +93,11 @@ Map<String, dynamic> buildProveBody({
   // Security §2 HW attestation (bound FULL/STD path; omitted on legacy).
   List<String> attestationChain = const [],
   String installId = '',
+  // iOS App Attest artifacts (hex; '' on Android / legacy): the enrollment
+  // CBOR raw (object or assertion) + credential key. The professor iOS
+  // branch parses them (app_attest.dart); absent = Android-shaped gate.
+  String appAttestRaw = '',
+  String appAttestCredKey = '',
 }) =>
     {
       'ID': id,
@@ -132,4 +137,8 @@ Map<String, dynamic> buildProveBody({
       if (attestationChain.isNotEmpty)
         'attestationChain': List<String>.of(attestationChain),
       if (installId.isNotEmpty) 'installId': installId,
+      if (appAttestRaw.trim().isNotEmpty)
+        'appAttestRaw': appAttestRaw.trim().toLowerCase(),
+      if (appAttestCredKey.trim().isNotEmpty)
+        'appAttestCredKey': appAttestCredKey.trim().toLowerCase(),
     };

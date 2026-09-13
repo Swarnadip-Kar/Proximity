@@ -1154,6 +1154,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // returned above).
       Uint8List pkD = Uint8List(0);
       List<String> chainForProve = stored.chainDERHex;
+      // iOS App Attest artifacts ride from the stored enrollment (parsed by
+      // the professor iOS branch; '' on Android — never length-gated).
+      var appAttestRawForProve = stored.appAttestRawHex;
+      var appAttestCredKeyForProve = stored.appAttestCredKeyHex;
       if (bound) {
         try {
           final livePkD = _deviceKey.pkD;
@@ -1184,6 +1188,8 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
                 attestedAt: stored.attestedAt,
                 attestedUntil: stored.attestedUntil,
                 lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+                appAttestRawHex: stored.appAttestRawHex,
+                appAttestCredKeyHex: stored.appAttestCredKeyHex,
               ));
             } catch (_) {}
           }
@@ -1450,6 +1456,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
             stored.attestedUntil.toUtc().millisecondsSinceEpoch,
         attestationChain: chainForProve,
         installId: installId,
+        // iOS App Attest artifacts ('' on Android): the professor iOS
+        // branch parses appAttestRaw (object or assertion) and binds the
+        // credential key; absent selects the Android-shaped gate.
+        appAttestRaw: appAttestRawForProve,
+        appAttestCredKey: appAttestCredKeyForProve,
       );
       if (res.flags.isNotEmpty) {
         BleLog.log('SEC', 'host attestation flags: ${res.flags.join(',')}');
