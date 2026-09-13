@@ -669,11 +669,15 @@ void main() {
       final challenge = deviceBindingChallenge(
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final (chain, rootHash, _) = fakeChain(challenge);
+      // Pin-pre-gate unit (fake DER, not X.509): sig verification is
+      // explicitly skipped here; full-chain sig coverage lives in
+      // test/chain_verify_test.dart (genuine + forged fixtures).
       final r = verifyAttestationChainPin(
           chain: chain,
           pinnedRootHashes: [rootHash],
           expectedChallenge: challenge,
-          level: AttestationLevel.full);
+          level: AttestationLevel.full,
+          verifySignatures: false);
       expect(r.ok, isTrue);
       expect(r.reason, 'ok');
     });
@@ -757,12 +761,16 @@ void main() {
         Uint8List.fromList([...challenge, ...List.filled(8, 2)]),
         root,
       ]);
+      // Pin-pre-gate unit (fake DER): OID skip is what is under test;
+      // sig verification is explicitly skipped (full iOS-chain sig
+      // coverage lives in test/chain_verify_test.dart).
       final r = verifyAttestationChainPin(
           chain: chain,
           pinnedRootHashes: [ProxCrypto.sha256Sync(root)],
           expectedChallenge: challenge,
           level: AttestationLevel.standard,
-          requireKeyOid: false);
+          requireKeyOid: false,
+          verifySignatures: false);
       expect(r.ok, isTrue);
     });
 

@@ -32,11 +32,13 @@
 // attestation-challenge helper and the offline chain-pinning types
 // (security §2, sec-protocol 1A). Trust caveat, stated plainly: the
 // [level] below is SELF-ASSERTED by the presenting device — full X.509
-// chain verification lives in the platform adapter (app layer) against
-// pins provisioned here; no billing-gated backend carries one, so FULL/STD
-// mean "claims hardware backing", verified only as a fresh signature over
-// the live challenge plus offline pin checks below, never as server
-// provenance. See PROXIMITY_DESIGN.md §3.4.
+// chain verification runs HERE offline (pure-Dart `chain_verify.dart`:
+// TBS signatures vs issuer SPKI, RSA + ECDSA P-256/P-384, root
+// self-signed + hash-pinned) against pins provisioned here; no
+// billing-gated backend carries one, so FULL/STD mean "claims hardware
+// backing", verified as a fresh signature over the live challenge plus
+// the offline chain checks below, never as server provenance.
+// See PROXIMITY_DESIGN.md §3.4.
 //
 // Security §4 liveness: the face ticket bound into Sig_s/dSig now carries
 // (livenessScore, livenessVer) — see crypto/primitives.dart faceTicketHash
@@ -48,6 +50,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'bytes.dart';
+import 'chain_verify.dart';
 import 'constants.dart';
 import 'crypto/primitives.dart';
 
@@ -164,10 +167,12 @@ class DeviceProofResult {
 ///
 /// Wire form is `attestationChain (list<string> DER hex)` on
 /// `studentDevices/{email}` — leaf-first, root-last, each entry DER-hex of
-/// one X.509 cert. This class is the pure-Dart in-memory form: no ASN.1
-/// parse, no platform code, no IMEI. Full X.509 signature verify lives in
-/// the platform adapter (app layer, owned by sec-hwkey); the pure pin
-/// checks below ([verifyAttestationChainPin]) run offline on the professor
+/// one X.509 cert. This class is the pure-Dart in-memory form: no platform
+/// code, no IMEI. Full X.509 chain-signature verification
+/// ([verifyChainSignaturesLeafFirst], in `chain_verify.dart` — offline,
+/// pure-Dart via `x509`/`asn1lib` parse + `pointycastle` RSA/ECDSA, no
+/// network) runs inside [verifyAttestationChainPin] after the pin
+/// pre-gates; the pure pin checks below run offline on the professor
 /// phone against pinned roots provisioned at setup time.
 class AttestationChain {
   /// Raw DER bytes per cert, leaf-first.
@@ -258,8 +263,9 @@ const List<int> kKeyAttestationOidDer = [
 ///
 /// Minimal pure-Dart format check: the leaf of a genuine Android key
 /// attestation cert carries extension 1.3.6.1.4.1.11129.2.1.17. Absence
-/// means "not an attestation cert" (fail closed). Full cert-signature
-/// verify is the platform adapter's job — this only gates format.
+/// means "not an attestation cert" (fail closed). Chain-signature math
+/// runs after this gate (see [verifyAttestationChainPin]) — this only
+/// gates format first so malformed leaves fail fast.
 bool attestationLeafHasKeyOid(Uint8List leafDer) {
   final needle = kKeyAttestationOidDer;
   if (leafDer.length < needle.length) return false;
@@ -337,11 +343,19 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// 1. [level] >= TEE (FULL/STD only — NONE never pins);
 /// 2. [chain] non-empty, every cert non-empty;
 /// 3. leaf carries the Key Attestation OID ([kKeyAttestationOid]) —
-///    else `missing-attestation-oid`;
+///    else `missing-attestation-oid` (skipped when [requireKeyOid] is
+///    false — see iOS below);
 /// 4. leaf embeds [expectedChallenge] (see [deviceBindingChallenge]) —
 ///    else `challenge-mismatch`;
 /// 5. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
-///    setup) — else `unknown-root`.
+///    setup) — else `unknown-root`;
+/// 6. full X.509 chain signatures verify offline (each TBS signed by the
+///    issuer SPKI, RSA + ECDSA P-256/P-384, root self-signed — see
+///    `chain_verify.dart`) — else `bad-chain-signature` /
+///    `bad-root-signature` / `bad-chain-der` / `unsupported-sigalg` /
+///    `unsupported-key` / `issuer-mismatch`. Skipped only when
+///    [verifySignatures] is false (pin-pre-gate unit tests; production
+///    callers MUST leave it true — no silent downgrades).
 ///
 /// [pinnedRootHashes] are raw 32-byte SHA-256 digests of trusted root DERs
 /// (TOFU→pin-check: first online fetch pins, offline verifies against the
@@ -360,9 +374,10 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 /// OID gate via [requireKeyOid] = false (App Attest objects are
 /// CBOR/authenticator-data and never carry the Android OID).
 ///
-/// X.509 signature math is explicitly OUT of scope here (platform adapter
-/// owns it) — this is the pure format+pin+challenge gate the professor
-/// runs offline before [evaluateDeviceProof] tiers the proof. Revocation
+/// X.509 signature math runs HERE (offline, pure-Dart — see
+/// `chain_verify.dart`), not in the platform adapter: this is the full
+/// format+pin+challenge+signature gate the professor runs offline before
+/// [evaluateDeviceProof] tiers the proof. Revocation
 /// (Google's CRL at android.googleapis.com/attestation/status) needs
 /// network and is therefore an online-setup-time check only — the offline
 /// professor gate cannot consult it (residual risk, see doc §7).
@@ -372,6 +387,7 @@ ChainPinResult verifyAttestationChainPin({
   required Uint8List expectedChallenge,
   required AttestationLevel level,
   bool requireKeyOid = true,
+  bool verifySignatures = true,
 }) {
   if (level == AttestationLevel.none) {
     return const ChainPinResult(
@@ -407,6 +423,13 @@ ChainPinResult verifyAttestationChainPin({
   if (!pinned) {
     return const ChainPinResult(
         ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
+  }
+  if (verifySignatures) {
+    final sig = verifyChainSignaturesLeafFirst(chain.certsDer);
+    if (!sig.ok) {
+      return ChainPinResult(
+          ok: false, reason: sig.reason, flags: sig.flags);
+    }
   }
   return const ChainPinResult(ok: true, reason: 'ok');
 }

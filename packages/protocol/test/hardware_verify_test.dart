@@ -254,11 +254,15 @@ void main() {
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final leaf = Uint8List.fromList(
           [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xAB)]);
+      // Pin-pre-gate unit (synthetic leaf, not X.509): sig verification is
+      // explicitly skipped here; full-chain sig coverage lives in
+      // test/chain_verify_test.dart (genuine + forged fixtures).
       final r = verifyAttestationChainPin(
         chain: AttestationChain([leaf, root]),
         pinnedRootHashes: defaultPinnedAttestationRoots(),
         expectedChallenge: challenge,
         level: AttestationLevel.full,
+        verifySignatures: false,
       );
       expect(r.ok, isTrue, reason: r.reason);
     });
@@ -272,11 +276,13 @@ void main() {
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final leaf = Uint8List.fromList(
           [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xCD)]);
+      // Pin-pre-gate unit (synthetic leaf): see above.
       final r = verifyAttestationChainPin(
         chain: AttestationChain([leaf, root]),
         pinnedRootHashes: defaultPinnedAttestationRoots(),
         expectedChallenge: challenge,
         level: AttestationLevel.standard,
+        verifySignatures: false,
       );
       expect(r.ok, isTrue, reason: r.reason);
     });

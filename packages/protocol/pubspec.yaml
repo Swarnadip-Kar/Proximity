@@ -16,6 +16,12 @@ dependencies:
   # not implement ECDSA — key generation/sign/verify throw
   # UnimplementedError off Flutter — so pointycastle carries both.)
   pointycastle: ^4.0.0
+  # Offline X.509 chain-signature verification (security §2, sec-chain):
+  # DER parse (`asn1lib` + `x509`) + TBS signature verify with issuer SPKI
+  # (RSA + ECDSA P-256/P-384 via pointycastle above). Pure-Dart, no platform
+  # code, no network — Spark-free (no billing-gated backend, no CRL fetch).
+  x509: ^0.2.4+3
+  asn1lib: ^1.6.5
 
 dev_dependencies:
   test: ^1.25.0
