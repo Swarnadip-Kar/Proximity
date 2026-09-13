@@ -77,8 +77,35 @@ dependencies:
   file_picker: ^12.0.0
   archive: ^4.2.0
   attested_secure_keys: ^0.1.1
+  # §5 integrity deps (owned by sec-integrity — other tracks request via 2C,
+  # never edit here directly).
+  # firebase_app_check PINNED to ^0.3.2+10, NOT ^0.4.7 (evaluated 2026-09-13):
+  # 0.4.0 is BREAKING — removes deprecated fns + bumps Android SDK to 34 /
+  # iOS SDK to 12, and 0.4.1+1 deprecates the `androidProvider` /
+  # `appleProvider` enum params that integrity.dart calls
+  # (`AndroidProvider.playIntegrity` / `AppleProvider.deviceCheck`) in favor
+  # of provider classes (`AppleAppAttestProvider`, rCE provider API). 0.4.x
+  # also requires firebase_core ^4.14.0 (repo pins ^3.8.0). Upgrading needs
+  # a Firebase-major bump + activate() rewrite + full test pass — deferred
+  # until the Firebase 4.x migration. integrity_gate_test pins the 0.3.x
+  # enum call shape, so drift fails review.
   firebase_app_check: ^0.3.2+10
+  # flutter_security_suite PINNED to ^1.1.1. Do NOT add advanced_root_detection:
+  # equivalent coverage already here — isRooted covers RootBeer/su +
+  # jailbreak reads, isRuntimeHooked covers Frida/Xposed/instrumentation, and
+  # isTampered + isAppIntegrityValid cover re-sign/strip — so a second root
+  # plugin buys duplicate native surface (new channel, new failure modes)
+  # for no new signal. Residual hiding (Magisk/Zygisk) fools BOTH equally;
+  # the compensating gate is Play Integrity STRONG via App Check console
+  # enforcement (see integrity.dart), not another local plugin.
   flutter_security_suite: ^1.1.1
+  # NO firebase_remote_config by decision (documented rejection): the
+  # version floor lives in Firestore `app_config/min_version` (world-readable
+  # get, Spark-free, offline-cached by the OS network layer) so force-update
+  # needs no extra SDK, no fetch/activate/TTL quota, and no silent-downgrade
+  # path — Remote Config defaults + throttled fetches would let a stale
+  # build read a stale/missing default as "no floor". Floor bumps ship with
+  # a rules deploy + min_version bump together, never silently.
   tflite_flutter: ^0.12.1
 
 dev_dependencies:
