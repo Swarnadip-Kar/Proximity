@@ -11,6 +11,7 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -291,7 +292,21 @@ Future<void> enterIp(WidgetTester t, String ip) async {
   await t.pump();
 }
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O which is meaningless on the test host — generateKey would
+// take the integrity-error path and the key ceremony could never complete
+// (same stall class as enroll_beacon_boundary_test.dart).
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
+  // Clean integrity verdict for generateKey (see _CleanProbe above);
+  // restored afterwards so probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
 
   testWidgets('prof course→take→LIVE→close→end (history, no export)', (t) async {
     final store = InMemoryDeviceStore();
