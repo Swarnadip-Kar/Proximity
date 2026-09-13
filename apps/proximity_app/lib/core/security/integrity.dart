@@ -88,7 +88,7 @@ import 'package:flutter_security_suite/flutter_security_suite.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
-import '../platformx.dart';
+
 
 /// Sensitive operation under test. Startup uses [startup]; every other
 /// caller passes its own op so logs stay attributable.
@@ -352,35 +352,6 @@ class IntegrityGate {
   /// the professor flags, never auto-absents.
   static String markingFlagStrict(IntegrityVerdict verdict) =>
       verdict.blocksEnroll || verdict.debug ? flaggedValue : '';
-
-  /// H7 combined gate: mobile domain + integrity in ONE call so enroll /
-  /// marking paths cannot pass one and skip the other. Records-only devices
-  /// (desktop/web) throw first via [requireMobileFace] (fail-closed
-  /// upstream, never an integrity verdict). Then a FRESH probe runs
-  /// (never the cached startup verdict — see [lastVerdictFresh]):
-  /// - [IntegrityOp.enroll] taint throws StateError (default law:
-  ///   privileged/hooked/tampered/emulator; debug alone passes — use
-  ///   [enrollBlockReasonStrict] via [strictDebug]=true to close it).
-  /// - host/prove ops never throw on taint (offline marking preserved) —
-  ///   the returned verdict's hash/flag ride into dSig/review.
-  /// Never throws for probe failures (fail-open probe → clean verdict).
-  static Future<IntegrityVerdict> requireMobileAndIntegrity(
-    IntegrityOp op, {
-    bool strictDebug = false,
-  }) async {
-    requireMobileFace();
-    final verdict = await verifyBeforeSensitiveOp(op);
-    if (op == IntegrityOp.enroll) {
-      final reason = strictDebug
-          ? enrollBlockReasonStrict(verdict)
-          : enrollBlockReason(verdict);
-      if (reason.isNotEmpty) {
-        BleLog.log('SEC', 'enroll integrity BLOCKED → ${verdict.hash}');
-        throw StateError(reason);
-      }
-    }
-    return verdict;
-  }
 
   /// Fresh probe before a sensitive op (enroll/host/prove). Never serves
   /// the cached startup verdict for decisions — callers pass the returned
