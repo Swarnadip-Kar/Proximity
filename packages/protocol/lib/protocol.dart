@@ -20,5 +20,6 @@ export 'src/crypto/preimages.dart';
 export 'src/crypto/freshness.dart';
 export 'src/crypto/verify.dart';
 export 'src/device_binding.dart';
+export 'src/app_attest.dart';
 export 'src/chain_verify.dart';
 export 'src/prof_key_pin.dart';
