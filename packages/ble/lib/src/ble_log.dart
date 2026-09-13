@@ -34,6 +34,15 @@ class BleLog {
   static List<BleLogEntry> get history => List.unmodifiable(_history);
   static Stream<BleLogEntry> get stream => _ctl.stream;
 
+  /// Console mirror switch (audit LOW: PII/scores in logcat): `true` in
+  /// debug/test so `adb logcat` carries the same history the on-screen
+  /// terminal shows (the in-app ring is autoscrolled and can't be grepped
+  /// during live radio tests); `false` in release (`dart.vm.product`), so
+  /// emails/scores/verdicts stay in the in-memory ring + on-screen
+  /// terminal and never reach logcat on user builds. Tests flip this to
+  /// pin both branches (zone-intercepted `print`).
+  static bool echoToConsole = !bool.fromEnvironment('dart.vm.product');
+
   static void log(String tag, String msg) {
     final e = BleLogEntry(DateTime.now().toUtc(), tag, msg);
     _history.add(e);
@@ -43,9 +52,7 @@ class BleLog {
     try {
       _ctl.add(e);
     } catch (_) {}
-    // Mirror to console so `adb logcat` (I/flutter) carries the same
-    // history the on-screen terminal shows — the in-app ring is
-    // autoscrolled and can't be grepped during live radio tests.
+    if (!echoToConsole) return;
     try {
       // ignore: avoid_print
       print('[${e.tag}] ${e.msg}');
