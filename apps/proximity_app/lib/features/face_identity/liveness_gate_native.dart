@@ -178,37 +178,81 @@ class HeuristicLivenessGate implements LivenessGate {
     }
   }
 
+  /// Single-flight turnstile for full passes: `tflite_flutter`
+  /// interpreters are NOT safe for concurrent `run` — overlapping passes
+  /// (rapid rescan taps, enroll+marking overlap) would share one
+  /// synchronous invoke and corrupt output or crash native. Queued callers
+  /// wait here but still fail closed on the shared [budget] deadline in
+  /// [detectPassive] (rescan-safe throw, never a hang). The slot never
+  /// completes with an error (see the `finally` below), so the chain stays
+  /// healthy across failures.
+  static Future<void> _flight = Future.value();
+
   @override
   Future<LivenessResult> detectPassive(String imagePath) async {
     requireMobileFace();
+    // Single deadline for the whole pass: read+decode+load+score share
+    // [budget] (the marking hot path is ~1s). Per-stage timeouts would
+    // stack to ~3x budget and blow the hot path, so every stage races the
+    // same remaining time instead.
+    final deadline = DateTime.now().add(budget);
+    Future<T> within<T>(Future<T> f) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw TimeoutException(
+            'liveness budget ${budget.inMilliseconds}ms exceeded');
+      }
+      return f.timeout(remaining);
+    }
+    // Queue behind any in-flight pass BEFORE touching the filesystem, so
+    // concurrent callers serialize instead of sharing the interpreter.
+    final prev = _flight;
+    final turn = Completer<void>();
+    _flight = turn.future;
     try {
-      final bytes = await _readStillBytes(imagePath).timeout(budget);
-      final frame = await _decodeRgba(bytes).timeout(budget);
-      final input = minifasnetInputFromRgba(
-          rgba: frame.rgba, width: frame.width, height: frame.height);
-      final output = List.generate(1, (_) => List.filled(3, 0.0));
-      final it = await _interpreter().timeout(budget);
-      // Synchronous invoke (MiniFASNetV2 is ~5ms/frame on-device — the
-      // budget above guards read/decode/load; inference itself never
-      // blocks on I/O, so no timeout can pre-empt it, by FFI design).
-      it.run(input, output);
-      final score = liveScoreFromProbs(output.first);
-      return LivenessResult(score: score, ver: kLivenessVer);
+      await within(prev);
+      try {
+        final bytes = await within(_readStillBytes(imagePath));
+        final frame = await within(_decodeRgba(bytes));
+        final input = minifasnetInputFromRgba(
+            rgba: frame.rgba, width: frame.width, height: frame.height);
+        final output = List.generate(1, (_) => List.filled(3, 0.0));
+        final it = await within(_interpreter());
+        // Synchronous invoke (MiniFASNetV2 is ~5ms/frame on-device — the
+        // deadline above guards read/decode/load; inference itself never
+        // blocks on I/O, so no timeout can pre-empt it, by FFI design).
+        // Runs under the turnstile above: never concurrent, by construction.
+        it.run(input, output);
+        final score = liveScoreFromProbs(output.first);
+        return LivenessResult(score: score, ver: kLivenessVer);
+      } on StateError {
+        rethrow;
+      } on TimeoutException catch (e) {
+        // Hung read/decode/model: fail closed as a rescan-safe error (driver
+        // maps to inconclusive, burns nothing), never a hang, never a pass.
+        throw StateError(
+            'Liveness check timed out — adjust light and try again ($e)');
+      } on ArgumentError catch (e) {
+        // Pure pre/post-processing contract breach (never on real frames):
+        // fail closed, same mapping.
+        throw StateError(
+            'Liveness check did not read clearly — adjust light and try again ($e)');
+      } catch (e) {
+        throw StateError(
+            'Liveness check did not read clearly — adjust light and try again ($e)');
+      }
     } on StateError {
       rethrow;
     } on TimeoutException catch (e) {
-      // Hung read/decode/model: fail closed as a rescan-safe error (driver
-      // maps to inconclusive, burns nothing), never a hang, never a pass.
+      // Turnstile wait outlived the budget (a previous pass hogged it):
+      // fail closed the same way, never a hang, never a pass.
       throw StateError(
           'Liveness check timed out — adjust light and try again ($e)');
-    } on ArgumentError catch (e) {
-      // Pure pre/post-processing contract breach (never on real frames):
-      // fail closed, same mapping.
-      throw StateError(
-          'Liveness check did not read clearly — adjust light and try again ($e)');
     } catch (e) {
       throw StateError(
           'Liveness check did not read clearly — adjust light and try again ($e)');
+    } finally {
+      turn.complete();
     }
   }
 }
