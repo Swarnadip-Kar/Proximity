@@ -79,7 +79,6 @@ ChainPinResult _fakeChainGate({
   required AttestationChain chain,
   required List<Uint8List> pinnedRootHashes,
   required Uint8List expectedChallenge,
-  required Uint8List? alternateChallenge,
   required Uint8List? expectedLeafPkD,
   required AttestationLevel level,
 }) {
@@ -109,10 +108,7 @@ ChainPinResult _fakeChainGate({
         flags: ['attest-leaf-pkd-mismatch']);
   }
   final challengeOk =
-      attestationLeafContainsChallenge(leaf, expectedChallenge) ||
-          (alternateChallenge != null &&
-              alternateChallenge.isNotEmpty &&
-              attestationLeafContainsChallenge(leaf, alternateChallenge));
+      attestationLeafContainsChallenge(leaf, expectedChallenge);
   if (!challengeOk) {
     return const ChainPinResult(
         ok: false,
@@ -257,7 +253,7 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final device = _p256Key();
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -298,7 +294,7 @@ void main() {
     final device = _p256Key();
     final proved = <String>[];
     // Enrollment-equivalent challenge the professor will recompute.
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -338,7 +334,7 @@ void main() {
     final stu = ProxCrypto.generateEdKeypair();
     final device = _p256Key();
     final proved = <String>[];
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -391,7 +387,7 @@ void main() {
     final device = _p256Key();
     final attacker = _p256Key(99);
     final proved = <String>[];
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -432,7 +428,7 @@ void main() {
     final device = _p256Key();
     final forger = _p256Key(77);
     final proved = <String>[];
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -475,7 +471,7 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final device = _p256Key();
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));
@@ -517,7 +513,7 @@ void main() {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final device = _p256Key();
-    final enrollChallenge = deviceBindingChallenge(
+    final enrollChallenge = deviceBindingChallengeV2(
         emailLower: _email,
         installId: _installId,
         pkS: _pk32(stu.publicKey));

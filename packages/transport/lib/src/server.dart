@@ -240,7 +240,6 @@ class ProxServer {
     required AttestationChain chain,
     required List<Uint8List> pinnedRootHashes,
     required Uint8List expectedChallenge,
-    required Uint8List? alternateChallenge,
     required Uint8List? expectedLeafPkD,
     required AttestationLevel level,
   })? testChainGate;
@@ -805,17 +804,12 @@ class ProxServer {
       } catch (_) {
         proveChain = null;
       }
-      // Track A: V2 primary (domain-separated + length-prefixed) with V1
-      // as migration alternate — new enrollments bind V2 at key creation
-      // (HwDeviceKey.bindEnrollment), already-issued V1 chains verify via
-      // the alternate. Structure/length/challenge containment only — the
+      // Enrollment challenge (V2 canonical, domain-separated +
+      // length-prefixed) bound at key creation (HwDeviceKey.bindEnrollment).
+      // The professor recomputes exactly it — no alternates, no migration
+      // accepts. Structure/length/challenge containment only — the
       // leaf bytes are never decrypted or interpreted.
-      final expectedAttChallengeV2 = deviceBindingChallengeV2(
-        emailLower: id,
-        installId: bodyInstallId,
-        pkS: presentedPk,
-      );
-      final expectedAttChallengeV1 = deviceBindingChallenge(
+      final expectedAttChallenge = deviceBindingChallengeV2(
         emailLower: id,
         installId: bodyInstallId,
         pkS: presentedPk,
@@ -996,8 +990,8 @@ class ProxServer {
 
       // Security §2 chain gate (sec-hwkey): a confirming FULL/STD proof
       // must carry a chain that (a) is well-formed with the attestation
-      // OID, (b) embeds the recomputed enrollment challenge (V2 primary,
-      // V1 alternate), (c) binds the leaf SPKI to the proving pkD
+      // OID, (b) embeds the recomputed enrollment challenge (V2 canonical),
+      // (c) binds the leaf SPKI to the proving pkD
       // (expectedLeafPkD — structure-only compare, no decryption), (d)
       // validates X.509 signatures + validity dates, and (e) pins to the
       // Google roots. Any failure verdicts device-unproven (never a tier,
@@ -1016,16 +1010,14 @@ class ProxServer {
                 ? testChainGate!(
                     chain: proveChain,
                     pinnedRootHashes: pinnedAttestationRoots,
-                    expectedChallenge: expectedAttChallengeV2,
-                    alternateChallenge: expectedAttChallengeV1,
+                    expectedChallenge: expectedAttChallenge,
                     expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
                     level: attLevel,
                   )
                 : verifyAttestationChainPin(
                     chain: proveChain,
                     pinnedRootHashes: pinnedAttestationRoots,
-                    expectedChallenge: expectedAttChallengeV2,
-                    alternateChallenge: expectedAttChallengeV1,
+                    expectedChallenge: expectedAttChallenge,
                     expectedLeafPkD: pkD.isNotEmpty ? pkD : null,
                     level: attLevel,
                     checkValidity: true,

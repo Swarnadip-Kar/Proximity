@@ -255,7 +255,7 @@ void main() {
       expect(root.length, 1312);
       expect(hexEncode(ProxCrypto.sha256Sync(root)),
           kGoogleHwAttestationRootRsaSha256Hex);
-      final challenge = deviceBindingChallenge(
+      final challenge = deviceBindingChallengeV2(
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final leaf = Uint8List.fromList(
           [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xAB)]);
@@ -278,7 +278,7 @@ void main() {
       expect(root.length, 550);
       expect(hexEncode(ProxCrypto.sha256Sync(root)),
           kGoogleHwAttestationRootEcSha256Hex);
-      final challenge = deviceBindingChallenge(
+      final challenge = deviceBindingChallengeV2(
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final leaf = Uint8List.fromList(
           [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xCD)]);
@@ -294,51 +294,35 @@ void main() {
     });
   });
 
-  group('M4: V2 challenge + alternate + leaf-pkD bind', () {
-    test('V1 stays byte-identical; V2 is domain-separated + unambiguous',
-        () {
+  group('M4: canonical challenge + leaf-pkD bind', () {
+    test('challenge is domain-separated + unambiguous', () {
       final pkS = randBytes(32);
-      final v1a = deviceBindingChallenge(
-          emailLower: 'ab', installId: 'c', pkS: pkS);
-      final v1b = deviceBindingChallenge(
-          emailLower: 'a', installId: 'bc', pkS: pkS);
-      // V1 concat ambiguity is real (documents why V2 exists); V2 splits it.
+      // Concat ambiguity is closed by length-prefixing: swapped splits differ.
       final v2a = deviceBindingChallengeV2(
           emailLower: 'ab', installId: 'c', pkS: pkS);
       final v2b = deviceBindingChallengeV2(
           emailLower: 'a', installId: 'bc', pkS: pkS);
       expect(v2a, isNot(v2b));
-      expect(v1a, isNot(v2a)); // domain tag separates the versions
       expect(
           deviceBindingChallengeV2(
               emailLower: 'A@x.in', installId: 'i1', pkS: pkS),
           deviceBindingChallengeV2(
               emailLower: 'a@x.in', installId: 'i1', pkS: pkS));
-      void _ = v1b; // ambiguity witness (V1 may collide at concat layer)
     });
 
-    test('alternateChallenge accepts a V1 leaf during migration', () {
+    test('wrong challenge fails closed (no alternates)', () {
       final pkS = randBytes(32);
-      final v2 = deviceBindingChallengeV2(
+      final expected = deviceBindingChallengeV2(
           emailLower: 'a@x.in', installId: 'i1', pkS: pkS);
-      final v1 = deviceBindingChallenge(
-          emailLower: 'a@x.in', installId: 'i1', pkS: pkS);
+      final other = deviceBindingChallengeV2(
+          emailLower: 'b@x.in', installId: 'i1', pkS: pkS);
       final root = hexDecode(_googleRsaRootDerHex);
       final leaf = Uint8List.fromList(
-          [...kKeyAttestationOidDer, ...v1, ...List.filled(8, 0xAB)]);
-      final ok = verifyAttestationChainPinForTest(
-        chain: AttestationChain([leaf, root]),
-        pinnedRootHashes: defaultPinnedAttestationRoots(),
-        expectedChallenge: v2,
-        level: AttestationLevel.full,
-        verifySignatures: false,
-        alternateChallenge: v1,
-      );
-      expect(ok.ok, isTrue, reason: ok.reason);
+          [...kKeyAttestationOidDer, ...other, ...List.filled(8, 0xAB)]);
       final bad = verifyAttestationChainPinForTest(
         chain: AttestationChain([leaf, root]),
         pinnedRootHashes: defaultPinnedAttestationRoots(),
-        expectedChallenge: v2,
+        expectedChallenge: expected,
         level: AttestationLevel.full,
         verifySignatures: false,
       );

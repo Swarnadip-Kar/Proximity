@@ -388,24 +388,12 @@ class HwDeviceKey implements DeviceKey {
       : _backend = backend,
         _sealStore = sealStore ?? const FlutterSealStore();
 
-  /// M1-gap canonical challenge: SHA256(emailLower || installId || pkS32).
-  /// Thin wrapper over the protocol contract (sec-protocol 1A).
-  /// V1 byte-identical (already-issued chains); new enrollments SHOULD
-  /// prefer [enrollmentChallengeV2] once the professor verifies with
-  /// `expectedChallenge: V2, alternateChallenge: V1` migration.
+  /// M1-gap canonical challenge: SHA256 over (emailLower || installId ||
+  /// pkS32), domain-separated + length-prefixed (see
+  /// [deviceBindingChallengeV2]). Thin wrapper over the protocol contract
+  /// (sec-protocol 1A). The professor verifies exactly this challenge —
+  /// no alternates, no migration accepts.
   static Uint8List enrollmentChallenge({
-    required String email,
-    required String installId,
-    required Uint8List pkS,
-  }) =>
-      deviceBindingChallenge(
-          emailLower: email, installId: installId, pkS: pkS);
-
-  /// Enrollment challenge V2 (preferred for NEW enrollments):
-  /// domain-separated + length-prefixed (see [deviceBindingChallengeV2]).
-  /// The professor accepts V2 primary with V1 as [alternateChallenge]
-  /// during migration — pass V2 here at key creation once provisioned.
-  static Uint8List enrollmentChallengeV2({
     required String email,
     required String installId,
     required Uint8List pkS,
@@ -463,12 +451,12 @@ class HwDeviceKey implements DeviceKey {
   }
 
   /// Generates (or re-binds) the HW key for one enrollment, embedding
-  /// the V2 enrollment challenge (domain-separated + length-prefixed —
-  /// see [enrollmentChallengeV2]) as the attestation challenge and caching
-  /// the chain. Idempotent per enrollment (same inputs → same challenge; a
-  /// new key replaces the old under [alias]). The professor verifies V2
-  /// primary with V1 as migration alternate, so already-issued V1 chains
-  /// keep verifying. Structure/length/challenge bytes only — sealed bytes
+  /// the canonical enrollment challenge (domain-separated +
+  /// length-prefixed — see [enrollmentChallenge]) as the attestation
+  /// challenge and caching the chain. Idempotent per enrollment (same
+  /// inputs → same challenge; a new key replaces the old under [alias]).
+  /// The professor verifies exactly this challenge — no alternates.
+  /// Structure/length/challenge bytes only — sealed bytes
   /// are never decrypted or interpreted here.
   ///
   /// Attestation MUST succeed: any attest failure (or empty chain) throws
@@ -480,7 +468,7 @@ class HwDeviceKey implements DeviceKey {
     required Uint8List pkS,
   }) async {
     requireMobileFace();
-    final challenge = enrollmentChallengeV2(
+    final challenge = enrollmentChallenge(
         email: email, installId: installId, pkS: pkS);
     final handle = await _backend.generateKey(
         alias: alias, attestationChallenge: challenge);

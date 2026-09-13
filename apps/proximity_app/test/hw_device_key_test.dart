@@ -97,13 +97,12 @@ HwDeviceKey _device(
     );
 
 void main() {
-  group('HwDeviceKey challenge binding (M1-gap canonical)', () {
-    test('enrollmentChallenge == deviceBindingChallenge, lowercases email',
-        () {
+  group('HwDeviceKey challenge binding (canonical V2)', () {
+    test('enrollmentChallenge is V2-canonical, lowercases email', () {
       final pkS = Uint8List.fromList(List.filled(32, 9));
       final a = HwDeviceKey.enrollmentChallenge(
           email: 'Student@Example.COM', installId: 'inst-1', pkS: pkS);
-      final b = deviceBindingChallenge(
+      final b = deviceBindingChallengeV2(
           emailLower: 'student@example.com', installId: 'inst-1', pkS: pkS);
       expect(a, b);
       expect(a.length, 32);

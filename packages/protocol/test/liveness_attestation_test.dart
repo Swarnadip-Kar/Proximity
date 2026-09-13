@@ -686,37 +686,35 @@ void main() {
     });
   });
 
-  group('deviceBindingChallenge SHA256(email||installId||pkS)', () {
-    test('golden', () {
-      final c = deviceBindingChallenge(
-          emailLower: 'A@X.in',
-          installId: 'inst-1',
-          pkS: Uint8List.fromList(List.filled(32, 7)));
-      expect(hexEncode(c),
-          'f5848dc95cc4c45505cb41e93666f8cf4443becbec76b413e8b1049e9caca903');
-    });
-
+  group('deviceBindingChallengeV2 SHA256(domain||lens||email||installId||pkS)', () {
     test('deterministic, lowercases email, binds all inputs', () {
       final pkS = randBytes(32);
-      final a = deviceBindingChallenge(
+      final a = deviceBindingChallengeV2(
           emailLower: 'A@x.in', installId: 'inst-1', pkS: pkS);
-      final b = deviceBindingChallenge(
+      final b = deviceBindingChallengeV2(
           emailLower: 'a@x.in', installId: 'inst-1', pkS: pkS);
       expect(a, b);
+      expect(a.length, 32);
       expect(
-          deviceBindingChallenge(
+          deviceBindingChallengeV2(
               emailLower: 'b@x.in', installId: 'inst-1', pkS: pkS),
           isNot(a));
       expect(
-          deviceBindingChallenge(
+          deviceBindingChallengeV2(
               emailLower: 'a@x.in', installId: 'inst-2', pkS: pkS),
           isNot(a));
       expect(
-          deviceBindingChallenge(
+          deviceBindingChallengeV2(
               emailLower: 'a@x.in',
               installId: 'inst-1',
               pkS: randBytes(32)),
           isNot(a));
+      // Length-prefixing closes the concat ambiguity: swapped splits differ.
+      expect(
+          deviceBindingChallengeV2(
+              emailLower: 'ab', installId: 'c', pkS: pkS),
+          isNot(deviceBindingChallengeV2(
+              emailLower: 'a', installId: 'bc', pkS: pkS)));
     });
   });
 
@@ -759,7 +757,7 @@ void main() {
     }
 
     test('happy pin verifies', () {
-      final challenge = deviceBindingChallenge(
+      final challenge = deviceBindingChallengeV2(
           emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
       final (chain, rootHash, _) = fakeChain(challenge);
       // Pin-pre-gate unit (fake DER, not X.509): sig verification is

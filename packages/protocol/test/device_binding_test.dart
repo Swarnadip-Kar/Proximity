@@ -736,34 +736,28 @@ void main() {
     });
   });
 
-  group('attestation challenge binding', () {
-    test('challenge is deterministic and binds all four inputs', () {
-      final nonce = randBytes(16);
+  group('enrollment challenge binding', () {
+    test('challenge is deterministic and binds all three inputs', () {
       final pkS = randBytes(32);
-      final a = attestationChallenge(
-          serverNonce: nonce,
-          emailLower: 'A@x.in',
-          installId: 'inst-1',
-          pkS: pkS);
-      final b = attestationChallenge(
-          serverNonce: nonce,
-          emailLower: 'a@x.in',
-          installId: 'inst-1',
-          pkS: pkS);
+      final a = deviceBindingChallengeV2(
+          emailLower: 'A@x.in', installId: 'inst-1', pkS: pkS);
+      final b = deviceBindingChallengeV2(
+          emailLower: 'a@x.in', installId: 'inst-1', pkS: pkS);
       expect(a, b); // email lowercased
+      expect(a.length, 32);
       expect(
-          attestationChallenge(
-              serverNonce: nonce,
-              emailLower: 'b@x.in',
-              installId: 'inst-1',
-              pkS: pkS),
+          deviceBindingChallengeV2(
+              emailLower: 'b@x.in', installId: 'inst-1', pkS: pkS),
           isNot(a));
       expect(
-          attestationChallenge(
-              serverNonce: nonce,
+          deviceBindingChallengeV2(
+              emailLower: 'a@x.in', installId: 'inst-2', pkS: pkS),
+          isNot(a));
+      expect(
+          deviceBindingChallengeV2(
               emailLower: 'a@x.in',
-              installId: 'inst-2',
-              pkS: pkS),
+              installId: 'inst-1',
+              pkS: randBytes(32)),
           isNot(a));
     });
 
