@@ -952,14 +952,57 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       }
       final pk = ed.public(sk);
       final pk32 = Uint8List.fromList(pk.bytes.sublist(0, 32));
-      // Device binding snapshot (enrolled claim, refreshed by heartbeat):
-      // pkD for the Sig_s bind + POST, attestation claims for the tier.
+      // Device binding snapshot: live DKey is authoritative for the Sig_s
+      // bind + POST (opaque variable-length: HW 64B P-256 x||y vs Software
+      // 32B Ed25519 — never length-gated). Stored pkDHex is cross-checked;
+      // on mismatch the stored binding is rebound to live (pkDHex+chainDER
+      // only — level/window stay as enrolled, refreshed by heartbeat) and
+      // proving continues with live. Live-unavailable after a successful
+      // unseal falls back to the stored decode so marking stays
+      // offline-capable. Sealed-only: no seedHex raw path (empty sealed
+      // already returned above).
       Uint8List pkD = Uint8List(0);
-      if (stored.pkDHex.isNotEmpty) {
-        try {
-          pkD = Uint8List.fromList(hexDecode(stored.pkDHex));
-        } catch (_) {
-          pkD = Uint8List(0);
+      List<String> chainForProve = stored.chainDERHex;
+      try {
+        final livePkD = _deviceKey.pkD;
+        final liveHex = hexEncode(livePkD);
+        pkD = Uint8List.fromList(livePkD);
+        final liveChain = _deviceKey.chainDERHex;
+        if (liveChain.isNotEmpty) {
+          chainForProve = List<String>.of(liveChain);
+        }
+        if (stored.pkDHex.trim().toLowerCase() !=
+            liveHex.trim().toLowerCase()) {
+          BleLog.log(
+              'SEC', 'prove pkD cross-check mismatch — rebound to live DKey');
+          try {
+            await _store.writeEnrollment(StoredEnrollment(
+              email: stored.email,
+              name: stored.name,
+              roll: stored.roll,
+              seedHex: '',
+              pkHex: stored.pkHex,
+              sealedKeyHex: stored.sealedKeyHex,
+              chainDERHex: List<String>.of(chainForProve),
+              faceId: stored.faceId,
+              enrolledAt: stored.enrolledAt,
+              verifierVer: stored.verifierVer,
+              org: stored.org,
+              pkDHex: liveHex,
+              attestationLevel: stored.attestationLevel,
+              attestedAt: stored.attestedAt,
+              attestedUntil: stored.attestedUntil,
+              lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
+            ));
+          } catch (_) {}
+        }
+      } catch (_) {
+        if (stored.pkDHex.isNotEmpty) {
+          try {
+            pkD = Uint8List.fromList(hexDecode(stored.pkDHex));
+          } catch (_) {
+            pkD = Uint8List(0);
+          }
         }
       }
       final bound = verifierVer.isNotEmpty ||
@@ -1139,7 +1182,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         attestationLevel: stored.attestationLevel,
         attestedUntilMs:
             stored.attestedUntil.toUtc().millisecondsSinceEpoch,
-        attestationChain: stored.chainDERHex,
+        attestationChain: chainForProve,
         installId: installId,
       );
       if (res.flags.isNotEmpty) {
