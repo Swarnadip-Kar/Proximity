@@ -49,7 +49,9 @@ rules_version = '2';
 //     by the claim transaction. Professors (role-gated) prefix-search it to
 //     add students to records; students read only their own doc. NOTE: the
 //     prof gate is advisory until professor roles are institute-verified —
-//     any self-registered prof can list it (emails/names/rolls only).
+//     any self-registered prof can list it (emails/names/rolls only), but
+//     ONLY within their own org (list is per-doc org-gated; cross-org rows
+//     deny as a whole, so clients always filter where('org', == myOrg)).
 //   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
 //     profEmail, profName, org, dateIso, timestampIso, startIso, windows, names,
 //     rolls, studentEmails[], updatedAt} — professors own their sessions; a student
@@ -241,7 +243,10 @@ service cloud.firestore {
         (!('pkDHex' in request.resource.data) ||
           request.resource.data.pkDHex is string) &&
         (!('attestationLevel' in request.resource.data) ||
-          request.resource.data.attestationLevel is string) &&
+          (request.resource.data.attestationLevel is string &&
+           (request.resource.data.attestationLevel == 'FULL' ||
+            request.resource.data.attestationLevel == 'STD' ||
+            request.resource.data.attestationLevel == 'NONE'))) &&
         (!('attestedAtMillis' in request.resource.data) ||
           request.resource.data.attestedAtMillis is int) &&
         (!('attestedUntilMillis' in request.resource.data) ||

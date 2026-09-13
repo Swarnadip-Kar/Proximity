@@ -67,6 +67,12 @@ RateLimiter windowLimiter() =>
 /// break (bump min_version, never silent).
 const double kLivenessThreshold = 0.70;
 
+/// M3 one-sided future tolerance for the face-ticket stamp: a ticket may be
+/// at most this far AHEAD of the verifier clock (clock skew), never more —
+/// the old symmetric `abs() <= 5m` window accepted pre-played future
+/// tickets. Anything later fails closed as `face-future-skew`.
+const Duration kFaceFutureSkew = Duration(seconds: 30);
+
 /// Liveness pipeline allowlist prefix. Stored `livenessVer` values look like
 /// `liveness/minifasnet-v2+<assetHash8>` (model + weights pin). The host
 /// accepts any version with this prefix unless a course pins a stricter
@@ -185,13 +191,22 @@ class VerifyOutcome {
 ///   `unknown-liveness-verifier` / `liveness-below-threshold`), never
 ///   auto-present. During migration ([requireLiveness] false) face-bound
 ///   proofs without liveness still confirm (no liveness claimed).
-/// - bound with level NONE (graceful fallback — HW keys don't ship, so
-///   production `SoftwareDeviceKey` is always NONE): the ticket-bound Sig_s,
-///   face threshold/window, allowlists (face + liveness), liveness threshold
-///   and sighting checks all still apply, but no device tier is claimed and
-///   `dSig` is not gated. Confirms with a `device-none-fallback` flag
-///   (logged, never silent). Tampered ticket/pkD/liveness bindings still
-///   fail as `bad-sig`; FULL/STD/expiry semantics unchanged.
+/// - bound with level NONE (explicit fallback — HW keys don't ship, so
+///   production `SoftwareDeviceKey` is always NONE): C3 fail-closed by
+///   default — returns `device-none-requires-approval` (never confirms)
+///   unless the caller explicitly passes [allowNoneFallback]: true (server
+///   test compat / documented deployment allowance). With the flag, the
+///   ticket-bound Sig_s, face threshold/window, allowlists (face +
+///   liveness), liveness threshold and sighting checks all still apply, but
+///   no device tier is claimed and `dSig` is not gated. Confirms with a
+///   `device-none-fallback` flag (logged, never silent). Tampered
+///   ticket/pkD/liveness bindings still fail as `bad-sig`; FULL/STD/expiry
+///   semantics unchanged.
+/// - legacy (unbound): C3 migration bypass closed — when [requireLiveness]
+///   is true a legacy proof (liveness fields absent 0.0/'') fails closed as
+///   `liveness-unbound` unless the caller explicitly passes [legacyAllow]:
+///   true (mixed-fleet tests). With [requireLiveness] false the legacy
+///   confirm path is unchanged.
 VerifyOutcome verifyProve({
   required VerifyRequest req,
   required Uint8List expectedCj,
@@ -215,6 +230,17 @@ VerifyOutcome verifyProve({
   // a silent downgrade. Post-rollout test pins the closed behavior;
   // migration test pins the open default.
   bool requireLiveness = false,
+  // C3(a): bound-NONE fallback allowance. False (default) fails a
+  // ticket-bound NONE proof closed as `device-none-requires-approval`
+  // (never confirms, never silent). True restores the explicit
+  // confirm-with-`device-none-fallback`-flag path for deployments/tests
+  // that knowingly run without HW keys.
+  bool allowNoneFallback = false,
+  // C3(b): legacy pre-liveness allowance. False (default) fails a legacy
+  // (unbound, liveness 0.0/'') proof closed as `liveness-unbound` once
+  // [requireLiveness] is true. True preserves the legacy confirm path
+  // for mixed-fleet tests.
+  bool legacyAllow = false,
 }) {
   final now = (nowOverride ?? req.now).toUtc();
   if (!bytesEqual(req.windowId, windowIdExpected)) {
@@ -286,7 +312,15 @@ VerifyOutcome verifyProve({
     return VerifyOutcome(ProveDecision.invalid, 'face-below-threshold',
         bound ? flags() : const []);
   }
-  if (now.difference(req.faceValidAt.toUtc()).abs() > kFaceValidWindow) {
+  // M3 one-sided faceValid window: the stamp must be at most 30s in the
+  // future (clock skew) and at most 5m old. The old symmetric abs() check
+  // accepted pre-played future tickets.
+  final faceAt = req.faceValidAt.toUtc();
+  if (faceAt.isAfter(now.add(kFaceFutureSkew))) {
+    return VerifyOutcome(ProveDecision.invalid, 'face-future-skew',
+        bound ? flags() : const []);
+  }
+  if (now.difference(faceAt) > kFaceValidWindow) {
     return VerifyOutcome(
         ProveDecision.invalid, 'face-stale', bound ? flags() : const []);
   }
@@ -327,14 +361,15 @@ VerifyOutcome verifyProve({
             ProveDecision.invalid, 'liveness-below-threshold', flags());
       }
     }
-    // Graceful NONE fallback: HW keys don't ship, so production is
-    // always level NONE (`SoftwareDeviceKey`). A bound-NONE proof verifies
-    // exactly like the legacy unbound proof for everything EXCEPT the tier
-    // — same ticket-bound Sig_s (already verified above, liveness-bound),
-    // same face threshold/window, same allowlists (face + liveness), same
-    // liveness threshold, same sighting gate — with no tier claimed and no
-    // dSig gate. Logged via the fallback flag.
+    // C3(a) fail-closed NONE: a bound proof claiming no device tier never
+    // confirms by default — `device-none-requires-approval` routes it to
+    // the manual path instead of silently marking. Explicit
+    // [allowNoneFallback]: true restores the flagged confirm below.
     if (req.attestationLevel == AttestationLevel.none) {
+      if (!allowNoneFallback) {
+        return VerifyOutcome(ProveDecision.invalid,
+            'device-none-requires-approval', flags());
+      }
       final fallbackFlags = [...flags(), 'device-none-fallback'];
       final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
       final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
@@ -367,6 +402,13 @@ VerifyOutcome verifyProve({
     // STALE confirms with its banner flag (heartbeat should roll
     // attestedUntil; the flag tells the professor to expect re-attest).
     return VerifyOutcome(ProveDecision.confirmed, 'ok', allFlags);
+  }
+  // C3(b) legacy-unbound closed: post-liveness-floor (requireLiveness true)
+  // a legacy proof (no ticket at all) fails as liveness-unbound unless the
+  // caller explicitly opts into mixed-fleet via legacyAllow. With
+  // requireLiveness false the legacy confirm path is unchanged.
+  if (!bound && requireLiveness && !legacyAllow) {
+    return const VerifyOutcome(ProveDecision.invalid, 'liveness-unbound');
   }
   // BLE sighting: direct RSSI > -70, or relayed hop <= 2 (flagged).
   final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
