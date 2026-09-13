@@ -40,7 +40,6 @@ import 'package:proximity_storage/storage.dart';
 
 import '../../design/tokens.dart';
 import 'cloud_api.dart';
-import 'org.dart';
 import 'queue.dart';
 import 'sessions.dart';
 import 'store/store_base.dart';
@@ -269,21 +268,8 @@ class SyncEngine {
       _lastOnline = false;
       return SyncFlushResult(online: false, remaining: pending);
     }
-    // Legacy discovery + migration run before the empty check: the
-    // org-filtered pulls below can never see pre-org cloud docs, so an
-    // unfiltered profUid-only pull discovers them while the backfill
-    // gate is open — otherwise untouched cloud legacy would strand the
-    // missingOrg() rules grace open forever. Discovery merges into
-    // local history; the backfill stamps on this same flush.
-    var discoveredLegacy = 0;
-    if (prof != null && !(await store.readOrgBackfillComplete())) {
-      discoveredLegacy = await _discoverLegacyCloud(store, cloud, prof);
-    }
-    // Migration runs before the empty check: legacy org='' history must
-    // enqueue (and push) even when the outbox starts empty.
-    if (prof != null) {
-      await _backfillLegacyOrg(store, prof, now);
-    }
+    // Full-fresh: every record stamps org at save time, so no
+    // discovery/backfill pass runs — org-less rows never exist locally.
     final pending = await pendingCount(store);
     if (_lastOnline == false) {
       BleLog.log(ProxLogTags.sync,
@@ -293,7 +279,6 @@ class SyncEngine {
     if (pending == 0 && prof != null) {
       // Still converge pulls (other devices may have written meanwhile).
       await _converge(store, cloud, prof);
-      await _maybeSignalBackfillComplete(store, discoveredLegacy);
       return const SyncFlushResult(online: true);
     }
 
@@ -345,7 +330,6 @@ class SyncEngine {
     }
     if (prof != null) {
       await _converge(store, cloud, prof);
-      await _maybeSignalBackfillComplete(store, discoveredLegacy);
     }
     final remaining = await pendingCount(store);
     BleLog.log(ProxLogTags.sync,
@@ -401,94 +385,6 @@ class SyncEngine {
     return deleted;
   }
 
-  /// Migration: owner backfill of legacy org='' history records once
-  /// (idempotent — stamped records never match again). Backfilled rows
-  /// enqueue due-now so the stamp itself propagates on this flush.
-  ///
-  /// number of pre-org ('') cloud sessions seen, merged into local
-  /// history for stamping (-1 when the pull failed — unknown, never a
-  /// completion signal). Skipped once the gate flag fires (see
-  /// [_maybeSignalBackfillComplete]) so steady-state flushes pay no
-  /// extra query.
-  Future<int> _discoverLegacyCloud(
-      DeviceStore store, CloudSync cloud, SyncProf prof) async {
-    List<ClassRecord> remote;
-    try {
-      remote = await cloud
-          .pullProfSessions(prof.uid)
-          .timeout(const Duration(seconds: 10));
-    } catch (e) {
-      BleLog.log(ProxLogTags.sync, 'legacy discovery pull FAILED: $e');
-      return -1;
-    }
-    final legacy = [for (final r in remote) if (r.org.isEmpty) r];
-    if (legacy.isEmpty) return 0;
-    final local = await store.readHistory();
-    final tombRaw = await store.readTombstones();
-    final tombs = <SessionTombstone>[];
-    for (final t in tombRaw) {
-      try {
-        tombs.add(SessionTombstone.fromJson(Map<String, dynamic>.from(t)));
-      } catch (_) {}
-    }
-    await store.writeHistory(
-        mergeHistoriesUnion(local, legacy, tombstones: tombs));
-    BleLog.log(ProxLogTags.sync,
-        'legacy discovery: ${legacy.length} pre-org cloud sessions merged for stamping');
-    return legacy.length;
-  }
-
-  /// Per-device half of the missingOrg() rules-removal gate: fires once
-  /// when a full online flush leaves zero org-less records locally after
-  /// an unfiltered cloud pull also showed zero. Removal itself is a
-  /// human deploy gated on this signal PLUS the org-wide console check
-  /// (see firestore.rules) — never on judgment alone.
-  Future<void> _maybeSignalBackfillComplete(
-      DeviceStore store, int discoveredLegacy) async {
-    if (discoveredLegacy != 0) return;
-    if (await store.readOrgBackfillComplete()) return;
-    final history = await store.readHistory();
-    if (history.any((r) => r.org.isEmpty)) return;
-    await store.writeOrgBackfillComplete();
-    BleLog.log(ProxLogTags.sync,
-        'org backfill COMPLETE: no org-less records locally or in the last full cloud pull — per-device gate done. Remove missingOrg() ONLY after the org-wide console check (classSessions/studentDevices/studentDirectory/deviceInstalls where org missing) returns zero, then `firebase deploy --only firestore:rules`.');
-  }
-  Future<void> _backfillLegacyOrg(
-      DeviceStore store, SyncProf prof, DateTime now) async {
-    final ownerOrg = prof.org.isNotEmpty ? prof.org : orgOf(prof.email);
-    if (ownerOrg.isEmpty) return;
-    final history = await store.readHistory();
-    final legacy = [for (final r in history) if (r.org.isEmpty) r];
-    if (legacy.isEmpty) return;
-    final outbox = await store.readPendingSessions();
-    for (final r in legacy) {
-      final withOrg = ClassRecord(
-        id: r.id,
-        courseId: r.courseId,
-        classLabel: r.classLabel,
-        dateIso: r.dateIso,
-        timestampIso: r.timestampIso,
-        startIso: r.startIso,
-        windows: [for (final w in r.windows) Map<String, bool>.from(w)],
-        names: Map<String, String>.from(r.names),
-        rolls: Map<String, String>.from(r.rolls),
-        org: ownerOrg,
-      );
-      await store.upsertHistory(withOrg);
-      if (!outbox.any((e) => (e['id'] as String? ?? '') == r.id)) {
-        outbox.add(PendingSession(
-          id: r.id,
-          record: withOrg,
-          org: ownerOrg,
-          updatedAtIso: now.toIso8601String(),
-        ).toJson());
-      }
-    }
-    await store.writePendingSessions(outbox);
-    BleLog.log(ProxLogTags.sync,
-        'org backfill: stamped ${legacy.length} legacy sessions ($ownerOrg)');
-  }
-
   /// Pushes due outbox sessions per-course FIFO with union-merge-before-push
   /// (additive windows/names/rolls vs the cloud copy). Cross-org entries
   /// never push (refused + kept, same gate as the live join path). Acked
@@ -507,7 +403,6 @@ class SyncEngine {
       BleLog.log(ProxLogTags.sync, 'pre-push pull FAILED: $e');
     }
     var raw = await store.readPendingSessions();
-    final ownerOrg = prof.org.isNotEmpty ? prof.org : orgOf(prof.email);
     if (raw.isEmpty) return 0;
     // Heal strays: history rows missing from the outbox (crash between the
     // history write and the outbox upsert) that the cloud lacks or holds
@@ -544,43 +439,19 @@ class SyncEngine {
             'outbox poison entry dropped (${e['id'] ?? 'no-id'} — history keeps the data)');
       }
     }
-    // Backfill legacy org on the parsed entries (rewritten below).
-    for (var i = 0; i < parsed.length; i++) {
-      final p = parsed[i];
-      if (p.org.isEmpty && ownerOrg.isNotEmpty) {
-        final rec = p.record.org.isNotEmpty
-            ? p.record
-            : ClassRecord(
-                id: p.record.id,
-                courseId: p.record.courseId,
-                classLabel: p.record.classLabel,
-                dateIso: p.record.dateIso,
-                timestampIso: p.record.timestampIso,
-                startIso: p.record.startIso,
-                windows: p.record.windows,
-                names: p.record.names,
-                rolls: p.record.rolls,
-                org: ownerOrg,
-              );
-        parsed[i] = PendingSession(
-          id: p.id,
-          record: rec,
-          org: ownerOrg,
-          attempts: p.attempts,
-          nextRetryAtIso: p.nextRetryAtIso,
-          updatedAtIso: p.updatedAtIso,
-        );
-      }
-    }
     final due = parsed.where((p) => p.due(now)).toList()
       ..sort(PendingSession.order);
     final acked = <String>{};
     for (final p in due) {
-      // Org drill: a queued entry only lands in its own org. Legacy (''
-      // either side) still resolves locally.
-      if (p.org.isNotEmpty &&
-          prof.org.isNotEmpty &&
-          p.org != prof.org) {
+      // Org drill: a queued entry only lands in its own org. Org-less
+      // entries never push (refused + kept — rules deny org-less writes,
+      // so pushing would only burn quota on a certain deny).
+      if (p.org.isEmpty || p.record.org.isEmpty) {
+        BleLog.log(ProxLogTags.sync,
+            'outbox skip org-less ${p.id} — kept (hand-built row, never a migration artifact)');
+        continue;
+      }
+      if (prof.org.isNotEmpty && p.org != prof.org) {
         BleLog.log(ProxLogTags.sync,
             'outbox skip cross-org ${p.id} (${p.org} vs ${prof.org}) — kept');
         continue;

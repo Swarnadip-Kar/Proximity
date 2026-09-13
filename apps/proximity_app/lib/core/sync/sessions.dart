@@ -3,8 +3,6 @@ library;
 
 import 'package:proximity_storage/storage.dart';
 
-import 'org.dart';
-
 /// Tombstone: a deleted session id that must stay deleted across merges.
 /// Wins over any upsert with timestampIso <= [deletedAtIso]; a record
 /// re-created (or edited) AFTER the delete carries a newer timestamp and
@@ -12,7 +10,7 @@ import 'org.dart';
 class SessionTombstone {
   final String id;
   final String deletedAtIso; // UTC ISO, monotonic vs record timestampIso
-  final String org; // owner org at delete, '' = legacy
+  final String org; // owner org at delete
   final String course; // course name at delete (badge/debug only)
   const SessionTombstone(
       {required this.id, required this.deletedAtIso, this.org = '', this.course = ''});
@@ -147,7 +145,7 @@ bool sessionDueAt(String nextRetryAtIso, DateTime nowUtc) {
 class PendingSession {
   final String id; // == record.id (doc id for idempotent pushes)
   final ClassRecord record; // full snapshot (union-merged before push)
-  final String org; // owner org at enqueue (see orgOf), '' = legacy
+  final String org; // owner org at enqueue; '' = refused, never pushed
   final int attempts; // consecutive push failures
   final String nextRetryAtIso; // '' = due now
   final String updatedAtIso; // last enqueue time
@@ -200,12 +198,9 @@ Map<String, dynamic> sessionToDoc(
     required ClassRecord record,
     String? profOrg}) {
   final emails = record.allEmails.map((e) => e.toLowerCase()).toList()..sort();
-  // Session org = prof org at creation, immutable on update: a stamped
-  // record keeps its org; an unstamped (legacy) record takes the prof org.
-  final fallback = (profOrg != null && profOrg.isNotEmpty)
-      ? profOrg
-      : orgOf(profEmail);
-  final org = record.org.isNotEmpty ? record.org : fallback;
+  // Session org = the stamped record org, immutable on update. Full-fresh:
+  // no prof-org fallback — an unstamped record writes '' and rules deny
+  // the write (fail-closed, never a silent cross-org stamp).
   return {
     'courseId': record.courseId,
     'courseName': record.courseId.isNotEmpty ? record.courseId : record.classLabel,
@@ -213,7 +208,7 @@ Map<String, dynamic> sessionToDoc(
     'profUid': profUid,
     'profEmail': profEmail.toLowerCase(),
     'profName': profName,
-    'org': org,
+    'org': record.org,
     'dateIso': record.dateIso,
     'timestampIso': record.timestampIso,
     'startIso': record.startIso.isNotEmpty

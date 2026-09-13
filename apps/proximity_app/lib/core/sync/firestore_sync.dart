@@ -267,10 +267,8 @@ class FirestoreCloudSync implements CloudSync {
   @override
   Future<List<ClassRecord>> pullProfSessions(String profUid,
           {String org = ''}) =>
-      // H1/H2: org-scoped when stamped (steady state always passes org);
-      // the engine's one legacy-discovery pull intentionally omits org so
-      // pre-Track-1 rows surface for stamping (rules keep the read grace
-      // until the backfill signal + console check gate its removal).
+      // H1/H2: org-scoped when stamped (callers always pass org; rules
+      // deny org-less rows, so an unstamped call only sees stamped docs).
       _querySessions((col) {
         var q = col.where('profUid', isEqualTo: profUid);
         if (org.isNotEmpty) q = q.where('org', isEqualTo: org);

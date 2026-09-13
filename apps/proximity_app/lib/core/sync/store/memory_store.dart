@@ -189,15 +189,6 @@ class InMemoryDeviceStore implements DeviceStore {
   @override
   Future<void> clearExportDir() async => _exportDir = null;
 
-  bool _orgBackfillComplete = false;
-
-  @override
-  Future<bool> readOrgBackfillComplete() async => _orgBackfillComplete;
-
-  @override
-  Future<void> writeOrgBackfillComplete() async =>
-      _orgBackfillComplete = true;
-
   Map<String, String>? _role;
   final Set<String> _hidden = {};
   String? _installId;

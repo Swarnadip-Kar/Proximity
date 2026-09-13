@@ -24,7 +24,7 @@ class PendingManualAdd {
   final String name;
   final String email;
   final String createdAtIso;
-  final String org; // prof org at enqueue (see orgOf), '' = legacy
+  final String org; // prof org at enqueue; '' = refused, never lands
   const PendingManualAdd(
       {required this.course,
       required this.sessionId,
@@ -148,8 +148,9 @@ class SyncQueue {
             }
           }
           target ??= _latestCourseRecord(history, item.course);
-          // Org gate: a queued add only lands on a session in its own org.
-          // Legacy ('' either side) still resolves locally.
+          // Org gate: a queued add only lands on a session in its own org
+          // (both stamped, equal). Org-less rows never reach the cloud —
+          // the directory query below throws without an org.
           if (target != null &&
               !recordInMyOrg(target, item.org)) {
             BleLog.log(ProxLogTags.sync,

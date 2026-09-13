@@ -108,14 +108,16 @@ void main() {
   });
 
   group('sessionToDoc stamping', () {
-    test('unstamped record takes prof org (creation)', () {
+    test('unstamped record writes empty org (rules deny, fail-closed)', () {
+      // Full-fresh: no prof-org fallback — an unstamped record writes ''
+      // and the rules deny the write. Callers always stamp at save time.
       final r = ClassRecord(classLabel: 'c', dateIso: '2026-01-01');
       final d = sessionToDoc(
           profUid: 'u',
           profEmail: 'p@univ.edu',
           profName: 'P',
           record: r);
-      expect(d['org'], 'univ.edu');
+      expect(d['org'], '');
     });
 
     test('stamped record keeps org (immutable on update)', () {
@@ -130,7 +132,9 @@ void main() {
       expect(d['org'], 'univ.edu');
     });
 
-    test('explicit profOrg wins for legacy records', () {
+    test('explicit profOrg never stamps legacy records (ignored)', () {
+      // Full-fresh: profOrg is retained for API stability but ignored —
+      // the stamped record org is the only thing written.
       final r = ClassRecord(classLabel: 'c', dateIso: '2026-01-01');
       final d = sessionToDoc(
           profUid: 'u',
@@ -138,7 +142,7 @@ void main() {
           profName: 'P',
           record: r,
           profOrg: 'hd.edu');
-      expect(d['org'], 'hd.edu');
+      expect(d['org'], '');
     });
 
     test('docToRecord round-trips org (tolerant of missing)', () {

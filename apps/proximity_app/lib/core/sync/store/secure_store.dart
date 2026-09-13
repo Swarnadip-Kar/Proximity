@@ -26,7 +26,6 @@ class SecureDeviceStore implements DeviceStore {
   static const _kShowProfPhoto = 'prox.showprofphoto.v1.';
   static const _kCourseProfPhoto = 'prox.courseprofphoto.v1.';
   static const _kLastHost = 'prox.lasthost.v1';
-  static const _kOrgBackfill = 'prox.orgBackfill.v1';
   final FlutterSecureStorage _secure;
   // Hardened at-rest posture (PROXIMITY_SECURITY.md §3, F3): biometric-bound
   // AES-GCM on Android (`enforceBiometrics:true`, `strongBiometricOnly`),
@@ -344,18 +343,6 @@ class SecureDeviceStore implements DeviceStore {
   Future<void> clearExportDir() async {
     final prefs = await _prefs();
     await prefs.remove(exportDirPrefsKey);
-  }
-
-  @override
-  Future<bool> readOrgBackfillComplete() async {
-    final prefs = await _prefs();
-    return prefs.getBool(_kOrgBackfill) ?? false;
-  }
-
-  @override
-  Future<void> writeOrgBackfillComplete() async {
-    final prefs = await _prefs();
-    await prefs.setBool(_kOrgBackfill, true);
   }
 
   @override
