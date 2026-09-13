@@ -16,6 +16,7 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/liveness_gate.dart';
+import 'package:proximity_app/features/setup/result_sections.dart';
 import 'package:proximity_protocol/protocol.dart';
 
 const _stills = ['c.jpg', 'l.jpg', 'r.jpg', 'u.jpg', 'd.jpg'];
@@ -211,6 +212,46 @@ void main() {
       await ctl.enrollFace(_stills);
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.lastFailedSlot, 'centre');
+    });
+  });
+
+  group('stale error text (recapture success clears the message)', () {
+    test('faceDone after a slot refusal carries no message', () async {
+      // Field 2026-09-13: a "right capture was not live" refusal survived
+      // into faceDone via copyWith and the result screen rendered the STALE
+      // error above Save after a successful recapture.
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live = FakeLivenessGate(score: 0.31);
+      final ctl =
+          await _keyReady(verifier: verifier, liveness: live);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.state.message, contains('centre'));
+      live.score = 0.95;
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.message, isEmpty,
+          reason: 'a validated capture must not carry refusal text');
+      expect(ctl.lastFailedSlot, isNull);
+    });
+  });
+
+  group('result classifier (stale-message hardening)', () {
+    test('faceDone never renders a refusal card, even with text', () {
+      // Belt-and-braces with the controller clear above: a validated
+      // capture must reach Save with no refusal card.
+      const st = EnrollmentState(
+          phase: EnrollPhase.faceDone,
+          faceScore: 0.7,
+          message: 'The right capture did not look live — recapture it.');
+      expect(classifyEnrollRefusal(st), EnrollRefusal.none);
+    });
+
+    test('error with liveness text still classifies (generic)', () {
+      const st = EnrollmentState(
+          phase: EnrollPhase.error,
+          message: 'The right capture did not look live — recapture it.');
+      expect(classifyEnrollRefusal(st), EnrollRefusal.generic);
     });
   });
 

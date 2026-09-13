@@ -1,8 +1,10 @@
 // sec-liveness (2B): checkFace liveness gating + extended-ticket proving.
 //
 // - Liveness runs BEFORE the matcher (spoof never reaches verify).
-// - Below-threshold liveness → mismatch (burns one attempt, never marks).
+// - Below-threshold liveness → mismatch (burns one attempt, never marks),
+//   except the near-miss band just under Tl → inconclusive (free rescan).
 // - Liveness throw/unreadable → inconclusive (rescan, burns nothing).
+// - checkFaceAny bursts score every still and decides on the MAX.
 // - Pass carries (livenessScore, livenessVer) into the Sig_s ticket; the
 //   full listenAndProve below resolves it from the checkFace cache (no UI
 //   change) and marks against a real ProxServer — driver ticket == server
@@ -41,7 +43,7 @@ Future<InMemoryDeviceStore> _enrolledStore() async {
 RealStudentDriver _driver({
   required InMemoryDeviceStore store,
   FakeFaceVerifier? verifier,
-  FakeLivenessGate? liveness,
+  LivenessGate? liveness,
   required ProxBleEngine engine,
 }) =>
     RealStudentDriver(
@@ -51,6 +53,23 @@ RealStudentDriver _driver({
       engine: engine,
       livenessGate: liveness ?? FakeLivenessGate(),
     );
+
+/// Per-path scripted vitality for burst tests: [scores] maps a still path
+/// to its live-prob; a null value (or unknown path) throws like an
+/// unreadable still.
+class _PathLivenessGate implements LivenessGate {
+  final Map<String, double?> scores;
+  final List<String> calls = [];
+  _PathLivenessGate(this.scores);
+
+  @override
+  Future<LivenessResult> detectPassive(String imagePath) async {
+    calls.add(imagePath);
+    final s = scores[imagePath];
+    if (s == null) throw StateError('unreadable still: $imagePath');
+    return LivenessResult(score: s, ver: kLivenessVer);
+  }
+}
 
 void main() {
   group('checkFace liveness gate (before verify)', () {
@@ -113,18 +132,123 @@ void main() {
           verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
     });
 
-    test('threshold boundary: exactly Tl passes, just below fails',
+    test('threshold mapping: Tl passes, near-miss rescans, low burns',
         () async {
-      for (final s in [kLivenessThreshold, kLivenessThreshold - 0.001]) {
+      final cases = {
+        kLivenessThreshold: FaceMatch.pass,
+        // 0.001 under Tl sits inside the near-miss band → free rescan.
+        kLivenessThreshold - 0.001: FaceMatch.inconclusive,
+        kLivenessThreshold - kLivenessNearMissBand: FaceMatch.inconclusive,
+        // Below the band is readable-spoof territory → burns an attempt.
+        kLivenessThreshold - kLivenessNearMissBand - 0.001:
+            FaceMatch.mismatch,
+        0.31: FaceMatch.mismatch,
+      };
+      for (final entry in cases.entries) {
         final d = _driver(
             store: await _enrolledStore(),
-            liveness: FakeLivenessGate(score: s),
+            liveness: FakeLivenessGate(score: entry.key),
             engine: ProxBleEngine(radio: FakeBleRadio()));
         final res = await d.checkFace('still.jpg');
-        expect(res.match,
-            s >= kLivenessThreshold ? FaceMatch.pass : FaceMatch.mismatch,
-            reason: 'liveness=$s vs Tl=$kLivenessThreshold');
+        expect(res.match, entry.value,
+            reason:
+                'liveness=${entry.key} vs Tl=$kLivenessThreshold band=$kLivenessNearMissBand');
       }
+    });
+
+    test('near-miss never stamps the gates (no sign, no ticket)', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = FakeLivenessGate(score: kLivenessThreshold - 0.01);
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFace('still.jpg');
+      expect(res.match, FaceMatch.inconclusive);
+      expect(res.faceValidAtMs, 0);
+      expect(res.livenessScore, 0);
+      expect(res.livenessVer, isEmpty);
+      expect(
+          verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
+    });
+  });
+
+  group('checkFaceAny best-of burst (max vitality decides)', () {
+    test('one dip + one pass → pass on the winning still', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = _PathLivenessGate({'a.jpg': 0.80, 'b.jpg': 0.92});
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg', 'b.jpg']);
+      expect(res.match, FaceMatch.pass);
+      expect(res.livenessScore, 0.92);
+      expect(live.calls, ['a.jpg', 'b.jpg']);
+      // The matcher ran ONCE, on the winning still — via checkFaceAny the
+      // verify path carries the burst winner (FakeFaceVerifier records
+      // verify calls; the gate calls above pin both stills were scored).
+      expect(verifier.calls, contains('verify:face-test-id'));
+    });
+
+    test('all stills low → mismatch, matcher never ran', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = _PathLivenessGate({'a.jpg': 0.31, 'b.jpg': 0.20});
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg', 'b.jpg']);
+      expect(res.match, FaceMatch.mismatch);
+      expect(
+          verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
+    });
+
+    test('max inside the near-miss band → inconclusive, no burn',
+        () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = _PathLivenessGate({'a.jpg': 0.80, 'b.jpg': 0.79});
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg', 'b.jpg']);
+      expect(res.match, FaceMatch.inconclusive);
+      expect(
+          verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
+    });
+
+    test('throw on one still + pass on the other → pass', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = _PathLivenessGate({'a.jpg': null, 'b.jpg': 0.93});
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg', 'b.jpg']);
+      expect(res.match, FaceMatch.pass);
+      expect(res.livenessScore, 0.93);
+    });
+
+    test('empty burst and all-blank burst → inconclusive, nothing ran',
+        () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = _PathLivenessGate({'a.jpg': 0.95});
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      expect((await d.checkFaceAny([])).match, FaceMatch.inconclusive);
+      expect((await d.checkFaceAny(['  '])).match, FaceMatch.inconclusive);
+      expect(live.calls, isEmpty);
+      expect(
+          verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
     });
   });
 

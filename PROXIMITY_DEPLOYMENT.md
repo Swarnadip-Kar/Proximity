@@ -120,6 +120,27 @@ Monitor, watch for legit denials → Enforce.
 
 ---
 
+## 3e. Debug emulator (iterate on-device with no single-device friction)
+
+Release rules enforce one device per Gmail + the 30-day move cooldown, so
+repeated reinstall-and-enroll loops on a debug phone keep hitting
+`installConflict` / cooldown refusals. Debug builds can point at local
+emulators instead (fresh backend every run — enroll freely, nothing touches
+prod). Release builds ignore the flag entirely.
+
+```bash
+cd apps/proximity_app
+firebase emulators:start --only firestore,auth   # needs firebase-tools + JDK
+flutter run --dart-define=PROX_EMULATOR=1
+```
+
+Then create any test user in the emulator UI (`localhost:4000` → Auth),
+sign in with it on-device, and enroll. The app targets `10.0.2.2` on
+Android emulators and `localhost` elsewhere (see `main.dart`
+`PROX_EMULATOR` wiring); App Check activation is skipped in this mode.
+`firestore.rules` is evaluated locally from the repo file, so rule
+behavior stays faithful — only the DATA is throwaway.
+
 ## 4. What changes later (checklist)
 
 - [ ] §1 deployed (rules timestamp + drill green) — DONE when console shows it.

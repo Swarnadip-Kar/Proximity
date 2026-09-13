@@ -1375,13 +1375,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // token heard during the camera UI can never be reused as proof for a
     // rotated/restarted round (air carries no window ID — a pre-face token
     // verifies against nothing and fails as "prof signature mismatch").
-    // Marking captures ONE still; the driver runs the single on-device
-    // verify (isolate hot path). Match→stamp+prove; readable mismatch→burn
-    // one of the 4 attempts (whole 12s session); inconclusive→rescan in
-    // the 12s session burning nothing.
+    // Marking captures a short burst ([kMarkingLivenessCaptures] stills,
+    // ~350ms apart) and the driver decides vitality on the MAX: one still
+    // can dip on transient noise while spoofs score consistently low.
+    // Match→stamp+prove; readable mismatch→burn one of the 4 attempts
+    // (whole 12s session); inconclusive (incl. the near-miss vitality
+    // band)→rescan in the 12s session burning nothing.
     final paths = await ref
         .read(stillCapturerProvider)
-        .capture(context, captures: 1, autoFire: true);
+        .capture(context,
+            captures: kMarkingLivenessCaptures, autoFire: true);
     // Mounted-before-ref + back/teardown guard: Cancel/Back/system-back
     // leaves faceCheck during the camera UI — never verify or prove after it.
     if (paths == null ||
@@ -1401,7 +1404,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     late final FaceCheckResult res;
     try {
-      res = await ref.read(studentDriverProvider).checkFace(paths.first);
+      res = await ref.read(studentDriverProvider).checkFaceAny(paths);
     } on StateError {
       if (!mounted) return;
       setState(() => faceNotice =

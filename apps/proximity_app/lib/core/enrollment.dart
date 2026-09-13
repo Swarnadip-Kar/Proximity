@@ -793,8 +793,13 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // boundary, never a measured similarity — honest UI never shows it.
       BleLog.log('FACE',
           'enroll self-check match (boundary ${check.score.toStringAsFixed(2)})');
+      // Clearing message is load-bearing: a prior attempt's slot refusal
+      // (e.g. "the right capture did not look live") otherwise survives
+      // into faceDone via copyWith, and the result screen's refusal
+      // classifier (message non-empty → refusal card) renders the STALE
+      // error above the Save button after a successful recapture.
       state = state.copyWith(
-          phase: EnrollPhase.faceDone, faceScore: check.score);
+          phase: EnrollPhase.faceDone, faceScore: check.score, message: '');
       _lastFailedSlot = null;
     } on StateError catch (e) {
       // Fail-closed (records-only device, missing model, unreadable
@@ -1152,7 +1157,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         attestedUntil: _deviceKey.attestedUntil,
         lastFaceRescanAtMillis: rescanStampMillis,
       ));
-      state = state.copyWith(phase: EnrollPhase.uploaded);
+      state = state.copyWith(phase: EnrollPhase.uploaded, message: '');
       return LinkedIdentity(name: name, gmail: email, roll: roll, org: org);
     } catch (e) {
       state = state.copyWith(

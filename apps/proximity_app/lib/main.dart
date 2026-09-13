@@ -4,10 +4,13 @@
 // never identical across platforms.
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kDebugMode, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -46,6 +49,18 @@ import 'package:proximity_storage/storage.dart';
 /// prof/course/take seed demo courses + history. Debug-only: release
 /// builds ignore the flag (see kDebugMode gates below).
 const _debugMode = String.fromEnvironment('PROX_MODE', defaultValue: 'unset');
+
+/// Debug-only backend escape hatch: `--dart-define=PROX_EMULATOR=1` points
+/// Firestore + Auth at the local Firebase emulators (see firebase.json
+/// `emulators`), so debug builds enroll against a FRESH backend every run —
+/// no single-device slot, no 30-day move cooldown, no installConflict while
+/// iterating on-device. Release builds ignore the flag entirely (the const
+/// is false there and the branch below is tree-shaken). The single-device +
+/// cooldown enforcement in firestore.rules is UNTOUCHED: prod still refuses.
+/// Recipe: `firebase emulators:start --only firestore,auth` in
+/// apps/proximity_app, create any test user in the emulator UI
+/// (localhost:4000), sign in with it on-device, enroll freely.
+const _useEmulator = bool.fromEnvironment('PROX_EMULATOR');
 
 Future<DeviceStore> _debugSeededStore() async {
   final store = InMemoryDeviceStore();
@@ -107,10 +122,26 @@ Future<void> main() async {
   } catch (_) {
     firebaseReady = false;
   }
+  // PROX_EMULATOR=1 (debug only): local Firestore + Auth emulators. Host
+  // is platform-dependent — the Android emulator cannot reach the dev
+  // machine's localhost, so it uses the 10.0.2.2 alias; iOS simulator and
+  // desktop reach localhost directly. Must run before the first Firestore
+  // / Auth use (App Check activation below stays fail-soft and is skipped
+  // against the emulator, where attestation has no meaning).
+  if (_useEmulator && kDebugMode && firebaseReady) {
+    final host = defaultTargetPlatform == TargetPlatform.android
+        ? '10.0.2.2'
+        : 'localhost';
+    try {
+      FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
+      await FirebaseAuth.instance.useAuthEmulator(host, 9099);
+    } catch (_) {}
+    firebaseReady = true;
+  }
   // §5 integrity (2C): App Check before the first Firestore read, then the
   // startup integrity snapshot (cached for the entry gates; sensitive ops
   // re-probe fresh). Both fail-soft — offline marking never depends on them.
-  if (firebaseReady) {
+  if (firebaseReady && !(_useEmulator && kDebugMode)) {
     try {
       await IntegrityAppCheck.ensureActivated();
     } catch (_) {}

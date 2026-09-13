@@ -35,7 +35,13 @@ enum EnrollRefusal {
 }
 
 EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {
-  if (st.phase == EnrollPhase.uploaded || st.message.isEmpty) {
+  // faceDone carries no message by construction (enrollFace clears it on
+  // success), but a validated capture must never render a refusal card even
+  // if a stale message ever survives again — belt-and-braces with the
+  // controller clear above.
+  if (st.phase == EnrollPhase.uploaded ||
+      st.phase == EnrollPhase.faceDone ||
+      st.message.isEmpty) {
     return EnrollRefusal.none;
   }
   final m = st.message.toLowerCase();

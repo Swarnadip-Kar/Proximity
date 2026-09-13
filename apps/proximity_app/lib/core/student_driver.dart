@@ -62,6 +62,25 @@ class FaceCheckResult {
       this.livenessVer = '']);
 }
 
+/// Marking vitality robustness (app-local policy, NOT a ticket break).
+/// The face-check camera captures [kMarkingLivenessCaptures] stills and the
+/// driver scores vitality on each, deciding on the MAX: one still can dip on
+/// transient noise (motion blur mid-frame, glare flicker) while a
+/// print/screen spoof scores consistently low (field probes ≤0.31), so
+/// best-of-N buys genuine FRR without moving the Tl that spoofs must beat.
+/// Scores landing within [kLivenessNearMissBand] below Tl are transient
+/// territory, not readable spoofs: they degrade to inconclusive (free
+/// rescan, burns nothing) instead of mismatch (burns an attempt). The bound
+/// ticket still carries the winning still's real gated score — never a
+/// constant, never an average. Marking Tl itself ([kLivenessThreshold]) is
+/// untouched: moving it would be a ticket break (ver bump + min_version).
+const int kMarkingLivenessCaptures = 2;
+
+/// Width of the near-miss vitality band below Tl that degrades to
+/// inconclusive instead of mismatch (see above). 0.10 keeps measured spoof
+/// probes (≤0.31) firmly in mismatch territory.
+const double kLivenessNearMissBand = 0.10;
+
 class MarkedReceipt {
   final String detail; // display code · server time
   final StudentResult result;
@@ -186,7 +205,13 @@ abstract class StudentDriver {
   /// (consumes one attempt); [FaceMatch.inconclusive] means no readable
   /// verdict (rescan, never consumes an attempt); [FaceMatch.blocked]
   /// means a records-only device (guidance, never an attempt).
+  /// Single-still shorthand for [checkFaceAny].
   Future<FaceCheckResult> checkFace(String imagePath);
+
+  /// Best-of-N vitality gate over one capture burst: scores liveness on
+  /// every still and decides on the max (see [kMarkingLivenessCaptures]).
+  /// Empty list → inconclusive (never a throw, never a pass).
+  Future<FaceCheckResult> checkFaceAny(List<String> imagePaths);
 
   /// Listens until marked. There is no round clock: the window stays open
   /// until the professor stops it, so every fresh challenge is signed,
@@ -425,7 +450,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   bool _listening = false;
 
   @override
-  Future<FaceCheckResult> checkFace(String imagePath) async {
+  Future<FaceCheckResult> checkFace(String imagePath) =>
+      checkFaceAny([imagePath]);
+
+  @override
+  Future<FaceCheckResult> checkFaceAny(List<String> imagePaths) async {
     // L1 domain gate first: records-only devices never reach the plugin —
     // guidance (blocked), never an attempt, SK never signs.
     try {
@@ -433,14 +462,6 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     } on StateError {
       BleLog.log('SEC', 'face check blocked: records-only device');
       return const FaceCheckResult(FaceMatch.blocked);
-    }
-    // Empty-frame guard (no-face crash): a blank capture path never reaches
-    // the native plugin (empty bytes crash it below the Dart catch) —
-    // inconclusive with rescan, never a pass, never a throw. Fast: no
-    // plugin call on this path.
-    if (imagePath.trim().isEmpty) {
-      BleLog.log('SEC', 'face check: empty still — rescan');
-      return const FaceCheckResult(FaceMatch.inconclusive);
     }
     // Enrollment + pipeline reads are fallible (corrupt store entry,
     // missing model): any throw here means unreadable, never a mismatch —
@@ -467,24 +488,52 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     }
     // Security §4 passive liveness BEFORE the matcher (marking =
     // passive only, ~1s, no prompts): a photo/screen that would match the
-    // template must still fail here. Throw/unreadable → inconclusive
-    // (rescan, burns nothing); below-threshold → mismatch (a readable
-    // still of a non-live holder consumes one attempt, same as matching
-    // somebody else — never auto-present, SK never signs).
-    LivenessResult live;
-    try {
-      live = await _liveness.detectPassive(imagePath);
-    } catch (e) {
-      BleLog.log('SEC', 'liveness check ERROR: $e');
+    // template must still fail here. Best-of burst (see
+    // [kMarkingLivenessCaptures]): every non-blank still is scored and the
+    // max decides. Blank paths are skipped (the old empty-frame guard —
+    // empty bytes crash the native plugin below the Dart catch);
+    // unreadable throws skip that still (no evidence either way, never a
+    // pass); nothing scoreable at all → inconclusive (rescan, burns
+    // nothing). The matcher then runs ONCE on the winning still.
+    LivenessResult? best;
+    String? bestPath;
+    for (final p in imagePaths) {
+      if (p.trim().isEmpty) continue;
+      LivenessResult live;
+      try {
+        live = await _liveness.detectPassive(p);
+      } catch (e) {
+        BleLog.log('SEC', 'liveness check ERROR (still skipped): $e');
+        continue;
+      }
+      if (best == null || live.score > best.score) {
+        best = live;
+        bestPath = p;
+      }
+    }
+    final win = best;
+    final winPath = bestPath;
+    if (win == null || winPath == null) {
+      BleLog.log('SEC', 'face check: no scoreable still — rescan');
       return const FaceCheckResult(FaceMatch.inconclusive);
     }
-    if (live.score < kLivenessThreshold) {
+    if (win.score < kLivenessThreshold - kLivenessNearMissBand) {
+      // Readable spoof territory (field probes ≤0.31): consumes one
+      // attempt like matching somebody else — never auto-present, SK
+      // never signs.
       BleLog.log('SEC',
-          'liveness check FAIL score=${live.score.toStringAsFixed(2)}');
+          'liveness check FAIL score=${win.score.toStringAsFixed(2)}');
       return const FaceCheckResult(FaceMatch.mismatch);
     }
+    if (win.score < kLivenessThreshold) {
+      // Near-miss band: transient dip on a live holder, not a readable
+      // spoof — free rescan inside the session, attempt kept.
+      BleLog.log('SEC',
+          'liveness check NEAR-MISS score=${win.score.toStringAsFixed(2)} — rescan, attempt kept');
+      return const FaceCheckResult(FaceMatch.inconclusive);
+    }
     try {
-      final res = await _verifier.verify(stored.faceId, imagePath);
+      final res = await _verifier.verify(stored.faceId, winPath);
       if (res.match) {
         final stampMs = DateTime.now().toUtc().millisecondsSinceEpoch;
         // Stamp the SK-use gate: the private key signs ONLY within a
@@ -495,17 +544,17 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         // hardcoded true: a transplanted pass without liveness fails.
         _faceGate.evaluate(
             score: res.score,
-            livenessPass: live.score >= kLivenessThreshold,
+            livenessPass: win.score >= kLivenessThreshold,
             now: DateTime.now().toUtc());
         // Stamp the liveness ticket cache for listenAndProve/_prove (same
         // pattern as _faceGate): the extended ticket binds this exact
         // (score, ver) pair.
         _lastLiveness = _LivenessStamp(
-            faceValidAtMs: stampMs, score: live.score, ver: live.ver);
+            faceValidAtMs: stampMs, score: win.score, ver: win.ver);
         BleLog.log('SEC',
-            'face check pass score=${res.score.toStringAsFixed(2)} liveness=${live.score.toStringAsFixed(2)}');
+            'face check pass score=${res.score.toStringAsFixed(2)} liveness=${win.score.toStringAsFixed(2)}');
         return FaceCheckResult(FaceMatch.pass, res.score, stampMs,
-            _verifier.verifierVer, live.score, live.ver);
+            _verifier.verifierVer, win.score, win.ver);
       }
       BleLog.log('SEC', 'face check FAIL');
       return FaceCheckResult(FaceMatch.mismatch, res.score);
@@ -1571,6 +1620,10 @@ class FakeStudentDriver implements StudentDriver {
       // (stamp 1ms + live tag) so widget tests exercise the bound shape.
       const FaceCheckResult(
           FaceMatch.pass, 0.95, 1, kFaceVerifierVer, 0.95, kLivenessVer);
+
+  @override
+  Future<FaceCheckResult> checkFaceAny(List<String> imagePaths) =>
+      checkFace(imagePaths.isEmpty ? '' : imagePaths.first);
 
   @override
   Future<WindowProbe> probeWindow(ClassBeacon target,
