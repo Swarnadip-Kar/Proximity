@@ -160,14 +160,25 @@ AttestationSelfCheck checkAttestationChain({
 
 /// User-facing copy for a failed [AttestationSelfCheck] (enroll refusal /
 /// mark-time detail). Names the cause + the remedy; never raw hex.
+///
+/// Field note 2026-09-13 (Samsung A52s, GPay works but chain root
+/// 1ef1a04b unknown): GPay passing proves Play Integrity DEVICE only, NOT
+/// hardware chain to a Google HW root (STRONG). An unknown root with a
+/// COMPLETE chain (OID/challenge/signatures pass, only the pin fails) means
+/// non-Google attestation — software Keystore fallback, custom ROM, Knox-
+/// tripped/unprovisioned TEE, or non-GMS hardware — fail-closed by design.
+/// Genuine 2021 devices chaining to the 2019 Google renewal now pass (pinned);
+/// anything still unknown needs the checklist below, not a retry.
 String attestationSelfCheckCopy(AttestationSelfCheck r) {
   switch (r.reason) {
     case 'unknown-root':
       return 'This phone\u2019s hardware attestation isn\u2019t recognized '
-          '(chain root ${r.rootPrefix.isEmpty ? 'unknown' : r.rootPrefix} — '
-          'emulator, software keystore, custom ROM, or non-certified '
-          'hardware). Marking needs a hardware-backed Android keystore — '
-          'enroll on a physical certified phone instead.';
+          '(chain root ${r.rootPrefix.isEmpty ? 'unknown' : r.rootPrefix}). '
+          'Payment apps can still work without hardware attestation. Check: '
+          'stock ROM + locked bootloader (no custom ROM/Magisk), Knox 0x0, '
+          'screen lock + biometric enrolled, Play Services updated, then '
+          're-enroll online. Marking needs a hardware-backed Android '
+          'keystore — enroll on a physical certified phone instead.';
     case 'challenge-mismatch':
       return 'This enrollment\u2019s device key doesn\u2019t match this '
           'phone\u2019s install (reinstall without re-enrolling?). '
@@ -177,8 +188,9 @@ String attestationSelfCheckCopy(AttestationSelfCheck r) {
           'missing). Re-enroll this device on a hardware-backed phone.';
     case 'device-expired':
     case 'expired-cert':
-      return 'This phone\u2019s attestation expired — go online once so it '
-          're-attests, then mark again.';
+      return 'This phone\u2019s attestation is stale (expired anchor or 90d '
+          'window + 14d grace spent) — update Android + Play Services, go '
+          'online once so it re-attests, then mark again.';
     default:
       return 'This phone\u2019s hardware proof doesn\u2019t verify '
           '(${r.reason}). Re-enroll this device, then mark again.';

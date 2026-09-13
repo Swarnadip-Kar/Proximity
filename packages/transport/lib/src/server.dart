@@ -136,16 +136,26 @@ class ProxServer {
   final void Function(String email, String decision, String reason)? onProve;
   final SingleUseTracker _once = SingleUseTracker();
   // Tracks 2+3 anomaly context (server-kept, bounded): seen face-ticket
-  // stamps (reused-face flag), recent scores (1.000-repeat flag), last
+  // keys (reused-face flag), recent scores (1.000-repeat flag), last
   // pipeline tag (verifier-flapping flag).
   //
-  // Stamp map (stamp → FIRST ID that presented it), WINDOW-scoped like the
-  // vector map: a legitimate retry re-presents its own ticket across
-  // rotations (same ID, new j — the encouraged path), so same-ID repeats
-  // must NOT flag. Only a DIFFERENT ID presenting an already-seen stamp
-  // flags (one face check transplanted across Gmails — the actual hook
-  // signal). The anomaly call below receives other-IDs' stamps only.
+  // Ticket map (full-ticket key → FIRST ID that presented it),
+  // WINDOW-scoped like the vector map: a legitimate retry re-presents its
+  // own ticket across rotations (same ID, new j — the encouraged path), so
+  // same-ID repeats must NOT flag. Only a DIFFERENT ID presenting an
+  // already-seen FULL ticket flags (one face check transplanted across
+  // Gmails — the actual hook signal). Keyed by the full ticket
+  // (stamp + ticket hash incl. score/vers/liveness), NOT by stamp alone:
+  // millis collisions across different holders in a large hall would
+  // otherwise false-flag (500 holders in a 5min window collide with ~40%
+  // chance on stamp alone; full-ticket collisions are transplant-only).
+  // The anomaly call below receives other-IDs' stamps only (legacy stamp
+  // scope for the stateless flag helper; the full-ticket gate below is
+  // authoritative for transplant).
   final Map<int, String> _seenFaceStamps = {};
+  // Full-ticket transplant map (authoritative): "$stampMs:$ticketHex" →
+  // first ID. Window-scoped with the stamp map (see openWindow/closeWindow).
+  final Map<String, String> _seenFaceTickets = {};
   final List<double> _recentScores = [];
   String _lastVerifierVer = '';
   // Local same-face dup path (RAM-only, window-scoped): email → canonical
@@ -331,9 +341,10 @@ class ProxServer {
     // close must not compare against the previous window's vectors).
     // Exemptions survive: the professor's override is session-scoped.
     _faceVecs.clear();
-    // Same window scope for ticket stamps (a new window's face checks mint
-    // new stamps; old entries would only false-flag).
+    // Same window scope for ticket stamps + full tickets (a new window's
+    // face checks mint new stamps; old entries would only false-flag).
     _seenFaceStamps.clear();
+    _seenFaceTickets.clear();
   }
 
   /// Closes the window. Proofs are rejected as `window-closed`; the HTTPS
@@ -349,8 +360,9 @@ class ProxServer {
     // Detection for the closing window is already complete (compare runs
     // per prove, including stop-grace proofs) — vectors must not outlive it.
     _faceVecs.clear();
-    // Ticket stamps share the window scope (see openWindow).
+    // Ticket stamps + full tickets share the window scope (see openWindow).
     _seenFaceStamps.clear();
+    _seenFaceTickets.clear();
   }
   int get windowNo => _windowNo;
 
@@ -944,13 +956,14 @@ class ProxServer {
             attestationLevel: bound ? attLevel : AttestationLevel.none,
             attestedUntil: attUntil,
             dSigValid: bound && dSigValidReal,
-            // Transplant-only scope (see _seenFaceStamps): this ID's own
-            // earlier stamps are excluded, so legitimate same-ticket
-            // retries across rotations never flag reused-face.
-            seenFaceValidAtMs: {
-              for (final e in _seenFaceStamps.entries)
-                if (e.value != id) e.key
-            },
+            // Transplant-only scope (see _seenFaceTickets): reused-face is
+            // gated by the FULL ticket below (authoritative), not by stamp
+            // alone — millis collisions across holders would otherwise
+            // false-flag in large halls. Pass empty here so the stateless
+            // helper never flags on stamp alone; the full-ticket check
+            // after verify adds `attest-reused-face` only on a true
+            // cross-Gmail ticket transplant. Same-ID retries never flag.
+            seenFaceValidAtMs: const {},
             priorScores: List.of(_recentScores),
             lastVerifierVer: _lastVerifierVer,
           ),
@@ -1208,9 +1221,29 @@ class ProxServer {
         if (integrityFlag == 'integrity-flagged') 'integrity-flagged',
       ];
       if (bound) {
-        // First presenter wins the stamp (transplant scope: a LATER
-        // different ID re-presenting it flags; same-ID retries never do).
+        // First presenter wins the stamp + full ticket (transplant scope:
+        // a LATER different ID re-presenting the FULL ticket flags;
+        // same-ID retries never do; millis-only collisions never flag).
         _seenFaceStamps.putIfAbsent(ticketStampMs, () => id);
+        // Full-ticket transplant gate (authoritative for reused-face):
+        // key binds stamp + score/vers/liveness via the ticket hash, so a
+        // transplanted face check across Gmails flags while coincidental
+        // millis equality does not.
+        var transplant = false;
+        try {
+          if (ticket.isNotEmpty && ticketStampMs != 0) {
+            final ticketKey = '$ticketStampMs:${hexEncode(ticket)}';
+            final first = _seenFaceTickets[ticketKey];
+            if (first == null) {
+              _seenFaceTickets[ticketKey] = id;
+            } else if (first != id) {
+              transplant = true;
+            }
+          }
+        } catch (_) {}
+        if (transplant && !flags.contains('attest-reused-face')) {
+          flags.add('attest-reused-face');
+        }
         _recentScores.add(ticketScore);
         if (_recentScores.length > 8) _recentScores.removeAt(0);
         if (verifierVer.isNotEmpty) _lastVerifierVer = verifierVer;

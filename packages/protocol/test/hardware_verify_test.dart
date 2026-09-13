@@ -220,14 +220,15 @@ void main() {
   });
 
   group('pinned Google roots', () {
-    test('two 32B pins (RSA + EC)', () {
+    test('three 32B pins (RSA 2022 + RSA 2019 renewal + EC)', () {
       final pins = defaultPinnedAttestationRoots();
-      expect(pins, hasLength(2));
+      expect(pins, hasLength(3));
       for (final p in pins) {
         expect(p.length, 32);
       }
       expect(hexEncode(pins[0]), kGoogleHwAttestationRootRsaSha256Hex);
-      expect(hexEncode(pins[1]), kGoogleHwAttestationRootEcSha256Hex);
+      expect(hexEncode(pins[1]), kGoogleHwAttestationRootRsa2019Sha256Hex);
+      expect(hexEncode(pins[2]), kGoogleHwAttestationRootEcSha256Hex);
     });
 
     test('unknown root still fails closed against the real pins', () {

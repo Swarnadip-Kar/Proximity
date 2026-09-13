@@ -315,27 +315,54 @@ class ChainPinResult {
 /// https://developer.android.com/privacy-and-security/security-key-attestation#root_certificate
 /// and mirrored with test vectors at
 /// https://github.com/android/keyattestation/blob/main/roots.json
-/// (audit 2026-09-13: both pins below re-hashed from that file's PEMs —
+/// (audit 2026-09-13: current pins re-hashed from that file's PEMs —
 /// `SHA256(DER)` — with openssl cross-check of serials/validity):
 /// - RSA root, serial f92009e853b6b045, 2022-03-20 → 2042-03-15.
 /// - EC root, CN "Key Attestation CA1", serial 84A9D0297B0EB58AE7FF0E80DE76,
 ///   2025-07-17 → 2035-07-15; starts signing device chains 2026-02-01.
-/// Legacy roots (2016/2019/2021) are deliberately omitted: the 2016 root
-/// expired May 2026 and pre-2021 devices chaining to it fail closed as
-/// `unknown-root` (manual path) rather than silently trusting an expired
-/// anchor. iOS App Attest chains pin Apple roots instead — callers pass
-/// their own [pinnedRootHashes]; these defaults are the Android set.
+/// - RSA 2019 root (same key, renewed cert, serial ANUP8luj8taz,
+///   2019-11-22 → 2034-11-18): 2021-era devices (e.g. Samsung A52s) provisioned
+///   before the 2022 renewal still chain here — field 2026-09-13 false-reject
+///   fix. Same modulus as the 2022 root (one key, renewed certs).
+/// The 2016 RSA root (same key, 2016-05-26 → 2026-05-24, expired) is NOT
+/// pinned: chains to it fail as `expired-cert` (better copy than
+/// `unknown-root` — update OS / re-provision via Play Services), never as
+/// silently-trusted. Its hash is kept as [kGoogleHwAttestationRootRsa2016Hex]
+/// for diagnostics only. iOS App Attest chains pin Apple roots instead —
+/// callers pass their own [pinnedRootHashes]; these defaults are Android.
 const String kGoogleHwAttestationRootRsaSha256Hex =
     'cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc';
 const String kGoogleHwAttestationRootEcSha256Hex =
     '6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0';
 
+/// RSA 2019 renewal (same key as above, valid till 2034 — see header).
+/// Hash verified 2026-09-13 from the 2020 gist PEM (serial ANUP8luj8taz).
+const String kGoogleHwAttestationRootRsa2019Sha256Hex =
+    'e50511a9400b527e58d8dd9018f88811bbb75415a8fe39d1faa3688e1daa7af1';
+
+/// RSA 2016 original (same key, expired 2026-05-24) — diagnostics only,
+/// never pinned as trusted (see header).
+const String kGoogleHwAttestationRootRsa2016Hex =
+    'c1984a3ef45c1e2a918551de10603c86f7051b2249c4891cae3230eabd0c97d5';
+
 /// Default pinned roots for Android key-attestation chains (see above).
 /// Returns fresh copies (callers must not mutate the pins).
 List<Uint8List> defaultPinnedAttestationRoots() => [
       hexDecode(kGoogleHwAttestationRootRsaSha256Hex),
+      hexDecode(kGoogleHwAttestationRootRsa2019Sha256Hex),
       hexDecode(kGoogleHwAttestationRootEcSha256Hex),
     ];
+
+/// True when [rootHash] is the known-expired 2016 Google root (see above).
+/// Callers map this to `expired-cert` copy (update OS / re-provision),
+/// never to generic `unknown-root`.
+bool isKnownExpiredGoogleRoot(Uint8List rootHash) {
+  try {
+    return bytesEqual(rootHash, hexDecode(kGoogleHwAttestationRootRsa2016Hex));
+  } catch (_) {
+    return false;
+  }
+}
 
 /// Offline chain-vs-pinned-roots check (security §2-last-para, pure half).
 ///
@@ -533,6 +560,13 @@ ChainPinResult _verifyAttestationChainPin({
   final rootHash = ProxCrypto.sha256Sync(root);
   final pinned = pinnedRootHashes.any((h) => bytesEqual(h, rootHash));
   if (!pinned) {
+    // Known-expired Google root (2016, same key, expired 2026-05-24):
+    // genuine hardware with a stale anchor — name it as expired (update
+    // OS / re-provision), not generic unknown. Never trusted.
+    if (isKnownExpiredGoogleRoot(rootHash)) {
+      return const ChainPinResult(
+          ok: false, reason: 'expired-cert', flags: ['attest-expired']);
+    }
     return const ChainPinResult(
         ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
   }
