@@ -40,8 +40,11 @@
 //     hooked   → SecurityStatus.isRuntimeHooked (Frida/Xposed/
 //                instrumentation + attached debugger per the
 //                runtime-protection contract)
-//     tampered → SecurityStatus.isTampered || !isAppIntegrityValid
-//                (SHA-256 re-sign/tamper + installer/package verify)
+//     tampered → SecurityStatus.isTampered (+ `!isAppIntegrityValid` on
+//                non-debug builds ONLY — the suite folds FLAG_DEBUGGABLE +
+//                installer allowlist into that bit, so it reads false on
+//                every dev/debug and sideloaded build; gating it raw would
+//                hard-block all dev enrollment, see [PlatformIntegrityProbe])
 //     emulator → SecurityStatus.isEmulator
 //     debug    → kDebugMode (pure Dart observed — the suite exposes no
 //                separate debugger bit; debug alone never blocks enroll)
@@ -94,9 +97,11 @@ abstract class IntegrityProbe {
 /// debug-only signals — fail-OPEN probe, fail-CLOSED gate (see
 /// [IntegrityGate]): unknown ⇒ clean, so offline marking is never broken
 /// by the plugin; tainted ⇒ enroll hard-blocks and marking flags.
-/// A PRESENT plugin's per-check errors stay fail-SECURE per signal (the
-/// suite's own contract: an unverifiable root/tamper read taints rather
-/// than clears) — only a wholly absent channel fails open (see the ping).
+/// A PRESENT plugin's root/tamper/integrity errors stay fail-SECURE (the
+/// suite's own contract: an unverifiable root/tamper/integrity read taints
+/// rather than clears — `?? true` / `?? false`-invalid); runtime/emulator
+/// reads fail OPEN per signal (`?? false`). A wholly absent channel fails
+/// open (see the ping).
 class PlatformIntegrityProbe implements IntegrityProbe {
   const PlatformIntegrityProbe();
 
@@ -141,7 +146,17 @@ class PlatformIntegrityProbe implements IntegrityProbe {
       return IntegritySignals(
         rooted: status.isRooted,
         hooked: status.isRuntimeHooked,
-        tampered: status.isTampered || !status.isAppIntegrityValid,
+        // isAppIntegrityValid folds FLAG_DEBUGGABLE + installer allowlist
+        // into one bit (suite 1.1.1 AppIntegrityHandler:
+        // `!isDebuggable && isInstalledFromTrustedSource`; sideloaded
+        // installer null → invalid) — gating it raw taints EVERY
+        // `flutter run` debug build and every sideloaded build, hard-
+        // blocking all dev enrollment against the "debug alone never
+        // blocks" law. Debug builds (never store builds) rely on
+        // isTampered (re-sign/strip) only; release/profile builds keep
+        // the full bit, so sideloaded release builds still taint.
+        tampered: status.isTampered ||
+            (!status.isAppIntegrityValid && !kDebugMode),
         emulator: status.isEmulator,
         debug: kDebugMode,
       );

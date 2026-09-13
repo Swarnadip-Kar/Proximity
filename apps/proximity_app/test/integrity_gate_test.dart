@@ -3,6 +3,7 @@
 // group pins the REAL backends' fail-open contract (missing plugin →
 // debug-only signals; App Check activation never throws).
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/app_config/force_update.dart';
 import 'package:proximity_app/core/security/integrity.dart';
@@ -47,6 +48,9 @@ IntegrityVerdict _verdict({
     );
 
 void main() {
+  // The mocked-channel group below needs the binary messenger; pure unit
+  // groups are unaffected by the initialized binding.
+  TestWidgetsFlutterBinding.ensureInitialized();
   tearDown(() {
     IntegrityGate.probe = const PlatformIntegrityProbe();
   });
@@ -280,6 +284,92 @@ void main() {
       // No platform plugins in unit tests: the real checkNow converts to
       // unchecked instead of throwing.
       await entryRequireFreshBuild();
+    });
+  });
+
+  group('PlatformIntegrityProbe suite mapping (mocked channel 1.1.1)', () {
+    // flutter_security_suite 1.1.1 talks on 'com.securebankkit/security'
+    // with `feature#action` methods (verified against the published
+    // package source): the probe pings 'emulator#isEmulator', then the
+    // facade reads root#isDeviceRooted / integrity#isValid /
+    // emulator#isEmulator / tamper#isTampered / runtime#isHooked.
+    const channel = MethodChannel('com.securebankkit/security');
+
+    Future<void> mockSuite({
+      bool rooted = false,
+      bool integrityValid = true,
+      bool emulator = false,
+      bool tampered = false,
+      bool hooked = false,
+    }) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'emulator#isEmulator':
+            return emulator;
+          case 'root#isDeviceRooted':
+            return rooted;
+          case 'integrity#isValid':
+            return integrityValid;
+          case 'tamper#isTampered':
+            return tampered;
+          case 'runtime#isHooked':
+            return hooked;
+          default:
+            return null;
+        }
+      });
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('dev build: debuggable+sideloaded integrity bit does not taint',
+        () async {
+      // Suite AppIntegrityHandler reads
+      // `!isDebuggable && isInstalledFromTrustedSource`: every `flutter
+      // run` debug build and every sideloaded build reports
+      // integrity-invalid. Unit tests run debug (kDebugMode), so the
+      // carve-out must keep tampered false and enrollment unblocked.
+      await mockSuite(integrityValid: false);
+      const probe = PlatformIntegrityProbe();
+      final signals = await probe.check();
+      expect(signals.rooted, isFalse);
+      expect(signals.hooked, isFalse);
+      expect(signals.emulator, isFalse);
+      expect(signals.tampered, isFalse);
+      expect(signals.debug, kDebugMode);
+      final verdict =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+      expect(verdict.tampered, isFalse);
+      expect(IntegrityGate.enrollBlockReason(verdict), isEmpty);
+      expect(IntegrityGate.markingFlag(verdict), isEmpty);
+    });
+
+    test('genuine re-sign still taints on debug builds', () async {
+      // The carve-out covers the debuggable/installer bit only — a
+      // stripped signature (isTampered) must still hard-block enroll and
+      // flag marking.
+      await mockSuite(integrityValid: false, tampered: true);
+      const probe = PlatformIntegrityProbe();
+      final signals = await probe.check();
+      expect(signals.tampered, isTrue);
+      final verdict =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+      expect(IntegrityGate.enrollBlockReason(verdict), isNotEmpty);
+      expect(IntegrityGate.markingFlag(verdict), 'integrity-flagged');
+    });
+
+    test('rooted + hooked suite bits still taint on debug builds', () async {
+      await mockSuite(rooted: true, hooked: true);
+      final verdict =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+      expect(verdict.rooted, isTrue);
+      expect(verdict.hooked, isTrue);
+      expect(IntegrityGate.enrollBlockReason(verdict), isNotEmpty);
+      expect(IntegrityGate.markingFlag(verdict), 'integrity-flagged');
     });
   });
 
