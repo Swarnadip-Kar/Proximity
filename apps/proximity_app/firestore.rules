@@ -111,22 +111,34 @@ service cloud.firestore {
         request.time.toMillis() - stamp > 180 * 24 * 60 * 60 * 1000;
     }
 
+    // M6: users roles already closed (hasOnly prof/student, size 1..2) +
+    // string caps so profile writes cannot blow quota.
     match /users/{uid} {
       allow get: if ownUid(uid);
       allow list: if false;
       allow create: if ownUid(uid)
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.size() <= 256
         && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
         && validRoles(request.resource.data.roles)
+        && (!('displayName' in request.resource.data) ||
+            !(request.resource.data.displayName is string) ||
+            request.resource.data.displayName.size() <= 128)
         && (!('lastMode' in request.resource.data) ||
             validLastMode(request.resource.data.lastMode));
       allow update: if ownUid(uid)
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.size() <= 256
         && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
         && (missingOrg(resource.data) ||
             resource.data.org == tokenOrg())
          && validRoles(request.resource.data.roles)
+         && (!('displayName' in request.resource.data) ||
+            !(request.resource.data.displayName is string) ||
+            request.resource.data.displayName.size() <= 128)
          && (!('lastMode' in request.resource.data) ||
              validLastMode(request.resource.data.lastMode));
       // Owner-lazy six-month purge: the owner deletes their OWN users doc
@@ -243,16 +255,26 @@ service cloud.firestore {
       return s is string && s.size() >= 8 && s.size() <= 128 &&
         s.matches('^[A-Za-z0-9:_-]+$');
     }
+    // M6 bounds (Spark-free): closed sets + size/hex caps on every
+    // security field so one write cannot blow quota or poison offline
+    // readers. Per-element chain checks are size-only here (no loops over
+    // cert bytes on Spark) — content (OID/challenge/pin) is professor-side
+    // verifyAttestationChainPin; clones are post-hoc findDoublePkD.
     function validSecurityFields() {
       return (!('attestationChain' in request.resource.data) ||
-          request.resource.data.attestationChain is list) &&
+          (request.resource.data.attestationChain is list &&
+           request.resource.data.attestationChain.size() <= 8)) &&
         (!('livenessVer' in request.resource.data) ||
-          request.resource.data.livenessVer is string) &&
+          (request.resource.data.livenessVer is string &&
+           request.resource.data.livenessVer.size() <= 128)) &&
         (!('integrityFlag' in request.resource.data) ||
           request.resource.data.integrityFlag == '' ||
           request.resource.data.integrityFlag == 'integrity-flagged') &&
         (!('pkDHex' in request.resource.data) ||
-          request.resource.data.pkDHex is string) &&
+          (request.resource.data.pkDHex is string &&
+           request.resource.data.pkDHex.size() <= 256 &&
+           (request.resource.data.pkDHex == '' ||
+            request.resource.data.pkDHex.matches('^[0-9a-fA-F]+$')))) &&
         (!('attestationLevel' in request.resource.data) ||
           (request.resource.data.attestationLevel is string &&
            (request.resource.data.attestationLevel == 'FULL' ||
