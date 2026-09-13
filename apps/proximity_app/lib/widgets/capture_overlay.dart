@@ -123,6 +123,11 @@ class CaptureOverlay extends StatefulWidget {
   /// prompt copy, signal tones, or motion.
   final double topInset;
 
+  /// Prompt-line visibility (default true): enroll hides the rotating
+  /// prompt while the save-error toast owns the message down below, so
+  /// the two never stack on small preview areas. Mark/face untouched.
+  final bool showStatusLine;
+
   const CaptureOverlay({
     super.key,
     required this.progress,
@@ -136,6 +141,7 @@ class CaptureOverlay extends StatefulWidget {
     this.showProgress = true,
     this.showBeacon = true,
     this.topInset = 0.0,
+    this.showStatusLine = true,
   });
 
   /// Default target direction for angle [index] of [total]: spread around
@@ -458,7 +464,9 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 ),
               // (3) ONE short guiding prompt line below the oval. White
               // for the same on-scrim reason as the guide ring above.
-              if (promptTop != null)
+              // Hidden while an error toast owns the message (enroll
+              // save-error) so the two never stack on small screens.
+              if (widget.showStatusLine && promptTop != null)
                 Positioned(
                   top: promptTop,
                   left: ProxSpacing.screenMargin,
@@ -471,7 +479,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                     maxLines: 1,
                   ),
                 )
-              else
+              else if (widget.showStatusLine)
                 Positioned(
                   left: ProxSpacing.screenMargin,
                   right: ProxSpacing.screenMargin,

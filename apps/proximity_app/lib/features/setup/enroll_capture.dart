@@ -145,6 +145,12 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
     final saveError = st.phase == EnrollPhase.error &&
         st.message.isNotEmpty &&
         doneCount == slotTotal;
+    // Slot-naming refusal (liveness/Euler FAIL): the toast copy promises
+    // single-slot recapture — the bottom bar offers it (other buckets
+    // kept). Plain transient errors keep Try-again only.
+    final recaptureSlot = saveError
+        ? ref.read(enrollmentControllerProvider.notifier).lastFailedSlot
+        : null;
     final total = slotTotal;
     final reduced = ProxMotion.reduced(context);
     // Message for the preview's fail branch (denied / failed / no-key).
@@ -225,17 +231,25 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               sweepAngle: reduced ? null : sweepValue,
               saveError: saveError,
               saveMessage: st.message,
+              // The toast owns the message on error — hide the rotating
+              // prompt so the two never stack on small preview areas.
+              promptVisible: !saveError,
               // Clears the transparent overlay app bar above.
               overlayTopInset: kToolbarHeight,
             ),
           ),
           // Bottom bar: validated shows Continue, save-error shows
-          // Try-again (+ the shared hidden top-up, back-nav stable).
+          // Try-again (+ slot recapture when a slot was named, + the
+          // shared hidden top-up, back-nav stable).
           // Mid-flow stays empty — the overlay carries the single prompt.
           EnrollCaptureBottomBar(
             validated: validated,
             saveError: saveError,
             saving: isSaving,
+            recaptureSlot: recaptureSlot,
+            onRecapture: recaptureSlot == null
+                ? null
+                : (slot) => retrySlot(slot),
             onContinue: () {
               // STEP-SCOPE: inside SetupFlow, Continue advances the
               // stepper instead of pushing the standalone route.

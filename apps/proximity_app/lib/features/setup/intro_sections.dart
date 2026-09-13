@@ -12,6 +12,7 @@ import '../../core/enrollment.dart';
 import '../../design/tokens.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
+import '../../widgets/prox_states.dart';
 import 'enroll_widgets.dart';
 
 /// Google-account card: silent pickup display + the single ID-number
@@ -62,13 +63,34 @@ class IntroAccountSection extends ConsumerWidget {
 }
 
 /// Device-key card: generate action or the created-key prefix.
-class IntroKeySection extends ConsumerWidget {
+///
+/// Single-flight: the button disables while a generation is in flight.
+/// Without this, rapid taps stack concurrent generations on the same
+/// KeyStore alias + concurrent biometric prompts, and every run strands
+/// (probe logged, no prompt, no error) — see generateKey budgets.
+class IntroKeySection extends ConsumerStatefulWidget {
   const IntroKeySection({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<IntroKeySection> createState() => _IntroKeySectionState();
+}
+
+class _IntroKeySectionState extends ConsumerState<IntroKeySection> {
+  var _busy = false;
+
+  Future<void> _generate() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(enrollmentControllerProvider.notifier).generateKey();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final st = ref.watch(enrollmentControllerProvider);
-    final ctl = ref.read(enrollmentControllerProvider.notifier);
     final hasAccount = st.account != null;
     final hasKey = st.pkHex.isNotEmpty;
     return ProxCard(
@@ -88,12 +110,22 @@ class IntroKeySection extends ConsumerWidget {
                 ? ProxPrimaryButton(
                     // Silent-skip guard: no key without sign-in.
                     label: const Text('Generate device key'),
-                    onPressed: !hasAccount ? null : ctl.generateKey,
+                    onPressed:
+                        (!hasAccount || _busy) ? null : _generate,
                   )
                 : Text(
                     'Key: ${st.pkHex.length >= 16 ? st.pkHex.substring(0, 16) : st.pkHex}…',
                   ),
           ),
+          // Key-step failures are controller-state (never exceptions past
+          // the button): render them here or a refused bind looks like
+          // "nothing happened" and invites tap-stacking.
+          if (!hasKey &&
+              st.phase == EnrollPhase.error &&
+              st.message.isNotEmpty) ...[
+            const SizedBox(height: ProxSpacing.sm),
+            ProxErrorNote(st.message),
+          ],
         ],
       ),
     );

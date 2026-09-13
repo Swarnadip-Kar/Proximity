@@ -34,6 +34,8 @@
 // + message, STEP-SCOPE navigation (owned by the composer), auto-capture
 library;
 
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -114,6 +116,11 @@ class EnrollCapturePreview extends StatelessWidget {
   final bool saveError;
   final String saveMessage;
 
+  /// Prompt-line visibility for the overlay (default true): the composer
+  /// hides the rotating prompt while the save-error toast owns the
+  /// message, so the two never stack on small preview areas.
+  final bool promptVisible;
+
   /// Edge-to-edge top inset forwarded to the overlay's top bar so it
   /// clears the transparent overlay app bar (composer passes the app-bar
   final double overlayTopInset;
@@ -134,6 +141,7 @@ class EnrollCapturePreview extends StatelessWidget {
     this.preview,
     this.previewAspectRatio,
     this.overlayTopInset = 0.0,
+    this.promptVisible = true,
   });
 
   @override
@@ -204,6 +212,7 @@ class EnrollCapturePreview extends StatelessWidget {
           sweepAngle: sweepAngle,
           previewAspectRatio: previewAspect,
           topInset: overlayTopInset,
+          showStatusLine: promptVisible,
         ),
         // Fail-closed error banner (save-error only):
         // toast-pattern overlay — same Notice widget and
@@ -251,6 +260,12 @@ class EnrollCaptureBottomBar extends StatelessWidget {
   final VoidCallback onContinue;
   final Future<void> Function() onRetry;
 
+  /// Slot recapture after a slot-naming refusal (controller.lastFailedSlot):
+  /// secondary `Recapture <slot>` next to Try-again. Null hides it (plain
+  /// transient-error chrome).
+  final String? recaptureSlot;
+  final Future<void> Function(String slot)? onRecapture;
+
   const EnrollCaptureBottomBar({
     super.key,
     required this.validated,
@@ -258,6 +273,8 @@ class EnrollCaptureBottomBar extends StatelessWidget {
     required this.saving,
     required this.onContinue,
     required this.onRetry,
+    this.recaptureSlot,
+    this.onRecapture,
   });
 
   @override
@@ -280,6 +297,26 @@ class EnrollCaptureBottomBar extends StatelessWidget {
               ),
               const EnrollCaptureSlotTopUp(),
             ] else if (saveError) ...[
+              // Slot-naming refusal (liveness/Euler FAIL): the toast names
+              // the slot and the copy promises single-slot recapture —
+              // this is that action (other buckets kept). Plain transient
+              // errors show Try-again only.
+              if (recaptureSlot != null && onRecapture != null) ...[
+                ProxSecondaryButton(
+                  label: Text('Recapture $recaptureSlot'),
+                  expanded: true,
+                  onPressed: saving
+                      ? null
+                      : () {
+                          final slot = recaptureSlot;
+                          final fn = onRecapture;
+                          if (slot != null && fn != null) {
+                            unawaited(fn(slot));
+                          }
+                        },
+                ),
+                const SizedBox(height: 8),
+              ],
               ProxPrimaryButton(
                 icon: saving
                     ? const SizedBox(

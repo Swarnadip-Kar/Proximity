@@ -36,7 +36,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter/foundation.dart'
-    show debugPrint, defaultTargetPlatform;
+    show debugPrint, defaultTargetPlatform, kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
@@ -125,6 +125,13 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   final PoseGate? _poseGate;
   // Cloud device binding (null in unit tests → local-only behavior).
   final CloudSync? _cloud;
+  // Debug NONE-tier law (§5 debug-alone-never-blocks): debug builds wire
+  // SoftwareDeviceKey (main.dart) so flows stay exercisable without secure
+  // hardware; the claim carries attestationLevel NONE (rules-accepted) and
+  // marking stays manual-approval there. Release/profile keep the hard
+  // Software-no-enroll refusal. Injectable so tests pin both branches
+  // (unit tests run with kDebugMode true).
+  final bool _allowSoftwareEnroll;
 
   /// The face verifier (shared with the live check for the ticket stamp).
   FaceVerifier get verifier => _verifier;
@@ -135,6 +142,24 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   ed.KeyPair? _keys;
   String? _faceId;
   String? _restoredRoll;
+  // Latest slot-naming refusal in enrollFace (pose/liveness FAIL names its
+  // slot for the capture session's single-slot recapture). Null when the
+  // last run did not refuse a slot. Cleared on each new scoring run + on
+  // faceDone; the gallery stays untouched on every refusal either way.
+  String? _lastFailedSlot;
+
+  /// Latest refused slot, if any (see [_lastFailedSlot]).
+  String? get lastFailedSlot => _lastFailedSlot;
+
+  /// Slot-naming refusal (see [_lastFailedSlot]): clears the face binding,
+  /// records the slot, surfaces the message. Callers return before any
+  /// gallery write, so a refused still is never stored.
+  void _slotFail(String slot, String message) {
+    _faceId = null;
+    _lastFailedSlot = slot;
+    state = state.copyWith(
+        phase: EnrollPhase.error, faceScore: 0, message: message);
+  }
 
   EnrollmentController({
     required AuthService auth,
@@ -145,10 +170,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     CloudSync? cloud,
     LivenessGate? livenessGate,
     PoseGate? poseGate,
+    bool? allowSoftwareEnroll,
   })  : _auth = auth,
         _store = store,
         _verifier = verifier,
         _deviceKey = deviceKey,
+        _allowSoftwareEnroll = allowSoftwareEnroll ?? kDebugMode,
         // Platform gate by default (native MiniFASNet scorer, web
         // fail-closed stub — same copy idiom as RealStudentDriver) so the
         // claimed livenessVer is MEASURED on every enroll, never asserted.
@@ -409,6 +436,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     state = state.copyWith(roll: roll.trim());
   }
 
+  /// NONE-tier gate shared by key ceremony + upload: true (proceed) in
+  /// debug allowance, false (caller refuses with Software-no-enroll) in
+  /// release/profile. Logs loudly on allow so a debug NONE enrollment can
+  /// never be mistaken for hardware-backed trust.
+  bool _allowNoneTier(String step) {
+    if (!_allowSoftwareEnroll) return false;
+    BleLog.log('SEC',
+        'DEBUG software device key at $step — NONE tier, local testing only; release requires StrongBox/TEE');
+    return true;
+  }
+
   /// Step 2: generate Ed25519 keypair (SKey) + bind the HW device key
   /// (DKey) it seals to, embedding the M1-gap challenge
   /// `SHA256(email || installId || pkS)` at HW key creation. Software is
@@ -442,7 +480,25 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final kp = ProxCrypto.generateEdKeypair();
       final pkS = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pkS);
-      final installId = await getOrCreateInstallId(_store);
+      // Budgets: every post-probe await below has a deadline so a hung
+      // Keystore/TEE op fails visible (tap again) instead of stranding
+      // the button with no prompt and no error. FSS touches stay
+      // prompt-tolerant (60s); the HW bind is programmatic (45s).
+      const installIdBudget = Duration(seconds: 60);
+      const bindBudget = Duration(seconds: 45);
+      BleLog.log('FACE', 'device key generate: keypair done');
+      late final String installId;
+      try {
+        installId =
+            await getOrCreateInstallId(_store).timeout(installIdBudget);
+      } on TimeoutException {
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            message:
+                'Secure storage timed out — tap Generate device key again.');
+        return;
+      }
+      BleLog.log('FACE', 'device key generate: install identity ready');
       // iOS assertion path: same-install re-enroll yields an assertion, not
       // an object — carry the previous enrollment credential key forward
       // (same account only; anything else starts clean).
@@ -456,16 +512,27 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         }
       } catch (_) {}
       try {
-        await _deviceKey.bindEnrollment(
-            email: acct.email.toLowerCase(),
-            installId: installId,
-            pkS: pkS,
-            prevAppAttestCredKeyHex: prevAppAttestCred);
+        await _deviceKey
+            .bindEnrollment(
+                email: acct.email.toLowerCase(),
+                installId: installId,
+                pkS: pkS,
+                prevAppAttestCredKeyHex: prevAppAttestCred)
+            .timeout(bindBudget);
+      } on TimeoutException {
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            message:
+                'Secure hardware timed out — tap Generate device key again.');
+        BleLog.log('FACE', 'device key generate: bind timed out');
+        return;
       } on StateError catch (e) {
         state = state.copyWith(phase: EnrollPhase.error, message: '$e');
+        BleLog.log('FACE', 'device key generate: bind refused: $e');
         return;
       }
-      if (_deviceKey.level == AttestationLevel.none) {
+      if (_deviceKey.level == AttestationLevel.none &&
+          !_allowNoneTier('generate')) {
         state = state.copyWith(
             phase: EnrollPhase.error,
             message:
@@ -488,9 +555,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       _restoredRoll = null;
       state = state.copyWith(
           phase: EnrollPhase.keyReady, pkHex: pkHex, restored: false);
+      BleLog.log('FACE',
+          'device key ready (${attestationLevelName(_deviceKey.level)})');
     } catch (e) {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Key generation failed: $e');
+      BleLog.log('FACE', 'device key generate: failed: $e');
     }
   }
 
@@ -594,6 +664,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     }
     BleLog.log('FACE',
         'enroll scoring ${imagePaths.length} stills in slot order: ${faceEnrollSlots.join(', ')}');
+    _lastFailedSlot = null;
     for (var i = 0; i < imagePaths.length; i++) {
       final slot = faceEnrollSlots[i];
       final path = imagePaths[i];
@@ -604,32 +675,20 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         try {
           final reading = await poseGate.readPose(path);
           if (reading == null) {
-            _faceId = null;
-            state = state.copyWith(
-                phase: EnrollPhase.error,
-                faceScore: 0,
-                message:
-                    'The $slot still did not read clearly (no face found) — recapture just that angle in good light, holding still.');
+            _slotFail(slot,
+                'The $slot still did not read clearly (no face found) — recapture just that angle in good light, holding still.');
             return;
           }
           final decision = EnrollPoseWindows.check(
               slot, reading.yaw, reading.pitch, reading.roll);
           if (!decision.ok) {
-            _faceId = null;
-            state = state.copyWith(
-                phase: EnrollPhase.error,
-                faceScore: 0,
-                message:
-                    'The $slot still missed its angle — ${decision.hint}');
+            _slotFail(slot,
+                'The $slot still missed its angle — ${decision.hint}');
             return;
           }
         } catch (e) {
-          _faceId = null;
-          state = state.copyWith(
-              phase: EnrollPhase.error,
-              faceScore: 0,
-              message:
-                  'The $slot still did not read clearly — recapture just that angle in good light, holding still ($e)');
+          _slotFail(slot,
+              'The $slot still did not read clearly — recapture just that angle in good light, holding still ($e)');
           return;
         }
       }
@@ -638,16 +697,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       try {
         live = await _liveness.detectPassive(path);
       } on StateError catch (e) {
-        _faceId = null;
-        state = state.copyWith(
-            phase: EnrollPhase.error, faceScore: 0, message: '$e');
+        _slotFail(slot, '$e');
         return;
       } catch (e) {
-        _faceId = null;
-        state = state.copyWith(
-            phase: EnrollPhase.error,
-            faceScore: 0,
-            message: 'Liveness check failed on the $slot still: $e');
+        _slotFail(slot, 'Liveness check failed on the $slot still: $e');
         return;
       }
       // Box-vs-fallback path note (M1): the gate picks face-box vs
@@ -659,12 +712,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       if (live.score < kLivenessThreshold) {
         BleLog.log('SEC',
             'enroll liveness FAIL slot=$slot score=${live.score.toStringAsFixed(2)}');
-        _faceId = null;
-        state = state.copyWith(
-            phase: EnrollPhase.error,
-            faceScore: 0,
-            message:
-                'The $slot capture did not look live (possible photo or screen) — hold still in good light and recapture just that angle.');
+        _slotFail(slot,
+            'The $slot capture did not look live (possible photo or screen) — hold still in good light and recapture just that angle.');
         return;
       }
       BleLog.log('FACE',
@@ -722,6 +771,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           'enroll self-check match (boundary ${check.score.toStringAsFixed(2)})');
       state = state.copyWith(
           phase: EnrollPhase.faceDone, faceScore: check.score);
+      _lastFailedSlot = null;
     } on StateError catch (e) {
       // Fail-closed (records-only device, missing model, unreadable
       // still): no face stored, score stays 0.
@@ -829,7 +879,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       try {
         requireMobileFace();
         await _deviceKey.ensure();
-        if (_deviceKey.level == AttestationLevel.none) {
+        if (_deviceKey.level == AttestationLevel.none &&
+            !_allowNoneTier('upload')) {
           throw StateError(
               'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
         }

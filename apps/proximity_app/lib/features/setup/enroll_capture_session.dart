@@ -29,6 +29,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -521,6 +522,32 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// Manual "Try again" re-runs the terminal write without touching the
   /// accepted stills (forwards to [_saveAll]).
   Future<void> retrySave() => _saveAll();
+
+  /// Single-slot recapture after a slot-naming refusal (the controller
+  /// names the failed slot via [EnrollmentController.lastFailedSlot] and
+  /// the message copy already says "recapture just that angle" — this is
+  /// the action behind that copy). Clears the refused still (file deleted
+  /// best-effort), unlatches the save, restarts the classify loop; the set
+  /// re-completes and saves again with the fresh still. The other four
+  /// buckets are kept — never a full rescan. No-op for unknown slots,
+  /// mid-save calls, or torn-down sessions.
+  Future<void> retrySlot(String slot) async {
+    final i = faceEnrollSlots.indexOf(slot);
+    if (i == -1 || _done || _saving) return;
+    final old = _paths[i];
+    _paths[i] = null;
+    if (old != null && old.isNotEmpty) {
+      try {
+        await File(old).delete();
+      } catch (_) {}
+    }
+    EnrollLog.face('slot recapture reopened: $slot (kept $_doneCount/'
+        '${_paths.length} buckets)');
+    _finished = false;
+    if (mounted) setState(() => _saving = false);
+    _loopStarted = false;
+    _startLoop();
+  }
 
   /// Verbatim excerpt of the pre-split initState body (minus `super`).
   /// The screen calls this from its own initState.

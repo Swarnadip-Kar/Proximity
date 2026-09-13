@@ -187,9 +187,11 @@ class _EnrollNoticeState extends State<EnrollNotice>
     return Container(
       padding: const EdgeInsets.all(ProxSpacing.md),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        // Legible over live video (toast floats above the feed): a 0.1
+        // wash lets the preview bleed through the text.
+        color: color.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(ProxRadii.md),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

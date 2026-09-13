@@ -115,4 +115,32 @@ void main() {
       expect(live.calls, _stills);
     });
   });
+
+  group('failed-slot tracking for single-slot recapture', () {
+    test('liveness FAIL records the slot, success clears it', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live = FakeLivenessGate(score: 0.31);
+      final ctl =
+          await _keyReady(verifier: verifier, liveness: live);
+      expect(ctl.lastFailedSlot, isNull);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.lastFailedSlot, 'centre');
+
+      live.score = 0.95;
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.lastFailedSlot, isNull);
+    });
+
+    test('liveness throw records the slot', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live = FakeLivenessGate(throwOnDetect: true);
+      final ctl =
+          await _keyReady(verifier: verifier, liveness: live);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.lastFailedSlot, 'centre');
+    });
+  });
 }

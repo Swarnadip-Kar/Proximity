@@ -3,7 +3,9 @@
 // Covers the gaps closed in this pass:
 // - ID-edit fallback path stays sealed-only (never re-persists a raw seed)
 //   and preserves the face-rescan stamp.
-// - Software keys cannot enroll (Software-no-enroll at the controller).
+// - Software-no-enroll law is two-branched (allowSoftwareEnroll policy,
+//   default kDebugMode): release refuses the software key, debug proceeds
+//   at the NONE tier.
 // - Sealed-only restore on a clone/invalidated key reports
 //   'restore detected — re-enroll' (controller _tryRestore path).
 // - Host ephemeral identity: hosting starts with a sealed doc or no
@@ -105,13 +107,14 @@ class _Seal implements HwSealStore {
 }
 
 EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
-        {DeviceKey? deviceKey}) =>
+        {DeviceKey? deviceKey, bool? allowSoftwareEnroll}) =>
     EnrollmentController(
       auth: auth,
       store: store,
       verifier: FakeFaceVerifier(),
       deviceKey: deviceKey ?? FakeDeviceKey(),
       livenessGate: FakeLivenessGate(),
+      allowSoftwareEnroll: allowSoftwareEnroll,
     );
 
 void main() {
@@ -146,15 +149,27 @@ void main() {
   });
 
   group('Software-no-enroll at the controller', () {
-    test('generateKey with a software key refuses with Software-no-enroll',
+    test('release law refuses: allowSoftwareEnroll false blocks software key',
         () async {
       final auth = FakeAuthService(_acct);
       final store = InMemoryDeviceStore();
-      final ctl = _ctl(auth, store, deviceKey: SoftwareDeviceKey());
+      final ctl = _ctl(auth, store,
+          deviceKey: SoftwareDeviceKey(), allowSoftwareEnroll: false);
       await ctl.signIn();
       await ctl.generateKey();
       expect(ctl.state.phase, EnrollPhase.error);
       expect(ctl.state.message, contains('Software-no-enroll'));
+    });
+
+    test('debug law allows: software key proceeds at NONE tier', () async {
+      final auth = FakeAuthService(_acct);
+      final store = InMemoryDeviceStore();
+      final ctl = _ctl(auth, store,
+          deviceKey: SoftwareDeviceKey(), allowSoftwareEnroll: true);
+      await ctl.signIn();
+      await ctl.generateKey();
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(ctl.state.pkHex, isNotEmpty);
     });
   });
 

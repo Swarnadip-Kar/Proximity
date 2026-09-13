@@ -5,12 +5,14 @@
 //
 // Passive MiniFASNetV2 (offline, ~1s, no license-key SDK): file sanity
 // (missing/empty/tiny/unknown-magic fail closed) + dart:ui decode at 160px
-// + face-box/BGR/NCHW packing ([minifasnetInputFromRgba] with an ML Kit
-// bbox, fallback centre-crop) + ONE `tflite_flutter` Interpreter invoke on
-// the vendored weights ([kLivenessModelAsset]) + LIVE-class post-processing
-// ([liveScoreFromProbs]). See liveness_gate.dart header for the model
-// contract and the honesty note (face-box crop, single 2.7 model, no
-// ensemble; FAR/FRR unmeasured + calibration TODO). Every failure —
+// + face-box/BGR/NCHW packing ([minifasnetInputFromRgba] with a box
+// detected ON the decoded frame via [InputImage.fromBitmap] — EXIF-blind,
+// so crop and box share one pixel space by construction — squared +
+// clamped crop, fallback centre-crop) + ONE `tflite_flutter` Interpreter
+// invoke on the vendored weights ([kLivenessModelAsset]) + LIVE-class
+// post-processing ([liveScoreFromProbs]). See liveness_gate.dart header
+// for the model contract and the honesty note (face-box crop, single 2.7
+// model, no ensemble; FAR/FRR unmeasured + calibration TODO). Every failure —
 // unreadable still, missing asset, interpreter/shape error, timeout —
 // throws StateError (fail-closed); there is NO heuristic fallback, by
 // design. The face-box fallback (centre-crop) is NOT a heuristic pass:
@@ -158,18 +160,8 @@ class HeuristicLivenessGate implements LivenessGate {
 
   /// Decode to raw RGBA at 160px (fast: ~25k px; the pure packer below
   /// nearest-neighbours to 80). Throws StateError when the bytes do not
-  /// decode (fail-closed, same mapping as above).
-  ///
-  /// M1 EXIF seam (documented, no behavior change): `instantiateImageCodec`
-  /// decodes raw pixels WITHOUT applying EXIF orientation, while the ML Kit
-  /// bbox runs on the oriented file — a rotated still (rare from the front
-  /// camera, possible on remounted files) maps the box onto unrotated
-  /// pixels. The mapping helper nulls out on invalid geometry and the pass
-  /// falls back to the centre-square crop (same scorer + Tl), so the seam
-  /// degrades to fallback, never to a mis-scored pass. DI note: the whole
-  /// pass races the shared [budget] deadline (1200ms default — the marking
-  /// hot path is ~1s; bbox + decode + load + score share it, never stacked
-  /// per-stage timeouts).
+  /// decode (fail-closed, same mapping as above). Raw pixels, no EXIF
+  /// handling anywhere in this pass (see the detection note below).
   static Future<({Uint8List rgba, int width, int height})> _decodeRgba(
       Uint8List bytes) async {
     late final ui.Image img;
@@ -226,33 +218,47 @@ class HeuristicLivenessGate implements LivenessGate {
     return d;
   }
 
-  /// One bbox pass in ORIGINAL file pixels. Returns null on every
+  /// One bbox pass on the DECODED frame (EXIF-blind by construction).
+  /// Detection runs on the same raw pixels the packer crops
+  /// ([InputImage.fromBitmap] over the decoded RGBA — no file path, no
+  /// EXIF flag anywhere in this pass), so the box is natively in frame
+  /// space: no header-dim mapping, no orientation math, no way for the
+  /// crop and the box to disagree. This exists because front-camera
+  /// stills can carry a stale EXIF orientation (upright pixels + rotate
+  /// flag): file-path detection analyses the flagged rotation while the
+  /// decoder hands back raw pixels, and the mismatch crops background
+  /// with a confident spoof score on a live face. Returns null on every
   /// non-usable outcome (0 or >1 faces, detector/channel error, timeout,
   /// unparseable box) — the caller falls back to the legacy centre-square
   /// crop (same scorer + Tl, never a throw for the fallback itself).
   /// Never throws: detection failure must not block the scorer fallback.
-  static Future<
-      ({double left, double top, double right, double bottom})?>
-      _detectFaceBoxOriginal(String imagePath, Duration remaining) async {
+  static Future<({int left, int top, int right, int bottom})?>
+      _detectFaceBoxFrame(
+          Uint8List rgba, int width, int height, Duration remaining) async {
     try {
+      final input =
+          InputImage.fromBitmap(bitmap: rgba, width: width, height: height);
       final faces = await _boxDetectorInstance()
-          .processImage(InputImage.fromFilePath(imagePath))
+          .processImage(input)
           .timeout(remaining);
       if (faces.length != 1) return null;
       final b = faces.first.boundingBox;
-      if (!(b.right > b.left && b.bottom > b.top)) return null;
       if (!b.left.isFinite ||
           !b.top.isFinite ||
           !b.right.isFinite ||
           !b.bottom.isFinite) {
         return null;
       }
-      return (
-        left: b.left,
-        top: b.top,
-        right: b.right,
-        bottom: b.bottom,
-      );
+      var l = b.left.floor();
+      var t = b.top.floor();
+      var r = b.right.ceil();
+      var bo = b.bottom.ceil();
+      if (l < 0) l = 0;
+      if (t < 0) t = 0;
+      if (r > width) r = width;
+      if (bo > height) bo = height;
+      if (r <= l || bo <= t) return null;
+      return (left: l, top: t, right: r, bottom: bo);
     } catch (_) {
       return null;
     }
@@ -295,40 +301,24 @@ class HeuristicLivenessGate implements LivenessGate {
       try {
         final bytes = await within(_readStillBytes(imagePath));
         final frame = await within(_decodeRgba(bytes));
-        // Face-box crop before TFLite (sec-face hardening): ML Kit bbox in
-        // ORIGINAL file pixels → map onto the 160px decoded frame via the
-        // header dims → squared + clamped crop inside the packer. Fallback
-        // is the legacy centre-square crop when detection is
+        // Face-box crop before TFLite (sec-face hardening): detection runs
+        // on the decoded frame itself (EXIF-blind, see
+        // [_detectFaceBoxFrame]), so the box arrives in frame space and
+        // feeds the packer directly — no file-dim mapping. Fallback is the
+        // legacy centre-square crop when detection is
         // unavailable/ambiguous (0 or >1 faces, detector error/timeout,
-        // unparseable dims) — same scorer + same Tl, never a throw for the
+        // unparseable box) — same scorer + same Tl, never a throw for the
         // fallback itself (the Tl gate stays the decider; no silent
         // downgrade — both paths feed the identical MiniFASNet scorer).
         ({int left, int top, int right, int bottom})? faceBox;
         try {
           final remaining = deadline.difference(DateTime.now());
           if (remaining > Duration.zero) {
-            final orig =
-                await _detectFaceBoxOriginal(imagePath, remaining);
-            if (orig != null) {
-              final dims = originalDimsFromBytes(bytes);
-              if (dims != null) {
-                faceBox = mapFaceBoxToFrame(
-                  origLeft: orig.left,
-                  origTop: orig.top,
-                  origRight: orig.right,
-                  origBottom: orig.bottom,
-                  origWidth: dims.width,
-                  origHeight: dims.height,
-                  frameWidth: frame.width,
-                  frameHeight: frame.height,
-                );
-              }
-              // Null dims or null mapped box → centre-square fallback below.
-            }
-            // Null orig (0/>1 faces, detector error/timeout) → fallback.
+            faceBox = await _detectFaceBoxFrame(
+                frame.rgba, frame.width, frame.height, remaining);
           }
-          // Expired remaining → fallback (inference still races the shared
-          // deadline below and fails closed on timeout, never a hang).
+          // Null (0/>1 faces, detector error/timeout, expired budget) →
+          // centre-square fallback below.
         } catch (_) {
           // Belt-and-braces: the bbox helper never throws by contract, but
           // a mapping surprise must still fall back, never fail the pass.
@@ -339,8 +329,13 @@ class HeuristicLivenessGate implements LivenessGate {
         // the plugin returns identity only, so the vitality score below is
         // the gate output, never a distance). Logged per still alongside the
         // callers' score lines (enroll self-check + marking face check).
+        // Geometry rides along (frame-space box on the decoded frame) so a
+        // confident-spoof on a live face is diagnosable as a mis-crop.
+        final boxNote = faceBox == null
+            ? 'fallback-centre'
+            : 'box=${faceBox.left},${faceBox.top},${faceBox.right},${faceBox.bottom}';
         debugPrint(
-            'liveness crop=${faceBox == null ? 'fallback-centre' : 'box'} frame=${frame.width}x${frame.height}');
+            'liveness crop=$boxNote frame=${frame.width}x${frame.height} src=frame-bitmap');
         final input = minifasnetInputFromRgba(
           rgba: frame.rgba,
           width: frame.width,

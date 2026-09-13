@@ -40,13 +40,17 @@
 //   input  [1,3,80,80] float32 NCHW, BGR order, pixels /255 (face crop).
 //   output [1,3] float32 softmax [spoof-print, LIVE, spoof-replay].
 //   score  output[1] ([kMinifasnetLiveIndex]) via [liveScoreFromProbs].
-// Pre-processing ([minifasnetInputFromRgba]): face-box square crop (ML Kit
-// bbox via google_mlkit_face_detection, squared + clamped — see
-// liveness_gate_native.dart) + nearest-neighbour resize to 80x80 +
-// BGR/255/NCHW packing. Fallback is the legacy centre-square crop when
-// detection is unavailable/ambiguous (0 or >1 faces, detector error /
-// timeout, unparseable dims) — same scorer + same Tl, never a pass, never
-// a throw for the fallback itself (comment at the call-site).
+// Pre-processing ([minifasnetInputFromRgba]): face-box square crop (the
+// box is detected ON the decoded frame via [InputImage.fromBitmap] —
+// EXIF-blind by construction: no file path, no orientation flag, no
+// header-dim mapping, so the crop and the box can never disagree; front
+// cameras that store upright pixels with a stale rotate flag used to
+// mis-crop background with confident spoof scores) + nearest-neighbour
+// resize to 80x80 + BGR/255/NCHW packing. Fallback is the legacy
+// centre-square crop when detection is unavailable/ambiguous (0 or >1
+// faces, detector error / timeout, unparseable box) — same scorer + same
+// Tl, never a pass, never a throw for the fallback itself (comment at the
+// call-site).
 //
 // Honesty note (residuals, not immunity claims): the gate crops the face
 // box with the 2.7x training-distribution margin ([kLivenessContextScale])
