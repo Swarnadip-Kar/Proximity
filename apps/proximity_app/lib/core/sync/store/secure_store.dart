@@ -29,10 +29,16 @@ class SecureDeviceStore implements DeviceStore {
   static const _kOrgBackfill = 'prox.orgBackfill.v1';
   final FlutterSecureStorage _secure;
   // Hardened at-rest posture (PROXIMITY_SECURITY.md §3, F3): biometric-bound
-  // AES-GCM on Android, this-device-only unsynced Keychain on iOS. Never
-  // revert to `const FlutterSecureStorage()` defaults — the default
-  // AndroidOptions allow device-credential fallback and the default
-  // IOSOptions are syncable/migratable.
+  // AES-GCM on Android (`enforceBiometrics:true`, `strongBiometricOnly`),
+  // this-device-only unsynced Keychain on iOS (`synchronizable:false`,
+  // `first_unlock_this_device`, `biometryCurrentSet`). Never revert to
+  // `const FlutterSecureStorage()` defaults — the default AndroidOptions
+  // allow device-credential fallback and the default IOSOptions are
+  // syncable/migratable. This is the ENROLLMENT doc store (prompt-gated);
+  // the HW seal DEK lives in the prompt-free `FlutterSealStore` (same FSS
+  // plugin, ungated options — gated instead by the 4h HW grant + face).
+  // Backup exclusion lives in AndroidManifest (`allowBackup=false`,
+  // `fullBackupContent=false`) + res/xml/data_extraction_rules.xml.
   SecureDeviceStore({FlutterSecureStorage? secure})
       : _secure = secure ??
             const FlutterSecureStorage(
