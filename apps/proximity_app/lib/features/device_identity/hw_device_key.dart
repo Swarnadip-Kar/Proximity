@@ -6,13 +6,21 @@
 //
 // Backend contract (see the plugin facade
 // `AttestedSecureKeys.generateKey/sign/attest/getKeyInfo`):
-// - generateKey: minSecurityLevel `trustedEnvironment` (StrongBox→TEE /
-//   Secure Enclave floor; anything lower throws `HwKeyUnsupportedError` →
+// - generateKey: minSecurityLevel `trustedEnvironment` (the CORRECT floor:
+//   StrongBox is opportunistic — the plugin tries StrongBox first and falls
+//   back to TEE where StrongBox is absent, so requiring StrongBox would
+//   brick TEE-only phones; `trustedEnvironment` accepts StrongBox→TEE /
+//   Secure Enclave and anything lower throws `HwKeyUnsupportedError` →
 //   `Software-no-enroll`, never a silent software key), userAuth
-//   `UserAuthPolicy.timeBound(4h)` (one strong-biometric per school block;
-//   per-use would prompt every 5s rotation and strand marking),
+//   `UserAuthPolicy.timeBound(4h)` (= [kHwDeviceKeyAuthValidity]: one
+//   strong-biometric per school block; per-use would prompt every 5s
+//   rotation and strand marking),
 //   attestationChallenge = the enrollment challenge
 //   (`SHA256(emailLower || installId || pkS32)` via [enrollmentChallenge]).
+// - pkD wire form: HW 64B P-256 x||y (JWK x/y 32B each via
+//   `HwDeviceKey.pkDFromXY`) vs Software 32B Ed25519 — callers treat pkD as
+//   opaque variable-length (hexEncode + hash fingerprint only, never a
+//   fixed slice/length gate).
 // - sign → `Es256Signature.bytes` (64B raw R||S).
 // - attest → `KeyAttestation.x5c` (base64 DER, leaf-first) decoded to DER
 //   bytes. JWK x/y (base64url) → pkD via [HwDeviceKey.pkDFromXY].

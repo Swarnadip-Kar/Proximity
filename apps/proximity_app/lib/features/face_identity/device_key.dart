@@ -47,12 +47,24 @@ import '../device_identity/hw_device_key.dart';
 const List<int> kSealedKeyMagic = [0x50, 0x58, 0x4B, 0x31]; // "PXK1"
 
 /// Narrow device-key interface.
+///
+/// pkD length contract (callers must NOT assume a fixed length — treat pkD
+/// as opaque variable-length bytes, hexEncode/fingerprint only, never a
+/// fixed slice or length assert):
+/// - HW ([HwDeviceKey]): 64B P-256 x||y (JWK x/y 32B each via
+///   `HwDeviceKey.pkDFromXY`).
+/// - Software ([SoftwareDeviceKey]): 32B Ed25519 public key (test-only,
+///   level `none`).
+/// - Fake ([FakeDeviceKey]): scripted bytes, 32B by default (tests may pass
+///   64B to mirror HW — both shapes must prove).
 abstract class DeviceKey {
   /// Generates (or loads) the device key. Idempotent.
   Future<void> ensure();
 
-  /// Raw DKey public bytes (empty until [ensure]). Bound into Sig_s and
-  /// the extended claim as pkD.
+  /// Raw DKey public bytes (throws until [ensure]/[bindEnrollment]).
+  /// Bound into Sig_s and the extended claim as pkD (pkDHex). Length is
+  /// backend-defined (HW 64B P-256 x||y vs Software 32B Ed25519) — callers
+  /// must not branch on length.
   Uint8List get pkD;
 
   /// Signs [data] (canonically the deviceProvePreimage) with DKey.
