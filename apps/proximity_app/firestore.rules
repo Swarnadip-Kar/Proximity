@@ -218,6 +218,18 @@ service cloud.firestore {
     // likewise type-locked when present (a mistyped level/window would
     // otherwise throw the readers' `as String?`/`as num?` casts or poison
     // the offline tier gate — fail the write, never the read path).
+    //
+    // WHY rules stop at type locks (no pkD-uniqueness, no chain-pin here):
+    // rules cannot query across docs (no "is this pkDHex already bound to
+    // another Gmail?"), cannot SHA-256 a root DER or byte-search a leaf for
+    // the Key Attestation OID / challenge (no crypto, no loops over cert
+    // bytes, no cross-doc joins on Spark), and cannot pin or rotate trust
+    // anchors. So pkD-clone detection lives OFFLINE post-hoc via
+    // claim.dart findDoublePkD (groups bindings by pkDHex for professor
+    // review) + protocol evaluateDeviceProof (tiers the dSig-gated proof),
+    // and chain-vs-pinned-roots + challenge containment lives in protocol
+    // verifyAttestationChainPin on the professor phone (offline, no quota).
+    // Rules keep the write surface narrow; crypto keeps the verdict.
     function validSecurityFields() {
       return (!('attestationChain' in request.resource.data) ||
           request.resource.data.attestationChain is list) &&
