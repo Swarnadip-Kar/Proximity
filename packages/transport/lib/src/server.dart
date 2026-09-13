@@ -1047,8 +1047,18 @@ class ProxServer {
     }
   }
 
+  /// H9: bearer via `Authorization: Bearer` (preferred — never logged in
+  /// URLs) with legacy `?token=` fallback for mixed fleets.
+  bool _bearerOk(Request req) {
+    final auth = req.headers['authorization'] ?? '';
+    if (auth.startsWith('Bearer ')) {
+      return auth.substring('Bearer '.length).trim() == bearer;
+    }
+    return req.url.queryParameters['token'] == bearer;
+  }
+
   Response _guarded(Request req, Response Function() fn) {
-    if (req.url.queryParameters['token'] != bearer) {
+    if (!_bearerOk(req)) {
       return _json({'error': 'forbidden'}, 403);
     }
     return fn();
@@ -1056,7 +1066,7 @@ class ProxServer {
 
   Future<Response> _guardedJson(
       Request req, FutureOr<Response> Function(Map<String, dynamic>) fn) async {
-    if (req.url.queryParameters['token'] != bearer) {
+    if (!_bearerOk(req)) {
       return _json({'error': 'forbidden'}, 403);
     }
     Map<String, dynamic> body = const {};
