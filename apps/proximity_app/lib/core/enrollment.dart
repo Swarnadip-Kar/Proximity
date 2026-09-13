@@ -20,8 +20,10 @@
 // reaches the cloud, ever). The app keeps only {faceId, verifierVer,
 // enrolledAt}; the SKey seed is DKey-sealed (ciphertext only at rest).
 //
-// Key seed lives in secure storage; production uses Keystore/StrongBox
-// (Android), Secure Enclave (iOS), OS keychain (desktop).
+// Key seed lives in secure storage; production uses Keystore/StrongBox→TEE
+// (Android) / Secure Enclave (iOS) via HwDeviceKey on mobile only.
+// Desktop/web are records-only fail-closed (UnavailableDeviceKey — no key,
+// no seal, every op throws before signing).
 // Face enrollment: injected [FaceVerifier]. Production injects
 // [PluginFaceVerifier] (mobile-only); [FakeFaceVerifier] drives unit
 // tests only, never the shipped app. Desktop/web get
@@ -33,7 +35,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show debugPrint, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
@@ -42,7 +45,14 @@ import '../features/entry/entry_flow.dart' show entryRequireEnrollIntegrity;
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart'
-    show HeuristicLivenessGate, LivenessGate, LivenessResult, kLivenessVer;
+    show
+        HeuristicLivenessGate,
+        LivenessAction,
+        LivenessGate,
+        LivenessResult,
+        kLivenessVer;
+import '../features/face_identity/pose_gate.dart'
+    show EnrollPoseWindows, PoseGate;
 import '../mode.dart';
 import 'auth.dart';
 import 'cloud_sync.dart';
@@ -107,6 +117,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   final FaceVerifier _verifier;
   final DeviceKey _deviceKey;
   final LivenessGate _liveness;
+  // Face-scoring re-check gate (C4): per-slot Euler windows + face presence
+  // on ALL 5 stills at enroll time (defense-in-depth over the capture-time
+  // PoseGate classify-fill). Null in older call sites / unit tests (capture
+  // already gated there) — liveness + plugin per-slot checks still run.
+  final PoseGate? _poseGate;
   // Cloud device binding (null in unit tests → local-only behavior).
   final CloudSync? _cloud;
 
@@ -128,6 +143,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     SignedAccount? preseed,
     CloudSync? cloud,
     LivenessGate? livenessGate,
+    PoseGate? poseGate,
   })  : _auth = auth,
         _store = store,
         _verifier = verifier,
@@ -137,6 +153,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // claimed livenessVer is MEASURED on every enroll, never asserted.
         // Tests inject FakeLivenessGate. main.dart needs no new override.
         _liveness = livenessGate ?? HeuristicLivenessGate(),
+        _poseGate = poseGate,
         _cloud = cloud,
         super(EnrollmentState(
             phase: preseed == null
@@ -439,14 +456,24 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// (centre/left/right/up/down image paths from the continuous capture
   /// session). Each still's angle was already pose-gated at capture (ML Kit
   /// euler windows via the PoseGate — real gates, never instruction-only);
-  /// the centre still is passive-liveness-gated HERE (fail-closed, same
-  /// copy idiom as RealStudentDriver.checkFace — spoof never reaches the
-  /// plugin gallery, so the claimed livenessVer is MEASURED); the plugin
-  /// owns detection + matching passively. A self-check verify of the
-  /// centre still must match before advancing (fail-closed with faceScore
-  /// 0). Mobile-only: records-only devices fail closed via the
-  /// verifier (never a mock pass).
-  Future<void> enrollFace(List<String> imagePaths) async {
+  /// ALL 5 stills are re-scored HERE before the gallery write (fail-closed,
+  /// same copy idiom as RealStudentDriver.checkFace): each still must pass
+  /// its Euler window (when a PoseGate is wired) + face-present AND the
+  /// passive liveness gate — any failure aborts the enroll with a
+  /// slot-naming error and the gallery stays untouched, so the claimed
+  /// livenessVer is MEASURED on every enrolled still, never asserted. The
+  /// plugin owns detection + matching passively (embeddings/sealed blobs
+  /// treated as opaque — presence/shape/scores plumbing only, never
+  /// decrypted or interpreted). A self-check verify of EVERY enrolled
+  /// still must match before advancing (fail-closed with faceScore 0).
+  /// Mobile-only: records-only devices fail closed via the verifier
+  /// (never a mock pass).
+  ///
+  /// [challengeOrder] is the session's shuffled liveness walk order (for
+  /// the decision log only — presence/order record, never a vitality
+  /// verdict); when provided it is logged per enroll.
+  Future<void> enrollFace(List<String> imagePaths,
+      {List<LivenessAction>? challengeOrder}) async {
     // Binding point (faceId derives from the account): refuse a draft the
     // session moved under — a stale-account faceId must never enroll.
     if (_requireLiveAccount() == null) return;
@@ -499,39 +526,109 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         return;
       }
     }
-    // Security §4 passive gate on the centre still BEFORE the gallery
-    // write (same copy idiom as RealStudentDriver.checkFace): a photo or
-    // screen that would match the template must still fail here, so the
-    // livenessVer claimed at Save names a real measurement. Throw /
-    // unreadable → error (rescan, nothing stored); below Tl → error as a
-    // readable non-live still (spoof), gallery untouched either way.
-    LivenessResult live;
-    try {
-      live = await _liveness.detectPassive(imagePaths.first);
-    } on StateError catch (e) {
-      _faceId = null;
-      state = state.copyWith(
-          phase: EnrollPhase.error, faceScore: 0, message: '$e');
-      return;
-    } catch (e) {
-      _faceId = null;
-      state = state.copyWith(
-          phase: EnrollPhase.error,
-          faceScore: 0,
-          message: 'Liveness check failed: $e');
-      return;
+    // Security §4 passive + Euler gates on ALL 5 stills BEFORE the
+    // gallery write (same copy idiom as RealStudentDriver.checkFace): a
+    // photo or screen that would match the template must still fail here,
+    // so the livenessVer claimed at Save names a real measurement on every
+    // enrolled still. Per still, in slot order: (1) Euler window + face
+    // presence via the PoseGate when wired (null reading = unreadable or
+    // anything but exactly one face → slot-naming abort, never a pass);
+    // (2) passive liveness via detectPassive (throw/unreadable → error,
+    // rescan, nothing stored; below Tl → error as a readable non-live
+    // still / spoof). Gallery untouched on any failure either way.
+    // Opaque-bytes rule: embeddings/sealed blobs are never decrypted or
+    // interpreted here — only presence (face present), shape (5 slots) and
+    // score plumbing (liveness >= Tl) gate the enroll.
+    // Scoring order + challenge order ride the decision log (BleLog FACE)
+    // plus a debugPrint of the per-still box-vs-fallback path note: the
+    // liveness gate crops the face box with a legacy centre-square
+    // fallback (same scorer + Tl) — the plugin returns identity only, so
+    // the per-still score below is the vitality gate output, never a
+    // distance; the crop path itself is chosen inside the gate.
+    if (challengeOrder != null && challengeOrder.isNotEmpty) {
+      final order = challengeOrder.map((a) => a.name).join(' → ');
+      BleLog.log('FACE', 'enroll challenge order: $order');
+      debugPrint('enroll challenge order: $order');
     }
-    if (live.score < kLivenessThreshold) {
-      BleLog.log('SEC',
-          'enroll liveness FAIL score=${live.score.toStringAsFixed(2)}');
-      _faceId = null;
-      state = state.copyWith(
-          phase: EnrollPhase.error,
-          faceScore: 0,
-          message:
-              'This capture did not look live (possible photo or screen) — hold still in good light and recapture.');
-      return;
+    BleLog.log('FACE',
+        'enroll scoring ${imagePaths.length} stills in slot order: ${faceEnrollSlots.join(', ')}');
+    for (var i = 0; i < imagePaths.length; i++) {
+      final slot = faceEnrollSlots[i];
+      final path = imagePaths[i];
+      // (1) Euler window + face presence (wired gate only; capture already
+      // gated, so a null gate skips — liveness + plugin checks still run).
+      final poseGate = _poseGate;
+      if (poseGate != null) {
+        try {
+          final reading = await poseGate.readPose(path);
+          if (reading == null) {
+            _faceId = null;
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                faceScore: 0,
+                message:
+                    'The $slot still did not read clearly (no face found) — recapture just that angle in good light, holding still.');
+            return;
+          }
+          final decision = EnrollPoseWindows.check(
+              slot, reading.yaw, reading.pitch, reading.roll);
+          if (!decision.ok) {
+            _faceId = null;
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                faceScore: 0,
+                message:
+                    'The $slot still missed its angle — ${decision.hint}');
+            return;
+          }
+        } catch (e) {
+          _faceId = null;
+          state = state.copyWith(
+              phase: EnrollPhase.error,
+              faceScore: 0,
+              message:
+                  'The $slot still did not read clearly — recapture just that angle in good light, holding still ($e)');
+          return;
+        }
+      }
+      // (2) Passive liveness on THIS still (fail-closed per still).
+      LivenessResult live;
+      try {
+        live = await _liveness.detectPassive(path);
+      } on StateError catch (e) {
+        _faceId = null;
+        state = state.copyWith(
+            phase: EnrollPhase.error, faceScore: 0, message: '$e');
+        return;
+      } catch (e) {
+        _faceId = null;
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            faceScore: 0,
+            message: 'Liveness check failed on the $slot still: $e');
+        return;
+      }
+      // Box-vs-fallback path note (M1): the gate picks face-box vs
+      // centre-square internally (same scorer + Tl); log per-still that the
+      // vitality gate ran (the path itself is inside the gate — no silent
+      // downgrade, Tl stays the decider).
+      debugPrint(
+          'enroll liveness scored slot=$slot score=${live.score.toStringAsFixed(2)} ver=${live.ver} (box-vs-fallback path inside gate, same Tl)');
+      if (live.score < kLivenessThreshold) {
+        BleLog.log('SEC',
+            'enroll liveness FAIL slot=$slot score=${live.score.toStringAsFixed(2)}');
+        _faceId = null;
+        state = state.copyWith(
+            phase: EnrollPhase.error,
+            faceScore: 0,
+            message:
+                'The $slot capture did not look live (possible photo or screen) — hold still in good light and recapture just that angle.');
+        return;
+      }
+      BleLog.log('FACE',
+          'enroll liveness pass slot=$slot score=${live.score.toStringAsFixed(2)}');
     }
+    // All 5 stills gated above (each >= Tl) — gallery write next.
     try {
       final installId = await getOrCreateInstallId(_store);
       final faceId = faceIdOf(acct.email.toLowerCase(), installId);
@@ -547,22 +644,34 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         } catch (_) {}
         rethrow;
       }
-      // Self-check: the centre still must match what was just enrolled —
-      // a failed capture leaves no face behind, so a bad scan can never
-      // advance to upload.
-      final check = await _verifier.verify(faceId, imagePaths.first);
-      if (!check.match) {
-        try {
-          await _verifier.remove(faceId);
-        } catch (_) {}
-        _faceId = null;
-        state = state.copyWith(
-            phase: EnrollPhase.error,
-            faceScore: 0,
-            message:
-                'Face capture did not match clearly — recapture in good light, holding still.');
-        return;
+      // Self-check: EVERY enrolled still must match what was just
+      // enrolled — a failed capture leaves no face behind, so a bad scan
+      // can never advance to upload. Scores only presence/shape plumbing
+      // (match bit + boundary score); embeddings stay opaque, never
+      // interpreted. First failure names its slot and clears the gallery.
+      FaceVerifyResult? firstCheck;
+      for (var i = 0; i < imagePaths.length; i++) {
+        final slot = faceEnrollSlots[i];
+        final check = await _verifier.verify(faceId, imagePaths[i]);
+        if (i == 0) firstCheck = check;
+        debugPrint(
+            'enroll self-check slot=$slot match=${check.match} score=${check.score.toStringAsFixed(2)}');
+        if (!check.match) {
+          try {
+            await _verifier.remove(faceId);
+          } catch (_) {}
+          _faceId = null;
+          state = state.copyWith(
+              phase: EnrollPhase.error,
+              faceScore: 0,
+              message:
+                  'The $slot capture did not match clearly — recapture just that angle in good light, holding still.');
+          return;
+        }
+        BleLog.log('FACE',
+            'enroll self-check match slot=$slot (boundary ${check.score.toStringAsFixed(2)})');
       }
+      final check = firstCheck!;
       _faceId = faceId;
       // Numeric internals stay in the debug log only: the plugin returns
       // identity (match vs non-match), so check.score carries the decision
@@ -939,6 +1048,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// it belongs to the same Gmail); keys/face/install/org/stamps untouched.
   /// Historical session rolls/names untouched by design (class history is
   /// immutable — past records keep the roll shown at mark time).
+  /// Skew note (advisory, no behavior change): this rewrite preserves the
+  /// HW envelope + chain + attestedAt/Until verbatim and wipes legacy raw
+  /// seed — no clock read, so no local-skew trust. Claim-side freshness is
+  /// server-gated (rules request.time ±1h); attestedAt/doublePkD/
+  /// integrity-flagged/duplicate-confirmed stay professor-review advisories
+  /// (never auto-absent offline) — see PROXIMITY_DESIGN.md residuals.
   Future<void> updateLocalRoll(String newRoll) async {
     final want = newRoll.trim();
     if (want.isEmpty) throw StateError('ID Number is required.');

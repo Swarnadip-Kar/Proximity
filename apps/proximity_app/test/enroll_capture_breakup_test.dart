@@ -28,14 +28,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_capture_sections.dart';
+import 'package:proximity_app/features/setup/enroll_flow.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
+import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 
 Widget _themed(Widget child) => MaterialApp(
@@ -50,6 +54,12 @@ Future<EnrollmentController> _keyReady() async {
     store: InMemoryDeviceStore(),
     verifier: FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    // enrollFace measures liveness: scripted pass (same as the
+    // enroll_guided suite). Without this the controller falls back to the
+    // production HeuristicLivenessGate, which would score the fake still
+    // paths with the real scorer if the loop ever reaches the terminal
+    // save (e.g. a longer drain on a slow host).
+    livenessGate: FakeLivenessGate(),
   );
   await ctl.signIn();
   await ctl.generateKey();
@@ -68,7 +78,28 @@ Future<void> _drain(WidgetTester t) async {
   }
 }
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey hangs forever (this was the
+// smoke-test stall: _keyReady awaits generateKey before the first pump,
+// so no pump ever advances the fake clock past the 8s budget). Same
+// pattern as enroll_account_roll_test.dart / student_driver_test.dart.
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
+  // EnrollFlow single-flight flags are static: a test that leaves a pushed
+  // result on top must not block the next test's push (same as the
+  // enroll_guided suite).
+  setUp(EnrollFlow.debugReset);
+  tearDown(EnrollFlow.debugReset);
+  // Clean integrity verdict for generateKey (see _CleanProbe above);
+  // restored afterwards so probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
   group('preview fidelity (zero distortion)', () {
     // Frame seam mimicking CameraPreview's self-sizing contract (native
     // aspect maintained internally) — proves the loose Stack never
@@ -266,6 +297,14 @@ void main() {
         ],
         child: MaterialApp(
           theme: proxLightTheme(),
+          // Named-route table: EnrollFlow.openResult (capture → result
+          // auto-advance) goes through ProxNav.pushNamed, so the harness
+          // must resolve enroll/* names like production does (same as the
+          // enroll_guided suite — a bare MaterialApp would fail the push
+          // with an unknown route if the loop ever reaches the save).
+          routes: buildProxRoutes(),
+          onGenerateRoute: proxOnGenerateRoute,
+          onUnknownRoute: proxOnUnknownRoute,
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(

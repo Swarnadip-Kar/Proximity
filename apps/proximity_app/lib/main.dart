@@ -263,6 +263,10 @@ Future<void> main() async {
             deviceKey: ref.watch(deviceKeyProvider),
             preseed: preseed,
             cloud: ref.watch(cloudSyncProvider),
+            // C4: enroll-time Euler re-check gate (defense-in-depth over
+            // the capture-time PoseGate classify-fill). Same provider the
+            // session driver classifies with, so capture + enroll agree.
+            poseGate: ref.watch(poseGateProvider),
           ),
         ),
       ],

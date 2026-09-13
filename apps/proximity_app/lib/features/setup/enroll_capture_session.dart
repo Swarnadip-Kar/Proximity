@@ -415,6 +415,18 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// leaves the error on the controller with progress kept.
   Future<void> _saveAll() async {
     if (_saving) return;
+    // Fail-closed completeness gate (C4): buckets alone never save — the
+    // shuffled liveness walk must also be complete. Throws StateError so a
+    // programmatic early call (incl. manual "Try again" before completion)
+    // can never enroll a partial session; the loop only reaches here on
+    // set-complete, so this is defense-in-depth, never the happy path.
+    if (!bucketsComplete || !livenessChallengesDone) {
+      EnrollLog.face('save refused: incomplete '
+          '(buckets $_doneCount/${_paths.length}, '
+          'liveness ${livenessChallengesDone ? 'done' : 'pending'})');
+      throw StateError(
+          'Enrollment incomplete — capture all ${faceEnrollSlots.length} angles and complete the liveness walk before saving.');
+    }
     _stopSweep();
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     setState(() {
@@ -423,7 +435,10 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     });
     try {
       EnrollLog.face('all buckets filled — enrolling');
-      await ctl.enrollFace([for (final p in _paths) p ?? '']);
+      EnrollLog.face('liveness walk complete: '
+          '${_livenessPlan!.order.map((a) => a.name).join(' → ')}');
+      await ctl.enrollFace([for (final p in _paths) p ?? ''],
+          challengeOrder: List<LivenessAction>.of(_livenessPlan!.order));
       if (_done) return;
       final after = ref.read(enrollmentControllerProvider);
       if (after.phase == EnrollPhase.faceDone) {
@@ -494,6 +509,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// True once both shuffled challenges have been walked (presence/order
   /// record — not a vitality verdict; see [EnrollLivenessPlan]).
   bool get livenessChallengesDone => _livenessPlan?.isComplete ?? false;
+
+  /// Buckets complete: all 5 pose-validated stills accepted.
+  bool get bucketsComplete => _doneCount == _paths.length;
+
+  /// Session complete: 5 buckets AND the shuffled liveness walk. The
+  /// [_saveAll] fail-closed gate below enforces this — never save on
+  /// buckets alone.
+  bool get isComplete => bucketsComplete && livenessChallengesDone;
 
   /// Manual "Try again" re-runs the terminal write without touching the
   /// accepted stills (forwards to [_saveAll]).
