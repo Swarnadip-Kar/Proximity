@@ -356,16 +356,25 @@ class IntegrityAppCheck {
 
   static bool _activated = false;
 
+  /// Activation budget: a hung native activate must never stall startup —
+  /// past this the call degrades to a log line (same fail-soft posture as
+  /// the integrity probe's [PlatformIntegrityProbe.probeBudget]).
+  static const activateBudget = Duration(seconds: 8);
+
   /// Best-effort activation hook called from main.dart before Firestore.
   /// Never throws (uninitialized Firebase, unsupported platform, missing
-  /// provider all degrade to a log line — marking stays offline-capable).
+  /// provider all degrade to a log line — marking stays offline-capable)
+  /// and never hangs past [activateBudget] (a blackholed native channel
+  /// degrades the same way, so cold start always proceeds).
   static Future<void> ensureActivated() async {
     if (_activated) return;
     try {
-      await FirebaseAppCheck.instance.activate(
-        androidProvider: AndroidProvider.playIntegrity,
-        appleProvider: AppleProvider.deviceCheck,
-      );
+      await FirebaseAppCheck.instance
+          .activate(
+            androidProvider: AndroidProvider.playIntegrity,
+            appleProvider: AppleProvider.deviceCheck,
+          )
+          .timeout(activateBudget);
       _activated = true;
       BleLog.log('SEC', 'AppCheck activated (PlayIntegrity/DeviceCheck)');
     } catch (e) {
