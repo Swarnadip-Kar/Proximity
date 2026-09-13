@@ -4,7 +4,11 @@
 // shared helper [resolveStudentClaimWrite] (see below).
 library;
 
+import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 
 import '../security/revocation_cache.dart';
 import 'store/record_helpers.dart';
@@ -157,12 +161,22 @@ class StudentClaimResult {
 /// Pure claim verdict shared by the Firestore transaction, the fake, and
 /// the landing pre-check (so the UI refuses for exactly the reasons the
 /// server refuses). [installEmail] is deviceInstalls[installId].email.
-/// [moveIntentValid]: an old-DKey-signed MoveIntent (verified by the
-/// caller against the PREVIOUS binding's pkD) grants an instant move even
-/// inside the cooldown — genuine phone change with the old phone at hand.
+///
+/// H5 — MoveIntent MUST be signature-verified, never a bare boolean: the
+/// legacy [moveIntentValid] flag is UNVERIFIED plumbing and is IGNORED by
+/// the verdict (a self-asserted bool must never bypass the cooldown). An
+/// instant move inside the cooldown requires [moveIntent]: an old-SKey-
+/// signed authorization (see [MoveIntent]/[verifyMoveIntent]) whose
+/// signature verifies against the STORED binding's pkHex for THIS install.
 /// Without it the 30d cooldown stands, EXCEPT the lost-phone exemption:
 /// a binding whose STORED lastSeen is past [kStudentLostPhoneStale] moves
 /// immediately (lost/stolen path, manual attendance covers the gap).
+///
+/// Rules need NO MoveIntent counterpart (server-side the 30-day cooldown
+/// still stands on request.time; the intent is a client-verdict fast path
+/// for genuine phone changes, and every write still passes the rules
+/// gates). Verify-only here: no decryption, no interpretation of
+/// encrypted content — shape/signature plumbing only.
 StudentClaimResult evaluateStudentClaim({
   required String localPkHex,
   required String localInstallId,
@@ -171,6 +185,7 @@ StudentClaimResult evaluateStudentClaim({
   required String email,
   DateTime? now,
   bool moveIntentValid = false,
+  MoveIntent? moveIntent,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
   final want = email.toLowerCase();
@@ -198,8 +213,21 @@ StudentClaimResult evaluateStudentClaim({
     return StudentClaimResult(StudentClaim.installConflict,
         installEmail: installEmail);
   }
-  // Old-DKey-signed MoveIntent: instant move (the old phone vouches).
-  if (moveIntentValid) {
+  // H5 verified MoveIntent: instant move ONLY when an old-SKey signature
+  // over (newInstallId|atMillis) verifies against the STORED binding key
+  // for THIS install (verify-only, no decrypt). The ignored
+  // [moveIntentValid] boolean previously short-circuited here — removed:
+  // a self-asserted flag is worthless (any caller could set it).
+  if (moveIntent != null &&
+      moveIntent.newInstallId == localInstallId &&
+      binding.pkHex.isNotEmpty &&
+      moveIntent.prevPkSHex.toLowerCase() ==
+          binding.pkHex.toLowerCase() &&
+      verifyMoveIntent(
+          prevPkSHex: moveIntent.prevPkSHex,
+          newInstallId: moveIntent.newInstallId,
+          atMillis: moveIntent.atMillis,
+          sigHex: moveIntent.sigHex)) {
     return const StudentClaimResult(StudentClaim.allowedMove);
   }
   // Lost-phone exemption (stored lastSeen ONLY — no move-time assertion
@@ -223,6 +251,77 @@ StudentClaimResult evaluateStudentClaim({
             isUtc: true));
   }
   return const StudentClaimResult(StudentClaim.allowedMove);
+}
+
+/// Old-phone-signed move authorization (H5).
+///
+/// When the previous device is still at hand, it authorizes the move by
+/// signing `UTF8(newInstallId "|" atMillis)` with its SKey (Ed25519).
+/// The new device presents [MoveIntent]; the verdict grants an instant
+/// move inside the 30-day cooldown ONLY when the signature verifies
+/// against the STORED binding's pkHex AND names the claiming install.
+/// Verify-only: no decryption, no interpretation of encrypted content —
+/// shape/signature plumbing only.
+class MoveIntent {
+  /// Previous device SKey public bytes hex (must match the stored binding).
+  final String prevPkSHex;
+
+  /// Install id being moved TO (must match the claiming install).
+  final String newInstallId;
+
+  /// Intent creation time, UTC epoch ms (signed over, replay-scoped).
+  final int atMillis;
+
+  /// Ed25519 signature hex over UTF8("$newInstallId|$atMillis").
+  final String sigHex;
+
+  const MoveIntent(
+      {required this.prevPkSHex,
+      required this.newInstallId,
+      required this.atMillis,
+      required this.sigHex});
+}
+
+/// Verifies a [MoveIntent] WITHOUT decrypting anything: Ed25519 verify of
+/// [sigHex] over `UTF8(newInstallId "|" atMillis)` under [prevPkSHex].
+/// Returns false (never throws) on any malformation — fail-closed.
+bool verifyMoveIntent(
+    {required String prevPkSHex,
+    required String newInstallId,
+    required int atMillis,
+    required String sigHex}) {
+  try {
+    final pk = _hexToBytes(prevPkSHex.trim());
+    final sig = _hexToBytes(sigHex.trim());
+    if (pk == null || pk.length != ed.PublicKeySize) return false;
+    if (sig == null || sig.length != ed.SignatureSize) return false;
+    if (newInstallId.isEmpty || atMillis <= 0) return false;
+    final msg = Uint8List.fromList(utf8.encode('$newInstallId|$atMillis'));
+    return ed.verify(ed.PublicKey(pk), msg, sig);
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Strict hex decode: bytes on clean even-length hex, null otherwise
+/// (never throws — malformed key/sig material fails the verify above).
+Uint8List? _hexToBytes(String hex) {
+  if (hex.isEmpty || hex.length % 2 != 0) return null;
+  final out = Uint8List(hex.length ~/ 2);
+  for (var i = 0; i < out.length; i++) {
+    final hi = _hexVal(hex.codeUnitAt(i * 2));
+    final lo = _hexVal(hex.codeUnitAt(i * 2 + 1));
+    if (hi < 0 || lo < 0) return null;
+    out[i] = (hi << 4) | lo;
+  }
+  return out;
+}
+
+int _hexVal(int c) {
+  if (c >= 0x30 && c <= 0x39) return c - 0x30; // 0-9
+  if (c >= 0x61 && c <= 0x66) return c - 0x61 + 10; // a-f
+  if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10; // A-F
+  return -1;
 }
 
 /// User-facing refusal copy for a non-ok [StudentClaimResult]. The cooldown
@@ -345,6 +444,7 @@ ClaimWrite resolveStudentClaimWrite({
   required String email,
   DateTime? now,
   bool moveIntentValid = false,
+  MoveIntent? moveIntent,
 }) {
   final at = (now ?? DateTime.now()).toUtc();
   final atMillis = at.millisecondsSinceEpoch;
@@ -356,7 +456,8 @@ ClaimWrite resolveStudentClaimWrite({
       installEmail: installEmail,
       email: key,
       now: at,
-      moveIntentValid: moveIntentValid);
+      moveIntentValid: moveIntentValid,
+      moveIntent: moveIntent);
   if (!verdict.ok) {
     throw StateError(studentClaimMessage(verdict, binding));
   }
@@ -400,6 +501,27 @@ class PurgeOutcome {
 // Identity here is only ever (pkHex, installId) joined against the cloud
 // studentDevices/deviceInstalls docs (see cloud_sync claim logic).
 
+/// Install-id shape (H3 rules mirror: `validInstallId`): 8..128 chars of
+/// [A-Za-z0-9:_-]. Fresh installs mint 32-char lowercase hex via
+/// [newInstallId]. Shape only — uniqueness across Gmails is enforced by
+/// the claim transaction reading deviceInstalls[installId] (rules cannot
+/// join across docs on Spark), with residual clone detection post-hoc via
+/// [findDoublePkD]. NEVER decrypts or interprets encrypted content.
+bool isValidInstallId(String id) {
+  if (id.length < 8 || id.length > 128) return false;
+  for (var i = 0; i < id.length; i++) {
+    final c = id.codeUnitAt(i);
+    final ok = (c >= 0x30 && c <= 0x39) || // 0-9
+        (c >= 0x41 && c <= 0x5A) || // A-Z
+        (c >= 0x61 && c <= 0x7A) || // a-z
+        c == 0x3A || // :
+        c == 0x5F || // _
+        c == 0x2D; // -
+    if (!ok) return false;
+  }
+  return true;
+}
+
 /// Generates a 128-bit hex install ID. [random] is injectable for tests.
 String newInstallId([Random? random]) {
   final r = random ?? Random.secure();
@@ -412,15 +534,37 @@ String newInstallId([Random? random]) {
 }
 
 /// Returns the persisted install ID, creating and storing one on first run.
+/// A stored ID failing [isValidInstallId] (pre-shape-class legacy) is
+/// regenerated — the install is the device identity, and malformed rows
+/// would be refused by the rules shape gate.
+///
+/// M7 read-once cache: the installId is process-stable (secure-storage
+/// write-once per install), so it is read once and cached in memory —
+/// every claim/heartbeat/prove in the process reuses the same value and a
+/// mid-process storage flip can never split one session across two
+/// identities. Tests reset via [clearInstallIdCacheForTest].
+String? _cachedInstallId;
+
+/// Test-only: resets the M7 read-once installId cache between tests.
+void clearInstallIdCacheForTest() => _cachedInstallId = null;
+
 Future<String> getOrCreateInstallId(DeviceStore store) async {
+  final cached = _cachedInstallId;
+  if (cached != null && isValidInstallId(cached)) return cached;
   try {
     final existing = await store.readInstallId();
-    if (existing != null && existing.isNotEmpty) return existing;
+    if (existing != null &&
+        existing.isNotEmpty &&
+        isValidInstallId(existing)) {
+      _cachedInstallId = existing;
+      return existing;
+    }
   } catch (_) {}
   final id = newInstallId();
   try {
     await store.writeInstallId(id);
   } catch (_) {}
+  _cachedInstallId = id;
   return id;
 }
 

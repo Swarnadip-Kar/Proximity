@@ -60,6 +60,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:attested_secure_keys/attested_secure_keys.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -68,6 +69,15 @@ import '../face_identity/device_key.dart';
 
 /// Stable alias for the single Proximity device key in the OS keystore.
 const String kHwDeviceKeyAlias = 'prox.deviceKey.v1';
+
+/// DEK storage version (M7): the seal DEK is keyed `$alias.dek.$version`
+/// so a future DEK format rolls to a new versioned entry instead of
+/// silently reusing one DEK forever. Rotation = generate under the next
+/// version + re-seal the live SKey (unseal old, seal new) or full
+/// re-enroll; the old versioned entry is deleted after the re-seal
+/// commits. Never auto-rotate without a re-seal — an unsealable envelope
+/// is worse than an old DEK.
+const String kHwSealDekVersion = 'v1';
 
 /// Lecture-block biometric validity (one strong-biometric per school block;
 /// per-use would prompt every 5s rotation and strand marking).
@@ -265,16 +275,39 @@ class FlutterSealStore implements HwSealStore {
         ),
       )]);
 
-  /// FSS key for the DEK of [alias].
-  static String keyFor(String alias) => '$alias.dek';
+  /// FSS key for the DEK of [alias] (versioned — see [kHwSealDekVersion]).
+  static String keyFor(String alias) => '$alias.dek.$kHwSealDekVersion';
+
+  /// Legacy (unversioned) FSS key, read-only migration source: installs
+  /// sealed before versioning carry `$alias.dek`. [readDek] migrates a
+  /// legacy hit to the versioned key on first read (write-through), so at
+  /// most one envelope generation ever reuses the pre-version DEK.
+  @visibleForTesting
+  static String legacyKeyFor(String alias) => '$alias.dek';
 
   @override
   Future<Uint8List?> readDek({required String alias}) async {
-    final raw = await storage.read(key: keyFor(alias));
-    if (raw == null || raw.trim().isEmpty) return null;
+    final cur = await storage.read(key: keyFor(alias));
+    if (cur != null && cur.trim().isNotEmpty) {
+      try {
+        final dek = hexDecode(cur.trim());
+        if (dek.length == 32) return dek;
+      } catch (_) {}
+    }
+    // One-shot legacy migration (M7): unversioned → versioned.
+    String? legacy;
     try {
-      final dek = hexDecode(raw.trim());
+      legacy = await storage.read(key: legacyKeyFor(alias));
+    } catch (_) {
+      legacy = null;
+    }
+    if (legacy == null || legacy.trim().isEmpty) return null;
+    try {
+      final dek = hexDecode(legacy.trim());
       if (dek.length != 32) return null;
+      try {
+        await storage.write(key: keyFor(alias), value: hexEncode(dek));
+      } catch (_) {}
       return dek;
     } catch (_) {
       return null;
@@ -331,6 +364,23 @@ class HwDeviceKey implements DeviceKey {
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   Uint8List? _lastChallenge;
 
+  /// Heartbeat roll budget (M7): at most this many `heartbeat()` rolls per
+  /// enrollment before a fresh attestation is required. 8 × 90d ≈ 2y of
+  /// silent rolls; past that `heartbeat()` returns false and
+  /// [needsReattest] flips — the caller must `bindEnrollment` again (new
+  /// key + chain + challenge, persisted atomically via the single
+  /// `writeEnrollment` in enrollment). Bounds infinite-refresh of a stale
+  /// binding; never auto-extends past the budget.
+  static const int kMaxHeartbeatRolls = 8;
+  int _heartbeatRolls = 0;
+
+  /// True once the roll budget is spent — re-attest (re-enroll), don't roll.
+  bool get needsReattest => _heartbeatRolls >= kMaxHeartbeatRolls;
+
+  /// Test seam: roll count (lets tests assert the cap without 8×90d waits).
+  @visibleForTesting
+  int get debugHeartbeatRollsForTest => _heartbeatRolls;
+
   HwDeviceKey(
       {required HwKeyBackend backend,
       HwSealStore? sealStore,
@@ -340,12 +390,27 @@ class HwDeviceKey implements DeviceKey {
 
   /// M1-gap canonical challenge: SHA256(emailLower || installId || pkS32).
   /// Thin wrapper over the protocol contract (sec-protocol 1A).
+  /// V1 byte-identical (already-issued chains); new enrollments SHOULD
+  /// prefer [enrollmentChallengeV2] once the professor verifies with
+  /// `expectedChallenge: V2, alternateChallenge: V1` migration.
   static Uint8List enrollmentChallenge({
     required String email,
     required String installId,
     required Uint8List pkS,
   }) =>
       deviceBindingChallenge(
+          emailLower: email, installId: installId, pkS: pkS);
+
+  /// Enrollment challenge V2 (preferred for NEW enrollments):
+  /// domain-separated + length-prefixed (see [deviceBindingChallengeV2]).
+  /// The professor accepts V2 primary with V1 as [alternateChallenge]
+  /// during migration — pass V2 here at key creation once provisioned.
+  static Uint8List enrollmentChallengeV2({
+    required String email,
+    required String installId,
+    required Uint8List pkS,
+  }) =>
+      deviceBindingChallengeV2(
           emailLower: email, installId: installId, pkS: pkS);
 
   /// JWK → raw pkD helper for the production adapter: base64url-unpadded
@@ -447,6 +512,11 @@ class HwDeviceKey implements DeviceKey {
     _attestedAt = now;
     _attestedUntil = now.add(kDeviceAttestedValidity);
     _lastChallenge = challenge == null ? null : Uint8List.fromList(challenge);
+    // Fresh attestation resets the heartbeat budget (M7): the new chain +
+    // challenge commit atomically with the window at the single
+    // `writeEnrollment` call site in enrollment (chain+pkD+window in one
+    // doc write — never chain-without-window or vice versa).
+    _heartbeatRolls = 0;
   }
 
   @override
@@ -487,7 +557,9 @@ class HwDeviceKey implements DeviceKey {
 
   /// Seals the 32B SKey seed under the device DEK (AES-256-GCM, PXK2
   /// envelope). Only ciphertext is ever persisted — the DEK never leaves
-  /// HW-backed secure storage.
+  /// HW-backed secure storage. Legacy empty-AAD envelope (compat with
+  /// pre-M7 seals); new callers SHOULD prefer [sealWithAad] binding
+  /// email/installId/pkS/pkD so a transplanted envelope fails the tag.
   @override
   Future<Uint8List> seal(Uint8List seed32) async {
     requireMobileFace();
@@ -516,8 +588,9 @@ class HwDeviceKey implements DeviceKey {
   }
 
   /// Unseals a PXK2 envelope. Any failure — missing HW key (biometric
-  /// invalidation), missing DEK, tampered envelope — throws
-  /// StateError('restore detected — re-enroll').
+  /// invalidation), missing DEK, tampered envelope, AAD mismatch — throws
+  /// StateError('restore detected — re-enroll'). Legacy empty-AAD
+  /// envelopes open here; AAD-bound envelopes open via [unsealWithAad].
   @override
   Future<Uint8List> unseal(Uint8List sealed) async {
     requireMobileFace();
@@ -545,6 +618,67 @@ class HwDeviceKey implements DeviceKey {
     return unsealWithDek(dek32: dek, sealed: sealed);
   }
 
+  /// AAD-bound seal (M7, preferred): wraps [seed32] with AAD binding
+  /// email/installId/pkS/pkD (see `buildSealAad`) so a transplanted
+  /// envelope fails the GCM tag. Structure/length/tag checks only — never
+  /// decrypts anything but the caller's own envelope under this DEK.
+  Future<Uint8List> sealWithAad(
+    Uint8List seed32, {
+    required Uint8List aad,
+  }) async {
+    requireMobileFace();
+    if (seed32.length != 32) {
+      throw ArgumentError('seal needs a 32B SKey seed.');
+    }
+    if (_pkD == null) throw StateError('DeviceKey.ensure() first.');
+    if (_level == AttestationLevel.none) {
+      throw StateError(
+          'Software-no-enroll: device key is not hardware-backed.');
+    }
+    late final bool exists;
+    try {
+      exists = await _backend.containsKey(alias: alias);
+    } catch (e) {
+      if (_isKeyInvalidated(e)) throw _restoreDetected('key invalidated');
+      rethrow;
+    }
+    if (!exists) throw StateError('restore detected — re-enroll');
+    var dek = await _sealStore.readDek(alias: alias);
+    if (dek == null) {
+      dek = randBytes(32);
+      await _sealStore.writeDek(alias: alias, dek32: dek);
+    }
+    return sealWithDek(dek32: dek, seed32: seed32, aad: aad);
+  }
+
+  /// Opens an AAD-bound envelope; [aad] must equal the seal-time value.
+  /// Any failure throws StateError('restore detected — re-enroll').
+  Future<Uint8List> unsealWithAad(
+    Uint8List sealed, {
+    required Uint8List aad,
+  }) async {
+    requireMobileFace();
+    late final bool exists;
+    try {
+      exists = await _backend.containsKey(alias: alias);
+    } catch (e) {
+      if (_isKeyInvalidated(e)) throw _restoreDetected('key invalidated');
+      rethrow;
+    }
+    if (!exists) throw StateError('restore detected — re-enroll');
+    if (_pkD == null || _level == AttestationLevel.none) {
+      throw StateError('restore detected — re-enroll');
+    }
+    Uint8List? dek;
+    try {
+      dek = await _sealStore.readDek(alias: alias);
+    } catch (_) {
+      throw StateError('restore detected — re-enroll');
+    }
+    if (dek == null) throw StateError('restore detected — re-enroll');
+    return unsealWithDek(dek32: dek, sealed: sealed, aad: aad);
+  }
+
   @override
   AttestationLevel get level => _level;
 
@@ -557,6 +691,11 @@ class HwDeviceKey implements DeviceKey {
   @override
   Future<bool> heartbeat({DateTime? now}) async {
     if (_pkD == null || _level == AttestationLevel.none) return false;
+    // M7 budget: past the roll cap the binding must re-attest (new key +
+    // chain + challenge) — silent infinite refresh would keep a stale
+    // binding alive forever. Returns false so the caller surfaces
+    // re-enroll instead of a fresh window.
+    if (needsReattest) return false;
     // The HW key may have died under us (biometric/credential-set
     // invalidation destroys it): never roll the window on a dead key —
     // the next seal/unseal/sign fails closed to re-enroll instead.
@@ -568,6 +707,7 @@ class HwDeviceKey implements DeviceKey {
     }
     _attestedUntil =
         ((now ?? DateTime.now()).toUtc()).add(kDeviceAttestedValidity);
+    _heartbeatRolls += 1;
     return true;
   }
 }

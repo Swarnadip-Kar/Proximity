@@ -21,6 +21,7 @@
 // keystream anywhere (the old SHA256(pkD) envelope is deleted).
 library;
 
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -69,14 +70,59 @@ bool verifyDeviceSignature({
   }
 }
 
+/// AAD domain tag for [buildSealAad] (M7 cross-protocol separation: this
+/// AAD verifies only as a Proximity seal binding, never as a challenge).
+const String kHwSealAadDomain = 'PROX-SEAL-AAD/v1';
+
+Uint8List _aadU16be(int v) {
+  final b = ByteData(2)..setUint16(0, v & 0xFFFF, Endian.big);
+  return b.buffer.asUint8List();
+}
+
+/// Builds the AES-GCM AAD binding the seal to one enrollment (M7).
+///
+/// `domain || u16be(len(email)) || email || u16be(len(installId)) ||
+/// installId || u16be(len(pkS)) || pkS || u16be(len(pkD)) || pkD` where
+/// `email` is trimmed + lowercased UTF-8. Structure-only bytes (no
+/// encryption, no attestation interpretation) passed as `aad` to
+/// [sealWithDek]/[unsealWithDek] — a seal transplanted across
+/// email/install/key fails the GCM tag as restore-detected. Legacy seals
+/// used empty AAD and still verify with empty `aad` (compat); new seals
+/// MUST pass this.
+Uint8List buildSealAad({
+  required String emailLower,
+  required String installId,
+  required Uint8List pkS,
+  required Uint8List pkD,
+}) {
+  final emailB = utf8.encode(emailLower.trim().toLowerCase());
+  final installB = utf8.encode(installId);
+  return Uint8List.fromList([
+    ...utf8.encode(kHwSealAadDomain),
+    ..._aadU16be(emailB.length),
+    ...emailB,
+    ..._aadU16be(installB.length),
+    ...installB,
+    ..._aadU16be(pkS.length),
+    ...pkS,
+    ..._aadU16be(pkD.length),
+    ...pkD,
+  ]);
+}
+
 /// Seals a 32B SKey seed under [dek32] (AES-256-GCM, fresh random nonce).
 /// Returns the 64B PXK2 envelope. Throws [ArgumentError] on bad key/seed
 /// lengths (programmer error — never silently truncated).
+///
+/// [aad] binds the envelope to one enrollment (see [buildSealAad]); empty
+/// (legacy) verifies only with empty on open. Mismatched AAD fails the GCM
+/// tag → restore-detected, never a raw fallback.
 Uint8List sealWithDek({
   required Uint8List dek32,
   required Uint8List seed32,
   Uint8List? nonce12,
   Random? rng,
+  Uint8List? aad,
 }) {
   if (dek32.length != 32) {
     throw ArgumentError('seal needs a 32B DEK.');
@@ -90,7 +136,7 @@ Uint8List sealWithDek({
   }
   final cipher = GCMBlockCipher(AESEngine());
   cipher.init(true, AEADParameters(KeyParameter(dek32), 128, nonce,
-      Uint8List(0)));
+      aad ?? Uint8List(0)));
   final out = Uint8List(cipher.getOutputSize(seed32.length));
   var off = cipher.processBytes(seed32, 0, seed32.length, out, 0);
   off += cipher.doFinal(out, off);
@@ -102,12 +148,15 @@ Uint8List sealWithDek({
 }
 
 /// Unseals a PXK2 envelope under [dek32]. Any failure — magic, length, GCM
-/// tag, missing key — throws StateError('restore detected — re-enroll'):
+/// tag (including AAD mismatch), missing key — throws
+/// StateError('restore detected — re-enroll'):
 /// a backup-restore clone carries ciphertext whose DEK never migrated, so
 /// it fails exactly like tampering (fail closed, never a raw fallback).
+/// [aad] must equal the seal-time value (empty for legacy seals).
 Uint8List unsealWithDek({
   required Uint8List dek32,
   required Uint8List sealed,
+  Uint8List? aad,
 }) {
   if (sealed.length != kHwSealEnvelopeBytes) {
     throw StateError('restore detected — re-enroll');
@@ -125,7 +174,7 @@ Uint8List unsealWithDek({
     cipher.init(
         false,
         AEADParameters(KeyParameter(dek32), 128,
-            sealed.sublist(4, 16), Uint8List(0)));
+            sealed.sublist(4, 16), aad ?? Uint8List(0)));
     final out = Uint8List(cipher.getOutputSize(48));
     var off = cipher.processBytes(sealed, 16, 48, out, 0);
     off += cipher.doFinal(out, off);
