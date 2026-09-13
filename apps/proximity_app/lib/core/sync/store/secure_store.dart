@@ -11,6 +11,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../security/revocation_cache.dart' show RevocationHashStore;
 import '../../security/secure_store_options.dart';
 import 'record_helpers.dart';
 import 'store_base.dart';
@@ -601,5 +602,40 @@ class SecureDeviceStore implements DeviceStore {
     final prefs = await _prefs();
     await prefs.setString(_kStudentSessions,
         jsonEncode(records.map((e) => e.toJson()).toList()));
+  }
+
+  /// H8 secure hash backend: the CRL integrity hash lives in the
+  /// biometric-bound secure store (same instance/options as the
+  /// enrollment doc), never the prefs sidecar.
+  @override
+  RevocationHashStore get revocationHashStore =>
+      SecureRevocationHashStore(_secure);
+}
+
+/// H8 [RevocationHashStore] backend (secure-store wiring): the CRL body
+/// hash lives in `flutter_secure_storage` under a dedicated key, so a
+/// prefs-only edit cannot go undetected (mismatch forces stale on load).
+/// Fail-open like every revocation path: read/write never throw (a locked
+/// keychain degrades to the prefs sidecar — detection preserved, the
+/// secure copy is best-effort hardening, not a gate).
+class SecureRevocationHashStore implements RevocationHashStore {
+  static const key = 'prox.revocation.v1.sha256.secure';
+  final FlutterSecureStorage _secure;
+  const SecureRevocationHashStore(this._secure);
+
+  @override
+  Future<String?> readHash() async {
+    try {
+      return await _secure.read(key: key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> writeHash(String sha256Hex) async {
+    try {
+      await _secure.write(key: key, value: sha256Hex);
+    } catch (_) {}
   }
 }

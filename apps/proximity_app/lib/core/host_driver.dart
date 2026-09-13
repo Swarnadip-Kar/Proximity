@@ -172,6 +172,7 @@ class RealHostDriver implements HostDriver {
   final Map<String, Set<String>> _dupGroups = {};
   Timer? _scanHold; // post-stop grace: scan lingers AND proofs still
   // accepted (cancelled by retake/end, which own both immediately).
+  Timer? _crlRefresh; // CRL periodic refresh (cancelled on endHosting).
 
   /// Post-stop grace: the scan lingers for last tokens AND the server
   /// keeps accepting proofs. Tests shrink it.
@@ -407,11 +408,17 @@ class RealHostDriver implements HostDriver {
             'host integrity flagged (${hv.flagForMarking}) → ${hv.hash} — hosting continues, student verdicts carry their own hashes');
       }
     } catch (_) {}
-    // One-time online CRL snapshot refresh (security §2 residual):
-    // Firestore-independent HTTPS, best-effort, never blocks hosting
-    // (failure degrades to the `revocation-stale` review flag — see
-    // core/security/revocation_cache.dart). Hosting stays offline-capable.
-    unawaited(RevocationCache.refreshBestEffort());
+    // CRL snapshot refresh (security §2 residual): one best-effort fetch
+    // now (Firestore-independent HTTPS, never blocks hosting — failure
+    // degrades to the `revocation-stale` review flag) plus a periodic
+    // refresh for long-lived sessions (no-op unless stale; cancelled on
+    // teardown). Hash reads prefer the secure-store backend when the
+    // device store serves one (see DeviceStore.revocationHashStore).
+    unawaited(RevocationCache.refreshBestEffort(
+        hashStore: _store.revocationHashStore));
+    _crlRefresh?.cancel();
+    _crlRefresh = RevocationCache.schedulePeriodicRefresh(
+        hashStore: _store.revocationHashStore);
     final stored = await _store.readEnrollment();
     // Advisory revocation review for the host binding's chain (security §2
     // residual): offline serial-vs-CRL flags, log only — hosting stays
@@ -999,6 +1006,8 @@ class RealHostDriver implements HostDriver {
   Future<void> _endHostingInner() async {
     _scanHold?.cancel();
     _scanHold = null;
+    _crlRefresh?.cancel();
+    _crlRefresh = null;
     final announcer = _announcer;
     _announcer = null;
     final server = _server;

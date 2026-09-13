@@ -871,7 +871,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // (failure degrades to the `revocation-stale` review flag — see
         // core/security/revocation_cache.dart). Fire-and-forget on purpose:
         // offline marking never waits on it.
-        unawaited(RevocationCache.refreshBestEffort());
+        unawaited(RevocationCache.refreshBestEffort(
+            hashStore: _store.revocationHashStore));
         // Pre-claim verdict-by-evidence (before the transaction): a
         // cross-org second-account enroll is denied at the install-doc
         // READ, so the transaction could never see the evidence and would

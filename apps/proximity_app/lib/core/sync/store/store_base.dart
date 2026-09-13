@@ -5,6 +5,8 @@ library;
 
 import 'package:proximity_storage/storage.dart';
 
+import '../../security/revocation_cache.dart' show RevocationHashStore;
+
 class StoredEnrollment {
   // One record, kept from the pre-plugin shape: new fields (faceId,
   // verifierVer, sealed SKey, DKey binding) ride this same JSON doc
@@ -279,4 +281,11 @@ abstract class DeviceStore {
   /// next pull. Replaced wholesale on every successful pull.
   Future<List<ClassRecord>> readStudentSessions();
   Future<void> writeStudentSessions(List<ClassRecord> records);
+
+  /// H8 CRL-hash backend (secure-store wiring): null by default
+  /// (memory/test stores — the hash travels in the prefs sidecar);
+  /// [SecureDeviceStore] serves the biometric-bound backend so a
+  /// prefs-only edit cannot go undetected. Callers pass this straight
+  /// into `RevocationCache.load/refreshBestEffort` (null = sidecar).
+  RevocationHashStore? get revocationHashStore => null;
 }
