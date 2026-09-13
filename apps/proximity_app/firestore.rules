@@ -340,6 +340,19 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Student device-key pin for offline email→key verification
+    // (anti-fake-student): the claim transaction stamps the enrollment
+    // SKey public bytes here so professors pin it online (same-org list)
+    // and enforce `unknown-pkS` offline from a persistent cache. '' =
+    // legacy row (no-pin TOFU, never a mismatch). Content (pin match) is
+    // professor-side; rules lock the shape only.
+    function validDirectoryPkS() {
+      return (!('pkS' in request.resource.data) ||
+        (request.resource.data.pkS is string &&
+         (request.resource.data.pkS == '' ||
+          (request.resource.data.pkS.size() == 64 &&
+           request.resource.data.pkS.matches('^[0-9a-fA-F]+$')))));
+    }
     match /studentDirectory/{id} {
       // Professors prefix-search enrolled students to add them to records
       // (org-scoped prefix queries; client merges email/roll/name hits).
@@ -360,13 +373,15 @@ service cloud.firestore {
       allow create: if signedIn()
         && id == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.org == tokenOrg();
+        && request.resource.data.org == tokenOrg()
+        && validDirectoryPkS();
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
-        && resource.data.org == tokenOrg();
+        && resource.data.org == tokenOrg()
+        && validDirectoryPkS();
       // Owner-lazy six-month purge (no backend): the owner deletes their
       // own directory row past 180d stale (server-time-gated, undated docs
       // deny). Professors can READ rows (advisory gate) but delete none.

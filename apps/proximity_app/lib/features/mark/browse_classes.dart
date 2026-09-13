@@ -85,6 +85,10 @@ class BrowseClassesView extends StatefulWidget {
   /// Empty/absent renders the class-letter disc (no blank avatar).
   final Map<String, String> profPhotoByHost;
 
+  /// Verification labels by `host:port` (see BrowseTile.verifyLabel).
+  /// Absent/'' renders exactly as before.
+  final Map<String, String> profVerifyByHost;
+
   const BrowseClassesView({
     super.key,
     this.avatarName = '',
@@ -103,6 +107,7 @@ class BrowseClassesView extends StatefulWidget {
     this.broadcastBlocked = false,
     this.profEmailByHost = const {},
     this.profPhotoByHost = const {},
+    this.profVerifyByHost = const {},
   });
 
   @override
@@ -295,6 +300,9 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                       widget.profEmailByHost[widget.live[i].last.key] ?? '',
                   profPhotoUrl: gatedPhotoFor(widget.profPhotoByHost,
                       widget.live[i].last.key),
+                  verifyLabel: widget.profVerifyByHost[
+                          widget.live[i].last.key] ??
+                      '',
                   onTap: () => widget.onTapLive(widget.live[i]),
                 ),
               )),

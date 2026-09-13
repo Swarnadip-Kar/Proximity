@@ -378,6 +378,27 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       setState(() => serverError =
           'Bluetooth permission is required to announce this class over radio. Enable it in Settings — students can still join by IP until then.');
     }
+    // Anti-fake-professor pin publish: the lecture key is appended to
+    // `profDevices/{email}` (owner-only write) so students verify the
+    // email→key binding offline. Wired here (auth + role + cloud live
+    // together) — the driver calls it fire-and-forget, never blocking.
+    try {
+      final driver = ref.read(hostDriverProvider);
+      driver.profKeyPublisher = ({required emailLower, required pkPHex}) async {
+        try {
+          final acct = ref.read(authServiceProvider).current;
+          if (acct == null) return;
+          final role = await ref.read(deviceStoreProvider).readRole();
+          final org = roleOrg(role);
+          await ref.read(cloudSyncProvider).uploadProfKey(
+                emailLower: emailLower,
+                uid: acct.uid.isNotEmpty ? acct.uid : acct.email.toLowerCase(),
+                org: org,
+                pkPHex: pkPHex,
+              );
+        } catch (_) {}
+      };
+    } catch (_) {}
     HostSession session;
     try {
       session = await ref
@@ -388,6 +409,28 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       setState(() => serverError = '$e');
       return;
     }
+    // Anti-fake-student pin prefetch: persist the same-org directory
+    // email→pkS map locally whenever online, then hydrate the live server
+    // so offline `unknown-pkS` enforcement survives restarts. Best-effort.
+    unawaited(Future(() async {
+      try {
+        final cloud = ref.read(cloudSyncProvider);
+        if (!await cloud.isOnline()) return;
+        final store = ref.read(deviceStoreProvider);
+        final role = await store.readRole();
+        final org = roleOrg(role);
+        if (org.isEmpty) return;
+        final pins =
+            await cloud.fetchStudentKeyPins(org: org, limit: 200);
+        if (pins.isEmpty) return;
+        final prev = await store.readStudentKeyPins();
+        await store.writeStudentKeyPins({...prev, ...pins});
+        try {
+          await ref.read(hostDriverProvider).hydrateStudentPins(pins);
+        } catch (_) {}
+        BleLog.log('SEC', 'student key pins prefetched (${pins.length})');
+      } catch (_) {}
+    }));
     if (!mounted) return;
     String? warn;
     try {

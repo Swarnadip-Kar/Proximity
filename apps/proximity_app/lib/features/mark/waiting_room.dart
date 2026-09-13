@@ -13,8 +13,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/student_driver.dart'
+    show ProfVerificationResult;
 import '../../design/tokens.dart';
 import '../../widgets/host_preview_card.dart';
+import '../../widgets/prof_verified_badge.dart';
 import '../../widgets/prox_motion.dart';
 
 /// Connection pill for the waiting room (not a verdict).
@@ -159,6 +162,12 @@ class WaitingRoomView extends StatelessWidget {
   final VoidCallback onRequestManual;
   final VoidCallback onCancel;
 
+  /// Email→key pin verdict for the hosting professor (see
+  /// ProfVerifiedBadge): verified (live/cache), unverified first-seen
+  /// (queued for auto-verify online), or mismatch (no proof is sent).
+  /// Null = unknown host — renders exactly as before.
+  final ProfVerificationResult? profVerification;
+
   const WaitingRoomView({
     super.key,
     required this.connected,
@@ -170,6 +179,7 @@ class WaitingRoomView extends StatelessWidget {
     required this.roundMarks,
     required this.onRequestManual,
     required this.onCancel,
+    this.profVerification,
   });
 
   @override
@@ -230,6 +240,11 @@ class WaitingRoomView extends StatelessWidget {
                     org: roomOrg,
                     photoUrl: roomProfPhoto,
                   ),
+                  // Pin verdict for the gated email (verified live/cache,
+                  // first-seen unverified with online auto-verify, or
+                  // mismatch-blocked). Null/unknown renders nothing —
+                  // the card above reads exactly as before.
+                  ProfVerifiedBadge(verification: profVerification),
                 ],
                 if (!connected) ...[
                   const SizedBox(height: ProxSpacing.sm),

@@ -51,6 +51,22 @@ String gatedPhotoFor(Map<String, String> byHost, String key) =>
 /// 3-bar recency glyph + open chevron / `idle` trailing it. The card avatar
 /// shows the professor's gated photo when published, else the class-letter
 /// disc; non-idle tiles carry the gradient ring (+ live glow while open).
+/// Verification caption for a browse tile (offline-first, honest):
+/// '' = unknown host (no email — no claim); 'known' = a pin is cached for
+/// this email (verifies against the presented key on join); 'first-seen' =
+/// no pin cached (TOFU — allowed with an unverified banner, auto-verifies
+/// online); 'verified-live' / 'verified' / 'mismatch' = the last join/prove
+/// verdict for this host (live fetch vs cache; mismatch sent no proof).
+String browseVerifyCaption(String label) => switch (label) {
+      'verified-live' => 'Verified · live',
+      'verified' => 'Verified',
+      'known' => 'Known host — verifies on join',
+      'first-seen' => 'First seen — verifies on join',
+      'unverified' => 'Unverified — verifies on join',
+      'mismatch' => 'Blocked earlier — key mismatch',
+      _ => '',
+    };
+
 class BrowseTile extends StatelessWidget {
   final LiveClass live;
   final String profEmail;
@@ -60,6 +76,10 @@ class BrowseTile extends StatelessWidget {
   /// falls back to the class-letter disc, exactly as before.
   final String profPhotoUrl;
 
+  /// Verification label for [profEmail] (see [browseVerifyCaption]).
+  /// '' renders exactly as before (no extra line).
+  final String verifyLabel;
+
   final VoidCallback onTap;
 
   const BrowseTile({
@@ -67,6 +87,7 @@ class BrowseTile extends StatelessWidget {
     required this.live,
     required this.profEmail,
     this.profPhotoUrl = '',
+    this.verifyLabel = '',
     required this.onTap,
   });
 
@@ -100,11 +121,17 @@ class BrowseTile extends StatelessWidget {
         if (a.display.isNotEmpty) 'Code ${a.display}',
       ].join(' · '),
       // Email on its own line below (never repeats the announced name —
-      // same dedupe contract as the host card second line).
+      // same dedupe contract as the host card second line). The pin
+      // verdict rides under it (never as verified without a key match —
+      // see browseVerifyCaption).
       subtitle2: (profEmail.isNotEmpty &&
               profEmail.toLowerCase() != a.prof.toLowerCase())
-          ? profEmail
-          : null,
+          ? (browseVerifyCaption(verifyLabel).isEmpty
+              ? profEmail
+              : '$profEmail\n${browseVerifyCaption(verifyLabel)}')
+          : (browseVerifyCaption(verifyLabel).isEmpty
+              ? null
+              : browseVerifyCaption(verifyLabel)),
       status: a.windowOpen
           ? const VerdictBadge(
               status: ProxStatus.waiting,

@@ -440,13 +440,15 @@ class FirestoreCloudSync implements CloudSync {
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
-        // Professor-searchable directory row (name/roll/email/org only).
+        // Professor-searchable directory row (name/roll/email/org + the
+        // student device public key for offline email→key pins).
         tx.set(_db.collection('studentDirectory').doc(key), {
           'email': key,
           'name': doc.name,
           'roll': doc.roll,
           'nameLower': doc.name.toLowerCase(),
           'org': org,
+          'pkS': doc.pkHex.trim().toLowerCase(),
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
@@ -705,6 +707,7 @@ class FirestoreCloudSync implements CloudSync {
           'roll': want,
           'nameLower': binding.name.toLowerCase(),
           'org': org,
+          'pkS': binding.pkHex.trim().toLowerCase(),
           'updatedAtMillis': atMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
@@ -778,8 +781,40 @@ class FirestoreCloudSync implements CloudSync {
           org: d.data()['org'] as String? ?? '',
           updatedAtMillis:
               (d.data()['updatedAtMillis'] as num?)?.toInt() ?? 0,
+          pkSHex: (d.data()['pkS'] as String? ?? '').trim().toLowerCase(),
         ),
     ];
+  }
+
+  @override
+  Future<Map<String, String>> fetchStudentKeyPins(
+      {required String org, int limit = 200}) async {
+    _needAvailable();
+    if (org.trim().isEmpty) return const {};
+    try {
+      final snap = await _db
+          .collection('studentDirectory')
+          .where('org', isEqualTo: org.trim().toLowerCase())
+          .limit(limit)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 10));
+      final out = <String, String>{};
+      for (final d in snap.docs) {
+        final email =
+            (d.data()['email'] as String? ?? '').trim().toLowerCase();
+        final pkS =
+            (d.data()['pkS'] as String? ?? '').trim().toLowerCase();
+        if (email.isNotEmpty && _isHex64(pkS)) out[email] = pkS;
+      }
+      return out;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return const {};
+      if (_isOfflineError(e)) return const {};
+      rethrow;
+    } catch (e) {
+      if (_isOfflineError(e)) return const {};
+      rethrow;
+    }
   }
 
   static bool _isHex64(String s) {

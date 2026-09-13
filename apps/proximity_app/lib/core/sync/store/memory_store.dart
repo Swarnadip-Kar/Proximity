@@ -294,4 +294,33 @@ class InMemoryDeviceStore implements DeviceStore {
     _profPins[emailLower.trim().toLowerCase()] =
         [for (final e in keys) Map<String, dynamic>.of(e)];
   }
+
+  final Map<String, String> _studentKeyPins = {};
+  final Set<String> _pendingProfVerifications = {};
+
+  @override
+  Future<Map<String, String>> readStudentKeyPins() async =>
+      Map<String, String>.of(_studentKeyPins);
+
+  @override
+  Future<void> writeStudentKeyPins(Map<String, String> pins) async {
+    _studentKeyPins
+      ..clear()
+      ..addAll({
+        for (final e in pins.entries)
+          if (e.key.trim().isNotEmpty && e.value.trim().isNotEmpty)
+            e.key.trim().toLowerCase(): e.value.trim().toLowerCase(),
+      });
+  }
+
+  @override
+  Future<Set<String>> readPendingProfVerifications() async =>
+      Set<String>.of(_pendingProfVerifications);
+
+  @override
+  Future<void> writePendingProfVerifications(Set<String> emails) async {
+    _pendingProfVerifications
+      ..clear()
+      ..addAll({for (final e in emails) e.trim().toLowerCase()}..remove(''));
+  }
 }

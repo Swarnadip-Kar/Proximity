@@ -116,6 +116,14 @@ abstract class CloudSync {
   /// Fetches the cached pin list for [emailLower] (`[]` = no pin yet).
   /// Same-org get; missing doc reads as not-found, never denied.
   Future<List<Map<String, dynamic>>> fetchProfKeys(String emailLower);
+
+  /// Bulk student-key pins for offline professor verification (anti-fake-
+  /// student): same-org directory email → SKey-public map (rows without a
+  /// stamped `pkS` are skipped — legacy no-pin TOFU). Powers the persistent
+  /// pin cache the live server enforces `unknown-pkS` from offline.
+  /// Best-effort: offline or denied → `{}` (never throws for those).
+  Future<Map<String, String>> fetchStudentKeyPins(
+      {required String org, int limit = 200});
 }
 
 /// Professor push identity: null when offline / skipped sign-in / no prof

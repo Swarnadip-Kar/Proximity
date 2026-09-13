@@ -118,6 +118,13 @@ Future<void> main() async {
   try {
     await IntegrityGate.performCheck();
   } catch (_) {}
+  // §6 force-update (H6): hydrate the disk-backed version floor BEFORE any
+  // gate runs, so a restart can never forget a floor it already saw (the
+  // pinned-APK restart bypass stays closed even when this launch is fully
+  // offline). Best-effort — a prefs failure degrades to memory-only.
+  try {
+    await ForceUpdate.hydrateCachedFloor();
+  } catch (_) {}
   // Restore linked identity from secure device storage so sign-in state
   // (Firebase Auth) + identity survive restarts with zero taps.
   // Fail-open: secure storage may be unavailable (e.g. unsigned sim
@@ -250,6 +257,18 @@ Future<void> main() async {
                 verifier: ref.watch(faceVerifierProvider),
                 deviceKey: ref.watch(deviceKeyProvider),
                 engine: bleEngine,
+                // Anti-fake-professor live fetch: online pin refresh for
+                // the email→key binding (offline degrades to the
+                // persistent cache inside checkProfPin, never a throw).
+                profKeyFetcher: (email) async {
+                  try {
+                    return await ref
+                        .read(cloudSyncProvider)
+                        .fetchProfKeys(email);
+                  } catch (_) {
+                    return const [];
+                  }
+                },
               )),
         bleEngineProvider.overrideWithValue(bleEngine),
         if (initialLinked != null)

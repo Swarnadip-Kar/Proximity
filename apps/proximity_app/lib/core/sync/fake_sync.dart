@@ -248,8 +248,13 @@ class FakeCloudSync implements CloudSync {
       integrityFlag: doc.integrityFlag,
     );
     installs[installId] = key;
-    dir[key] =
-        StudentDirectoryEntry(email: key, name: doc.name, roll: doc.roll, org: org, updatedAtMillis: atMillis);
+    dir[key] = StudentDirectoryEntry(
+        email: key,
+        name: doc.name,
+        roll: doc.roll,
+        org: org,
+        updatedAtMillis: atMillis,
+        pkSHex: doc.pkHex.trim().toLowerCase());
     return ClaimOutcome(isFirst: isFirst, isMove: isMove);
   }
 
@@ -456,5 +461,23 @@ class FakeCloudSync implements CloudSync {
       for (final e in list)
         if (e is Map) Map<String, dynamic>.from(e)
     ];
+  }
+
+  @override
+  Future<Map<String, String>> fetchStudentKeyPins(
+      {required String org, int limit = 200}) async {
+    _needOnline();
+    final want = org.trim().toLowerCase();
+    if (want.isEmpty) return const {};
+    final out = <String, String>{};
+    final sorted = dir.keys.toList()..sort();
+    for (final key in sorted) {
+      if (out.length >= limit) break;
+      final e = dir[key]!;
+      if (e.org.isNotEmpty && e.org != want) continue;
+      if (e.org.isEmpty) continue;
+      if (e.pkSHex.trim().isNotEmpty) out[key] = e.pkSHex.toLowerCase();
+    }
+    return out;
   }
 }

@@ -85,6 +85,8 @@
 
 **Shipped API (not the `detect(File,box)` sketch in older notes):** `lib/features/face_identity/liveness_gate.dart` — `LivenessGate.detectPassive(imagePath)→LivenessResult{score,ver}` fail-closed + `HeuristicLivenessGate` fallback + `EnrollLivenessPlan` shuffle; tag `kLivenessVer = liveness/minifasnet-v2-27-80x80+<weightsHash8>`; input `[1,3,80,80]` float32 NCHW BGR/255, output `[1,3]` LIVE index 1.
 
+**Calibration (2026-09-13, Tl=0.85 strict + 2.7x crop):** the packer expands the squared face box by `kLivenessContextScale = 2.7` (the `2.7_80x80` training margin — the tight-square crop scored off-distribution) via `expandedSquareCropFromFaceBox` (overflow fits the largest centred square; unusable boxes still fall back to centre-square, same scorer + Tl); `kLivenessThreshold = 0.85` (protocol `verify.dart`): upstream MiniFASNetV2-27 reports ~98.2% acc / ROC-AUC 0.9984 on CelebA Spoof at argmax with the 2.7x crop and the upstream APK ships near FPR 1e-5 @ TPR 97.8% — attendance has a strong print/replay incentive while genuine FRR is cheap (rescan-free inconclusive path, never auto-absent, professor manual override), so Tl sits strict. The liveness score sent IS graded (0..1 live-prob, ticket-bound — the professor CAN tell 0.95 from 0.86); only the face-matcher score stays at its decision boundary (plugin identity-only contract — no distance exists to send; `kFaceThreshold = 0.70` stays as the plugin default, matching an independent FaceNet512 0.7 deployment point). Ticket break: ship with a `min_version` floor bump (rules deploy together, never silently).
+
 **Diffs:** gate in `face_verifier.dart / student_driver.dart:checkFace` before `verify()`; enroll = active blink+smile shuffled + passive centre-still; marking = passive only (~1s). Extend `ProxCrypto.faceTicketHash` → `SHA256(scoreMilli||faceValidAt||verifierVerHash8||livenessMilli||livenessVerHash8)[0:8]`; `Sig_s+dSig` bind it; `VerifyRequest` adds `livenessScore/livenessVer`; host gates `>=T_l` + allowlist. Old tickets fail `bad-sig` (no silent downgrade).
 
 ## 5. Root/tamper + integrity (App Check)
@@ -100,6 +102,8 @@
 **New:** `lib/core/app_config/force_update.dart` + Firestore `app_config/min_version {minVersion,latest,force,msg,storeAndroid,storeIos}` (`allow get:true`).
 
 **Diffs:** check in `entry_flow/host/enroll` via `package_info_plus`; `force && current<minVersion` → non-dismissible barrier (`barrierDismissible:false` + `PopScope(canPop:false)`) with copyable store links (copy-to-clipboard text, no `url_launcher` — "store buttons" in older notes = copy-link + Recheck actions, never auto-launch). Bump on any ticket/rules/verifier break. Remote Config rejected (extra dep, same guarantee, extra quota). `force` accepts bool, non-zero num, and case-insensitive `'true'/'1'/'yes'` (a `'true'` floor enforces — sec-low-force); unknown types stay false (floor enforces only when affirmatively set). `compareVersions` is semver-strict: build metadata ignored, pre-release sorts BELOW the same core (`1.2.3-beta < 1.2.3`, pinned by test) so debug/pre builds can never satisfy a release floor. `checkNow` carries its own 10 s floor-read deadline (hung Firestore degrades to the cached floor, never a hung gate).
+
+**H6 disk-backed floor (2026-09-13, restart-safe):** `ForceUpdate` persists every verified floor to SharedPreferences (`prox.forceFloor.v1.*`) and hydrates it at startup (`hydrateCachedFloor`, called in `main` before any gate). `checkNow`/`checkCached` enforce the cached floor offline, and `entryRequireFreshBuild` refuses on a cached-stale floor when the live read is unchecked (a floor seen once blocks across restarts and offline launches — the pinned-APK restart bypass is closed). Only a verified-fresh recheck lifts the barrier; a verified no-floor read clears the disk entry on purpose (never by restart). Professor-side ticket allowlists (`verifierVer`/`livenessVer` + `liveness-unbound` fail-closed) reject old builds even offline as defense-in-depth. Fundamental limit, stated: a build that NEVER went online after the floor published cannot know about it (no channel exists) — the bound is the 90d attestation validity + Play auto-update when online.
 
 ## 7. Schema / offline (additive only)
 
@@ -117,6 +121,25 @@ match /studentDevices/{id} { // create/update: + pkDHex is string
 App Check enforcement is console toggle (no rules syntax on Spark).
 Opaque handling: chain/pkD bytes are type-checked only here — never
 decrypted/interpreted server-side (no backend exists to do so).
+
+**Email→key verification (wired 2026-09-13 — the keypair proposal, no new
+crypto):** students already sign email-bound tickets with the enrollment
+SKey (`Sig_s` binds ID; `pkHex` pinned in `studentDevices`) and hosts
+already sign live challenges with the lecture key (`Sig_p`) — what was
+missing was the pin check on both sides (the pin helpers existed but no
+production caller used them). Now: hosts publish the lecture pkP
+best-effort to `profDevices/{email}` on `startHosting` (fire-and-forget,
+never blocks offline); students run `checkProfPin` after `Sig_p` verifies
+and BEFORE signing `Sig_s` (mismatch → no proof is sent; unknown →
+unverified banner + `prox.pendingProfVerify.v1` queue, auto-verified on
+resume/15s backstop with live tile flip; known → verified badge, live
+when the pin came from a direct online fetch). Professors prefetch
+`fetchStudentKeyPins` (same-org `studentDirectory` + new type-locked `pkS`
+field, stamped by the claim transaction; legacy rows without `pkS` stay
+no-pin TOFU, never a mismatch) into the persistent
+`prox.studentKeyPins.v1` cache, hydrated into the live server at hosting
+start so offline `unknown-pkS` enforcement survives restarts. First-seen
+TOFU on both sides is VISIBLE (unverified captions/flags), never silent.
 
 **Pubspec (app — as-built, `apps/proximity_app/pubspec.yaml`):**
 ```yaml
@@ -140,7 +163,7 @@ file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
 
 **Verification log (2026-09-13, `sec-docs` close-out):** code landed by sibling tracks, docs closed here — (a) X.509 full verify (`chain_verify.dart` + `verifyAttestationChainPin` step 6, pure-Dart, no platform adapter); (b) App Check 0.4.x provider-class migration (`IntegrityAppCheck` provider constants + `ensureActivated()` call shape, `firebase_app_check ^0.4.7`); STRONG enforce runbook verified present in `integrity.dart` `IntegrityAppCheck` docs (commit `7de0d2e`); (c) CRL snapshot wired (`RevocationCache`, `core/enrollment.dart:724` + `core/host_driver.dart:412`, TTL 7d). Open work is field/console-only: Tl uncalibrated, CRL snapshot-only, Magisk console steps — see residual risks. No thresholds changed, no FAR/FRR numbers claimed.
 
-**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required; hide-resistance close-out is console-side: Play Console SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump, requires console access); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; liveness is always gated (no opt-out window remains — a photo-spoof must beat the live gate plus face/ticket/radio gates); `Tl=0.70` uncalibrated (FAR/FRR unmeasured — calibration needs field captures: live + print/replay, varied light/phones, ROC sweep via `sweepTl`/`recommendTl`/`formatCalibrationTable` in `apps/proximity_app/test/liveness_calibration_test.dart`; ships only as threshold + `kLivenessVer` + `min_version` bump); CRL is snapshot-only offline (true push revocation needs a backend, excluded by Spark-free — stale/revoked stay review flags).
+**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required; hide-resistance close-out is console-side: Play Console SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump, requires console access); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; liveness is always gated at strict Tl=0.85 with the 2.7x training crop (a photo-spoof must beat the vitality gate plus face/ticket/radio gates — FAR/FRR still UNMEASURED on Proximity captures; a field ROC via `sweepTl`/`recommendTl`/`formatCalibrationTable` stays the way to move Tl, shipped only as threshold + `kLivenessVer` + `min_version` bump); email→key pins are TOFU (first-seen allows with an unverified banner — a sustained MITM from the very first class is not detected until the next online fetch; mismatch refuses outright); force-update cannot reach a build that never goes online after the floor publishes (no channel exists — bound is attestation validity + auto-update); CRL is snapshot-only offline (true push revocation needs a backend, excluded by Spark-free — stale/revoked stay review flags).
 
 ---
 

@@ -838,15 +838,20 @@ one-liner idioms and intentional seams (below).
 
 ### 13.3 Honest residual weaknesses (as-built — HW shipped, trust still TOFU)
 
-1. **Face + liveness trust is local and uncalibrated.** `T=0.70` (face) and
-   `Tl=0.70` (liveness) are shipped operating points, uncalibrated on
-   Proximity captures — no FAR/FRR numbers claimed anywhere in this doc.
-   Passive MiniFASNetV2 + 5 pose gates raise spoof cost but a good print/
-   replay at each angle can still pass. Behind it: 4-mismatch budget →
-   needs-review → human override, 5-min holder gate, cross-ticket replay
-   impossible, server `requireLivenessEnforced=true` (always enforced —
-   liveness is a confirm-gate with no opt-out). Calibrate via §13.5
-   before tightening.
+1. **Face + liveness trust is local; liveness is strict, Proximity ROC
+   still unmeasured.** `T=0.70` (face: plugin default + FaceNet512 0.7
+   deployment point) and `Tl=0.85` (liveness, strict — 2.7x training crop
+   + upstream ~98.2% acc / ROC-AUC 0.9984 + APK near FPR 1e-5 @ TPR 97.8%)
+   are the shipped operating points — no Proximity FAR/FRR numbers claimed
+   anywhere in this doc. Passive MiniFASNetV2 + 5 pose gates raise spoof
+   cost; a print/replay must now also clear the strict vitality gate (the
+   graded 0..1 liveness score rides the ticket, so the professor sees
+   strong vs weak passes — only the face score stays at its boundary by
+   plugin contract). Behind it: 4-mismatch budget → needs-review → human
+   override, 5-min holder gate, cross-ticket replay impossible, server
+   `requireLivenessEnforced=true` (always enforced — liveness is a
+   confirm-gate with no opt-out). Measure a field ROC via §13.5 before
+   moving Tl again (threshold + `kLivenessVer` + `min_version` together).
 2. **Device trust is HW-backed but still client-asserted TOFU at first join
    (§3.4).** `HwDeviceKey` ships (StrongBox→TEE / Secure Enclave,
    `attested_secure_keys ^0.1.1`, PXK2 AES-GCM, offline chain pin incl. full

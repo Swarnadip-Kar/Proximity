@@ -128,6 +128,26 @@ abstract class HostDriver {
   /// Updates the professor display name announced with the class.
   Future<void> setDisplayName(String name);
   Future<void> endHosting();
+
+  /// Current lecture public key hex (Ed25519 32B, '' when not hosting).
+  /// Published best-effort to `profDevices/{email}` for student pinning
+  /// (anti-fake-professor); never blocks hosting offline.
+  String get currentProfPkHex => '';
+
+  /// Best-effort publisher for the lecture-key pin (wired by the Take
+  /// screen to `CloudSync.uploadProfKey`; null in tests/offline hosts).
+  /// Called fire-and-forget after the server is ready — never blocks
+  /// hosting, never throws out.
+  set profKeyPublisher(
+      Future<void> Function(
+              {required String emailLower, required String pkPHex})?
+          fn) {}
+
+  /// Hydrates the server's student-key pins from the professor's persistent
+  /// directory cache (email → pkS) so offline `unknown-pkS` enforcement
+  /// survives restarts. Returns pinned count.
+  Future<int> hydrateStudentPins(Map<String, String> emailToPkSHex) async =>
+      0;
 }
 
 class WaitingRow {
@@ -200,6 +220,33 @@ class RealHostDriver implements HostDriver {
   String _classLabel = '';
   String _announceIp = '';
   List<String> _allIps = const [];
+  Future<void> Function(
+      {required String emailLower,
+      required String pkPHex})? _profKeyPublisher;
+
+  @override
+  set profKeyPublisher(
+          Future<void> Function(
+                  {required String emailLower, required String pkPHex})?
+              fn) =>
+      _profKeyPublisher = fn;
+
+  @override
+  String get currentProfPkHex => _profKeys == null
+      ? ''
+      : hexEncode(_profKeys!.publicKey.bytes.sublist(0, 32)).toLowerCase();
+
+  @override
+  Future<int> hydrateStudentPins(
+      Map<String, String> emailToPkSHex) async {
+    final s = _server;
+    if (s == null) return 0;
+    try {
+      return s.pinStudentKeys(emailToPkSHex);
+    } catch (_) {
+      return 0;
+    }
+  }
 
   RealHostDriver({
     required DeviceStore store,
@@ -491,6 +538,34 @@ class RealHostDriver implements HostDriver {
       sessionProfName: _profName,
     );
     await _bindWithRetry(_server!, port);
+    // Email→key pin publish (anti-fake-professor): the lecture pkP is
+    // appended best-effort to `profDevices/{email}` so students pin it
+    // online and verify Sig_p against the pin offline (TOFU). Fire-and-
+    // forget — never blocks hosting, never throws out (offline hosts
+    // simply skip; students then see first-seen unverified).
+    final publishEmail = sessionProfEmail;
+    final publishPk = currentProfPkHex;
+    final publish = _profKeyPublisher;
+    if (publish != null && publishEmail.isNotEmpty && publishPk.isNotEmpty) {
+      unawaited(Future(() async {
+        try {
+          await publish(emailLower: publishEmail, pkPHex: publishPk);
+          BleLog.log('SEC', 'prof key pin published ($publishEmail)');
+        } catch (e) {
+          BleLog.log('SEC', 'prof key pin publish deferred ($e)');
+        }
+      }));
+    }
+    // Hydrate student-key pins from the persistent directory cache so
+    // offline `unknown-pkS` enforcement survives restarts (in-memory TOFU
+    // alone forgot everything on reboot).
+    try {
+      final cachedPins = await _store.readStudentKeyPins();
+      if (cachedPins.isNotEmpty) {
+        final n = _server!.pinStudentKeys(cachedPins);
+        if (n > 0) BleLog.log('SEC', 'student key pins hydrated ($n)');
+      }
+    } catch (_) {}
     // Readiness BEFORE any hint/beacon: the port must answer TLS locally.
     // On failure tear the half-started server down so the next attempt
     // (or re-entry) binds clean — never advertise a dead host:port.
@@ -1045,6 +1120,20 @@ class FakeHostDriver implements HostDriver {
   final List<WaitingRow> _waiting = [];
   final List<ManualRow> _manual = [];
   final Map<String, Set<String>> _dupGroups = {};
+
+  @override
+  String get currentProfPkHex => '';
+
+  @override
+  set profKeyPublisher(
+          Future<void> Function(
+                  {required String emailLower, required String pkPHex})?
+              fn) {}
+
+  @override
+  Future<int> hydrateStudentPins(
+          Map<String, String> emailToPkSHex) async =>
+      0;
 
   @override
   TallyStore get tally => _tally;

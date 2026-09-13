@@ -21,10 +21,10 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/auth.dart';
 import '../core/ble_radio.dart';
+import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
 import '../core/student_driver.dart';
-import '../core/sync/org.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/account/account_common.dart';
@@ -115,6 +115,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // Browse tiles render these; ''/absent = opted-out/unknown → the
   // class-letter disc. Never beacons/BLE.
   final Map<String, String> _gatedPhotoByHost = {};
+  // Verification labels by `host:port` for the browse tiles (see
+  // BrowseTile.verifyLabel): 'known' / 'first-seen' from the pin-cache
+  // presence at backfill time, upgraded to 'verified-live' / 'verified' /
+  // 'mismatch' / 'unverified' by the prove-time pin verdict. Absent/'' =
+  // unknown host — renders exactly as before.
+  final Map<String, String> _profVerifyByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
   final Map<String, DateTime> _emailFetchThrottle = {};
@@ -460,6 +466,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _gatedPhotoByHost[key] = photo;
         changed = true;
       }
+      // Pin-cache presence for the tile caption (honest pre-join state:
+      // a cached pin means the key WILL be checked on join; no pin means
+      // first-seen TOFU. Never claims verified without a key match —
+      // the prove-time verdict upgrades this to verified/mismatch).
+      if (email.isNotEmpty && !_profVerifyByHost.containsKey(key)) {
+        try {
+          final pins =
+              await ref.read(deviceStoreProvider).readProfPin(email);
+          final label = pins.isNotEmpty ? 'known' : 'first-seen';
+          if (_profVerifyByHost[key] != label) {
+            _profVerifyByHost[key] = label;
+            changed = true;
+          }
+        } catch (_) {}
+      }
       if (changed && phase == StudentPhase.browsing && mounted) {
         setState(() => _live = _allLive());
       }
@@ -478,6 +499,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _bleHintThrottle.remove(key);
     _gatedEmailByHost.remove(key);
     _gatedPhotoByHost.remove(key);
+    _profVerifyByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -512,8 +534,57 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// All re-probes carry our org claim (gated): a host that now answers
   /// org-mismatch goes silent here (dropped like a dead host — the class
   /// never appears on a foreign-org phone).
+  /// Waiting-room badge state: the driver's last pin verdict, but ONLY
+  /// when it belongs to this room's gated email (a stale verdict from a
+  /// previous class must never badge the next room). Null renders nothing.
+  ProfVerificationResult? _waitingVerification() {
+    try {
+      final driver = ref.read(studentDriverProvider);
+      if (driver is! RealStudentDriver) return null;
+      final v = driver.lastProfVerification;
+      if (v == null || v.profEmail.isEmpty) return null;
+      if (_roomProfEmail.trim().isNotEmpty &&
+          v.profEmail != _roomProfEmail.trim().toLowerCase()) {
+        return null;
+      }
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Offline-first auto-verify drain: first-seen prof emails queued while
+  /// offline get a live direct fetch (online only) and their tile captions
+  /// flip to verified without a rejoin. Never throws; no-ops offline.
+  Future<void> _drainProfVerifyQueue() async {
+    try {
+      final driver = ref.read(studentDriverProvider);
+      if (driver is! RealStudentDriver) return;
+      final cloud = ref.read(cloudSyncProvider);
+      if (!await cloud.isOnline()) return;
+      final verdicts = await driver.verifyQueuedProfEmails();
+      if (verdicts.isEmpty || !mounted) return;
+      var changed = false;
+      for (final entry in verdicts.entries) {
+        for (final host in _gatedEmailByHost.entries) {
+          if (host.value == entry.key && entry.value.name == 'known') {
+            if (_profVerifyByHost[host.key] != 'verified-live') {
+              _profVerifyByHost[host.key] = 'verified-live';
+              changed = true;
+            }
+          }
+        }
+      }
+      if (changed && phase == StudentPhase.browsing && mounted) {
+        setState(() => _live = _allLive());
+      }
+    } catch (_) {}
+  }
+
   Future<void> _refreshSessions() async {
     if (!mounted || phase != StudentPhase.browsing) return;
+    // 15s backstop also drains the prof auto-verify queue (online only).
+    unawaited(_drainProfVerifyQueue());
     // Drop stale pending hints (heard >2 min ago, never answered).
     final now0 = DateTime.now().toUtc();
     _pendingHints
@@ -735,6 +806,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // this student-side call is belt over suspenders for mark flows).
     if (state == AppLifecycleState.resumed && mounted) {
       unawaited(flushNow(ref));
+      // Auto-verify queue: first-seen prof emails queued while offline get
+      // a live direct fetch now — tiles flip to verified without a rejoin.
+      unawaited(_drainProfVerifyQueue());
     }
   }
 
@@ -1616,6 +1690,28 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     BleLog.log(ProxLogTags.state,
         'verdict ${receipt.result.name} (${receipt.detail})');
+    // Prove-time pin verdict → browse tile caption + waiting badge state.
+    // First-seen/verified/mismatch labels replace the cache-presence hint
+    // for this host (offline unverified stays queued for auto-verify).
+    try {
+      final driver = ref.read(studentDriverProvider);
+      final v = driver is RealStudentDriver
+          ? driver.lastProfVerification
+          : null;
+      if (v != null && v.profEmail.isNotEmpty) {
+        final hostKey = '${target.host}:${target.port}';
+        final label = switch (v.state) {
+          ProfEmailVerification.verified =>
+            v.liveFetch ? 'verified-live' : 'verified',
+          ProfEmailVerification.unverified => 'unverified',
+          ProfEmailVerification.mismatch => 'mismatch',
+          ProfEmailVerification.absent => '',
+        };
+        if (label.isNotEmpty && _profVerifyByHost[hostKey] != label) {
+          _profVerifyByHost[hostKey] = label;
+        }
+      }
+    } catch (_) {}
     // Wrong-org refusals surface as structured error receipts (no proof
     // sent, no PII left) with their own verdict screen — a decision, not
     // a network hole. Branches on the receipt flag, never detail text.
@@ -1864,6 +1960,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       broadcastBlocked: _broadcastBlocked,
       profEmailByHost: Map.of(_gatedEmailByHost),
       profPhotoByHost: Map.of(_gatedPhotoByHost),
+      profVerifyByHost: Map.of(_profVerifyByHost),
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final target = ClassBeacon(
@@ -1971,6 +2068,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               roundMarks: _roundMarks,
               onRequestManual: _requestManual,
               onCancel: _cancelToBrowsing,
+              // Live pin verdict for the gated email (verified live/cache,
+              // first-seen unverified with online auto-verify, mismatch).
+              // Unknown before the first prove renders nothing.
+              profVerification: _waitingVerification(),
             ),
           StudentPhase.manualPending => ManualRequestView(
               status: _manualStatus,

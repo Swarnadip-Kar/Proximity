@@ -10,7 +10,8 @@
 library;
 
 /// One row of the professor-searchable student directory: the minimum a
-/// professor needs to add someone to a record. Written by the claim
+/// professor needs to add someone to a record + the student's device
+/// public key for offline email→key verification. Written by the claim
 /// transaction, never by hand.
 class StudentDirectoryEntry {
   final String email;
@@ -20,12 +21,18 @@ class StudentDirectoryEntry {
   /// Last claim touch (UTC epoch ms, 0 = legacy — never "stale" by itself;
   /// drives the owner-lazy six-month purge gate).
   final int updatedAtMillis;
+  /// Student SKey public bytes hex (Ed25519 32B, '' = legacy row written
+  /// before the pin field landed — treated as no-pin TOFU, never as a
+  /// mismatch; re-enroll backfills it). Professors pin this online and
+  /// enforce `unknown-pkS` offline from the persistent cache.
+  final String pkSHex;
   const StudentDirectoryEntry(
       {required this.email,
       required this.name,
       required this.roll,
       this.org = '',
-      this.updatedAtMillis = 0});
+      this.updatedAtMillis = 0,
+      this.pkSHex = ''});
 }
 
 /// Normalized search prefixes shared by both backends (roll is trimmed

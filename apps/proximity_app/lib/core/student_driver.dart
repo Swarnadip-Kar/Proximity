@@ -23,6 +23,7 @@ import '../features/device_identity/hw_device_key.dart';
 import '../features/face_identity/device_key.dart';
 import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart';
+import 'prof_pin_check.dart';
 import '../mode.dart';
 import 'device_store.dart';
 import 'platformx.dart';
@@ -128,6 +129,40 @@ class WindowProbe {
       this.profPhoto = '',
       this.profName = '',
       this.rateLimited = false});
+}
+
+/// Professor-email verification state for one gated /window descriptor
+/// (anti-fake-professor, anybody-can-host). The email→key binding is the
+/// user's keypair proposal: the lecture public key is pinned server-side
+/// (`profDevices/{email}`, owner-only write) at registration/hosting, and
+/// the live challenge signature (Sig_p, already verified against the
+/// radio-heard C_j) is checked against that pin here before anything is
+/// signed. First-seen emails are TOFU: allowed with an `unverified` banner
+/// + queued for auto-verify when online; mismatches refuse (no proof sent).
+enum ProfEmailVerification {
+  /// No email on the descriptor (legacy host) — nothing to verify.
+  absent,
+
+  /// Pinned key matched the presented lecture key (cache or live fetch).
+  /// [liveFetch] true means a direct online fetch just confirmed it.
+  verified,
+
+  /// First-seen email (no pin cached, offline or never fetched). Allowed
+  /// with a banner; queued for auto-verify on reconnect.
+  unverified,
+
+  /// Pin list exists but the presented key is not in it — fake class.
+  /// The driver sends NO proof.
+  mismatch,
+}
+
+/// One verification outcome (verdict + whether it came from a live fetch).
+class ProfVerificationResult {
+  final ProfEmailVerification state;
+  final bool liveFetch;
+  final String profEmail;
+  const ProfVerificationResult(
+      {required this.state, required this.liveFetch, required this.profEmail});
 }
 
 /// Presence POST result with the piggybacked window sample (SYNC-owned).
@@ -260,12 +295,21 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   final DeviceKey _deviceKey;
   final ProxBleEngine _engine;
   final LivenessGate _liveness;
+  /// Online pin fetcher (wired by the UI to `CloudSync.fetchProfKeys`;
+  /// null in tests/offline drivers → cache-only verdicts). Never throws
+  /// out (checkProfPin swallows fetch errors into cache fallback).
+  final Future<List<Map<String, dynamic>>> Function(String email)?
+      profKeyFetcher;
+  /// Last verification outcome (for the UI badge + queue; null before the
+  /// first gated fetch in this process).
+  ProfVerificationResult? lastProfVerification;
   RealStudentDriver({
     required DeviceStore store,
     required FaceVerifier verifier,
     required DeviceKey deviceKey,
     required ProxBleEngine engine,
     LivenessGate? livenessGate,
+    this.profKeyFetcher,
   })  : _store = store,
         _verifier = verifier,
         _deviceKey = deviceKey,
@@ -274,6 +318,49 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         // stub) so no new DI override is needed in main (2C-owned).
         // Tests inject FakeLivenessGate.
         _liveness = livenessGate ?? HeuristicLivenessGate();
+
+  /// Queues [email] for auto-verify when the app returns online
+  /// (best-effort, never throws). Drained by the UI on connectivity edge /
+  /// resume / backstop via [verifyQueuedProfEmails].
+  Future<void> queueProfVerification(String email) async {
+    final e = email.trim().toLowerCase();
+    if (e.isEmpty) return;
+    try {
+      final pending = await _store.readPendingProfVerifications();
+      if (pending.contains(e)) return;
+      await _store.writePendingProfVerifications({...pending, e});
+      BleLog.log('SEC', 'prof verify queued ($e — auto-verifies online)');
+    } catch (_) {}
+  }
+
+  /// Drains the pending queue with live fetches (UI calls this online).
+  /// Returns email → verdict for badge updates. Never throws.
+  Future<Map<String, ProfPinVerdict>> verifyQueuedProfEmails() async {
+    final out = <String, ProfPinVerdict>{};
+    try {
+      final pending = await _store.readPendingProfVerifications();
+      if (pending.isEmpty) return out;
+      final fetcher = profKeyFetcher;
+      if (fetcher == null) return out;
+      final still = <String>{};
+      for (final email in pending) {
+        try {
+          final fresh = await fetcher(email).timeout(
+              const Duration(seconds: 8));
+          if (fresh.isNotEmpty) {
+            await _store.writeProfPin(email, fresh);
+            out[email] = ProfPinVerdict.known;
+          } else {
+            still.add(email);
+          }
+        } catch (_) {
+          still.add(email);
+        }
+      }
+      await _store.writePendingProfVerifications(still);
+    } catch (_) {}
+    return out;
+  }
 
   /// Dead-air bound per wait: 45s of no new challenge, then one cheap
   /// window probe decides "round ended" vs "still open". Tests shrink it.
@@ -1183,6 +1270,71 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       }
       if (desc.org.isEmpty) {
         BleLog.log('NET', 'window legacy (no org) — allowed');
+      }
+      // Anti-fake-professor pin gate (email→key binding): Sig_p above
+      // proved the server owns windowId; this proves the CLAIMED prof
+      // email owns that key (pinned at registration/hosting). Runs BEFORE
+      // anything is signed — a mismatch sends NO proof, NO PII beyond the
+      // already-gated fetch. First-seen (unknown) allows with an
+      // unverified banner + auto-verify queue; online callers get a live
+      // direct-fetch verdict for the UI badge.
+      final profEmailForPin = desc.profEmail.trim().toLowerCase();
+      if (profEmailForPin.isNotEmpty) {
+        ProfPinCheck pin;
+        try {
+          pin = await checkProfPin(
+            desc: desc,
+            store: _store,
+            fetchRemote: profKeyFetcher,
+          );
+        } catch (_) {
+          pin = ProfPinCheck(
+            verdict: ProfPinVerdict.unknown,
+            profEmail: profEmailForPin,
+            presentedPkPHex: '',
+          );
+        }
+        final liveFetch = profKeyFetcher != null;
+        if (pin.verdict == ProfPinVerdict.mismatch) {
+          BleLog.log('SEC',
+              'prof pin MISMATCH ($profEmailForPin) — fake class? no proof sent');
+          lastProfVerification = ProfVerificationResult(
+            state: ProfEmailVerification.mismatch,
+            liveFetch: liveFetch,
+            profEmail: profEmailForPin,
+          );
+          return MarkedReceipt(
+            detail:
+                'Professor key mismatch — possible fake class. No proof was sent.',
+            result: StudentResult.error,
+            attestationLevel: stored.attestationLevel,
+            attestationFlags: const ['fake-prof-key'],
+          );
+        }
+        if (pin.verdict == ProfPinVerdict.known) {
+          BleLog.log('SEC',
+              'prof pin KNOWN ($profEmailForPin${liveFetch ? ', live fetch' : ', cache'}) — verified');
+          lastProfVerification = ProfVerificationResult(
+            state: ProfEmailVerification.verified,
+            liveFetch: liveFetch,
+            profEmail: profEmailForPin,
+          );
+        } else {
+          BleLog.log('SEC',
+              'prof pin UNKNOWN ($profEmailForPin — first seen, unverified)');
+          lastProfVerification = ProfVerificationResult(
+            state: ProfEmailVerification.unverified,
+            liveFetch: false,
+            profEmail: profEmailForPin,
+          );
+          await queueProfVerification(profEmailForPin);
+        }
+      } else {
+        lastProfVerification = const ProfVerificationResult(
+          state: ProfEmailVerification.absent,
+          liveFetch: false,
+          profEmail: '',
+        );
       }
       final j = desc.jNow;
       // Holder gate: the face pass that authorized THIS listen must still

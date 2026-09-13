@@ -613,6 +613,72 @@ class SecureDeviceStore implements DeviceStore {
         [for (final e in keys) Map<String, dynamic>.from(e)];
     await prefs.setString(_kProfPins, jsonEncode(all));
   }
+
+  static const _kStudentKeyPins = 'prox.studentKeyPins.v1';
+  static const _kPendingProfVerify = 'prox.pendingProfVerify.v1';
+
+  @override
+  Future<Map<String, String>> readStudentKeyPins() async {
+    try {
+      final prefs = await _prefs();
+      final raw = prefs.getString(_kStudentKeyPins);
+      if (raw == null) return const {};
+      final all = jsonDecode(raw) as Map<String, dynamic>;
+      return {
+        for (final e in all.entries)
+          if (e.value is String &&
+              e.key.trim().isNotEmpty &&
+              (e.value as String).trim().isNotEmpty)
+            e.key.trim().toLowerCase():
+                (e.value as String).trim().toLowerCase(),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  @override
+  Future<void> writeStudentKeyPins(Map<String, String> pins) async {
+    try {
+      final prefs = await _prefs();
+      await prefs.setString(
+          _kStudentKeyPins,
+          jsonEncode({
+            for (final e in pins.entries)
+              if (e.key.trim().isNotEmpty && e.value.trim().isNotEmpty)
+                e.key.trim().toLowerCase(): e.value.trim().toLowerCase(),
+          }));
+    } catch (_) {}
+  }
+
+  @override
+  Future<Set<String>> readPendingProfVerifications() async {
+    try {
+      final prefs = await _prefs();
+      final raw = prefs.getString(_kPendingProfVerify);
+      if (raw == null) return const {};
+      final list = jsonDecode(raw) as List;
+      return {
+        for (final e in list)
+          if (e is String && e.trim().isNotEmpty) e.trim().toLowerCase(),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  @override
+  Future<void> writePendingProfVerifications(Set<String> emails) async {
+    try {
+      final prefs = await _prefs();
+      await prefs.setString(
+          _kPendingProfVerify,
+          jsonEncode([
+            for (final e in emails)
+              if (e.trim().isNotEmpty) e.trim().toLowerCase(),
+          ]));
+    } catch (_) {}
+  }
 }
 
 /// H8 [RevocationHashStore] backend (secure-store wiring): the CRL body

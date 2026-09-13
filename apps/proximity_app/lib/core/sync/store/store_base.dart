@@ -280,4 +280,22 @@ abstract class DeviceStore {
   Future<List<Map<String, dynamic>>> readProfPin(String emailLower);
   Future<void> writeProfPin(
       String emailLower, List<Map<String, dynamic>> keys);
+
+  /// Student-key pins (anti-fake-student, rosterless phase): persistent
+  /// emailLower → pkS-hex cache hydrated from the professor-readable
+  /// directory (`studentDirectory` + `pkS`, same-org) whenever online.
+  /// The live [ProxServer] pins enforce `unknown-pkS` offline from this
+  /// map; first-seen (absent) emails stay TOFU with an
+  /// `unverified-student-key` flag (visible, never silent). Public keys
+  /// only — prefs-backed like the prof pins above.
+  Future<Map<String, String>> readStudentKeyPins();
+  Future<void> writeStudentKeyPins(Map<String, String> pins);
+
+  /// Pending prof-email verifications (offline-first queue): prof emails
+  /// first seen while offline (or with an empty pin cache) wait here for
+  /// auto-verify when the app returns online (connectivity edge / resume /
+  /// 15 min backstop). Lowercased emails, no PII beyond what the gated
+  /// /window unicast already showed.
+  Future<Set<String>> readPendingProfVerifications();
+  Future<void> writePendingProfVerifications(Set<String> emails);
 }
