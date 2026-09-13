@@ -149,7 +149,7 @@ most once per 30 days); manual attendance covers any gap.
    entry pre-check, sharing the `allowedMove` outcome (a move is a move:
    stamps lastMove, bumps moveCount, atomically refreshes the face print).
    Adjacent hardening in the same rules: lastMoveAt must be preserved or
-   freshly stamped (rewind-to-legacy is a cooldown bypass, denied).
+   freshly stamped (rewind is a cooldown bypass, denied).
 
    Six-month cloud purge, no backend (Spark has no billing-gated
    backend: Cloud Functions deploys require Blaze, and TTL policy is
@@ -236,14 +236,14 @@ What still holds without it (all offline, all tested):
   the offline double-pkD audit (`findDoublePkD` / `auditDoublePkD`):
   a copied identity used on two installs leaves a permanent,
   attributable trace in the synced bindings.
-- Live marking works on both shapes: legacy unbound proofs verify
-  exactly as before, and bound-NONE proofs (what every genuine mobile
-  student sends today) confirm via the flagged fallback — same
-  ticket-bound `Sig_s`, face, org, sighting and channel-binding gates,
-  only the device tier skipped. FULL/STD confirmation is reserved for the
-  HW keys that earn it; until they ship, the binding story is the ticket
-  binding + fallback flag + double-pkD audit, not a hard NONE gate (which
-  stranded all live marking — see fix note 2026-09-08).
+- Live marking is fresh-only: unbound proofs never confirm
+  (`liveness-unbound`), and bound proofs claiming level NONE never confirm
+  (`device-none-requires-approval` → manual path, never a mark). FULL/STD
+  confirmation is reserved for HW keys that earn it (fresh `dSig` + ticket
+  binding + leaf-pkD bind + chain-vs-pinned-roots + face/org/sighting/
+  channel-binding gates); the binding story is the ticket binding + hard
+  NONE gate + double-pkD audit. (Pre-fresh fallback history: fix note
+  2026-09-08; removed full-fresh 2026-09-13, sec-legacy series.)
 
 Remains (scoped feature work, not stubs): on-device HW key production
 by the keystore/Enclave track (the step that makes FULL/STD mean
@@ -355,7 +355,7 @@ enrollment, marking, and the SK-use stamp. Backend is the
   professor SEES both faces); custom clients can omit/garbage vectors
   (evasion only — transplanting another's vector merely self-flags, and
   the face ticket + Sig_s crypto is untouched); proofs without vectors
-  (legacy) mark normally with no dup participation.
+  (vector-less custom clients) mark normally with no dup participation.
 
 ---
 
@@ -836,8 +836,9 @@ one-liner idioms and intentional seams (below).
    Passive MiniFASNetV2 + 5 pose gates raise spoof cost but a good print/
    replay at each angle can still pass. Behind it: 4-mismatch budget →
    needs-review → human override, 5-min holder gate, cross-ticket replay
-   impossible, server `requireLivenessEnforced=true` (protocol default false
-   for migration). Calibrate via §13.5 before tightening.
+   impossible, server `requireLivenessEnforced=true` (always enforced —
+   liveness is a confirm-gate with no opt-out). Calibrate via §13.5
+   before tightening.
 2. **Device trust is HW-backed but still client-asserted TOFU at first join
    (§3.4).** `HwDeviceKey` ships (StrongBox→TEE / Secure Enclave,
    `attested_secure_keys ^0.1.1`, PXK2 AES-GCM, offline chain pin incl. full

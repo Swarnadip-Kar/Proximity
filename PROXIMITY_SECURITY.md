@@ -7,15 +7,20 @@
 
 ---
 
-## 1. Audit — flaws in the current system
+## 1. Audit — flaws in the original system (all fixed; kept as history)
 
-### F1 — Raw `seedHex` at rest + XOR seal (CRITICAL)
+> Status 2026-09-13 (sec-legacy series, full-fresh): F1 sealed-only
+> (`seedHex` wiped, AAD-bound HW envelopes, raw branches deleted);
+> F2 closed (offline chain-vs-pinned-roots + leaf-pkD bind, NONE/unbound
+> never confirm). Findings below describe the pre-hardening system.
+
+### F1 — Raw `seedHex` at rest + XOR seal (CRITICAL, FIXED)
 - `packages/.../store_base.dart:22 StoredEnrollment.seedHex`, `core/enrollment.dart:741` writes `seedHex:hexEncode(seed)` **always**, even when `sealedKeyHex` exists.
 - `core/enrollment.dart:308 _tryRestore` legacy raw branch; `core/student_driver.dart:753 _prove` raw fallback.
 - `features/face_identity/device_key.dart:156 SoftwareDeviceKey.seal()` is XOR-with-pubkey, not AES-GCM. `SoftwareDeviceKey` is production, `level==none`.
 - Effect: copy `prox.enrollment.v1` + prefs → full clone. Backup/restore clones identity. Fix: §2 + §3.
 
-### F2 — Self-asserted attestation (HIGH)
+### F2 — Self-asserted attestation (HIGH, FIXED)
 - Design §3.4 honest: no chain verification anywhere. `attestationLevel` written by client in `firestore_sync.dart:claimStudentDevice:426`, trusted by `protocol/device_binding.dart:evaluateDeviceProof` + `crypto/verify.dart:verifyProve`.
 - Patched client claims `FULL` with software key. Only mitigations today: `device-none-fallback` flag + `audit-double-pkD` + ticket binding. Fix: §2 (HW keys + offline chain-vs-pinned-roots).
 
@@ -72,7 +77,7 @@
 
 **New file:** `lib/core/security/secure_store_options.dart` (`aOpts/iOpts` constants above).
 
-**Diffs:** `secure_store.dart:30` → `FlutterSecureStorage(aOptions:aOpts,iOptions:iOpts)`; `AndroidManifest.xml: application android:allowBackup="false" android:fullBackupContent="false"`; iOS `Info.plist: NSFaceIDUsageDescription + kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Migration: SE-read → if old-default hit, SE-write → old-delete; log `SEC migrate ok`; never dual-retain.
+**Diffs:** `secure_store.dart:30` → `FlutterSecureStorage(aOptions:aOpts,iOptions:iOpts)`; `AndroidManifest.xml: application android:allowBackup="false" android:fullBackupContent="false"`; iOS `Info.plist: NSFaceIDUsageDescription + kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Migration (completed one-time): SE-read → if old-default hit, SE-write → old-delete; log `SEC migrate ok`; never dual-retain.
 
 ## 4. Face liveness (`LivenessGate`)
 
@@ -125,17 +130,17 @@ share_plus: ^13.3.0 # (was ^12: same win32 split)
 file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
 ```
 
-**Migration order:** (1) deploy rules + `app_config` doc; (2) ship dual-read build (new fields default `''/NONE`); (3) first online open: SE migration + `seedHex→''` wipe + heartbeat rolls `attestedUntil`; (4) stale-pipeline → re-face only (key kept); (5) software enrollments → `Software=no enroll` + re-enroll via `MoveIntent` fast path. No wipe, no cloud face backfill.
+**Migration order (completed; full-fresh since 2026-09-13):** (1) deploy rules + `app_config` doc; (2) ship dual-read build (new fields default `''/NONE`); (3) first online open: SE migration + `seedHex→''` wipe + heartbeat rolls `attestedUntil`; (4) stale-pipeline → re-face only (key kept); (5) software enrollments → `Software=no enroll` + re-enroll via `MoveIntent` fast path. No wipe, no cloud face backfill. The sec-legacy series then deleted every grace (org/backfill/NONE-fallback/empty-AAD/pk-fallback): org-less, tier-less, and AAD-less artifacts deny fail-closed, never migrate.
 
 **Tests:** protocol goldens (old sigs must fail on extended preimage); `evaluateDeviceProof` chain-pinning units; SE migration test; `LivenessGate` fake (spoof→`faceFailed`); `IntegrityGate` fake (rooted enroll blocks, marking flags); `force_update` fake (stale→barrier); `rules-drill` emulator for new fields; 2-phone relay + adversarial drill (forwarded code, VPN, lent phone, photo spoof, wormhole).
 
-**Verification log (2026-09-12, `Security-Enhancement`):** suites green — protocol 138, transport 51, storage 12, ble 35, app 983 (`flutter test`, incl. new `liveness_attestation`, `secure_store_options`, `force_update`, `integrity_gate`, `liveness_gate` cases). Live rules drill 8/8 vs Firestore emulator (`apps/proximity_app/rules-drill/sec-drill.mjs`, `@firebase/rules-unit-testing`): valid claim allows; `attestationChain:string`, `integrityFlag:'evil'`, `livenessVer:number` deny; same-device `integrity-flagged` update allows; legacy field-less claim allows; `app_config` unauth get allows, list denies. Drill needs JDK 21 for firebase-tools (system Temurin 17 rejected — portable JDK via `api.adoptium.net/v3/binary/latest/21/ga/mac/aarch64/jdk/hotspot/normal/eclipse`, point `JAVA_HOME` at it; 200 MB, deleted after the run, re-fetch to re-drill).
+**Verification log (2026-09-12, `Security-Enhancement`):** suites green — protocol 138, transport 51, storage 12, ble 35, app 983 (`flutter test`, incl. new `liveness_attestation`, `secure_store_options`, `force_update`, `integrity_gate`, `liveness_gate` cases). Live rules drill 8/8 vs Firestore emulator (`apps/proximity_app/rules-drill/sec-drill.mjs`, `@firebase/rules-unit-testing`): valid claim allows; `attestationChain:string`, `integrityFlag:'evil'`, `livenessVer:number` deny; same-device `integrity-flagged` update allows; minimal field-less claim allows (security fields optional-with-type-lock; org/installId/stamps always required); `app_config` unauth get allows, list denies. Drill needs JDK 21 for firebase-tools (system Temurin 17 rejected — portable JDK via `api.adoptium.net/v3/binary/latest/21/ga/mac/aarch64/jdk/hotspot/normal/eclipse`, point `JAVA_HOME` at it; 200 MB, deleted after the run, re-fetch to re-drill).
 
-**`requireLiveness` migration (shipped default `false`):** liveness-carrying proofs are always gated; pre-liveness face-bound proofs still confirm (no liveness claimed) so live marking + old builds keep working while liveness clients roll out. Flip to `true` (server `requireLiveness`) together with the liveness-required `min_version` bump + `unknown-liveness-verifier` allowlist deploy — then pre-liveness fails `liveness-unbound`, never a silent downgrade. Post-rollout test pins the closed behavior; migration test pins the open default.
+**`requireLiveness` (always enforced, no opt-out):** the bound path requires a non-zero liveness score + allowlisted `livenessVer` (`server requireLivenessEnforced=true`); pre-liveness proofs fail `liveness-unbound`, never a silent downgrade. Pre-fresh history: shipped default `false` during rollout, flipped with the liveness-required `min_version` bump; closed behavior pinned by tests. Full-fresh 2026-09-13: no legacy path remains.
 
 **Verification log (2026-09-13, `sec-docs` close-out):** code landed by sibling tracks, docs closed here — (a) X.509 full verify (`chain_verify.dart` + `verifyAttestationChainPin` step 6, pure-Dart, no platform adapter); (b) App Check 0.4.x provider-class migration (`IntegrityAppCheck` provider constants + `ensureActivated()` call shape, `firebase_app_check ^0.4.7`); STRONG enforce runbook verified present in `integrity.dart` `IntegrityAppCheck` docs (commit `7de0d2e`); (c) CRL snapshot wired (`RevocationCache`, `core/enrollment.dart:724` + `core/host_driver.dart:412`, TTL 7d). Open work is field/console-only: Tl uncalibrated, CRL snapshot-only, Magisk console steps — see residual risks. No thresholds changed, no FAR/FRR numbers claimed.
 
-**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required; hide-resistance close-out is console-side: Play Console SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump, requires console access); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; during the `requireLiveness:false` window a photo-spoof passes the liveness gate by absence (face/ticket/radio gates still apply) — bounded by the min_version flip; `Tl=0.70` uncalibrated (FAR/FRR unmeasured — calibration needs field captures: live + print/replay, varied light/phones, ROC sweep via `sweepTl`/`recommendTl`/`formatCalibrationTable` in `apps/proximity_app/test/liveness_calibration_test.dart`; ships only as threshold + `kLivenessVer` + `min_version` bump); CRL is snapshot-only offline (true push revocation needs a backend, excluded by Spark-free — stale/revoked stay review flags).
+**Residual risks:** rooted live-hook can observe plaintext at use time (HW raises to live-hook cost); integrity heuristics bypassable by Magisk/Zygisk (never sole gate — HW `dSig` still required; hide-resistance close-out is console-side: Play Console SHA-256/bundleID → Play Integrity `DEVICE→STRONG` + App Attest → App Check Monitor→Enforce → `min_version` bump, requires console access); twins flag dup (1-tap override); wormhole with real-time accomplice + live face needs UWB to close; first-join TLS TOFU relies on `Sig_p` + channel binding; in-memory rate limits reset on prof restart; liveness is always gated (no opt-out window remains — a photo-spoof must beat the live gate plus face/ticket/radio gates); `Tl=0.70` uncalibrated (FAR/FRR unmeasured — calibration needs field captures: live + print/replay, varied light/phones, ROC sweep via `sweepTl`/`recommendTl`/`formatCalibrationTable` in `apps/proximity_app/test/liveness_calibration_test.dart`; ships only as threshold + `kLivenessVer` + `min_version` bump); CRL is snapshot-only offline (true push revocation needs a backend, excluded by Spark-free — stale/revoked stay review flags).
 
 ---
 

@@ -17,8 +17,8 @@
 // one-way (published template-inversion reconstructs recognizable faces
 // from such vectors), but the blast radius is one classroom LAN for one
 // window — the professor already sees every face physically — and RAM
-// lifetime is minutes. Proofs without vectors (legacy) mark normally
-// with no dup participation; custom clients can omit/garbage vectors
+// lifetime is minutes. Proofs without vectors (vector-less custom
+// clients) mark normally with no dup participation; custom clients can omit/garbage vectors
 // (evasion only: transplanting another holder's vector merely self-flags,
 // and the Sig_s face-ticket crypto is untouched).
 //
