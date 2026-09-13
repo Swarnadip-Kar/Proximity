@@ -203,12 +203,17 @@ VerifyOutcome verifyProve({
   required bool singleUseOk, // (ID,j) unseen
   DateTime? nowOverride,
   bool requireBoundTicket = false,
-  // Security §4 migration: false (default) accepts pre-liveness
-  // face-bound proofs without a liveness gate — live marking + existing
-  // tests keep working while sec-liveness wires the client. Proofs that
-  // DO carry liveness fields are always gated. Flip to true with the
-  // liveness-required min_version bump (then pre-liveness fails
-  // `liveness-unbound`, never a silent downgrade).
+  // Security §4 migration grace (PROXIMITY_SECURITY.md:121-123): false
+  // (default) accepts pre-liveness face-bound proofs without a liveness
+  // gate — live marking + existing tests keep working while liveness
+  // clients roll out. Proofs that DO carry liveness fields are always
+  // gated (allowlist + >= Tl on BOTH the NONE fallback and FULL/STD
+  // paths), never silently downgraded.
+  // TODO(sec-face): flip default to true together with the
+  // liveness-required min_version bump + `unknown-liveness-verifier`
+  // allowlist deploy — then pre-liveness fails `liveness-unbound`, never
+  // a silent downgrade. Post-rollout test pins the closed behavior;
+  // migration test pins the open default.
   bool requireLiveness = false,
 }) {
   final now = (nowOverride ?? req.now).toUtc();
