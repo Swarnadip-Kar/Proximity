@@ -307,8 +307,7 @@ class SyncEngine {
                       profUid: prof.uid,
                       profEmail: prof.email,
                       profName: prof.name,
-                      record: r,
-                      profOrg: prof.org)
+                      record: r)
                   .timeout(const Duration(seconds: 10));
               pushed++;
             } catch (e) {
@@ -465,8 +464,7 @@ class SyncEngine {
                 profUid: prof.uid,
                 profEmail: prof.email,
                 profName: prof.name,
-                record: merged,
-                profOrg: prof.org)
+                record: merged)
             .timeout(const Duration(seconds: 10));
         acked.add(p.id);
       } catch (e) {

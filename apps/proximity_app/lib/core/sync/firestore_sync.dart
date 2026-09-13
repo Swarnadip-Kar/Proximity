@@ -215,8 +215,7 @@ class FirestoreCloudSync implements CloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record,
-      String? profOrg}) async {
+      required ClassRecord record}) async {
     _needAvailable();
     try {
       await _db
@@ -227,8 +226,7 @@ class FirestoreCloudSync implements CloudSync {
                   profUid: profUid,
                   profEmail: profEmail,
                   profName: profName,
-                  record: record,
-                  profOrg: profOrg),
+                  record: record),
               SetOptions(merge: true))
           .timeout(const Duration(seconds: 8));
     } on FirebaseException catch (e) {

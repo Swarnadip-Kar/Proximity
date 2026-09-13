@@ -195,8 +195,7 @@ Map<String, dynamic> sessionToDoc(
     {required String profUid,
     required String profEmail,
     required String profName,
-    required ClassRecord record,
-    String? profOrg}) {
+    required ClassRecord record}) {
   final emails = record.allEmails.map((e) => e.toLowerCase()).toList()..sort();
   // Session org = the stamped record org, immutable on update. Full-fresh:
   // no prof-org fallback — an unstamped record writes '' and rules deny

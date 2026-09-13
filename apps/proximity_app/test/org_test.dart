@@ -127,22 +127,8 @@ void main() {
           profUid: 'u',
           profEmail: 'p@other.edu',
           profName: 'P',
-          record: r,
-          profOrg: 'other.edu');
+          record: r);
       expect(d['org'], 'univ.edu');
-    });
-
-    test('explicit profOrg never stamps legacy records (ignored)', () {
-      // Full-fresh: profOrg is retained for API stability but ignored —
-      // the stamped record org is the only thing written.
-      final r = ClassRecord(classLabel: 'c', dateIso: '2026-01-01');
-      final d = sessionToDoc(
-          profUid: 'u',
-          profEmail: 'p@univ.edu',
-          profName: 'P',
-          record: r,
-          profOrg: 'hd.edu');
-      expect(d['org'], '');
     });
 
     test('docToRecord round-trips org (tolerant of missing)', () {

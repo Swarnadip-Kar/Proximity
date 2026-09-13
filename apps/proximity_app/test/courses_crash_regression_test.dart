@@ -118,6 +118,8 @@ void main() {
             ],
             names: const {'student@example.com': 'Test User'},
             rolls: const {'student@example.com': 'R1'},
+            // Fresh-cloud fixture: production saves always stamp org.
+            org: 'example.com',
           ),
         );
       }

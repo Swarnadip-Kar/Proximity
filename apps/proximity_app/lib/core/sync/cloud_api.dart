@@ -92,8 +92,7 @@ abstract class CloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record,
-      String? profOrg});
+      required ClassRecord record});
   Future<List<ClassRecord>> pullProfSessions(String profUid,
       {String org = ''});
   Future<List<ClassRecord>> pullStudentSessions(String emailLower,

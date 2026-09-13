@@ -340,38 +340,16 @@ class FakeCloudSync implements CloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record,
-      String? profOrg}) async {
+      required ClassRecord record}) async {
     _needOnline();
-    // Session org immutable on update: a stamped doc keeps its org.
-    final prev = sessions[record.id];
-    final prevOrg = prev?['org'] as String? ?? '';
-    final wantOrg = record.org.isNotEmpty
-        ? record.org
-        : (prevOrg.isNotEmpty
-            ? prevOrg
-            : ((profOrg != null && profOrg.isNotEmpty)
-                ? profOrg
-                : orgOf(profEmail)));
-    final stamped = wantOrg.isNotEmpty && record.org != wantOrg
-        ? ClassRecord(
-            id: record.id,
-            courseId: record.courseId,
-            classLabel: record.classLabel,
-            dateIso: record.dateIso,
-            timestampIso: record.timestampIso,
-            startIso: record.startIso,
-            windows: record.windows,
-            names: record.names,
-            rolls: record.rolls,
-            org: wantOrg)
-        : record;
+    // Full-fresh mirror of the real push: the stamped record org is
+    // written verbatim (no fallback) — org-less writes land org-less
+    // here and deny against the real rules.
     sessions[record.id] = sessionToDoc(
         profUid: profUid,
         profEmail: profEmail,
         profName: profName,
-        record: stamped,
-        profOrg: wantOrg);
+        record: record);
   }
 
   @override

@@ -29,6 +29,8 @@ import 'package:proximity_storage/storage.dart';
 
 const _email = 'student@example.com';
 
+/// Fresh-cloud fixture: production saves always stamp org, so pushed
+/// records carry it (no silent server/fake fallback stamps org-less rows).
 ClassRecord _rec(String id, String course, String date, String stamp) =>
     ClassRecord(
       id: id,
@@ -42,6 +44,7 @@ ClassRecord _rec(String id, String course, String date, String stamp) =>
       ],
       names: const {_email: 'Student One'},
       rolls: const {_email: '10000001'},
+      org: 'example.com',
     );
 
 /// Cloud-originated edge shape: `docToRecord` defaults a missing dateIso to

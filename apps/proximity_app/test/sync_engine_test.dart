@@ -39,8 +39,7 @@ class FlakyCloud extends FakeCloudSync {
       {required String profUid,
       required String profEmail,
       required String profName,
-      required ClassRecord record,
-      String? profOrg}) async {
+      required ClassRecord record}) async {
     pushes++;
     pushOrder.add(record.id);
     if (pushes == failOnPush) {
@@ -50,8 +49,7 @@ class FlakyCloud extends FakeCloudSync {
         profUid: profUid,
         profEmail: profEmail,
         profName: profName,
-        record: record,
-        profOrg: profOrg);
+        record: record);
   }
 }
 
@@ -169,8 +167,7 @@ void main() {
         record: rec('s1', 'CS201', '2026-09-01T10:00:00.000Z',
             '2026-09-01T11:00:00.000Z',
             w1: {'bob@univ.edu': true},
-            names: {'bob@univ.edu': 'Bob'}),
-        profOrg: 'univ.edu');
+            names: {'bob@univ.edu': 'Bob'}));
     final res = await engine.flush(store: store, cloud: cloud, prof: prof);
     expect(res.online, isTrue);
     // Pure LWW would have kept only bob; union keeps BOTH marks.
@@ -259,8 +256,7 @@ void main() {
         profName: 'Prof',
         record: rec('old2', 'CS201', '2026-08-02T10:00:00.000Z',
             '2026-08-02T10:05:00.000Z',
-            org: ''),
-        profOrg: '');
+            org: ''));
     legacyDoc.remove('org');
     cloud.sessions['old2'] = legacyDoc;
     final res = await engine.flush(store: store, cloud: cloud, prof: prof);
