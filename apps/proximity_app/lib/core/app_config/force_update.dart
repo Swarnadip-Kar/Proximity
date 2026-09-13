@@ -28,6 +28,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Remote doc model: `app_config/min_version`.
 class ForceUpdateConfig {
@@ -156,13 +157,26 @@ class ForceUpdate {
   static const configCollection = 'app_config';
   static const configDoc = 'min_version';
 
-  /// H6 last-known floor cache (Spark-free, in-memory): the last verified
-  /// floor + fetch time. Updated on every verified [checkNow]; enforced
-  /// offline by [checkNow]/[checkCached] so a pinned old build cannot dodge
-  /// the floor by staying offline after seeing it once. Structure only
+  /// H6 last-known floor cache (Spark-free, memory + disk): the last
+  /// verified floor + fetch time. Updated on every verified [checkNow] and
+  /// persisted to SharedPreferences so a restart can never forget a floor
+  /// it already saw (a pinned old APK cannot dodge the floor by restarting
+  /// offline). Enforced offline by [checkNow]/[checkCached]. Structure only
   /// (version strings + timestamps) — no sealed bytes involved.
   static ForceUpdateConfig? _lastFloor;
   static DateTime? _lastFetchedAt;
+  static bool _hydrated = false;
+
+  /// Prefs keys for the disk-backed floor (survives restart; cleared only
+  /// by reinstall or an explicit fresh verified no-floor read).
+  static const prefsPrefix = 'prox.forceFloor.v1';
+  static const prefsMinKey = '$prefsPrefix.minVersion';
+  static const prefsLatestKey = '$prefsPrefix.latest';
+  static const prefsForceKey = '$prefsPrefix.force';
+  static const prefsMsgKey = '$prefsPrefix.msg';
+  static const prefsAndroidKey = '$prefsPrefix.storeAndroid';
+  static const prefsIosKey = '$prefsPrefix.storeIos';
+  static const prefsAtKey = '$prefsPrefix.fetchedAtMillis';
 
   /// Last verified floor (null until the first verified read).
   static ForceUpdateConfig? get lastKnownFloor => _lastFloor;
@@ -172,13 +186,114 @@ class ForceUpdate {
       ? null
       : (_lastFetchedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true));
 
-  /// Test seam: seed/clear the last-known floor cache.
+  /// Test seam: seed/clear the last-known floor cache (memory only; tests
+  /// that need disk behaviour use [persistFloorForTest]/[hydrateCachedFloor]
+  /// with a fake prefs backend via [prefsForTest]).
   static void debugSeedFloorForTest(ForceUpdateConfig? config,
       {DateTime? fetchedAt}) {
     _lastFloor = config;
     _lastFetchedAt = config == null
         ? null
         : (fetchedAt ?? DateTime.now()).toUtc();
+    _hydrated = true;
+  }
+
+  /// Test seam: inject a SharedPreferences backend (unit tests).
+  static SharedPreferences? _prefsForTest;
+  static void debugPrefsForTest(SharedPreferences? prefs) {
+    _prefsForTest = prefs;
+  }
+
+  /// Test seam: simulates an app restart — drops the memory cache and the
+  /// hydrated flag while KEEPING the disk backend, so the next
+  /// [hydrateCachedFloor]/[checkNow] must re-read the persisted floor.
+  /// Proves a pinned old build cannot dodge the floor by restarting.
+  static void debugSimulateRestartForTest() {
+    _lastFloor = null;
+    _lastFetchedAt = null;
+    _hydrated = false;
+  }
+
+  static Future<SharedPreferences?> _prefs() async {
+    if (_prefsForTest != null) return _prefsForTest;
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Best-effort disk write of a verified floor (never throws — marking
+  /// stays offline-capable even when prefs are unavailable).
+  static Future<void> _persistFloor(
+      ForceUpdateConfig config, DateTime at) async {
+    try {
+      final p = await _prefs();
+      if (p == null) return;
+      await p.setString(prefsMinKey, config.minVersion);
+      await p.setString(prefsLatestKey, config.latest);
+      await p.setBool(prefsForceKey, config.force);
+      await p.setString(prefsMsgKey, config.message);
+      await p.setString(prefsAndroidKey, config.storeAndroid);
+      await p.setString(prefsIosKey, config.storeIos);
+      await p.setInt(
+          prefsAtKey, at.toUtc().millisecondsSinceEpoch);
+    } catch (_) {}
+  }
+
+  /// Best-effort disk clear (verified no-floor read: the server withdrew
+  /// the floor — forget it on purpose, never by restart).
+  static Future<void> _clearPersistedFloor() async {
+    try {
+      final p = await _prefs();
+      if (p == null) return;
+      await p.remove(prefsMinKey);
+      await p.remove(prefsLatestKey);
+      await p.remove(prefsForceKey);
+      await p.remove(prefsMsgKey);
+      await p.remove(prefsAndroidKey);
+      await p.remove(prefsIosKey);
+      await p.remove(prefsAtKey);
+    } catch (_) {}
+  }
+
+  /// Hydrates the memory cache from disk (call once at startup before the
+  /// first gate; idempotent). A floor seen before a restart is enforced
+  /// after it — the pinned-APK restart bypass is closed.
+  static Future<void> hydrateCachedFloor() async {
+    if (_hydrated) return;
+    _hydrated = true;
+    try {
+      final p = await _prefs();
+      if (p == null) return;
+      final min = (p.getString(prefsMinKey) ?? '').trim();
+      if (min.isEmpty) return;
+      _lastFloor = ForceUpdateConfig(
+        minVersion: min,
+        latest: p.getString(prefsLatestKey) ?? '',
+        force: p.getBool(prefsForceKey) ?? false,
+        message: p.getString(prefsMsgKey) ?? '',
+        storeAndroid: p.getString(prefsAndroidKey) ?? '',
+        storeIos: p.getString(prefsIosKey) ?? '',
+      );
+      final at = p.getInt(prefsAtKey) ?? 0;
+      _lastFetchedAt = at > 0
+          ? DateTime.fromMillisecondsSinceEpoch(at, isUtc: true)
+          : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    } catch (_) {}
+  }
+
+  /// Synchronous gate for offline marking paths (student prove, host
+  /// window, enroll): true when the DISK+memory cached floor affirmatively
+  /// blocks [currentVersion]. Callers refuse with the "update required"
+  /// copy instead of attempting crypto that would fail as cryptic
+  /// bad-sig/liveness-unbound. Never throws; false when no floor is known.
+  static bool cachedFloorBlocks(String currentVersion) {
+    try {
+      return checkCached(currentVersion: currentVersion).updateRequired;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Offline verdict against the cached floor: verified-stale + force
@@ -250,6 +365,7 @@ class ForceUpdate {
     Future<PackageInfo> Function()? packageInfoLoader,
     Duration timeout = const Duration(seconds: 10),
   }) async {
+    await hydrateCachedFloor();
     late final String current;
     try {
       final info = packageInfoLoader != null
@@ -257,6 +373,18 @@ class ForceUpdate {
           : await PackageInfo.fromPlatform();
       current = info.version;
     } catch (_) {
+      // Version lookup failed: still enforce a known-stale disk floor
+      // (fail-closed on unknown build vs mandated floor) instead of
+      // passing blind — an unreadable version never clears a floor.
+      final cached = checkCached(currentVersion: '');
+      if (cached.updateRequired) {
+        return ForceUpdateResult(
+          checked: true,
+          updateRequired: true,
+          currentVersion: '',
+          config: cached.config,
+        );
+      }
       return const ForceUpdateResult(
         checked: false,
         updateRequired: false,
@@ -287,13 +415,20 @@ class ForceUpdate {
         currentVersion: current,
         config: ForceUpdateConfig.fromMap(data),
       );
-      // Cache every verified read (floor or no-floor) with its fetch time.
+      // Cache every verified read (floor or no-floor) with its fetch time,
+      // memory + disk (restart-surviving).
       _lastFloor = result.config;
       _lastFetchedAt = DateTime.now().toUtc();
+      if (result.config != null && result.config!.minVersion.isNotEmpty) {
+        await _persistFloor(result.config!, _lastFetchedAt!);
+      } else {
+        await _clearPersistedFloor();
+      }
       return result;
     } catch (_) {
-      // Transport failure: enforce the cached floor when it blocks (H6),
-      // else unchecked (marking stays offline-capable on first-ever run).
+      // Transport failure: enforce the cached (disk-backed) floor when it
+      // blocks (H6), else unchecked (marking stays offline-capable on
+      // first-ever run).
       final cached = checkCached(currentVersion: current);
       if (cached.updateRequired) return cached;
       return ForceUpdateResult(

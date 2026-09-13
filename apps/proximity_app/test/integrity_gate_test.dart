@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/app_config/force_update.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeProbe implements IntegrityProbe {
   final IntegritySignals signals;
@@ -277,7 +278,32 @@ void main() {
 
     test('unchecked (offline/missing floor) never throws', () async {
       // Offline marking preserved: only a VERIFIED floor blocks.
+      ForceUpdate.debugSeedFloorForTest(null);
       await entryRequireFreshBuild(checkNow: () async => unchecked());
+    });
+
+    test('unchecked + disk-cached floor still blocks (H6 restart-safe)',
+        () async {
+      // A floor seen once (persisted to disk) blocks offline launches even
+      // when the live read is unchecked — the pinned-APK bypass stays
+      // closed across restarts.
+      SharedPreferences.setMockInitialValues({});
+      ForceUpdate.debugPrefsForTest(
+          await SharedPreferences.getInstance());
+      addTearDown(() {
+        ForceUpdate.debugPrefsForTest(null);
+        ForceUpdate.debugSeedFloorForTest(null);
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(ForceUpdate.prefsMinKey, '0.2.0');
+      await prefs.setBool(ForceUpdate.prefsForceKey, true);
+      ForceUpdate.debugSimulateRestartForTest();
+      await ForceUpdate.hydrateCachedFloor();
+      expect(
+        entryRequireFreshBuild(checkNow: () async => unchecked()),
+        throwsA(isA<StateError>().having(
+            (e) => e.message, 'message', contains('too old'))),
+      );
     });
 
     test('live checkNow degrades to unchecked in tests (never throws)',

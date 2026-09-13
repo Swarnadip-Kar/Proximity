@@ -351,12 +351,15 @@ Future<IntegrityVerdict> entryMarkingIntegrity() async {
 /// Verified-stale + `force: true` throws StateError with update copy (UI
 /// surfaces `message`, same as every other entry refusal). Unchecked
 /// (offline, missing floor doc, unreadable build, or a hung read past
-/// [timeout]) NEVER throws — marking stays offline-capable; only a
-/// verified floor blocks. The timeout also bounds blackhole networks (the
-/// Firestore `.get()` inside checkNow has no deadline of its own) and the
-/// widget-test harness (unmocked platform channels there never answer).
-/// Injectable [checkNow] for tests (production uses [ForceUpdate.checkNow],
-/// which reads AFTER App Check activation — see main.dart ordering).
+/// [timeout]) falls back to the DISK-backed cached floor: a build that saw
+/// the floor once stays blocked across restarts and offline launches (the
+/// pinned-APK bypass stays closed); a build that NEVER saw a floor passes
+/// (first-ever offline run stays capable). The timeout also bounds
+/// blackhole networks (the Firestore `.get()` inside checkNow has no
+/// deadline of its own) and the widget-test harness (unmocked platform
+/// channels there never answer). Injectable [checkNow] for tests
+/// (production uses [ForceUpdate.checkNow], which reads AFTER App Check
+/// activation — see main.dart ordering).
 Future<void> entryRequireFreshBuild({
   Future<ForceUpdateResult> Function()? checkNow,
   Duration timeout = const Duration(seconds: 10),
@@ -368,8 +371,13 @@ Future<void> entryRequireFreshBuild({
     res = await pending.timeout(timeout);
   } catch (_) {
     // checkNow never throws by contract — timeouts, channel failures and
-    // belt-and-braces all land here as "unverified, keep going".
-    return;
+    // belt-and-braces all land here: fall through to the cached floor
+    // below (a known-stale floor still blocks; unknown passes).
+    res = const ForceUpdateResult(
+      checked: false,
+      updateRequired: false,
+      currentVersion: '',
+    );
   }
   if (res.checked && res.updateRequired) {
     final floor = res.config?.minVersion.trim() ?? '';
@@ -380,6 +388,23 @@ Future<void> entryRequireFreshBuild({
         'This version of Proximity is too old to continue safely'
         '${floor.isEmpty ? '' : ' (needs $floor)'} — '
         'update the app, then try again.');
+  }
+  if (!res.checked && !res.updateRequired) {
+    // Offline/unverified path: enforce the restart-surviving cached floor
+    // (H6). No cached floor (first-ever run) passes — marking stays
+    // offline-capable until the floor is seen once.
+    final cachedBlocks =
+        ForceUpdate.cachedFloorBlocks(res.currentVersion);
+    if (cachedBlocks) {
+      final floor =
+          ForceUpdate.lastKnownFloor?.minVersion.trim() ?? '';
+      BleLog.log('SEC',
+          'stale build (cached floor${floor.isEmpty ? '' : ' $floor'}) — update required');
+      throw StateError(
+          'This version of Proximity is too old to continue safely'
+          '${floor.isEmpty ? '' : ' (needs $floor)'} — '
+          'connect to the internet and update the app, then try again.');
+    }
   }
 }
 

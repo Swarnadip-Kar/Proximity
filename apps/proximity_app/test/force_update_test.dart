@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:proximity_app/core/app_config/force_update.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 ForceUpdateConfig floor({
   String minVersion = '0.2.0',
@@ -22,6 +23,20 @@ ForceUpdateConfig floor({
     );
 
 void main() {
+  setUp(() async {
+    // Disk-backed floor cache (H6): widget/unit tests have no prefs plugin
+    // — the mock backend keeps checkNow's hydration synchronous-fast.
+    SharedPreferences.setMockInitialValues({});
+    ForceUpdate.debugPrefsForTest(
+        await SharedPreferences.getInstance());
+    ForceUpdate.debugSeedFloorForTest(null);
+  });
+
+  tearDown(() {
+    ForceUpdate.debugPrefsForTest(null);
+    ForceUpdate.debugSeedFloorForTest(null);
+  });
+
   group('compareVersions', () {
     test('equal, build metadata, and segment-length forms', () {
       expect(compareVersions('0.1.0', '0.1.0'), 0);
@@ -224,6 +239,34 @@ void main() {
       );
       expect(result.checked, isFalse);
       expect(result.updateRequired, isFalse);
+    });
+
+    test('cached floor survives a restart and blocks offline (H6)',
+        () async {
+      // A verified online read persists the floor the way checkNow does
+      // (same prefs contract); a restart then re-hydrates it from disk.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(ForceUpdate.prefsMinKey, '0.2.0');
+      await prefs.setString(ForceUpdate.prefsLatestKey, '0.3.0');
+      await prefs.setBool(ForceUpdate.prefsForceKey, true);
+      await prefs.setString(ForceUpdate.prefsMsgKey, 'Please update');
+      await prefs.setInt(ForceUpdate.prefsAtKey,
+          DateTime.now().toUtc().millisecondsSinceEpoch);
+      // Restart: memory drops, disk keeps the floor.
+      ForceUpdate.debugSimulateRestartForTest();
+      expect(ForceUpdate.lastKnownFloor, isNull);
+      await ForceUpdate.hydrateCachedFloor();
+      expect(ForceUpdate.lastKnownFloor?.minVersion, '0.2.0');
+      expect(ForceUpdate.lastKnownFloor?.force, isTrue);
+      final afterRestart =
+          ForceUpdate.checkCached(currentVersion: '0.1.0');
+      expect(afterRestart.checked, isTrue);
+      expect(afterRestart.updateRequired, isTrue);
+      // Fresh builds still pass against the same floor.
+      expect(
+        ForceUpdate.checkCached(currentVersion: '0.3.0').updateRequired,
+        isFalse,
+      );
     });
 
     test('unreadable floor is unchecked, never blocking', () async {
