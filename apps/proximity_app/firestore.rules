@@ -214,7 +214,10 @@ service cloud.firestore {
     // sending certs; rules lock the container type, offline verifiers
     // check the content vs pinned roots). integrityFlag is closed to the
     // two known values; new flags ship with a rules deploy + min_version
-    // bump together, never silently.
+    // bump together, never silently. pkDHex/attestationLevel/window are
+    // likewise type-locked when present (a mistyped level/window would
+    // otherwise throw the readers' `as String?`/`as num?` casts or poison
+    // the offline tier gate — fail the write, never the read path).
     function validSecurityFields() {
       return (!('attestationChain' in request.resource.data) ||
           request.resource.data.attestationChain is list) &&
@@ -222,7 +225,15 @@ service cloud.firestore {
           request.resource.data.livenessVer is string) &&
         (!('integrityFlag' in request.resource.data) ||
           request.resource.data.integrityFlag == '' ||
-          request.resource.data.integrityFlag == 'integrity-flagged');
+          request.resource.data.integrityFlag == 'integrity-flagged') &&
+        (!('pkDHex' in request.resource.data) ||
+          request.resource.data.pkDHex is string) &&
+        (!('attestationLevel' in request.resource.data) ||
+          request.resource.data.attestationLevel is string) &&
+        (!('attestedAtMillis' in request.resource.data) ||
+          request.resource.data.attestedAtMillis is int) &&
+        (!('attestedUntilMillis' in request.resource.data) ||
+          request.resource.data.attestedUntilMillis is int);
     }
     match /studentDevices/{id} {
       // Doc id IS the lowercased Gmail (client writes it so): the owner can
