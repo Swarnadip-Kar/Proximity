@@ -3,6 +3,25 @@
 // face_verifier.dart includes THIS file on native and
 // face_verifier_plugin_stub.dart on web. No logic lives here that the
 // stub does not mirror as fail-closed.
+//
+// M1 threshold notes (Spark-free, no behavior change):
+//   - distances unavailable: the plugin returns identity only (matched id
+//     or null), never an embedding distance — a match carries the decision
+//     threshold as its score (honest boundary value; the host re-checks
+//     score >= T=0.70). No FAR/FRR is quoted: T is the plugin default,
+//     UNCALIBRATED on Proximity captures — field ROC required per
+//     `test/liveness_calibration_test.dart` (`sweepTl`/`recommendTl`) before
+//     changing T or claiming rates (same procedure as Tl).
+//   - unified still-readability gates (fail closed BEFORE scoring, same
+//     outcome as the liveness native gate — different layer, same law):
+//     empty path → blank; missing file → unreadable; zero-byte → blank;
+//     tiny/corrupt frames and non-image magic surface as detector throws
+//     mapped to the same rescan-safe StateErrors below (never a pass).
+//     The gate in `face_gate.dart` never sees an unreadable still.
+//   - budgets: [verifyTimeout] (10s, ML Kit detect + FaceNet + compare) +
+//     [initTimeout] (30s, one-time model/store load); past budget the call
+//     fails closed as a rescan-safe error (driver maps to inconclusive,
+//     burns nothing), never a hang, never a pass.
 library;
 
 import 'dart:async';
@@ -198,8 +217,11 @@ class PluginFaceVerifier implements FaceVerifier {
     // here is a conservative non-match that never auto-presents.)
     final match = hit != null && hit == faceId;
     // Plugin returns identity only, not a distance: carry the decision
-    // boundary on match (see face_verifier.dart header — honest, host
-    // re-checks).
+    // boundary on match (see file header + face_verifier.dart header —
+    // honest, host re-checks score >= T). A measured distance is
+    // unavailable by plugin contract, so the boundary is kept with this
+    // note rather than an invented similarity; field ROC (see header) is
+    // the procedure that may move T, never a constant tweak.
     return FaceVerifyResult(score: match ? threshold : 0.0, match: match);
   }
 

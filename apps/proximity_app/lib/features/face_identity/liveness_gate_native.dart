@@ -27,6 +27,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -104,6 +105,14 @@ class HeuristicLivenessGate implements LivenessGate {
   /// tiny frames and non-image magic throw here as rescan-safe StateErrors
   /// the driver maps to inconclusive (rescan path, burns nothing), never a
   /// pass. Decode/model failures below throw the same way.
+  ///
+  /// M1 unified size gates (same fail-closed law as the plugin verifier —
+  /// different layer, same outcome; both documented here so field review
+  /// sees one contract): empty path → blank; missing file → unreadable;
+  /// <4096B → blank (no intact phone still is smaller — corrupt write, not
+  /// a holder); non JPEG/PNG magic → unreadable (camera stills are always
+  /// one of these); decode <8px → blank. The `face_gate.dart` threshold
+  /// gate never sees an unreadable still from either caller.
   Future<Uint8List> _readStillBytes(String imagePath) async {
     if (imagePath.trim().isEmpty) {
       throw StateError(
@@ -150,6 +159,17 @@ class HeuristicLivenessGate implements LivenessGate {
   /// Decode to raw RGBA at 160px (fast: ~25k px; the pure packer below
   /// nearest-neighbours to 80). Throws StateError when the bytes do not
   /// decode (fail-closed, same mapping as above).
+  ///
+  /// M1 EXIF seam (documented, no behavior change): `instantiateImageCodec`
+  /// decodes raw pixels WITHOUT applying EXIF orientation, while the ML Kit
+  /// bbox runs on the oriented file — a rotated still (rare from the front
+  /// camera, possible on remounted files) maps the box onto unrotated
+  /// pixels. The mapping helper nulls out on invalid geometry and the pass
+  /// falls back to the centre-square crop (same scorer + Tl), so the seam
+  /// degrades to fallback, never to a mis-scored pass. DI note: the whole
+  /// pass races the shared [budget] deadline (1200ms default — the marking
+  /// hot path is ~1s; bbox + decode + load + score share it, never stacked
+  /// per-stage timeouts).
   static Future<({Uint8List rgba, int width, int height})> _decodeRgba(
       Uint8List bytes) async {
     late final ui.Image img;
@@ -314,6 +334,13 @@ class HeuristicLivenessGate implements LivenessGate {
           // a mapping surprise must still fall back, never fail the pass.
           faceBox = null;
         }
+        // M1 box-vs-fallback log: field review must tell which crop scored
+        // (same scorer + same Tl either way — the Tl gate stays the decider;
+        // the plugin returns identity only, so the vitality score below is
+        // the gate output, never a distance). Logged per still alongside the
+        // callers' score lines (enroll self-check + marking face check).
+        debugPrint(
+            'liveness crop=${faceBox == null ? 'fallback-centre' : 'box'} frame=${frame.width}x${frame.height}');
         final input = minifasnetInputFromRgba(
           rgba: frame.rgba,
           width: frame.width,

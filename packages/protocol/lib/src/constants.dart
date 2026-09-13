@@ -58,7 +58,9 @@ const int kJitterMinMs = 10;
 const int kJitterMaxMs = 220;
 
 /// Face match threshold on the `face_verification` plugin (FaceNet TFLite)
-/// scale. 0.70 = plugin default, calibrated for FAR ~0.01% / FRR <2%.
+/// scale. 0.70 = plugin default, UNCALIBRATED on Proximity captures —
+/// uncalibrated, field ROC required per liveness_calibration_test procedure
+/// before quoting any FAR/FRR (no invented numbers).
 /// The old 0.60/0.80 EdgeFace-XS cosine numbers MUST NOT be reused: the
 /// vendored EdgeFace pipeline is deleted (Tracks 2+3) and its embedding
 /// space is incomparable with the plugin's FaceNet space.
