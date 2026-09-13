@@ -61,6 +61,25 @@ import 'device_store.dart';
 import 'platformx.dart';
 import 'security/revocation_cache.dart';
 
+/// Enroll side-slot liveness bar (app-local policy, NOT a ticket break).
+/// The protocol Tl ([kLivenessThreshold] = 0.85) stays the decider for the
+/// frontal centre still — the documented vitality decider, re-checked at
+/// every marking — and for all marking proofs. The four diversity slots
+/// (left/right/up/down) exist for template diversity + sustained presence
+/// across the walked order; tilted captures systematically score lower
+/// (field 2026-09-13 genuine: centre 0.90, left 0.95, right 0.89, up 0.79 —
+/// foreshortened boxes pull in more background at the 2.7x crop), so gating
+/// all five at 0.85 fails ~1 genuine enrollment in 4 on vitality alone
+/// (joint 5/5 pass ≈ 0.75^5). 0.70 keeps anti-spoof margin on every measured
+/// probe (moire-replay 0.026, recapture-blur 0.243, uniform ≤0.31 — the
+/// uniform-64 0.76 outlier cannot reach this gate without a face: the Euler
+/// pose check above aborts faceless stills first) while passing the field
+/// genuine tilted range. Changing this constant breaks nothing on the wire
+/// (the enroll claim carries only the pipeline tag [kLivenessVer], never a
+/// score); lowering [kLivenessThreshold] itself would be a ticket break
+/// (ver bump + min_version floor, never silent).
+const double kEnrollSideLivenessThreshold = 0.70;
+
 enum EnrollPhase {
   signedOut,
   signedIn,
@@ -646,11 +665,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     // presence via the PoseGate when wired (null reading = unreadable or
     // anything but exactly one face → slot-naming abort, never a pass);
     // (2) passive liveness via detectPassive (throw/unreadable → error,
-    // rescan, nothing stored; below Tl → error as a readable non-live
-    // still / spoof). Gallery untouched on any failure either way.
+    // rescan, nothing stored; below the per-slot bar → error as a readable
+    // non-live still / spoof). Gallery untouched on any failure either way.
     // Opaque-bytes rule: embeddings/sealed blobs are never decrypted or
     // interpreted here — only presence (face present), shape (5 slots) and
-    // score plumbing (liveness >= Tl) gate the enroll.
+    // score plumbing (liveness >= bar: Tl for centre,
+    // [kEnrollSideLivenessThreshold] for the diversity slots) gate the enroll.
     // Scoring order + challenge order ride the decision log (BleLog FACE)
     // plus a debugPrint of the per-still box-vs-fallback path note: the
     // liveness gate crops the face box with a legacy centre-square
@@ -704,14 +724,18 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         return;
       }
       // Box-vs-fallback path note (M1): the gate picks face-box vs
-      // centre-square internally (same scorer + Tl); log per-still that the
+      // centre-square internally (same scorer); log per-still that the
       // vitality gate ran (the path itself is inside the gate — no silent
-      // downgrade, Tl stays the decider).
+      // downgrade). Bar is per-slot: centre holds the strict protocol Tl
+      // (the vitality decider), diversity slots hold [kEnrollSideLivenessThreshold].
+      final bar = slot == 'centre'
+          ? kLivenessThreshold
+          : kEnrollSideLivenessThreshold;
       debugPrint(
-          'enroll liveness scored slot=$slot score=${live.score.toStringAsFixed(2)} ver=${live.ver} (box-vs-fallback path inside gate, same Tl)');
-      if (live.score < kLivenessThreshold) {
+          'enroll liveness scored slot=$slot score=${live.score.toStringAsFixed(2)} bar=${bar.toStringAsFixed(2)} ver=${live.ver} (box-vs-fallback path inside gate)');
+      if (live.score < bar) {
         BleLog.log('SEC',
-            'enroll liveness FAIL slot=$slot score=${live.score.toStringAsFixed(2)}');
+            'enroll liveness FAIL slot=$slot score=${live.score.toStringAsFixed(2)} bar=${bar.toStringAsFixed(2)}');
         _slotFail(slot,
             'The $slot capture did not look live (possible photo or screen) — hold still in good light and recapture just that angle.');
         return;

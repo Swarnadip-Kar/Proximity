@@ -269,7 +269,16 @@ void main() {
       }
     });
 
-    test('exactly one face maps euler angles through', () async {
+    test('file yaw is mirrored to holder-perspective (front camera)',
+        () async {
+      // The takePicture file is unmirrored while the holder follows a
+      // mirrored preview, so file-space yaw has the opposite sign of the
+      // holder's own left/right (field 2026-09-13: turning to YOUR left
+      // filled the RIGHT bucket). Here the fake detector reports
+      // file-space -20 (a turn to the holder's own right); the gate must
+      // surface holder-space +20 — the convention EnrollPoseWindows
+      // speaks (right = positive). Pitch/roll are mirror-invariant and
+      // pass through untouched.
       final det = _FakeDetector()
         ..script = () async => [_face(yaw: -20, pitch: 5, roll: 2)];
       final gate = MlkitPoseGate(detector: det);
@@ -277,10 +286,25 @@ void main() {
       try {
         final reading = await gate.readPose(path);
         expect(reading, isNotNull);
-        expect(reading!.yaw, -20);
+        expect(reading!.yaw, 20);
         expect(reading.pitch, 5);
         expect(reading.roll, 2);
         expect(det.calls, 1);
+      } finally {
+        await File(path).delete();
+      }
+    });
+
+    test('null file yaw stays null (never a silent accept)', () async {
+      final det = _FakeDetector()
+        ..script = () async => [_face(yaw: null, pitch: 5, roll: 2)];
+      final gate = MlkitPoseGate(detector: det);
+      final path = await _realStill();
+      try {
+        final reading = await gate.readPose(path);
+        expect(reading, isNotNull);
+        expect(reading!.yaw, isNull);
+        expect(reading.pitch, 5);
       } finally {
         await File(path).delete();
       }

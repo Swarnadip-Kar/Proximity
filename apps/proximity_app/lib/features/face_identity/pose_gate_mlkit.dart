@@ -47,8 +47,14 @@ class MlkitPoseGate implements PoseGate {
   }) : _detector = detector ??
             FaceDetector(
               options: FaceDetectorOptions(
-                enableLandmarks: true,
-                enableContours: true,
+                // Landmarks/contours are never consumed (pose needs Euler
+                // angles + the liveness gate needs the box only) — leaving
+                // them on only spams logcat (`Unknown landmark type`) on
+                // detectors whose landmark enum is newer than the plugin's,
+                // plus wasted native latency per still.
+                enableLandmarks: false,
+                enableContours: false,
+                // Accurate mode stays: Euler Y is only guaranteed there.
                 performanceMode: FaceDetectorMode.accurate,
               ),
             );
@@ -81,8 +87,18 @@ class MlkitPoseGate implements PoseGate {
     requireMobileFace();
     final face = await _detect(imagePath);
     if (face == null) return null;
+    // Front-camera mirror correction (field-verified 2026-09-13: turning
+    // to YOUR left filled the RIGHT bucket): the enrollment camera is the
+    // front lens and takePicture stills are stored unmirrored, while the
+    // preview the holder follows is mirrored. ML Kit reports yaw in file
+    // space, so file-space yaw has the opposite sign of the holder's own
+    // left/right. Negating here converts to holder-perspective yaw —
+    // the convention [EnrollPoseWindows]/[EnrollBucketFill] and every
+    // canonical test vector already use (left = negative). Pitch/roll are
+    // unaffected by a horizontal mirror and pass through untouched.
+    final fileYaw = face.headEulerAngleY;
     return PoseReading(
-      yaw: face.headEulerAngleY,
+      yaw: fileYaw == null ? null : -fileYaw,
       pitch: face.headEulerAngleX,
       roll: face.headEulerAngleZ,
     );

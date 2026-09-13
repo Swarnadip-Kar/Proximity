@@ -44,12 +44,16 @@ class PoseDecision {
 
 /// Per-slot head-pose windows in ML Kit degrees (pure, no native calls).
 ///
-/// ML Kit semantics (verified against the ML Kit face-detection docs +
-/// google_mlkit_face_detection 0.15.1 Face model): yaw (Y) positive = facing
-/// the camera's right, negative = facing left; pitch (X) positive = facing
-/// up, negative = facing down. Euler Y is guaranteed only in accurate mode —
-/// the ML Kit impl below uses accurate mode (same options as the plugin's
-/// own detector). Null yaw/pitch (detector could not estimate) fails closed.
+/// Yaw convention is HOLDER-perspective throughout this file (negative =
+/// the holder's own left, positive = the holder's own right), matching the
+/// on-screen prompts ("turn to your left"). The raw ML Kit file-space yaw
+/// has the opposite sign on front-camera stills (unmirrored file vs
+/// mirrored preview), so [MlkitPoseGate] negates it at the backend boundary;
+/// everything downstream ([EnrollPoseWindows.check], [EnrollBucketFill],
+/// [FakePoseGate] vectors) speaks holder-perspective only. Pitch (X)
+/// positive = facing up, negative = facing down (mirror-invariant). Euler Y
+/// is guaranteed only in accurate mode — the ML Kit impl below uses accurate
+/// mode. Null yaw/pitch (detector could not estimate) fails closed.
 abstract final class EnrollPoseWindows {
   /// Max |yaw|/|pitch| for the frontal slot (near-frontal throughout).
   static const centreDeg = 12.0;

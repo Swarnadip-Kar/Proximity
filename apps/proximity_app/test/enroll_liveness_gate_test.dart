@@ -3,7 +3,9 @@
 // - Spoof (low liveness, matching face) → error, gallery untouched, no
 //   save (the claimed livenessVer is measured, never self-asserted).
 // - Liveness throw/unreadable → error, nothing stored, no save.
-// - Threshold boundary: exactly Tl passes, just below fails.
+// - Threshold boundary: exactly Tl passes, just below fails (centre).
+// - Per-slot bars: centre holds strict Tl, diversity slots hold the
+//   relaxed kEnrollSideLivenessThreshold (field tilted-genuine 0.79).
 // - C4: the gate runs on ALL 5 stills in slot order (fail-closed per
 //   still) — success pins all 5 were measured; a first-still spoof still
 //   aborts at the centre slot with the gallery untouched.
@@ -36,6 +38,42 @@ Future<EnrollmentController> _keyReady({
   required FakeLivenessGate liveness,
 }) async {
   final ctl = _ctl(verifier: verifier, liveness: liveness);
+  await ctl.signIn();
+  await ctl.generateKey();
+  return ctl;
+}
+
+/// Per-still scripted vitality: FakeLivenessGate returns one constant for
+/// every still, but the enroll bar is per-slot (strict centre, relaxed
+/// sides) — this gate pops one score per detectPassive call in slot order
+/// (centre, left, right, up, down), falling back to the last score.
+class _ScriptedLivenessGate implements LivenessGate {
+  final List<double> scores;
+  final List<String> calls = [];
+  _ScriptedLivenessGate(this.scores);
+
+  @override
+  Future<LivenessResult> detectPassive(String imagePath) async {
+    calls.add(imagePath);
+    final s = scores[calls.length <= scores.length
+        ? calls.length - 1
+        : scores.length - 1];
+    return LivenessResult(score: s, ver: kLivenessVer);
+  }
+}
+
+Future<EnrollmentController> _keyReadyScripted({
+  required FakeFaceVerifier verifier,
+  required _ScriptedLivenessGate liveness,
+}) async {
+  final ctl = EnrollmentController(
+    auth: FakeAuthService(const SignedAccount(
+        email: 's@x.in', displayName: 'S', uid: 'u1')),
+    store: InMemoryDeviceStore(),
+    verifier: verifier,
+    deviceKey: FakeDeviceKey(),
+    livenessGate: liveness,
+  );
   await ctl.signIn();
   await ctl.generateKey();
   return ctl;
@@ -113,6 +151,66 @@ void main() {
       // C4: every enrolled still carries a measured vitality score —
       // scoring order is slot order (centre, left, right, up, down).
       expect(live.calls, _stills);
+    });
+  });
+
+  group('per-slot bars (strict centre, relaxed diversity slots)', () {
+    test('field genuine spread passes: 0.90/0.95/0.89/0.79/0.88', () async {
+      // 2026-09-13 field enrollment scored centre 0.90, left 0.95, right
+      // 0.89, up 0.79 against a flat 0.85 bar and failed on up. The up
+      // still is genuine vitality (same holder, same light) — tilted
+      // captures systematically score lower.
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live =
+          _ScriptedLivenessGate([0.90, 0.95, 0.89, 0.79, 0.88]);
+      final ctl = await _keyReadyScripted(
+          verifier: verifier, liveness: live);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(live.calls, _stills);
+    });
+
+    test('centre stays strict: 0.84 centre fails despite live sides',
+        () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live =
+          _ScriptedLivenessGate([0.84, 0.95, 0.95, 0.95, 0.95]);
+      final ctl = await _keyReadyScripted(
+          verifier: verifier, liveness: live);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.lastFailedSlot, 'centre');
+      expect(
+          verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
+    });
+
+    test('side bar boundary: 0.70 passes a side, 0.69 fails it', () async {
+      for (final s in [kEnrollSideLivenessThreshold, 0.69]) {
+        final verifier = FakeFaceVerifier(match: true, score: 0.9);
+        // Centre strict-passes; the up slot probes the side boundary.
+        final live = _ScriptedLivenessGate([0.95, 0.95, 0.95, s, 0.95]);
+        final ctl = await _keyReadyScripted(
+            verifier: verifier, liveness: live);
+        await ctl.enrollFace(_stills);
+        if (s >= kEnrollSideLivenessThreshold) {
+          expect(ctl.state.phase, EnrollPhase.faceDone,
+              reason: 'side liveness=$s vs side bar');
+        } else {
+          expect(ctl.state.phase, EnrollPhase.error,
+              reason: 'side liveness=$s vs side bar');
+          expect(ctl.lastFailedSlot, 'up');
+        }
+      }
+    });
+
+    test('spoof still fails every slot at the relaxed bar', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.9);
+      final live = FakeLivenessGate(score: 0.31);
+      final ctl =
+          await _keyReady(verifier: verifier, liveness: live);
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.error);
+      expect(ctl.lastFailedSlot, 'centre');
     });
   });
 
