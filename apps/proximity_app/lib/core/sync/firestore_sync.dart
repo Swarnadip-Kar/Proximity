@@ -565,6 +565,13 @@ class FirestoreCloudSync implements CloudSync {
             binding.installId.isNotEmpty &&
             binding.installId == installId;
         if (!pkSame && !instSame) return; // moved away: never touch
+        // Security §2/§7 heartbeat scope: this touch bumps lastSeen/updated
+        // ONLY (merge:true preserves pkDHex/level/window + attestationChain/
+        // livenessVer/integrityFlag untouched). attestedUntil rolls via the
+        // local DeviceKey.heartbeat() before the next claimStudentDevice
+        // (enroll/move/re-key rewrites the window); a touch never extends
+        // the window without the device in hand, and MoveIntent/30d-cooldown
+        // live in the claim verdict only (see claim.dart) — untouched here.
         tx.set(devRef, {
           'lastSeenAtMillis': at.millisecondsSinceEpoch,
           'updatedAtMillis': at.millisecondsSinceEpoch,
