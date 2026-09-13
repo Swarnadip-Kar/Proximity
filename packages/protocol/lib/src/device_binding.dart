@@ -356,6 +356,12 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
 ///    `unsupported-key` / `issuer-mismatch`. Skipped only when
 ///    [verifySignatures] is false (pin-pre-gate unit tests; production
 ///    callers MUST leave it true — no silent downgrades).
+/// 7. optional leaf-pkD bind: when [expectedLeafPkD] is non-null, the
+///    leaf EC SPKI (structure-only via `extractLeafEcPublicKeyRaw`, no
+///    decryption) must equal it — else `leaf-pkd-mismatch`. This is the
+///    pkD bind: the enrollment challenge (V1/V2) binds email+installId+
+///    pkS (the SKey), NOT pkD — pkD enters trust only through this leaf
+///    check plus the fresh dSig over the prove preimage.
 ///
 /// [pinnedRootHashes] are raw 32-byte SHA-256 digests of trusted root DERs
 /// (TOFU→pin-check: first online fetch pins, offline verifies against the
@@ -388,6 +394,7 @@ ChainPinResult verifyAttestationChainPin({
   required AttestationLevel level,
   bool requireKeyOid = true,
   bool verifySignatures = true,
+  Uint8List? expectedLeafPkD,
 }) {
   if (level == AttestationLevel.none) {
     return const ChainPinResult(
@@ -409,6 +416,18 @@ ChainPinResult verifyAttestationChainPin({
         ok: false,
         reason: 'missing-attestation-oid',
         flags: ['attest-missing-oid']);
+  }
+  // C2 leaf-pkD bind (structure-only SPKI compare, no decryption): the
+  // challenge binds pkS, so without this an attacker could transplant a
+  // valid chain from another device onto their pkD. Runs before the
+  // challenge gate so a key transplant fails as key mismatch, not challenge.
+  if (expectedLeafPkD != null && expectedLeafPkD.isNotEmpty) {
+    if (!leafPkDEquals(leaf, expectedLeafPkD)) {
+      return const ChainPinResult(
+          ok: false,
+          reason: 'leaf-pkd-mismatch',
+          flags: ['attest-leaf-pkd-mismatch']);
+    }
   }
   if (expectedChallenge.isEmpty ||
       !attestationLeafContainsChallenge(leaf, expectedChallenge)) {
@@ -434,7 +453,7 @@ ChainPinResult verifyAttestationChainPin({
   return const ChainPinResult(ok: true, reason: 'ok');
 }
 
-/// M1-gap enrollment challenge (security §2, canonical):
+/// M1-gap enrollment challenge (security §2, canonical V1):
 /// SHA256(emailLower || installId || pkS32).
 ///
 /// Binds the key to the Gmail + install at enrollment without a server
@@ -444,6 +463,20 @@ ChainPinResult verifyAttestationChainPin({
 /// The OS attestation record embeds this challenge; the offline professor
 /// re-computes it and checks leaf containment via
 /// [verifyAttestationChainPin].
+///
+/// BINDING SCOPE (C2): this challenge binds the SKey (pkS), NOT the DKey
+/// (pkD). pkD enters trust only via the leaf-SPKI check
+/// (`expectedLeafPkD` → `leaf-pkd-mismatch` in
+/// [verifyAttestationChainPin]) plus the fresh dSig over the prove
+/// preimage — never via this hash. A chain transplant across devices fails
+/// the leaf check even when the challenge matches.
+///
+/// V1 framing is a bare concat (no lengths, no domain separation), so
+/// `email="ab"+install="c"` and `email="a"+install="bc"` can collide at
+/// the concat layer before hashing. New enrollments MUST prefer
+/// [deviceBindingChallengeV2]; V1 stays byte-identical for already-issued
+/// chains and is accepted during migration via [verifyAttestationChainPin]'s
+/// [alternateChallenge] (V2 in `expectedChallenge`, V1 as alternate).
 Uint8List deviceBindingChallenge({
   required String emailLower,
   required String installId,
@@ -454,6 +487,47 @@ Uint8List deviceBindingChallenge({
       utf8.encode(installId),
       pkS,
     ]));
+
+/// Domain tag for [deviceBindingChallengeV2] (M4 cross-protocol separation:
+/// this hash verifies only as a Proximity device-binding challenge).
+const String kDeviceBindingChallengeDomain = 'PROX-DHK-BIND/v1';
+
+Uint8List _u16be(int v) {
+  final b = ByteData(2)..setUint16(0, v & 0xFFFF, Endian.big);
+  return b.buffer.asUint8List();
+}
+
+/// Enrollment challenge V2 (preferred): domain-separated + length-prefixed.
+///
+/// `SHA256(domain || u16be(len(email)) || email || u16be(len(installId)) ||
+/// installId || u16be(len(pkS)) || pkS)` where `email` is trimmed +
+/// lowercased UTF-8, `domain` is [kDeviceBindingChallengeDomain]. The length
+/// prefixes remove V1's concat ambiguity and the domain tag stops a hash
+/// minted for another protocol from verifying as a binding challenge.
+///
+/// Compatibility: V1 ([deviceBindingChallenge]) output is unchanged; the
+/// professor accepts either during migration — pass V2 as `expectedChallenge`
+/// and V1 as `alternateChallenge` to [verifyAttestationChainPin] (prefer
+/// new). The leaf check stays opaque byte-containment (HARD REQUIREMENT:
+/// sealed/attestation bytes are never decrypted or interpreted — only
+/// structure, lengths, signatures, bindings are verified).
+Uint8List deviceBindingChallengeV2({
+  required String emailLower,
+  required String installId,
+  required Uint8List pkS,
+}) {
+  final emailB = utf8.encode(emailLower.trim().toLowerCase());
+  final installB = utf8.encode(installId);
+  return ProxCrypto.sha256Sync(concat([
+    utf8.encode(kDeviceBindingChallengeDomain),
+    _u16be(emailB.length),
+    emailB,
+    _u16be(installB.length),
+    installB,
+    _u16be(pkS.length),
+    pkS,
+  ]));
+}
 
 /// Legacy attestation challenge (pre-M1-gap):
 /// SHA256(serverNonce || emailLower || installId || pkS32).

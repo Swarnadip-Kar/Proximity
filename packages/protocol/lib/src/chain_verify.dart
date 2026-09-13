@@ -208,6 +208,57 @@ ChainSigResult verifyChainSignaturesLeafFirst(List<Uint8List> certsDer) {
   return const ChainSigResult(ok: true, reason: 'ok');
 }
 
+// -- Leaf SPKI extraction (C2: pkD bind, structure-only) -------------------
+
+/// Extracts the leaf's raw EC public key (x||y, 64B for P-256) without
+/// decrypting or interpreting attestation content.
+///
+/// Structure-only parse of the leaf SPKI (lengths + OIDs + uncompressed
+/// point shape): returns null for non-EC leaves, compressed points, or
+/// malformed DER — callers fail closed. Never decrypts sealed bytes.
+Uint8List? extractLeafEcPublicKeyRaw(Uint8List leafDer) {
+  try {
+    final parsed = _parseCert(leafDer);
+    final spki = parsed.spki;
+    if (spki.algOid != _spkiEc) return null;
+    if (spki.ecX == null || spki.ecY == null) return null;
+    // P-256 only for the pkD bind (P-384/P-521 leaves return null and the
+    // caller fails closed as mismatch — no silent truncation).
+    if (spki.curveOid != _curveP256) return null;
+    Uint8List be(BigInt v, int len) {
+      final hex = v.toRadixString(16).padLeft(len * 2, '0');
+      if (hex.length != len * 2) return Uint8List(0);
+      final out = Uint8List(len);
+      for (var i = 0; i < len; i++) {
+        out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+      }
+      return out;
+    }
+
+    final x = be(spki.ecX!, 32);
+    final y = be(spki.ecY!, 32);
+    if (x.length != 32 || y.length != 32) return null;
+    return Uint8List.fromList([...x, ...y]);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Constant-time equality of the leaf EC SPKI against an expected pkD.
+///
+/// [expectedPkD] is the 64B raw x||y P-256 device key. Returns false on
+/// length mismatch, non-EC leaves, or parse failure — never throws.
+bool leafPkDEquals(Uint8List leafDer, Uint8List expectedPkD) {
+  if (expectedPkD.length != 64) return false;
+  final raw = extractLeafEcPublicKeyRaw(leafDer);
+  if (raw == null || raw.length != expectedPkD.length) return false;
+  var acc = 0;
+  for (var i = 0; i < raw.length; i++) {
+    acc |= raw[i] ^ expectedPkD[i];
+  }
+  return acc == 0;
+}
+
 // -- Parsing --------------------------------------------------------------
 
 class _UnsupportedSigAlg implements Exception {}
