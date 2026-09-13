@@ -48,6 +48,7 @@ import 'auth.dart';
 import 'cloud_sync.dart';
 import 'device_store.dart';
 import 'platformx.dart';
+import 'security/revocation_cache.dart';
 
 enum EnrollPhase {
   signedOut,
@@ -715,6 +716,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   'Student enrollment needs internet (one enrolled device per Gmail is checked online). Connect and tap Save again — your face capture is kept.');
           return null;
         }
+        // One-time online CRL snapshot refresh (security §2 residual):
+        // Firestore-independent HTTPS, best-effort, never blocks the claim
+        // (failure degrades to the `revocation-stale` review flag — see
+        // core/security/revocation_cache.dart). Fire-and-forget on purpose:
+        // offline marking never waits on it.
+        unawaited(RevocationCache.refreshBestEffort());
         // Pre-claim verdict-by-evidence (before the transaction): a
         // cross-org second-account enroll is denied at the install-doc
         // READ, so the transaction could never see the evidence and would

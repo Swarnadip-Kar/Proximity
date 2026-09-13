@@ -31,6 +31,7 @@ import '../features/entry/entry_flow.dart' show entryHostIntegrity;
 import 'device_store.dart';
 import 'net_if.dart';
 import 'platformx.dart' as platformx;
+import 'security/revocation_cache.dart';
 import 'sync/roles.dart';
 
 class HostSession {
@@ -404,6 +405,11 @@ class RealHostDriver implements HostDriver {
             'host integrity flagged (${hv.flagForMarking}) → ${hv.hash} — hosting continues, student verdicts carry their own hashes');
       }
     } catch (_) {}
+    // One-time online CRL snapshot refresh (security §2 residual):
+    // Firestore-independent HTTPS, best-effort, never blocks hosting
+    // (failure degrades to the `revocation-stale` review flag — see
+    // core/security/revocation_cache.dart). Hosting stays offline-capable.
+    unawaited(RevocationCache.refreshBestEffort());
     final stored = await _store.readEnrollment();
     String manual = '';
     try {
@@ -855,7 +861,10 @@ class RealHostDriver implements HostDriver {
   /// current rules). The chain-vs-pinned-Google-roots + challenge-match
   /// gate runs per prove inside the server; clone pairs surface post-hoc
   /// via `findDoublePkD` on synced bindings (TOFU→pin-check on mismatch
-  /// is manual review until a roster source exists).
+  /// is manual review until a roster source exists). CRL freshness rides
+  /// alongside as the advisory `revocation-stale` flag (see
+  /// `core/security/revocation_cache.dart` — refreshed at host setup,
+  /// never blocking) — same review screen, never auto-absent offline.
   void _applyIntegrityFlag(String email, String reason) {
     if (!isIntegrityFlaggedReason(reason)) return;
     final me = email.trim().toLowerCase();

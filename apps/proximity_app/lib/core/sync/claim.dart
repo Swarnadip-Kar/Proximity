@@ -434,6 +434,14 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
 // by non-empty pkDHex; every pkD shared by 2+ distinct Gmails is a
 // clone-or-shared-device signal for professor review. Pure — the sync
 // layer calls it after pulling studentDevices and surfaces the groups.
+//
+// Companion review signal (security §2 residual): the offline CRL snapshot
+// cache (`core/security/revocation_cache.dart`) contributes the advisory
+// `revocation-stale` flag (`RevocationCache.flagFor` / `reviewFlagsFor` —
+// stale/missing snapshot, fail-open, never blocks marking). Professor
+// review shows both together: `findDoublePkD` groups (clone signal) +
+// the revocation flag (CRL freshness signal) + the ticket anomaly flags —
+// presence is never changed offline because of either.
 Map<String, List<String>> findDoublePkD(
     Map<String, StudentDeviceDoc> devices) {
   final byPkD = <String, List<String>>{};

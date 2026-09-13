@@ -21,9 +21,23 @@ dependencies:
   # Firebase via FlutterFire (project: proximity-attendence).
   # Auth + Firestore: sign-in on Android/iOS/macOS; Windows/Linux builds
   # run offline-only (see AuthService.available + main fail-soft).
-  firebase_core: ^3.8.0
-  firebase_auth: ^5.3.3
-  cloud_firestore: ^5.5.0
+  # Firebase-major 4.x set (migrated 2026-09-13, sec-deps): firebase_core
+  # 4.x ships the Android BOM 34 / iOS SDK 12 native bump only — the Dart
+  # surface used here (initializeApp, authStateChanges, signInWithCredential,
+  # Firestore get/set/batch/runTransaction) is unchanged, so auth.dart and
+  # firestore_sync.dart needed no code changes. firebase_auth 6.x removals
+  # (fetchSignInMethodsForEmail, User.updateEmail, Dynamic Links, legacy
+  # MicrosoftAuthProvider.credential) and firestore 6.x removals
+  # (databaseURL, Settings.persistenceEnabled, setIndexConfiguration) are
+  # all APIs this app never called (verified by grep pre-migration).
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.9.0
+  # google_sign_in stays 6.x BY DECISION (not oversight): 7.x replaces the
+  # GoogleSignIn(scopes:) + signIn()/authentication/signOut() surface that
+  # auth.dart uses with the instance/initialize/authenticate event API — a
+  # separate auth-rewrite track. 6.x has no firebase_core pin so it
+  # resolves cleanly beside core 4.x.
   google_sign_in: ^6.2.2
   path_provider: ^2.1.4
   ed25519_edwards: ^0.3.1
@@ -79,17 +93,20 @@ dependencies:
   attested_secure_keys: ^0.1.1
   # §5 integrity deps (owned by sec-integrity — other tracks request via 2C,
   # never edit here directly).
-  # firebase_app_check PINNED to ^0.3.2+10, NOT ^0.4.7 (evaluated 2026-09-13):
-  # 0.4.0 is BREAKING — removes deprecated fns + bumps Android SDK to 34 /
-  # iOS SDK to 12, and 0.4.1+1 deprecates the `androidProvider` /
-  # `appleProvider` enum params that integrity.dart calls
-  # (`AndroidProvider.playIntegrity` / `AppleProvider.deviceCheck`) in favor
-  # of provider classes (`AppleAppAttestProvider`, rCE provider API). 0.4.x
-  # also requires firebase_core ^4.14.0 (repo pins ^3.8.0). Upgrading needs
-  # a Firebase-major bump + activate() rewrite + full test pass — deferred
-  # until the Firebase 4.x migration. integrity_gate_test pins the 0.3.x
-  # enum call shape, so drift fails review.
-  firebase_app_check: ^0.3.2+10
+  # firebase_app_check ^0.4.7 (migrated 2026-09-13 with the Firebase 4.x set,
+  # sec-appcheck): 0.4.0 removed nothing this app calls but DEPRECATED the
+  # `androidProvider` / `appleProvider` enum params in favor of provider
+  # classes — integrity.dart now activates with
+  # `providerAndroid: AndroidPlayIntegrityProvider()` +
+  # `providerApple: AppleAppAttestWithDeviceCheckFallbackProvider()` (App
+  # Attest where the OS floor allows, DeviceCheck fallback below it; the
+  # iOS-14+/macOS-14+ Attest floor from the old DeviceCheck-default note is
+  # now covered by the fallback instead of blocking the upgrade). 0.4.x
+  # requires firebase_core ^4.14.0, which is why the two bumps ship together.
+  # No token-TTL knob exists in the 0.4.x Dart API (TTL is a console-side
+  # token setting) — the 8s fail-soft activate budget in integrity.dart is
+  # the only timing contract and is unchanged.
+  firebase_app_check: ^0.4.7
   # flutter_security_suite PINNED to ^1.1.1. Do NOT add advanced_root_detection:
   # equivalent coverage already here — isRooted covers RootBeer/su +
   # jailbreak reads, isRuntimeHooked covers Frida/Xposed/instrumentation, and
