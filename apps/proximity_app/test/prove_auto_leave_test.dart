@@ -8,14 +8,15 @@
 // server's waiting count drops with zero extra requests (this test never
 // calls leaveWaiting). Rewaits re-register via their normal presence POST.
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/student_driver.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
+
+import 'test_device.dart';
 
 void main() {
   test('prove auto-leaves the server waiting room with zero extra requests',
@@ -23,19 +24,9 @@ void main() {
     const email = 's@x.in';
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final store = InMemoryDeviceStore();
-    // Sealed-only fixture (security §2): DKey-sealed envelope, never raw.
-    await store.writeEnrollment(StoredEnrollment(
-      email: email,
-      name: 'S',
-      roll: '1',
-      seedHex: '',
-      pkHex: 'cd' * 32,
-      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-      faceId: 'face-test-id',
-      enrolledAt: DateTime.now().toUtc(),
-      verifierVer: kFaceVerifierVer,
-    ));
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
+    final hw = await freshHwDevice(email: email, seedBytes: seed, salt: 92);
+    final store = await hwEnrolledStore(email: email, hw: hw);
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -45,7 +36,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -62,9 +55,12 @@ void main() {
       final driver = RealStudentDriver(
         store: store,
         verifier: FakeFaceVerifier(),
-        deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await driver.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       final target = ClassBeacon(
         classLabel: 't',
         host: '127.0.0.1',
@@ -94,7 +90,14 @@ void main() {
       final receipt = await driver.listenAndProve(
         target: target,
         identity: identity,
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(receipt.result, StudentResult.marked);

@@ -7,33 +7,27 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
-import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
+import 'test_device.dart';
+
 const _email = 's@x.in';
 
-/// Sealed-only fixture (security §2): DKey-sealed envelope, never raw seed.
-Future<InMemoryDeviceStore> _enrolled() async {
-  final s = InMemoryDeviceStore();
-  final sealed = hexEncode(await FakeDeviceKey()
-      .seal(Uint8List.fromList(hexDecode('ab' * 32))));
-  await s.writeEnrollment(StoredEnrollment(
+/// Fresh-device fixture (security §2, full-fresh): HW test device (real
+/// P-256 dSig + AAD-sealed envelope) + FULL store.
+Future<({InMemoryDeviceStore store, TestHwDevice hw})> _enrolled() async {
+  final hw = await freshHwDevice(
     email: _email,
-    name: 'S',
-    roll: '1',
-    seedHex: '',
-    pkHex: 'cd' * 32,
-    sealedKeyHex: sealed,
-    faceId: 'face-test-id',
-    enrolledAt: DateTime.now().toUtc(),
-    verifierVer: kFaceVerifierVer,
-  ));
-  return s;
+    seedBytes: Uint8List.fromList(hexDecode('ab' * 32)),
+    salt: 91,
+  );
+  return (store: await hwEnrolledStore(email: _email, hw: hw), hw: hw);
 }
 
 void main() {
@@ -46,6 +40,9 @@ void main() {
     final cloud = FakeCloudSync()..online = false;
     expect(await cloud.isOnline(), isFalse);
     final prof = ProxCrypto.generateEdKeypair();
+    final enrolled = await _enrolled();
+    final store = enrolled.store;
+    final hw = enrolled.hw;
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -55,7 +52,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -68,14 +67,16 @@ void main() {
         ),
         1,
       );
-      final store = await _enrolled();
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
         verifier: FakeFaceVerifier(match: true, score: 0.85),
-        deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       )..silenceCap = const Duration(seconds: 2);
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       Future.delayed(const Duration(seconds: 3), () {
         final w = server.window!;
         final cj = w.challengeFor(w.jForTime(DateTime.now().toUtc()));
@@ -97,7 +98,14 @@ void main() {
           displayCode: 'X',
         ),
         identity: const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -143,12 +151,16 @@ void main() {
     // and the UI layer turns this into `Professor unreachable` + manual-IP
     // + abort (see RealStudentDriver._isRefused → joinError path).
     final engine = ProxBleEngine(radio: FakeBleRadio());
+    final enrolled = await _enrolled();
     final d = RealStudentDriver(
-      store: await _enrolled(),
+      store: enrolled.store,
       verifier: FakeFaceVerifier(match: true, score: 0.85),
-      deviceKey: FakeDeviceKey(),
+      deviceKey: enrolled.hw.deviceKey,
       engine: engine,
+      livenessGate: FakeLivenessGate(),
     )..silenceCap = const Duration(seconds: 2);
+    final check = await d.checkFace('still.jpg');
+    expect(check.match, FaceMatch.pass);
     const target = ClassBeacon(
       classLabel: 't',
       host: '127.0.0.1',
@@ -161,7 +173,13 @@ void main() {
     final res = await d.listenAndProve(
       target: target,
       identity: const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-      faceScore: 0.9,
+      faceScore: check.score,
+      faceValidAtMs: check.faceValidAtMs,
+      verifierVer: check.verifierVer,
+      livenessScore: check.livenessScore,
+      livenessVer: check.livenessVer,
+      integrityFlag: '',
+      integrityHash: '00000000',
       onStatus: (_) {},
     );
     expect(res.result, StudentResult.noSignal);
