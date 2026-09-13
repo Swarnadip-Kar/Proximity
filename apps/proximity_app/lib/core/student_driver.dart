@@ -71,22 +71,24 @@ class FaceCheckResult {
 }
 
 /// Marking vitality robustness (app-local policy, NOT a ticket break).
-/// The face-check camera captures [kMarkingLivenessCaptures] stills and the
+/// The face-check camera captures [kMarkingLivenessCaptures] stills per
+/// burst (~1s cadence, 7s window — the holder just holds still) and the
 /// driver scores vitality on each, deciding on the MAX: one still can dip on
 /// transient noise (motion blur mid-frame, glare flicker) while a
 /// print/screen spoof scores consistently low (field probes ≤0.31), so
-/// best-of-N buys genuine FRR without moving the Tl that spoofs must beat.
+/// best-of-10 buys genuine FRR without moving the Tl that spoofs must beat.
 /// Scores landing within [kLivenessNearMissBand] below Tl are transient
 /// territory, not readable spoofs: they degrade to inconclusive (free
-/// rescan, burns nothing) instead of mismatch (burns an attempt). The bound
-/// ticket still carries the winning still's real gated score — never a
-/// constant, never an average. Marking Tl itself ([kLivenessThreshold]) is
-/// untouched: moving it would be a ticket break (ver bump + min_version).
-const int kMarkingLivenessCaptures = 2;
+/// rescan in place, burns nothing) instead of mismatch (burns an attempt).
+/// The bound ticket still carries the winning still's real gated score —
+/// never a constant, never an average. Marking Tl itself
+/// ([kLivenessThreshold] = 0.70 field-relaxed) is protocol-owned: moving it
+/// is a ticket break (ver bump + min_version).
+const int kMarkingLivenessCaptures = 10;
 
 /// Width of the near-miss vitality band below Tl that degrades to
 /// inconclusive instead of mismatch (see above). 0.10 keeps measured spoof
-/// probes (≤0.31) firmly in mismatch territory.
+/// probes (≤0.31) firmly in mismatch territory at Tl=0.70 (0.60 floor).
 const double kLivenessNearMissBand = 0.10;
 
 class MarkedReceipt {

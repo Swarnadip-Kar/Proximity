@@ -174,19 +174,22 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // photo/screen then, not the wrong face (see
   // FaceCheckResult.livenessFailed). Reset on every face-check entry.
   bool _faceMismatchLiveness = false;
-  // Automatic re-scans after unreadable verdicts: time-boxed (10s window,
-  // ~1s between scans — the holder just keeps holding still, never taps
-  // retry), with a try-count backstop; Cancel/back exits via the teardown
-  // guards. The retries run INSIDE the open camera sheet (same preview,
-  // same controller — see the [accept] handoff in _scanFace), so the
-  // camera never tears down between bursts; the delayed re-push below is
-  // the legacy path for capturers without [accept] support. Mismatch
-  // (readable wrong-face/spoof) never auto-retries — it burns an attempt
-  // and parks for review, so retries can't spend the attempt budget or
-  // hand an attacker free oracle queries.
+  // Automatic re-scans after unreadable/low-score verdicts: time-boxed
+  // (7s window, ~1s between bursts of 10 stills — the holder just keeps
+  // holding still, never taps retry), with a try-count backstop;
+  // Cancel/back exits via the teardown guards. The retries run INSIDE the
+  // open camera sheet (same preview, same controller — see the [accept]
+  // handoff in _scanFace), so the camera never tears down between bursts;
+  // the delayed re-push below is the legacy path for capturers without
+  // [accept] support. Readable wrong-face (identity mismatch) never
+  // auto-retries — it burns an attempt and parks for review. Low vitality
+  // (possible photo/screen) retries IN PLACE till the 7s window spends
+  // (never an instant exit that wastes a retry), then burns — so transient
+  // dips don't cost attempts while consistent-low spoofs still do after
+  // the window, without handing free oracle queries beyond the window.
   int _autoFaceTries = 0;
   DateTime? _autoFaceDeadline;
-  static const _autoFaceWindow = Duration(seconds: 10);
+  static const _autoFaceWindow = Duration(seconds: 7);
   static const _autoFaceGap = Duration(seconds: 1);
   static const _autoFaceTryCap = 8;
   // Samsung-style auto-start guard: the scan fires once per faceCheck
@@ -1533,9 +1536,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           return true;
         }
         _modalResult = res;
-        if (res.match != FaceMatch.inconclusive) return true;
-        // No readable verdict (attempt kept): retry in place while the
-        // window holds; the sheet owns the gap, this owns the budget.
+        // Low-vitality stays in preview: a very-low-score burst (possible
+        // photo/screen OR transient shadow/blur) must NOT exit the camera
+        // and waste a retry — it retries in place till the 7s window
+        // spends, exactly like inconclusive. Only a spent window converts
+        // it to a terminal mismatch (burns one attempt). Identity
+        // mismatches (readable wrong face, livenessFailed=false) still pop
+        // at once — they are decisions, not lighting.
+        final retryableLowVitality = res.match == FaceMatch.mismatch &&
+            res.livenessFailed;
+        if (res.match != FaceMatch.inconclusive && !retryableLowVitality) {
+          return true;
+        }
+        // No readable verdict (attempt kept) OR retryable low vitality:
+        // retry in place while the window holds; the sheet owns the gap,
+        // this owns the budget.
         _autoFaceTries++;
         final now = DateTime.now();
         _autoFaceDeadline ??= now.add(_autoFaceWindow);
@@ -1547,8 +1562,18 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           deadline: _autoFaceDeadline!,
         );
         BleLog.log(ProxLogTags.face,
-            'face inconclusive — auto-retry in place ($_autoFaceTries)');
-        if (gap == null) _modalExhausted = true;
+            '${res.match == FaceMatch.inconclusive ? 'face inconclusive' : 'face low-vitality'} — auto-retry in place ($_autoFaceTries)');
+        if (gap == null) {
+          _modalExhausted = true;
+          // Window spent on a low-vitality burst: keep the mismatch
+          // verdict (burns one attempt below); spent inconclusive keeps
+          // the inconclusive verdict (manual Scan below).
+          if (retryableLowVitality) _modalResult = res;
+        } else if (retryableLowVitality) {
+          // Still retrying: hold the preview with an inconclusive-grade
+          // notice (no attempt burned yet).
+          _modalResult = const FaceCheckResult(FaceMatch.inconclusive);
+        }
         return gap == null;
       },
       acceptWindow: _autoFaceWindow,
@@ -1603,9 +1628,49 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // above, and the listen binds this object's scores.
         await _listenWithCheck(target, fresh, res);
       case FaceMatch.mismatch:
-        // Readable session, somebody else (or a readable spoof): the ONLY
-        // outcome that consumes one of the 4 attempts (a whole 12s
-        // session, not one frame).
+        // Low-vitality legacy path (no in-modal stay): don't burn on the
+        // first low burst — retry hands-free in the 7s window like
+        // inconclusive. Spent windows (in-modal _modalExhausted, or the
+        // outer budget below) still burn. Identity mismatches
+        // (livenessFailed=false) always burn at once.
+        if (res.livenessFailed && !_modalExhausted) {
+          _autoFaceTries++;
+          final lowNow = DateTime.now();
+          _autoFaceDeadline ??= lowNow.add(_autoFaceWindow);
+          final lowGap = nextAutoFaceRetryDelay(
+            tries: _autoFaceTries,
+            tryCap: _autoFaceTryCap,
+            gap: _autoFaceGap,
+            now: lowNow,
+            deadline: _autoFaceDeadline!,
+          );
+          if (lowGap != null) {
+            BleLog.log(ProxLogTags.face,
+                'face low-vitality — auto-retry ($_autoFaceTries)');
+            if (!mounted) return;
+            setState(() => faceNotice =
+                'Scan unclear — hold still, retrying automatically…');
+            Future.delayed(lowGap, () {
+              if (!mounted || phase != StudentPhase.faceCheck) return;
+              final retryLinked = _readLinked();
+              final retryAcct = _readAccount();
+              if (retryLinked == null ||
+                  retryLinked.gmail.trim().toLowerCase() != scanEmail ||
+                  !_identityMatchesCurrent(retryAcct, retryLinked)) {
+                return;
+              }
+              _scanFace(target, retryLinked);
+            });
+            break;
+          }
+          _autoFaceDeadline = null;
+          // Window spent: fall through to burn below.
+        }
+        _modalExhausted = false;
+        _autoFaceDeadline = null;
+        // Readable session, somebody else (or a consistent-low spoof after
+        // the 7s window): the ONLY outcome that consumes one of the 4
+        // attempts (a whole session, not one frame).
         BleLog.log(
             ProxLogTags.face, 'face mismatch — attempt consumed, needs review');
         if (!mounted) return;

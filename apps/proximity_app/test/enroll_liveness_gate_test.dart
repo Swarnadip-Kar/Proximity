@@ -155,7 +155,7 @@ void main() {
     });
   });
 
-  group('per-slot bars (strict centre, relaxed diversity slots)', () {
+  group('per-slot bars (field-relaxed centre 0.70, diversity slots 0.70)', () {
     test('field genuine spread passes: 0.90/0.95/0.89/0.79/0.88', () async {
       // 2026-09-13 field enrollment scored centre 0.90, left 0.95, right
       // 0.89, up 0.79 against a flat 0.85 bar and failed on up. The up
@@ -171,11 +171,13 @@ void main() {
       expect(live.calls, _stills);
     });
 
-    test('centre stays strict: 0.84 centre fails despite live sides',
+    test('centre field-relaxed: 0.69 centre fails despite live sides',
         () async {
+      // 2026-09-13 field relaxation: centre bar is Tl=0.70 (was strict
+      // 0.85). 0.69 fails, 0.70 passes — same bar as attendance marking.
       final verifier = FakeFaceVerifier(match: true, score: 0.9);
       final live =
-          _ScriptedLivenessGate([0.84, 0.95, 0.95, 0.95, 0.95]);
+          _ScriptedLivenessGate([0.69, 0.95, 0.95, 0.95, 0.95]);
       final ctl = await _keyReadyScripted(
           verifier: verifier, liveness: live);
       await ctl.enrollFace(_stills);

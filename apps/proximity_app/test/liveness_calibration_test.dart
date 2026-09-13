@@ -226,11 +226,13 @@ void main() {
     });
   });
 
-  group('shipped operating point (STRICT Tl=0.85 pins)', () {
-    test('kLivenessThreshold is the strict 0.85', () {
+  group('shipped operating point (FIELD-RELAXED Tl=0.70 pins)', () {
+    test('kLivenessThreshold is the field-relaxed 0.70', () {
       // Flip ONLY via the TODO(sec-face) procedure above (threshold bump +
       // kLivenessVer bump + min_version floor, never silently).
-      expect(kLivenessThreshold, 0.85);
+      // 2026-09-13: relaxed 0.85→0.70 for mid-range field usability;
+      // measured spoofs (≤0.31) still fail with ≥0.39 margin.
+      expect(kLivenessThreshold, 0.70);
     });
 
     test('kLivenessVer unchanged until real data lands', () {
