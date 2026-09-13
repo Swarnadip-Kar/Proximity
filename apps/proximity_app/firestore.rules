@@ -3,14 +3,10 @@ rules_version = '2';
 //
 // Identity is the Google account itself. Track 1 org = the lowercased
 // Google-account domain (gmail.com is a normal org; subdomains exact-match).
-// Every doc below stamps `org`; cross-org reads/writes are denied. Legacy
-// docs without org ('') keep a temporary owner-only grace (classSessions
-// reads + stamp-on-update) so the upgrade does not strand data — remove
-// the grace ONLY after SyncEngine's backfill-complete signal has fired
-// (one-time persisted flag + SYNC log) AND the org-wide console check
-// (all four collections, where org missing) returns zero. The signal is
-// the gate. The engine's unfiltered legacy-discovery pull exists so
-// untouched cloud legacy cannot strand this grace open forever.
+// Every doc below stamps `org`; cross-org reads/writes are denied.
+// Full-fresh (no legacy): docs without org (missing key or '') deny
+// everywhere — every client stamps org on create and preserves it on
+// update, so an org-less doc is hand-built, never a migration artifact.
 //
 //   users/{uid}: {email, name, roles[prof|student], displayName, lastMode,
 //     org, updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
@@ -96,11 +92,6 @@ service cloud.firestore {
         'prof' in get(/databases/$(db)/documents/users/$(request.auth.uid))
           .data.get('roles', []);
     }
-    // Legacy grace: docs stamped before Track 1 carry no org (missing key
-    // or ''). They stay owner-visible until the backfill stamps them.
-    function missingOrg(data) {
-      return !('org' in data) || data.org == '';
-    }
     // Six-month purge gate (owner-lazy, no backend): the STORED stamp is
     // past 180d by the SERVER clock (request.time — client clocks decide
     // nothing). Callers must hasAll-guard the key first: reading a missing
@@ -133,8 +124,7 @@ service cloud.firestore {
         && request.resource.data.email.size() <= 256
         && request.resource.data.org == tokenOrg()
         && request.resource.data.org.size() <= 64
-        && (missingOrg(resource.data) ||
-            resource.data.org == tokenOrg())
+        && resource.data.org == tokenOrg()
          && validRoles(request.resource.data.roles)
          && (!('displayName' in request.resource.data) ||
             !(request.resource.data.displayName is string) ||
@@ -222,8 +212,8 @@ service cloud.firestore {
            -60 * 60 * 1000);
     }
 
-    // Security §7 additive fields (Spark-free type locks, migration-safe:
-    // absent = legacy, present must be correctly typed). attestationChain
+    // Security §7 additive fields (Spark-free type locks: absent =
+    // unstamped, present must be correctly typed). attestationChain
     // is X.509 DER hex only (never IMEI/serial — enforced by clients
     // sending certs; rules lock the container type, offline verifiers
     // check the content vs pinned roots). integrityFlag is closed to the
@@ -307,14 +297,13 @@ service cloud.firestore {
       // the stored value, and the fresh-stamp gate below refused the forgery
       // at write time. Pre-timestamp docs move once freely (migration),
       // stamping lastMoveAtMillis as they go.
-      // Org stamps once and never blanks: legacy docs stamp on update.
+      // Org stamps once and never blanks.
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
-        && (missingOrg(resource.data) ||
-            resource.data.org == tokenOrg())
+        && resource.data.org == tokenOrg()
         && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed() ||
             isLostPhone())
         && incomingStampsFresh()
@@ -341,7 +330,7 @@ service cloud.firestore {
       // where no doc exists yet. `resource == null` covers that read;
       // existing docs stay org-scoped.
       allow get: if signedIn() && (resource == null ||
-        missingOrg(resource.data) || resource.data.org == tokenOrg());
+        resource.data.org == tokenOrg());
       allow list: if false;
       allow create: if signedIn()
         && validInstallId(id)
@@ -352,8 +341,7 @@ service cloud.firestore {
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
-        && (missingOrg(resource.data) ||
-            resource.data.org == tokenOrg());
+        && resource.data.org == tokenOrg();
       // No delete, ever: install ids are unguessable UUIDs and unlistable,
       // so stale rows linger by design (harmless — the install→email mapping
       // keeps enforcing one-Gmail-per-install after a binding purge).
@@ -365,13 +353,10 @@ service cloud.firestore {
       // (org-scoped prefix queries; client merges email/roll/name hits).
       // Owner reads their own row. The prof gate is advisory until
       // professor roles are institute-verified. Cross-org rows are
-      // invisible: prof reads require org match (legacy rows stay
-      // owner-visible + prof-visible for the backfill window).
+      // invisible: prof reads require org match.
       allow get: if signedIn() &&
         ((id == tokenEmailLower()) ||
-         (callerIsProf() &&
-          (missingOrg(resource.data) ||
-           resource.data.org == tokenOrg())));
+         (callerIsProf() && resource.data.org == tokenOrg()));
       // H1: list is per-doc org-gated — the query MUST constrain
       // where('org', == tokenOrg) or it denies as a whole when it would
       // match other-org rows. Spark-free: no request.query filter
@@ -379,7 +364,7 @@ service cloud.firestore {
       // client-side where('org') in firestore_sync._prefixQuery (org
       // required — empty org throws before any query).
       allow list: if callerIsProf() &&
-        (missingOrg(resource.data) || resource.data.org == tokenOrg());
+        resource.data.org == tokenOrg();
       allow create: if signedIn()
         && id == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
@@ -389,8 +374,7 @@ service cloud.firestore {
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.org == tokenOrg()
-        && (missingOrg(resource.data) ||
-            resource.data.org == tokenOrg());
+        && resource.data.org == tokenOrg();
       // Owner-lazy six-month purge (no backend): the owner deletes their
       // own directory row past 180d stale (server-time-gated, undated docs
       // deny). Professors can READ rows (advisory gate) but delete none.
@@ -402,19 +386,13 @@ service cloud.firestore {
     }
 
     match /classSessions/{id} {
-      // Org-scoped read: same-org owner OR same-org member, plus a
-      // temporary legacy owner-only grace for docs stamped before Track 1
-      // (missing/'' org). Cross-org direct-ID fetches deny (T3). Grace
-      // removal is gated (backfill signal + console check) — see header.
-      allow read: if signedIn() && (
-        ((!missingOrg(resource.data) &&
-          resource.data.org == tokenOrg()) && (
+      // Org-scoped read: same-org owner OR same-org member.
+      // Cross-org direct-ID fetches deny (T3); org-less docs deny.
+      allow read: if signedIn() &&
+        resource.data.org == tokenOrg() && (
           resource.data.profUid == request.auth.uid ||
           tokenEmailLower() in resource.data.studentEmails
-        )) ||
-        ((missingOrg(resource.data)) &&
-         resource.data.profUid == request.auth.uid)
-      );
+        );
       // H4 bounds: roster fan-out capped (600) + per-string caps so one
       // write cannot blow quota. Phishing vector (documented): gmail.com
       // is a normal org — any Gmail can host a same-org session named like
@@ -431,18 +409,15 @@ service cloud.firestore {
         && request.resource.data.studentEmails.size() <= 600
         && request.resource.data.names is map
         && request.resource.data.rolls is map;
-      // Session org immutable on update: the stamp survives every merge;
-      // legacy docs stamp once (missing/'' -> tokenOrg).
+      // Session org immutable on update: the stamp survives every merge.
       allow update: if signedIn()
         && resource.data.profUid == request.auth.uid
         && request.resource.data.profUid == request.auth.uid
         && request.resource.data.org == tokenOrg()
-        && (missingOrg(resource.data) ||
-            request.resource.data.org == resource.data.org);
+        && request.resource.data.org == resource.data.org;
       allow delete: if signedIn()
         && resource.data.profUid == request.auth.uid
-        && (missingOrg(resource.data) ||
-            resource.data.org == tokenOrg());
+        && resource.data.org == tokenOrg();
     }
 
     // §6 force-update floor + §5 integrity posture (2C, append-only):
