@@ -6,8 +6,9 @@
 // - Pass carries (livenessScore, livenessVer) into the Sig_s ticket; the
 //   full listenAndProve below resolves it from the checkFace cache (no UI
 //   change) and marks against a real ProxServer — driver ticket == server
-//   ticket, or the proof fails bad-sig (migration: requireLiveness false).
-import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
+//   ticket, or the proof fails bad-sig (liveness always enforced).
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/student_driver.dart';
@@ -18,6 +19,8 @@ import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
+
+import 'test_device.dart';
 
 const _email = 's@x.in';
 
@@ -129,24 +132,11 @@ void main() {
   group('extended ticket prove (driver == server preimage)', () {
     test('checkFace cache threads liveness into Sig_s; marks',
         timeout: const Timeout(Duration(minutes: 2)), () async {
+      // Fresh FULL proof (HW test device + checkFace ticket + liveness).
       final prof = ProxCrypto.generateEdKeypair();
       final seed = randBytes(32);
-      final stuPk = ed.public(ed.newKeyFromSeed(seed));
-      final store = InMemoryDeviceStore();
-      // Sealed-only enrollment (security §2, sec-hwkey): the envelope is
-      // sealed with a throwaway FakeDeviceKey so the driver-held fake
-      // unseals it — same pattern as student_driver_test.enrolledStore.
-      await store.writeEnrollment(StoredEnrollment(
-        email: _email,
-        name: 'S',
-        roll: '1',
-        seedHex: '',
-        sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-        pkHex: hexEncode(stuPk.bytes),
-        faceId: 'face-test-id',
-        enrolledAt: DateTime.now().toUtc(),
-        verifierVer: kFaceVerifierVer,
-      ));
+      final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 81);
+      final store = await hwEnrolledStore(email: _email, hw: hw);
       final server = ProxServer(
         classLabel: 't',
         profSk: prof.privateKey,
@@ -156,7 +146,9 @@ void main() {
                 required expectedAirKey,
                 required expectedUuid}) =>
             const RadioSighting(rssiDbm: -55, hop: 0),
-      );
+        pinnedRoots: hw.pins,
+        // ignore: cascade_invocations
+      )..testChainGate = testChainGate;
       await server.start(port: 0);
       try {
         server.openWindow(
@@ -170,8 +162,13 @@ void main() {
           1,
         );
         final engine = ProxBleEngine(radio: FakeBleRadio());
-        final d = _driver(store: store, engine: engine)
-          ..silenceCap = const Duration(seconds: 10);
+        final d = RealStudentDriver(
+          store: store,
+          verifier: FakeFaceVerifier(match: true, score: 0.85),
+          deviceKey: hw.deviceKey,
+          engine: engine,
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 10);
         // Holder check first (stamps the face + liveness ticket caches).
         final check = await d.checkFace('still.jpg');
         expect(check.match, FaceMatch.pass);
@@ -202,6 +199,9 @@ void main() {
           faceScore: check.score,
           faceValidAtMs: check.faceValidAtMs,
           verifierVer: check.verifierVer,
+          // Clean verdict wire form (explicit → no native probe in tests).
+          integrityFlag: '',
+          integrityHash: '00000000',
           onStatus: (_) {},
         );
         expect(res.result, StudentResult.marked,
@@ -239,7 +239,7 @@ void main() {
   });
 
   group('spoof fail-closed end-to-end (never marked)', () {
-    Future<ProxServer> openTestServer() async {
+    Future<ProxServer> openTestServer({List<Uint8List> pins = const []}) async {
       final prof = ProxCrypto.generateEdKeypair();
       final server = ProxServer(
         classLabel: 't',
@@ -250,7 +250,11 @@ void main() {
                 required expectedAirKey,
                 required expectedUuid}) =>
             const RadioSighting(rssiDbm: -55, hop: 0),
-      );
+        pinnedRoots: pins.isEmpty ? null : pins,
+        // ignore: cascade_invocations
+      )..testChainGate = pins.isEmpty
+          ? null
+          : testChainGate;
       await server.start(port: 0);
       server.openWindow(
         WindowParams(
@@ -265,22 +269,16 @@ void main() {
       return server;
     }
 
-    Future<InMemoryDeviceStore> sealedTestStore() async {
-      final seed = randBytes(32);
-      final stuPk = ed.public(ed.newKeyFromSeed(seed));
-      final store = InMemoryDeviceStore();
-      await store.writeEnrollment(StoredEnrollment(
-        email: _email,
-        name: 'S',
-        roll: '1',
-        seedHex: '',
-        sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-        pkHex: hexEncode(stuPk.bytes),
-        faceId: 'face-test-id',
-        enrolledAt: DateTime.now().toUtc(),
-        verifierVer: kFaceVerifierVer,
-      ));
-      return store;
+    // Fresh HW test device (real P-256 dSig + AAD seal); [salt] distinct
+    // per device.
+    Future<({InMemoryDeviceStore store, TestHwDevice hw})> freshTestStore(
+        int salt) async {
+      final hw = await freshHwDevice(
+          email: _email, seedBytes: randBytes(32), salt: salt);
+      return (
+        store: await hwEnrolledStore(email: _email, hw: hw),
+        hw: hw,
+      );
     }
 
     void injectSighting(ProxBleEngine engine, ProxServer server) {
@@ -308,13 +306,14 @@ void main() {
 
     test('spoof (low liveness) then prove fails as faceFailed, never marked',
         timeout: const Timeout(Duration(minutes: 2)), () async {
-      final server = await openTestServer();
+      final fdev = await freshTestStore(82);
+      final server = await openTestServer(pins: fdev.hw.pins);
       try {
         final engine = ProxBleEngine(radio: FakeBleRadio());
         final d = RealStudentDriver(
-          store: await sealedTestStore(),
+          store: fdev.store,
           verifier: FakeFaceVerifier(match: true, score: 0.85),
-          deviceKey: FakeDeviceKey(),
+          deviceKey: fdev.hw.deviceKey,
           engine: engine,
           // Readable still of the enrolled holder, but not live: the
           // matcher would hit, so the gate must stop it first.
@@ -345,13 +344,14 @@ void main() {
 
     test('explicit weak liveness is not masked by a strong cache',
         timeout: const Timeout(Duration(minutes: 2)), () async {
-      final server = await openTestServer();
+      final fdev = await freshTestStore(83);
+      final server = await openTestServer(pins: fdev.hw.pins);
       try {
         final engine = ProxBleEngine(radio: FakeBleRadio());
         final d = RealStudentDriver(
-          store: await sealedTestStore(),
+          store: fdev.store,
           verifier: FakeFaceVerifier(match: true, score: 0.85),
-          deviceKey: FakeDeviceKey(),
+          deviceKey: fdev.hw.deviceKey,
           engine: engine,
           livenessGate: FakeLivenessGate(score: 0.92),
         )..silenceCap = const Duration(seconds: 10);
