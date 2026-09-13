@@ -468,6 +468,7 @@ class RealHostDriver implements HostDriver {
       onProve: (email, decision, reason) {
         BleLog.log('NET', 'prove $email -> $decision ($reason)');
         _applyDupFaceToken(email, reason);
+        _applyIntegrityFlag(email, reason);
       },
       tally: _tally,
       sessionOrg: sessionOrg,
@@ -808,6 +809,64 @@ class RealHostDriver implements HostDriver {
     final no = _server?.windowNo ?? 0;
     _tally.mark(key, name, no == 0 ? 1 : no, roll: roll);
     _server?.registerWaiting(key, name, roll);
+  }
+
+  /// Security §4/§2 host allowlists (mirror the protocol/transport gates —
+  /// the per-prove enforcement lives in `ProxServer`/`verifyProve`; these
+  /// pin the contract here so allowlist drift fails review/tests, never
+  /// marking). `verifierAllowlist` gates `face.verifierVer`,
+  /// `livenessAllowlist` + [livenessThreshold] gate `liveness.{score,ver}`
+  /// (`>=Tl`, fail-closed `liveness-unbound`/`unknown-liveness-verifier`/
+  /// `liveness-below-threshold` in the server). `faceValidAt` freshness
+  /// (5-min window) + fresh `dSig` per 5s rotation are likewise server-gated;
+  /// NONE proofs confirm only via the logged `device-none-fallback` (never
+  /// hard-invalid live marking until HW ships) and tainted proofs ride
+  /// `integrity-flagged` into [_applyIntegrityFlag] below (never auto-absent).
+  static const List<String> hostVerifierAllowlist = [kVerifierVerPrefix];
+  static const List<String> hostLivenessAllowlist = [kLivenessVerPrefix];
+  static const double hostLivenessThreshold = kLivenessThreshold;
+
+  /// True when the server's piped `reason` carries the §5 taint flag.
+  /// Pure (tests pin it): the flag is machine-readable, never shown; the
+  /// roster renders FLAGGED from the tally flag (see [_applyIntegrityFlag]).
+  static bool isIntegrityFlaggedReason(String reason) {
+    for (final seg in reason.split('|')) {
+      if (seg.trim() == 'integrity-flagged') return true;
+    }
+    return false;
+  }
+
+  /// Maps a tainted prove into the roster-visible FLAGGED state WITHOUT
+  /// touching presence (never auto-absent offline — the server already
+  /// marked confirmed/late; we only add the flag). Invalid proofs plant
+  /// nothing ([TallyStore.setFaceFlag] no-ops without a row, same as the
+  /// dup path). `device-none-fallback` is deliberately NOT mapped here:
+  /// every genuine software-key proof carries it until HW ships, so
+  /// flagging it would mark the whole room — it stays a log-line signal
+  /// (plus the post-hoc double-pkD audit in `claim.dart`), not a roster flag.
+  ///
+  /// TOFU note (§2): professor-side pinning is per-class first-seen (no
+  /// roster lookup — `studentDevices` denies list + cross-Gmail get, so an
+  /// online pre-fetch of other Gmails' pkD+chain is impossible under the
+  /// current rules). The chain-vs-pinned-Google-roots + challenge-match
+  /// gate runs per prove inside the server; clone pairs surface post-hoc
+  /// via `findDoublePkD` on synced bindings (TOFU→pin-check on mismatch
+  /// is manual review until a roster source exists).
+  void _applyIntegrityFlag(String email, String reason) {
+    if (!isIntegrityFlaggedReason(reason)) return;
+    final me = email.trim().toLowerCase();
+    if (me.isEmpty) return;
+    _tally.setFaceFlag(me);
+    BleLog.log('SEC', 'integrity flagged (tainted device, kept present): $me');
+  }
+
+  /// Test seam: applies the same flag parsing as the live `onProve`
+  /// callback (dup + integrity) without needing a full HTTPS prove round.
+  /// The tally must already hold the email (server marks before flagging);
+  /// unknown emails no-op, exactly like the live path.
+  void applyProveFlagsForTest(String email, String reason) {
+    _applyDupFaceToken(email, reason);
+    _applyIntegrityFlag(email, reason);
   }
 
   /// Parses the server's `dupface:a,b` reason token into roster flags +
