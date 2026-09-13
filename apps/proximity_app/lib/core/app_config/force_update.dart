@@ -58,9 +58,16 @@ class ForceUpdateConfig {
   });
 
   /// Lenient parse: missing keys default to no-block; `force` accepts bool
-  /// (server contract) or non-zero num.
+  /// (server contract), non-zero num, or case-insensitive 'true'/'1'/'yes'
+  /// strings (console sometimes writes strings — a `'true'` floor must
+  /// enforce, not silently unenforce). Unknown types default false: the
+  /// floor enforces only when affirmatively set (fail-open preserves
+  /// offline-capable marking on a garbage-typed doc).
   factory ForceUpdateConfig.fromMap(Map<String, dynamic> map) {
     final forceRaw = map['force'];
+    final forceStr = forceRaw is String
+        ? forceRaw.trim().toLowerCase()
+        : '';
     return ForceUpdateConfig(
       minVersion: '${map['minVersion'] ?? ''}'.trim(),
       latest: '${map['latest'] ?? ''}'.trim(),
@@ -68,7 +75,9 @@ class ForceUpdateConfig {
           ? forceRaw
           : forceRaw is num
               ? forceRaw != 0
-              : false,
+              : forceStr == 'true' ||
+                  forceStr == '1' ||
+                  forceStr == 'yes',
       message: ('${map['msg'] ?? map['message'] ?? ''}').trim(),
       storeAndroid: '${map['storeAndroid'] ?? ''}'.trim(),
       storeIos: '${map['storeIos'] ?? ''}'.trim(),
@@ -78,29 +87,40 @@ class ForceUpdateConfig {
 
 /// Pure dotted-version compare: negative / zero / positive.
 ///
-/// Strips build metadata (`+…`) and pre-release (`-…`); non-numeric segments
-/// count as 0; missing segments count as 0 (`'1.2' == '1.2.0'`, and numeric
-/// — never lexicographic — so `'1.10.0' > '1.9.9'`).
+/// Semver precedence: build metadata (`+…`) is ignored; a pre-release
+/// suffix (`-…`) sorts BELOW the same dotted core (`'1.2.3-beta' <
+/// '1.2.3'`) so debug/pre-release builds can never satisfy a floor meant
+/// for the release. Non-numeric segments count as 0; missing segments
+/// count as 0 (`'1.2' == '1.2.0'`, numeric — never lexicographic — so
+/// `'1.10.0' > '1.9.9'`).
 int compareVersions(String a, String b) {
-  List<int> parse(String v) {
+  (List<int>, bool) parse(String v) {
     var s = v.trim();
     final plus = s.indexOf('+');
     if (plus >= 0) s = s.substring(0, plus);
+    var pre = false;
     final dash = s.indexOf('-');
-    if (dash >= 0) s = s.substring(0, dash);
-    if (s.isEmpty) return <int>[0];
-    return s.split('.').map((p) => int.tryParse(p.trim()) ?? 0).toList();
+    if (dash >= 0) {
+      pre = true;
+      s = s.substring(0, dash);
+    }
+    if (s.isEmpty) return (<int>[0], pre);
+    return (
+      s.split('.').map((p) => int.tryParse(p.trim()) ?? 0).toList(),
+      pre
+    );
   }
 
-  final pa = parse(a);
-  final pb = parse(b);
+  final (pa, preA) = parse(a);
+  final (pb, preB) = parse(b);
   final n = pa.length > pb.length ? pa.length : pb.length;
   for (var i = 0; i < n; i++) {
     final x = i < pa.length ? pa[i] : 0;
     final y = i < pb.length ? pb[i] : 0;
     if (x != y) return x < y ? -1 : 1;
   }
-  return 0;
+  if (preA == preB) return 0;
+  return preA ? -1 : 1;
 }
 
 /// Outcome of [ForceUpdate.check]/[ForceUpdate.checkNow].
@@ -222,10 +242,13 @@ class ForceUpdate {
   /// Injectable for tests (`firestore`, `packageInfoLoader`); production
   /// uses `FirebaseFirestore.instance` + `PackageInfo.fromPlatform()`.
   /// Transport/parse failures yield `checked: false` (never throws for
-  /// those — marking stays offline-capable).
+  /// those — marking stays offline-capable). The floor read carries its
+  /// own [timeout] deadline (a hung Firestore get degrades to the cached
+  /// floor, never a hung entry gate) — callers need no outer timeout.
   static Future<ForceUpdateResult> checkNow({
     FirebaseFirestore? firestore,
     Future<PackageInfo> Function()? packageInfoLoader,
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     late final String current;
     try {
@@ -242,8 +265,11 @@ class ForceUpdate {
     }
     try {
       final store = firestore ?? FirebaseFirestore.instance;
-      final snap =
-          await store.collection(configCollection).doc(configDoc).get();
+      final snap = await store
+          .collection(configCollection)
+          .doc(configDoc)
+          .get()
+          .timeout(timeout);
       final data = snap.data();
       if (data == null) {
         // Missing doc: fall back to the cached floor (H6 offline

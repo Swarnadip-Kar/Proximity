@@ -27,8 +27,20 @@ void main() {
       expect(compareVersions('0.1.0', '0.1.0'), 0);
       expect(compareVersions('0.1.0+1', '0.1.0'), 0);
       expect(compareVersions('1.2', '1.2.0'), 0);
-      expect(compareVersions('1.2.3-beta', '1.2.3'), 0);
       expect(compareVersions(' 1.2.3 ', '1.2.3'), 0);
+    });
+
+    test('pre-release sorts below the same core (never satisfies a floor)',
+        () {
+      expect(compareVersions('1.2.3-beta', '1.2.3'), lessThan(0));
+      expect(compareVersions('0.2.0-malicious', '0.2.0'), lessThan(0));
+      expect(compareVersions('1.2.3-beta', '1.2.3-alpha'), 0);
+      expect(compareVersions('1.2.3', '1.2.3-beta'), greaterThan(0));
+      final blocked = ForceUpdate.check(
+        currentVersion: '0.2.0-beta',
+        config: floor(minVersion: '0.2.0'),
+      );
+      expect(blocked.updateRequired, isTrue);
     });
 
     test('numeric (not lexicographic) ordering', () {
@@ -119,6 +131,17 @@ void main() {
       final result =
           ForceUpdate.check(currentVersion: '0.0.1', config: config);
       expect(result.updateRequired, isFalse);
+    });
+
+    test('force accepts bool, num, and common string forms', () {
+      expect(ForceUpdateConfig.fromMap({'force': true}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': 1}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': 0}).force, isFalse);
+      expect(ForceUpdateConfig.fromMap({'force': 'true'}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': ' True '}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': '1'}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': 'yes'}).force, isTrue);
+      expect(ForceUpdateConfig.fromMap({'force': 'treu'}).force, isFalse);
     });
   });
 
