@@ -41,8 +41,20 @@ String? leafSerialHex(Uint8List leafDer) {
     final tbs = top.elements[0];
     if (tbs is! ASN1Sequence || tbs.elements.isEmpty) return null;
     final els = tbs.elements;
-    // Optional `[0] version EXPLICIT` shifts the serial by one.
-    final base = els.first.tag == 0xa0 ? 1 : 0;
+    // Optional `[0] version EXPLICIT` (tag 0xa0) shifts the serial by one
+    // (H8 bounds hardening): the tag check alone is fragile on malformed
+    // TBS (e.g. single-element sequences, non-constructed 0xa0, or a
+    // trailing version with no serial). Bounds-check explicitly — any
+    // malformed shape returns null (fail-open, never accuses), never an
+    // out-of-range read.
+    var base = 0;
+    try {
+      if (els.isEmpty) return null;
+      if (els.first.tag == 0xa0) base = 1;
+    } catch (_) {
+      return null;
+    }
+    if (base < 0 || base >= els.length) return null;
     if (els.length <= base) return null;
     final serialObj = els[base];
     if (serialObj is! ASN1Integer) return null;
