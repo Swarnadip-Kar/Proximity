@@ -13,6 +13,8 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
 
+import 'test_device.dart';
+
 const _email = 's@x.in';
 const _beacon = ClassBeacon(
   classLabel: 't',
@@ -273,21 +275,11 @@ void main() {
       timeout: const Timeout(Duration(minutes: 2)), () async {
     // Silence alone never ends a listen while the round is open: the
     // probe says open, waiting continues, and the next rotation marks.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: '',
-      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-      pkHex: hexEncode(stuPk.bytes),
-      faceId: 'face-test-id',
-      enrolledAt: DateTime.now().toUtc(),
-      verifierVer: kFaceVerifierVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 72);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -297,7 +289,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -314,9 +308,12 @@ void main() {
       final d = RealStudentDriver(
         store: store,
         verifier: mockVerifier(),
-      deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       )..silenceCap = const Duration(seconds: 2);
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       // First rotation arrives after one silence probe says "still open".
       Future.delayed(const Duration(seconds: 3), () {
         final w = server.window!;
@@ -341,7 +338,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: statuses.add,
       );
       expect(res.result, StudentResult.marked);
@@ -360,21 +364,11 @@ void main() {
     // stale relay of the previous round's token is still on air. The
     // student hears the stale token first — proving waits for the fresh
     // rotation instead of failing.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: '',
-      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-      pkHex: hexEncode(stuPk.bytes),
-      faceId: 'face-test-id',
-      enrolledAt: DateTime.now().toUtc(),
-      verifierVer: kFaceVerifierVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 73);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     WindowParams freshWindow() => WindowParams(
           sessionId: randBytes(16),
           windowId: randBytes(6),
@@ -391,7 +385,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(freshWindow(), 1);
@@ -402,9 +398,12 @@ void main() {
       final d = RealStudentDriver(
         store: store,
         verifier: mockVerifier(),
-      deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       // Stale token first, then the live rotation — both over radio
       // (no hearChallenge seam: the driver listens to the engine).
       void inject(Uint8List tok) => engine.handleSighting(BleSighting(
@@ -427,7 +426,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -673,21 +679,11 @@ void main() {
     // radio hears the student's response as a DEFAULT-ttl (3) sighting —
     // exactly like live air — and the real host mapping must still
     // accept it (hop 0, RSSI-gated), or every live prove fails invalid.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: '',
-      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-      pkHex: hexEncode(stuPk.bytes),
-      faceId: 'face-test-id',
-      enrolledAt: DateTime.now().toUtc(),
-      verifierVer: kFaceVerifierVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 71);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final engine = ProxBleEngine(radio: FakeBleRadio());
     final server = ProxServer(
       classLabel: 't',
@@ -700,7 +696,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           RealHostDriver.matchResponse(engine, expectedAirKey, expectedUuid),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -739,9 +737,12 @@ void main() {
       final d = RealStudentDriver(
         store: store,
         verifier: mockVerifier(),
-      deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       final res = await d.listenAndProve(
         target: ClassBeacon(
           classLabel: 't',
@@ -752,7 +753,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -767,21 +775,11 @@ void main() {
     // The professor's radio misses the first answer (no-ble-sighting):
     // the student re-announces + re-proves on the next live token
     // instead of failing.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: '',
-      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
-      pkHex: hexEncode(stuPk.bytes),
-      faceId: 'face-test-id',
-      enrolledAt: DateTime.now().toUtc(),
-      verifierVer: kFaceVerifierVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 74);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final engine = ProxBleEngine(radio: FakeBleRadio());
     // First answer unheard, re-announced answers heard.
     var lookups = 0;
@@ -797,7 +795,9 @@ void main() {
               ? null
               : RealHostDriver.matchResponse(
                   engine, expectedAirKey, expectedUuid),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -844,9 +844,12 @@ void main() {
       final d = RealStudentDriver(
         store: store,
         verifier: mockVerifier(),
-      deviceKey: FakeDeviceKey(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       final res = await d.listenAndProve(
         target: ClassBeacon(
           classLabel: 't',
@@ -857,7 +860,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -946,13 +956,12 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
     }
   });
 
-  test('bound e2e with NONE attestation marks via fallback flag',
+  test('bound e2e with NONE attestation never marks (manual path)',
       timeout: const Timeout(Duration(minutes: 2)), () async {
-    // Graceful fallback (HW keys don't ship): production is always
-    // SoftwareDeviceKey/NONE, so a bound-NONE proof confirms like the
-    // legacy path — same ticket-bound Sig_s + sighting checks, no tier
-    // claimed — with the fallback flag logged, not a device-unproven
-    // reject. This is the live-marking path for genuine students today.
+    // Fresh-only: a bound proof claiming no hardware tier never confirms —
+    // `device-none-requires-approval` routes it to the manual path instead
+    // of marking. Same ticket/Sig_s/sighting checks run; only the tier is
+    // missing, so the verdict is terminal-error, never a silent mark.
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
     final store = await enrolledStore(seedHex: hexEncode(seed));
@@ -1008,9 +1017,11 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
         verifierVer: check.verifierVer,
         onStatus: (_) {},
       );
-      expect(res.result, StudentResult.marked);
-      expect(res.attestationFlags, contains('device-none-fallback'));
-      expect(server.tally.presentCount, 1);
+      expect(res.result, StudentResult.error);
+      expect(res.detail, contains('device-none-requires-approval'));
+      expect(res.attestationFlags,
+          isNot(contains('device-none-fallback')));
+      expect(server.tally.presentCount, 0);
     } finally {
       await server.stop();
     }
@@ -1228,13 +1239,16 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
 
     test('tainted verdict rides to the professor as flagged (never absent)',
         () async {
-      // Full legacy-unbound prove against a real local server: the hooked
-      // verdict's flag must arrive in the receipt flags while the verdict
-      // still confirms (marking never blocks offline).
+      // Fresh FULL prove against a real local server: the hooked verdict's
+      // flag must arrive in the receipt flags while the verdict still
+      // confirms (marking never blocks offline).
       final prof = ProxCrypto.generateEdKeypair();
       final probe = _CountingProbe(const IntegritySignals(hooked: true));
       final prev = IntegrityGate.probe;
       IntegrityGate.probe = probe;
+      final seed = randBytes(32);
+      final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 75);
+      final hwStore = await hwEnrolledStore(email: _email, hw: hw);
       final server = ProxServer(
         classLabel: 't',
         profSk: prof.privateKey,
@@ -1244,7 +1258,9 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
                 required expectedAirKey,
                 required expectedUuid}) =>
             const RadioSighting(rssiDbm: -55, hop: 0),
-      );
+        pinnedRoots: hw.pins,
+        // ignore: cascade_invocations
+      )..testChainGate = testChainGate;
       await server.start(port: 0);
       try {
         server.openWindow(
@@ -1259,12 +1275,14 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
         );
         final engine = ProxBleEngine(radio: FakeBleRadio());
         final d = RealStudentDriver(
-          store: await enrolledStore(),
+          store: hwStore,
           verifier: mockVerifier(),
-          deviceKey: FakeDeviceKey(),
+          deviceKey: hw.deviceKey,
           engine: engine,
           livenessGate: FakeLivenessGate(),
         )..silenceCap = const Duration(seconds: 2);
+        final check = await d.checkFace('still.jpg');
+        expect(check.match, FaceMatch.pass);
         Future.delayed(const Duration(seconds: 3), () {
           final w = server.window!;
           final cj = w.challengeFor(w.jForTime(DateTime.now().toUtc()));
@@ -1277,6 +1295,8 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
             at: DateTime.now().toUtc(),
           ));
         });
+        // No explicit integrity args → the hooked probe verdict rides in
+        // the dSig while the proof still confirms (flagged, never absent).
         final res = await d.listenAndProve(
           target: ClassBeacon(
             classLabel: 't',
@@ -1287,7 +1307,11 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
           ),
           identity:
               const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-          faceScore: 0.9,
+          faceScore: check.score,
+          faceValidAtMs: check.faceValidAtMs,
+          verifierVer: check.verifierVer,
+          livenessScore: check.livenessScore,
+          livenessVer: check.livenessVer,
           onStatus: (_) {},
         );
         expect(res.result, StudentResult.marked);

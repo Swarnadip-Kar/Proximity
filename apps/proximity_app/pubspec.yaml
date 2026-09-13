@@ -135,6 +135,9 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   test: ^1.25.0
+  # e2e prove fixtures only (real P-256 dSig in TestHwBackend): same pin
+  # as protocol/transport (^4.0.0) so the resolved tree stays unified.
+  pointycastle: ^4.0.0
 
 # macOS Google Sign-In keychain regression: native GoogleSignIn 7.1+ / 8.x
 # throws "keychain error" on macOS even with correct entitlements
