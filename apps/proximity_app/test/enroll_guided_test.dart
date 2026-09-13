@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
@@ -149,11 +150,25 @@ Future<void> _drain(WidgetTester t) async {
   }
 }
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey hangs forever (same stall as
+// enroll_capture_breakup_test.dart).
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
   // EnrollFlow single-flight flags are static: a test that leaves a pushed
   // result on top must not block the next test's push.
   setUp(EnrollFlow.debugReset);
   tearDown(EnrollFlow.debugReset);
+  // Clean integrity verdict for generateKey; restored afterwards so
+  // probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
   group('pose windows (pure, no native calls)', () {
     test('centre accepts near-frontal only', () {
       expect(EnrollPoseWindows.check('centre', 0, 0, 0).ok, isTrue);

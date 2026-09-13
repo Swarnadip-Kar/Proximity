@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -71,7 +72,21 @@ Future<void> _openSession(WidgetTester t) async {
   await t.pump(const Duration(milliseconds: 300));
 }
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey hangs forever (same stall as
+// enroll_capture_breakup_test.dart).
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
+  // Clean integrity verdict for generateKey; restored afterwards so
+  // probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
   group('single-oval geometry (pure)', () {
     test('guide rect is one centered oval inside the preview', () {
       const size = Size(400, 800);

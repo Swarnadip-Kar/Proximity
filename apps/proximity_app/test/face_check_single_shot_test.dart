@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -105,7 +106,21 @@ Future<void> _openSession(WidgetTester t) async {
 
 void _noop() {}
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey hangs forever (same stall as
+// enroll_capture_breakup_test.dart).
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
+  // Clean integrity verdict for generateKey; restored afterwards so
+  // probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
   group('single-shot prompt', () {
     test('faceCheckPrompt is one look-at-the-camera line', () {
       expect(faceCheckPrompt.toLowerCase(), contains('look at the camera'));

@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
@@ -122,10 +123,25 @@ Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
     w.alignment == Alignment.center &&
     w.children.whereType<CaptureOverlay>().isNotEmpty);
 
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey hangs forever (same stall as
+// enroll_capture_breakup_test.dart: _keyReady awaits generateKey before
+// the first pump, so no pump ever advances the fake clock past the budget).
+class _CleanProbe implements IntegrityProbe {
+  const _CleanProbe();
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
+
 void main() {
   // EnrollFlow single-flight flags are static: reset between tests.
   setUp(EnrollFlow.debugReset);
   tearDown(EnrollFlow.debugReset);
+  // Clean integrity verdict for generateKey (see _CleanProbe above);
+  // restored afterwards so probe-sensitive suites keep the real probe.
+  setUp(() => IntegrityGate.probe = const _CleanProbe());
+  tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
   group('device-boundary parity (elongation fix)', () {
     testWidgets('Scaffold defaults match original (no overflow flags)',
         (t) async {
