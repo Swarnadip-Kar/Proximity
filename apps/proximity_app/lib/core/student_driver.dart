@@ -303,6 +303,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     if (c != null && faceValidAtMs != 0 && c.faceValidAtMs == faceValidAtMs) {
       return (score: c.score, ver: c.ver);
     }
+    // C5: no legacy implicit pass — an unclaimed (0.0/'') ticket is an
+    // explicit DENY of the liveness claim downstream (bound=false → the
+    // host fails it `liveness-unbound` once requireLiveness is true),
+    // never an implicit pass. The SK-use gate ([_faceGate]) is stamped
+    // ONLY by [checkFace] on a gated pass, so a raw-score listen without
+    // a prior fresh checkFace also denies at `requireFreshForSign`.
+    BleLog.log('SEC',
+        'prove liveness unclaimed (0.0/empty) — host denies liveness-unbound, gate NOT re-armed');
     return (score: 0.0, ver: '');
   }
 
@@ -627,6 +635,60 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     }
   }
 
+  /// C5 object path: the holder evidence travels as the [FaceCheckResult]
+  /// from [checkFace], not a raw double. The SK-use gate is still stamped
+  /// only by [checkFace] itself — this forwards the object so the ticket
+  /// binds its scores. Non-pass checks deny here (faceFailed) before any
+  /// radio, fail-closed. TODO(sec-face): migrate outside callers here.
+  Future<MarkedReceipt> listenAndProveWithCheck({
+    required ClassBeacon target,
+    required LinkedIdentity identity,
+    required FaceCheckResult faceCheck,
+    required void Function(ListenStatus s) onStatus,
+    String? integrityFlag,
+    String? integrityHash,
+  }) async {
+    try {
+      requireMobileFace();
+    } on StateError {
+      return const MarkedReceipt(
+          detail: 'Marking needs the mobile app (Android/iOS)',
+          result: StudentResult.error);
+    }
+    if (faceCheck.match != FaceMatch.pass) {
+      BleLog.log('SEC', 'prove refused: no pass check object — rescan');
+      return const MarkedReceipt(
+          detail: 'Face check required — scan again',
+          result: StudentResult.faceFailed);
+    }
+    if (_listening) {
+      return const MarkedReceipt(
+          detail: 'Already proving — wait for the current round',
+          result: StudentResult.error);
+    }
+    final integ = await _resolveIntegrity(
+        integrityFlag: integrityFlag, integrityHash: integrityHash);
+    BleLog.log('SEC',
+        'prove integrity ${integ.hash}${integ.flag.isEmpty ? '' : ' (${integ.flag})'}');
+    _listening = true;
+    try {
+      return await _listenAndProveInner(
+          target: target,
+          identity: identity,
+          faceScore: faceCheck.score,
+          onStatus: onStatus,
+          faceValidAtMs: faceCheck.faceValidAtMs,
+          verifierVer: faceCheck.verifierVer,
+          livenessScore: faceCheck.livenessScore,
+          livenessVer: faceCheck.livenessVer,
+          integrityFlag: integ.flag,
+          integrityHash: integ.hash,
+          faceCheck: faceCheck);
+    } finally {
+      _listening = false;
+    }
+  }
+
   /// Security §5 verdict resolution for one listen: explicit args win,
   /// else a fresh [entryMarkingIntegrity] probe (never throws by contract;
   /// belt-and-braces fallback proves clean so marking stays
@@ -661,6 +723,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     String livenessVer = '',
     String integrityFlag = '',
     String integrityHash = '',
+    // C5: holder evidence as a check object, not a raw double. The
+    // deprecated raw-score overload (public listenAndProve, unchanged so
+    // outside callers still compile) maps here with null and defaults to
+    // DENY unless a prior checkFace armed the gate. TODO(sec-face):
+    // migrate outside callers (student_home _listen + tests) to
+    // listenAndProveWithCheck with the FaceCheckResult from checkFace,
+    // then drop the raw faceScore param.
+    FaceCheckResult? faceCheck,
   }) async {
     final stored = await _store.readEnrollment();
     if (stored == null ||
@@ -676,24 +746,33 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           detail: 'Face recognition was updated — re-enroll this device, then join again',
           result: StudentResult.faceFailed);
     }
-    // The face score is the holder evidence for THIS listen (the face
-    // screen matched just before calling): stamp the SK-use gate now, so
-    // _prove can time-bound marathon listens — a face pass older than
-    // kFaceValidWindow refuses to sign and the student re-scans instead
-    // of marking on a stale check. livenessPass is the listen's REAL
-    // ticket state: a CLAIMED ticket must clear Tl (weak/clamped scores
-    // never arm the key); an UNCLAIMED legacy ticket (0.0/'', no checkFace
-    // cache — direct-listen tests + pre-liveness callers) arms exactly as
-    // before during migration (the host still confirms face-bound while
-    // requireLiveness is false). Post-rollout those callers must carry
-    // liveness — the host fails them liveness-unbound regardless.
-    if (faceScore >= kFaceThreshold) {
-      final livenessOk = (livenessScore == 0.0 && livenessVer.isEmpty) ||
-          livenessScore >= kLivenessThreshold;
-      _faceGate.evaluate(
-          score: faceScore,
-          livenessPass: livenessOk,
-          now: DateTime.now().toUtc());
+    // C5 fail-closed: the SK-use gate ([_faceGate]) is stamped ONLY by
+    // [checkFace] on a gated pass — NEVER re-stamped here from the supplied
+    // score param. A raw faceScore without a prior fresh checkFace denies
+    // at [_prove]'s requireFreshForSign (faceFailed, nothing signed). The
+    // legacy arm that treated an unclaimed (0.0/'') ticket as livenessOk is
+    // REMOVED: an unclaimed ticket is an explicit deny of the liveness
+    // claim (the host still fails it liveness-unbound), never an implicit
+    // pass. Effective ticket values prefer the check object when present;
+    // the raw doubles below are the deprecated path (deny-by-default: no
+    // gate stamp here either way).
+    final effScore = faceCheck?.score ?? faceScore;
+    final effStamp = faceCheck != null && faceCheck.faceValidAtMs != 0
+        ? faceCheck.faceValidAtMs
+        : faceValidAtMs;
+    final effVer = faceCheck != null && faceCheck.verifierVer.isNotEmpty
+        ? faceCheck.verifierVer
+        : verifierVer;
+    final effLiveScore =
+        faceCheck != null && faceCheck.livenessVer.isNotEmpty
+            ? faceCheck.livenessScore
+            : livenessScore;
+    final effLiveVer = faceCheck != null && faceCheck.livenessVer.isNotEmpty
+        ? faceCheck.livenessVer
+        : livenessVer;
+    if (faceCheck == null) {
+      BleLog.log('SEC',
+          'prove without check object (deprecated raw-score path) — gate NOT re-armed; prior fresh checkFace required');
     }
     // No round clock: the window stays open until the professor stops it,
     // so a slow prover (face retries, weak corner signal) simply proves a
@@ -743,11 +822,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         return await _prove(
           target: target,
           identity: identity,
-          faceScore: faceScore,
-          faceValidAtMs: faceValidAtMs,
-          verifierVer: verifierVer,
-          livenessScore: livenessScore,
-          livenessVer: livenessVer,
+          faceScore: effScore,
+          faceValidAtMs: effStamp,
+          verifierVer: effVer,
+          livenessScore: effLiveScore,
+          livenessVer: effLiveVer,
           integrityFlag: integrityFlag,
           integrityHash: integrityHash,
           challenge: cj,

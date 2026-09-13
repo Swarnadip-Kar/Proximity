@@ -1348,11 +1348,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         BleLog.log(ProxLogTags.face, 'face pass — continuing to proving');
         if (!mounted) return;
         setState(() => faceNotice = '');
-        _listen(target, fresh, res.score,
-            faceValidAtMs: res.faceValidAtMs,
-            verifierVer: res.verifierVer,
-            livenessScore: res.livenessScore,
-            livenessVer: res.livenessVer);
+        // C5: holder evidence travels as the check object, never raw
+        // doubles — the SK-use gate was stamped ONLY by the [checkFace]
+        // above, and the listen binds this object's scores.
+        await _listenWithCheck(target, fresh, res);
       case FaceMatch.mismatch:
         // Readable session, somebody else: the ONLY outcome that consumes
         // one of the 4 attempts (a whole 12s session, not one frame).
@@ -1500,12 +1499,64 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
   }
 
+  /// C5 object path: the holder evidence travels as the [FaceCheckResult]
+  /// from [StudentDriver.checkFace], never raw doubles. Real driver binds
+  /// the object's scores; other drivers (fake/tests) keep the raw shape.
+  Future<void> _listenWithCheck(ClassBeacon target, LinkedIdentity linked,
+      FaceCheckResult faceCheck) async {
+    final driver = ref.read(studentDriverProvider);
+    if (driver is RealStudentDriver) {
+      await _listenVia(
+        target,
+        linked,
+        (startLinked, onStatus) => driver.listenAndProveWithCheck(
+          target: target,
+          identity: startLinked,
+          faceCheck: faceCheck,
+          onStatus: onStatus,
+        ),
+      );
+      return;
+    }
+    await _listen(target, linked, faceCheck.score,
+        faceValidAtMs: faceCheck.faceValidAtMs,
+        verifierVer: faceCheck.verifierVer,
+        livenessScore: faceCheck.livenessScore,
+        livenessVer: faceCheck.livenessVer);
+  }
+
   Future<void> _listen(ClassBeacon target, LinkedIdentity linked,
       double faceScore,
       {int faceValidAtMs = 0,
       String verifierVer = '',
       double? livenessScore,
       String? livenessVer}) async {
+    final driver = ref.read(studentDriverProvider);
+    await _listenVia(
+      target,
+      linked,
+      (startLinked, onStatus) => driver.listenAndProve(
+        target: target,
+        identity: startLinked,
+        faceScore: faceScore,
+        faceValidAtMs: faceValidAtMs,
+        verifierVer: verifierVer,
+        livenessScore: livenessScore,
+        livenessVer: livenessVer,
+        onStatus: onStatus,
+      ),
+    );
+  }
+
+  /// Shared listen body: run/entry guards, listening UI, receipt routing.
+  /// [prover] runs the driver (raw-score or check-object path); everything
+  /// else here is identical so the two paths cannot drift.
+  Future<void> _listenVia(
+      ClassBeacon target,
+      LinkedIdentity linked,
+      Future<MarkedReceipt> Function(LinkedIdentity startLinked,
+              void Function(ListenStatus s) onStatus)
+          prover) async {
     final run = ++_runId;
     _rewaitTimer?.cancel();
     _rewaitTimer = null;
@@ -1531,30 +1582,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
     // No round clock: the driver loops on fresh challenges until a verdict
     // (marked/late/dead-air/error) — nothing here retries or counts down.
-    final receipt = await ref.read(studentDriverProvider).listenAndProve(
-          target: target,
-          identity: startLinked,
-          faceScore: faceScore,
-          faceValidAtMs: faceValidAtMs,
-          verifierVer: verifierVer,
-          livenessScore: livenessScore,
-          livenessVer: livenessVer,
-          onStatus: (s) {
-            if (!mounted || run != _runId) return;
-            final sLinked = _readLinked();
-            final sAcct = _readAccount();
-            if (sLinked == null ||
-                sLinked.gmail.trim().toLowerCase() != listenEmail ||
-                !_identityMatchesCurrent(sAcct, sLinked)) {
-              return;
-            }
-            setState(() => listenStatus = switch (s) {
-                  ListenStatus.waiting => 'Waiting for the class signal…',
-                  ListenStatus.proving => 'Signal heard — proving…',
-                  ListenStatus.confirming => 'Proof sent — confirming…',
-                });
-          },
-        );
+    final receipt = await prover(startLinked, (s) {
+      if (!mounted || run != _runId) return;
+      final sLinked = _readLinked();
+      final sAcct = _readAccount();
+      if (sLinked == null ||
+          sLinked.gmail.trim().toLowerCase() != listenEmail ||
+          !_identityMatchesCurrent(sAcct, sLinked)) {
+        return;
+      }
+      setState(() => listenStatus = switch (s) {
+            ListenStatus.waiting => 'Waiting for the class signal…',
+            ListenStatus.proving => 'Signal heard — proving…',
+            ListenStatus.confirming => 'Proof sent — confirming…',
+          });
+    });
     if (!mounted || run != _runId) return;
     // Switch/sign-out during the long prove: drop the stale receipt rather
     // than landing a verdict for the wrong account.
