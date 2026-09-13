@@ -95,7 +95,7 @@ class WindowProbe {
   final String classLabel;
   final int waiting;
   final String display; // window code when open (round identity)
-  final String org; // prof org from gated /window, '' = legacy host
+  final String org; // prof org from gated /window, '' = unstamped host
   /// Hosting professor's Gmail from the GATED /window unicast (matching
   /// or legacy org only; '' = unknown/legacy or gated silence). NEVER from
   /// beacons/BLE — fed only by the org-checked unicast.

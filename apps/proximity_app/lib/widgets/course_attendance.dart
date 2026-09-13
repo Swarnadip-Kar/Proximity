@@ -117,7 +117,7 @@ CourseAttendanceSummary summarizeCourse(
 /// Status rides the [VerdictBadge] (exact `sessionStatusOf` word), never
 /// duplicated here — same split as the course-detail tile (FIX 2 dedupe).
 /// Institute org rides in the synced record already (prof org at push,
-/// '' = legacy) — surfaced so same-org scope reads on the tile.
+/// '' = unstamped) — surfaced so same-org scope reads on the tile.
 String studentSessionSecondary(ClassRecord session, String course) {
   final label =
       session.classLabel.isNotEmpty && session.classLabel != course

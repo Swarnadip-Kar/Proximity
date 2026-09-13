@@ -12,7 +12,7 @@ class RoleDoc {
   final List<String> roles; // subset of ['prof', 'student']
   final String displayName;
   final String lastMode;
-  final String org; // Google-account domain (see orgOf), '' = legacy
+  final String org; // Google-account domain (see orgOf), '' = unstamped
   /// Last cloud touch (UTC epoch ms, 0 = pre-timestamp legacy — never
   /// "stale" by itself; drives the owner-lazy six-month purge gate).
   final int updatedAtMillis;
@@ -62,7 +62,7 @@ String roleLastMode(Map<String, String>? role) {  if (role == null) return '';
   return '';
 }
 
-/// Org stamped on the role cache ('' = legacy), defensively normalized —
+/// Org stamped on the role cache ('' = unstamped), defensively normalized —
 /// the cache is written lowercased at sign-in.
 String roleOrg(Map<String, String>? role) =>
     (role?['org'] ?? '').trim().toLowerCase();

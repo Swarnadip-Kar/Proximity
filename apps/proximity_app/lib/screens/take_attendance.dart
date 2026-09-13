@@ -226,7 +226,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   String? _recordOrg;
   String _lastSavedSig = '';
 
-  /// Org the host actually announces (role-cache stamp, '' = legacy).
+  /// Org the host actually announces (role-cache stamp, '' = unstamped).
   /// Same source as the beacon `org` students see on the waiting card —
   /// the Setup preview passes this through so it can never drift.
   String _announcedOrg = '';

@@ -152,7 +152,7 @@ class WaitingRoomView extends StatelessWidget {
   /// on the next room poll when the host publishes late.
   final String roomProfPhoto;
 
-  /// Institute org from the announcement / beacon target ('' = legacy).
+  /// Institute org from the announcement / beacon target ('' = unstamped).
   final String roomOrg;
 
   final List<String> roundMarks;

@@ -1,7 +1,7 @@
 // Org mapping: same Google-account domain join-gate + schema-level scoping.
 //
 // (no blocklist); subdomains exact-match (mail.univ.edu != univ.edu);
-// malformed addresses map to '' (legacy / unknown).
+// malformed addresses map to '' (unknown).
 library;
 
 import 'dart:convert';
@@ -60,10 +60,10 @@ String? parseHdFromIdToken(String? idToken) {
 }
 
 /// Local visibility predicate for exports + manual-queue resolution.
-/// Legacy docs without org ('') stay locally visible/exportable; cross-org
+/// Unstamped local docs ('') stay locally visible/exportable; cross-org
 /// docs (both stamped, different) are hidden. Cloud queries additionally
-/// filter server-side with where('org', isEqualTo: myOrg), so legacy cloud
-/// docs stay invisible there until stamped.
+/// filter server-side with where('org', isEqualTo: myOrg), and the rules
+/// deny org-less cloud docs — '' rows are local-only by construction.
 bool inMyOrg(String sessionOrg, String myOrg) {
   if (sessionOrg.isEmpty) return true; // legacy locally visible
   if (myOrg.isEmpty) return true; // offline-skipped / unknown: local only
@@ -75,7 +75,7 @@ bool recordInMyOrg(ClassRecord record, String myOrg) =>
     inMyOrg(record.org, myOrg);
 
 /// Preferred org for this device: account org wins, else the role-cache
-/// stamp ('' = legacy/offline-skipped). Role side normalized here.
+/// stamp ('' = unstamped/offline-skipped). Role side normalized here.
 String resolveMyOrg(String? acctOrg, Map<String, String>? role) {
   final a = (acctOrg ?? '').trim().toLowerCase();
   if (a.isNotEmpty) return a;

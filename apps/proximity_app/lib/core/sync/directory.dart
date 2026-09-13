@@ -16,7 +16,7 @@ class StudentDirectoryEntry {
   final String email;
   final String name;
   final String roll;
-  final String org; // Google-account domain (see orgOf), '' = legacy
+  final String org; // Google-account domain (see orgOf), '' = unstamped
   /// Last claim touch (UTC epoch ms, 0 = legacy — never "stale" by itself;
   /// drives the owner-lazy six-month purge gate).
   final int updatedAtMillis;

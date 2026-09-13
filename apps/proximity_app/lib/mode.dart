@@ -62,7 +62,7 @@ class LinkedIdentity {
   final String name;
   final String gmail;
   final String roll; // institute ID / roll number: user-entered, unverified
-  final String org; // Google-account domain (see orgOf), '' = legacy
+  final String org; // Google-account domain (see orgOf), '' = unstamped
   const LinkedIdentity(
       {required this.name,
       required this.gmail,

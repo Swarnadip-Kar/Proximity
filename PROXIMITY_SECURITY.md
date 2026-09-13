@@ -10,7 +10,7 @@
 ## 1. Audit — flaws in the original system (all fixed; kept as history)
 
 > Status 2026-09-13 (sec-legacy series, full-fresh): F1 sealed-only
-> (`seedHex` wiped, AAD-bound HW envelopes, raw branches deleted);
+> (`seedHex` field deleted, AAD-bound HW envelopes, raw branches deleted);
 > F2 closed (offline chain-vs-pinned-roots + leaf-pkD bind, NONE/unbound
 > never confirm). Findings below describe the pre-hardening system.
 
@@ -130,7 +130,7 @@ share_plus: ^13.3.0 # (was ^12: same win32 split)
 file_picker: ^12.0.0 # (was ^11: same win32 split; Darwin floor → iOS 14)
 ```
 
-**Migration order (completed; full-fresh since 2026-09-13):** (1) deploy rules + `app_config` doc; (2) ship dual-read build (new fields default `''/NONE`); (3) first online open: SE migration + `seedHex→''` wipe + heartbeat rolls `attestedUntil`; (4) stale-pipeline → re-face only (key kept); (5) software enrollments → `Software=no enroll` + re-enroll via `MoveIntent` fast path. No wipe, no cloud face backfill. The sec-legacy series then deleted every grace (org/backfill/NONE-fallback/empty-AAD/pk-fallback): org-less, tier-less, and AAD-less artifacts deny fail-closed, never migrate.
+**Migration order (completed; full-fresh since 2026-09-13):** (1) deploy rules + `app_config` doc; (2) ship dual-read build (new fields default `''/NONE`); (3) first online open: SE migration + `seedHex` field deletion + heartbeat rolls `attestedUntil`; (4) stale-pipeline → re-face only (key kept); (5) software enrollments → `Software=no enroll` + re-enroll via `MoveIntent` fast path. No wipe, no cloud face backfill. The sec-legacy series then deleted every grace (org/backfill/NONE-fallback/empty-AAD/pk-fallback/single-role-mirror/seedHex-field): org-less, tier-less, AAD-less, and mirror artifacts deny fail-closed, never migrate.
 
 **Tests:** protocol goldens (old sigs must fail on extended preimage); `evaluateDeviceProof` chain-pinning units; SE migration test; `LivenessGate` fake (spoof→`faceFailed`); `IntegrityGate` fake (rooted enroll blocks, marking flags); `force_update` fake (stale→barrier); `rules-drill` emulator for new fields; 2-phone relay + adversarial drill (forwarded code, VPN, lent phone, photo spoof, wormhole).
 

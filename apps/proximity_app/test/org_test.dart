@@ -93,7 +93,7 @@ void main() {
       expect(inMyOrg('mail.univ.edu', 'univ.edu'), isFalse);
     });
 
-    test('legacy empty passes locally', () {
+    test('unstamped empty passes locally (local-only; rules deny cloud)', () {
       expect(inMyOrg('', 'univ.edu'), isTrue);
       expect(inMyOrg('univ.edu', ''), isTrue);
       expect(inMyOrg('', ''), isTrue);
@@ -137,8 +137,8 @@ void main() {
       final d = sessionToDoc(
           profUid: 'u', profEmail: 'p@univ.edu', profName: 'P', record: r);
       expect(docToRecord('id', d).org, 'univ.edu');
-      final legacy = Map<String, dynamic>.from(d)..remove('org');
-      expect(docToRecord('id', legacy).org, '');
+      final unstamped = Map<String, dynamic>.from(d)..remove('org');
+      expect(docToRecord('id', unstamped).org, '');
     });
   });
 

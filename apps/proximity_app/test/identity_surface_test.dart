@@ -91,7 +91,7 @@ void main() {
     expect(find.textContaining('univ.edu'), findsNothing);
   });
 
-  testWidgets('browse tile with legacy announcement shows no org',
+  testWidgets('browse tile with unstamped announcement shows no org',
       (t) async {
     await t.pumpWidget(_browse([_live(prof: '', display: '', org: '')]));
     await t.pumpAndSettle();
@@ -288,7 +288,7 @@ void main() {
     expect(find.textContaining('univ.edu'), findsOneWidget);
   });
 
-  testWidgets('history tile with legacy record shows no org', (t) async {
+  testWidgets('history tile with unstamped record shows no org', (t) async {
     final session = ClassRecord(
       classLabel: 'CS201',
       dateIso: '2026-09-06',

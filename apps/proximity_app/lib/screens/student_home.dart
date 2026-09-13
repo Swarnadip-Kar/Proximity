@@ -352,7 +352,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   }
 
   /// This student's org claim for gated discovery (explicit identity org,
-  /// else the Gmail domain; '' = legacy/unknown, passes as before).
+  /// else the Gmail domain; '' = unstamped/unknown, passes as before).
   String _myOrg() {
     try {
       final linked = ref.read(linkedIdentityProvider);

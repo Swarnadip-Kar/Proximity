@@ -35,7 +35,7 @@ class StoredEnrollment {
   /// (`face_verification/<pkgVer>+<assetHash8>`). '' = never-enrolled →
   /// always stale → forced re-face, key kept.
   final String verifierVer;
-  final String org; // Google-account domain (see orgOf), '' = legacy
+  final String org; // Google-account domain (see orgOf), '' = unstamped
   /// DKey public bytes hex ('' = unbound — never confirms).
   final String pkDHex;
   /// Attestation level wire name ('FULL'/'STD'/'NONE').
