@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/core/sync/claim.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
@@ -50,6 +51,17 @@ Future<EnrollmentController> _signedInWithKey(FakeAuthService auth,
 }
 
 const _stills = ['c.jpg', 'l.jpg', 'r.jpg', 'u.jpg', 'd.jpg'];
+
+// Widget-test integrity fake: the real PlatformIntegrityProbe does native
+// channel I/O with a .timeout(8s) budget, which never fires under the
+// testWidgets FakeAsync clock — generateKey/upload hang forever. Plain
+// test() uses real async so the missing plugin fails open fast; widget
+// tests must inject this clean probe instead (same pattern as
+// integrity_gate_test.dart / student_driver_test.dart).
+class _CleanProbe implements IntegrityProbe {
+  @override
+  Future<IntegritySignals> check() async => const IntegritySignals();
+}
 
 void main() {
   group('stale account invalidation', () {
@@ -149,6 +161,8 @@ void main() {
 
   group('single ID-number entry', () {
     testWidgets('account step holds the one editable field, prefilled', (t) async {
+      addTearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
+      IntegrityGate.probe = _CleanProbe();
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
@@ -166,6 +180,8 @@ void main() {
 
     testWidgets('result shows the entry readonly, never a second prompt',
         (t) async {
+      addTearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
+      IntegrityGate.probe = _CleanProbe();
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
@@ -366,6 +382,8 @@ void main() {
 
   group('honest score UI (no constant parades as a measurement)', () {
     testWidgets('success shows match copy, never a numeric score', (t) async {
+      addTearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
+      IntegrityGate.probe = _CleanProbe();
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
@@ -388,6 +406,8 @@ void main() {
     });
 
     testWidgets('pending shows progress, never a numeric score', (t) async {
+      addTearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
+      IntegrityGate.probe = _CleanProbe();
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
       final ctl = await _signedInWithKey(auth, store, 'B-ROLL');
