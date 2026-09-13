@@ -204,7 +204,6 @@ Future<InMemoryDeviceStore> hwEnrolledStore({
     email: email,
     name: 'S',
     roll: '1',
-    seedHex: '',
     pkHex: hexEncode(hw.pkS),
     sealedKeyHex: hexEncode(sealed),
     chainDERHex: hw.chainHex,

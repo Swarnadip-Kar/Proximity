@@ -213,15 +213,13 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
           final stored = await store.readEnrollment();
           if (stored != null &&
               stored.email.trim().toLowerCase() == me) {
-            // Sealed-only (security §2 F1): never re-persist a legacy raw
-            // seed — always '' (the envelope + chain carry the key).
-            // Preserves the face-rescan stamp (dropping it to 0 would lift
-            // the 30-day rescan cooldown).
+            // Sealed-only (security §2 F1): the envelope + chain carry
+            // the key. Preserves the face-rescan stamp (dropping it to 0
+            // would lift the 30-day rescan cooldown).
             await store.writeEnrollment(StoredEnrollment(
               email: stored.email,
               name: stored.name,
               roll: want,
-              seedHex: '',
               pkHex: stored.pkHex,
               sealedKeyHex: stored.sealedKeyHex,
               chainDERHex: stored.chainDERHex,

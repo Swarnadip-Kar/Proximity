@@ -1,5 +1,6 @@
 // SecureDeviceStore SE fixes: hardened options are actually wired (not just
-// defined) + one-shot sealed+raw → raw-wiped migration on read.
+// defined). Fresh-only: unknown at-rest keys are ignored, sealed-only docs
+// read with no rewrite.
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -64,11 +65,10 @@ class _FakeSecure extends FlutterSecureStorage {
   }
 }
 
-Map<String, dynamic> _doc({String seedHex = '', String sealedKeyHex = ''}) => {
+Map<String, dynamic> _doc({String sealedKeyHex = ''}) => {
       'email': 'a@x.in',
       'name': 'A',
       'roll': '1',
-      'seedHex': seedHex,
       'pkHex': 'cd' * 32,
       'sealedKeyHex': sealedKeyHex,
       'enrolledAt': '2026-01-01T00:00:00.000Z',
@@ -89,46 +89,15 @@ void main() {
         isNot(IOSOptions.defaultOptions.accessibility));
   });
 
-  test('sealed+raw doc is re-wiped on read (sealed wins)', () async {
+  test('unknown at-rest keys are ignored (no rewrite)', () async {
     final fake = _FakeSecure();
-    fake.backend['prox.enrollment.v1'] =
-        jsonEncode(_doc(seedHex: 'ab' * 32, sealedKeyHex: 'deadbeef'));
+    final doc = _doc(sealedKeyHex: 'deadbeef')..['seedHex'] = 'ab' * 32;
+    fake.backend['prox.enrollment.v1'] = jsonEncode(doc);
     final store = SecureDeviceStore(secure: fake);
 
     final back = (await store.readEnrollment())!;
     expect(back.sealedKeyHex, 'deadbeef');
-    // ignore: deprecated_member_use_from_same_package
-    expect(back.seedHex, isEmpty); // wiped in memory too
-    expect(fake.writeCount, 1);
-
-    final atRest =
-        jsonDecode(fake.backend['prox.enrollment.v1']!) as Map<String, dynamic>;
-    expect(atRest['seedHex'], isEmpty);
-    expect(atRest['sealedKeyHex'], 'deadbeef');
-
-    // One-shot: a second read rewrites nothing.
-    await store.readEnrollment();
-    expect(fake.writeCount, 1);
-  });
-
-  test('pure-legacy raw-only doc stays readable and is never rewritten',
-      () async {
-    final fake = _FakeSecure();
-    fake.backend['prox.enrollment.v1'] =
-        jsonEncode(_doc(seedHex: 'ab' * 32));
-    final store = SecureDeviceStore(secure: fake);
-
-    final back = (await store.readEnrollment())!;
-    expect(back.email, 'a@x.in');
-    expect(back.sealedKeyHex, isEmpty);
-    // Still parseable for the host ephemeral fallback …
-    // ignore: deprecated_member_use_from_same_package
-    expect(back.seedHex, 'ab' * 32);
-    // … but never re-persisted.
     expect(fake.writeCount, 0);
-    final atRest =
-        jsonDecode(fake.backend['prox.enrollment.v1']!) as Map<String, dynamic>;
-    expect(atRest['seedHex'], 'ab' * 32);
   });
 
   test('sealed-only doc reads with no rewrite', () async {

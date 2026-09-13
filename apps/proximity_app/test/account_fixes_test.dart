@@ -84,7 +84,6 @@ Future<InMemoryDeviceStore> _storeEnrolledAsA() async {
     email: _emailA,
     name: 'Ada A',
     roll: 'RA1001',
-    seedHex: 'ab' * 32,
     pkHex: _pkHexA,
     faceId: 'face-ada-id',
     enrolledAt: DateTime.utc(2026, 9, 1),

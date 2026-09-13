@@ -304,9 +304,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // Sealed-only (security §2): unwrap needs THIS device's HW DKey — a
       // backup-restore clone carrying ciphertext fails here with
       // 'restore detected — re-enroll' and must re-enroll, never match.
-      // Legacy raw-seed docs (sealedKeyHex empty) never restore — the key
-      // step re-runs on secure hardware (software enrollments re-enroll
-      // via the MoveIntent fast path; no silent downgrade, no seed read).
+      // Unsealed docs (sealedKeyHex empty) never restore — the key
+      // step re-runs on secure hardware (re-enroll via the MoveIntent
+      // fast path; no silent downgrade).
       if (stored.sealedKeyHex.isEmpty) {
         BleLog.log('SEC',
             'enroll restore: unsealed legacy doc — re-enroll on hardware');
@@ -1019,13 +1019,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   prevEnrollment.email.toLowerCase() == email
               ? prevEnrollment.lastFaceRescanAtMillis
               : 0);
-      // Sealed-only (security §2 F1 fix): never writes `seedHex` (always
-      // `''` via toJson) — `sealedKeyHex + pkDHex + chainDERHex` only.
+      // Sealed-only (security §2 F1 fix): `sealedKeyHex + pkDHex +
+      // chainDERHex` only — no raw-seed field exists.
       await _store.writeEnrollment(StoredEnrollment(
         email: email,
         name: name,
         roll: roll,
-        seedHex: '',
         pkHex: pkHex,
         sealedKeyHex: hexEncode(sealed),
         chainDERHex: chainDERHex,
@@ -1085,8 +1084,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// Historical session rolls/names untouched by design (class history is
   /// immutable — past records keep the roll shown at mark time).
   /// Skew note (advisory, no behavior change): this rewrite preserves the
-  /// HW envelope + chain + attestedAt/Until verbatim and wipes legacy raw
-  /// seed — no clock read, so no local-skew trust. Claim-side freshness is
+  /// HW envelope + chain + attestedAt/Until verbatim — no clock read, so
+  /// no local-skew trust. Claim-side freshness is
   /// server-gated (rules request.time ±1h); attestedAt/doublePkD/
   /// integrity-flagged/duplicate-confirmed stay professor-review advisories
   /// (never auto-absent offline) — see PROXIMITY_DESIGN.md residuals.
@@ -1098,13 +1097,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       throw StateError(
           'No enrolled device found for this account — enroll this device first.');
     }
-    // Sealed-only: roll rewrite preserves the HW envelope + chain and
-    // wipes any legacy raw seed (migration: seedHex → '').
+    // Sealed-only: roll rewrite preserves the HW envelope + chain.
     await _store.writeEnrollment(StoredEnrollment(
       email: stored.email,
       name: stored.name,
       roll: want,
-      seedHex: '',
       pkHex: stored.pkHex,
       sealedKeyHex: stored.sealedKeyHex,
       chainDERHex: stored.chainDERHex,

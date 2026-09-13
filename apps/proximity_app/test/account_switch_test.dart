@@ -74,7 +74,6 @@ Future<InMemoryDeviceStore> _store({Map<String, String>? role, bool enrolled = f
       email: _email,
       name: 'Test User',
       roll: 'R1001',
-      seedHex: 'ab' * 32,
       pkHex: _pkHex,
       faceId: 'face-test-id',
       enrolledAt: DateTime.utc(2026, 9, 1),

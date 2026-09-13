@@ -30,7 +30,6 @@ Future<InMemoryDeviceStore> _enrolledStore() async {
     email: _email,
     name: 'S',
     roll: '1',
-    seedHex: 'ab' * 32,
     pkHex: 'cd' * 32,
     faceId: 'face-test-id',
     enrolledAt: DateTime.now().toUtc(),

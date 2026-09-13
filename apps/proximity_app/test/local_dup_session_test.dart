@@ -404,7 +404,6 @@ void main() {
           email: 'old@x.in',
           name: 'OLD',
           roll: '9',
-          seedHex: 'ab' * 32,
           pkHex: 'cd' * 32,
           faceId: 'face-old@x.in',
           enrolledAt: DateTime.now().toUtc(),

@@ -136,7 +136,6 @@ void main() {
         email: _otherEmail,
         name: 'Other User',
         roll: 'R9',
-        seedHex: 'ab' * 32,
         pkHex: 'cd' * 32,
         faceId: 'face-other',
         enrolledAt: DateTime.utc(2026, 9, 1),

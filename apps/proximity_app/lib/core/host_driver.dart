@@ -427,42 +427,12 @@ class RealHostDriver implements HostDriver {
     if (stored != null && stored.chainDERHex.isNotEmpty) {
       unawaited(logChainRevocationReview(stored.chainDERHex, 'host'));
     }
-    // H10 sealed-only migration (security §2 F1): the raw `seedHex'
-    // reader is deleted — hosting NEVER derives the lecture identity from
-    // a raw seed. The lecture key is always ephemeral (never uploaded;
-    // students verify per-window Cert_p + Sig_p fresh each session), and
-    // enrollment truth lives in the HW-sealed envelope (`sealedKeyHex` +
-    // `pkDHex` + `chainDERHex`, opened only via the HW DeviceKey on the
-    // student path — never opened here). On first sealed open, a legacy
-    // doc carrying BOTH sealed + raw is wiped to sealed-only best-effort
-    // (raw-only legacy docs are left untouched — readable, never
-    // re-written — since wiping them would destroy the only copy).
-    if (stored != null &&
-        stored.sealedKeyHex.trim().isNotEmpty &&
-        stored.seedHex.trim().isNotEmpty) {
-      try {
-        await _store.writeEnrollment(StoredEnrollment(
-          email: stored.email,
-          name: stored.name,
-          roll: stored.roll,
-          // seedHex omitted → '' (sealed-only).
-          pkHex: stored.pkHex,
-          sealedKeyHex: stored.sealedKeyHex,
-          chainDERHex: List<String>.of(stored.chainDERHex),
-          faceId: stored.faceId,
-          enrolledAt: stored.enrolledAt,
-          verifierVer: stored.verifierVer,
-          org: stored.org,
-          pkDHex: stored.pkDHex,
-          attestationLevel: stored.attestationLevel,
-          attestedAt: stored.attestedAt,
-          attestedUntil: stored.attestedUntil,
-          lastFaceRescanAtMillis: stored.lastFaceRescanAtMillis,
-        ));
-      } catch (_) {
-        // Best-effort: hosting continues ephemeral regardless.
-      }
-    }
+    // Sealed-only (security §2 F1): hosting NEVER derives the lecture
+    // identity from stored secrets. The lecture key is always ephemeral
+    // (never uploaded; students verify per-window Cert_p + Sig_p fresh
+    // each session). Enrollment truth lives in the HW-sealed envelope
+    // (`sealedKeyHex` + `pkDHex` + `chainDERHex`, opened only via the HW
+    // DeviceKey on the student path — never opened here).
     String manual = '';
     try {
       manual = await _store.readHostName();

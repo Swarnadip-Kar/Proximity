@@ -32,21 +32,20 @@ const _beacon = ClassBeacon(
 Future<InMemoryDeviceStore> enrolledStore({
   String verifierVer = kFaceVerifierVer,
   String faceId = 'face-test-id',
-  String? seedHex,
+  String? seedBytesHex,
   String? sealedKeyHex,
   String attestationLevel = 'NONE',
   DateTime? attestedUntil,
   String pkDHex = '',
 }) async {
   final s = InMemoryDeviceStore();
-  final seedBytes = hexDecode(seedHex ?? ('ab' * 32));
+  final seedBytes = hexDecode(seedBytesHex ?? ('ab' * 32));
   final sealed = sealedKeyHex ??
       hexEncode(await FakeDeviceKey().seal(Uint8List.fromList(seedBytes)));
   await s.writeEnrollment(StoredEnrollment(
     email: _email,
     name: 'S',
     roll: '1',
-    seedHex: '',
     pkHex: 'cd' * 32,
     sealedKeyHex: sealed,
     faceId: faceId,
@@ -458,7 +457,6 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: '',
       sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
@@ -535,7 +533,6 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: '',
       sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
@@ -616,7 +613,6 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: '',
       sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
       faceId: 'face-test-id',
@@ -889,7 +885,6 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
     final stuPk = ed.public(ed.newKeyFromSeed(seed));
     final pkDHex = hexEncode(Uint8List.fromList(List.filled(32, 7)));
     final store = await enrolledStore(
-      seedHex: '',
       sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       attestationLevel: 'FULL',
       attestedUntil: DateTime.now().toUtc().add(const Duration(days: 80)),
@@ -964,7 +959,7 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
     // missing, so the verdict is terminal-error, never a silent mark.
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final store = await enrolledStore(seedHex: hexEncode(seed));
+    final store = await enrolledStore(seedBytesHex: hexEncode(seed));
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -1039,7 +1034,6 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: '',
       pkHex: 'cd' * 32,
       sealedKeyHex: hexEncode(sealed),
       faceId: 'face-test-id',

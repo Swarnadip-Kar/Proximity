@@ -274,7 +274,6 @@ void main() {
         email: 'b@univ.edu',
         name: 'B',
         roll: 'B-ROLL',
-        seedHex: '',
         pkHex: 'cd' * 32,
         sealedKeyHex: hexEncode(await FakeDeviceKey()
             .seal(Uint8List.fromList(hexDecode('ab' * 32)))),
@@ -315,7 +314,6 @@ void main() {
         email: 'b@univ.edu',
         name: 'B',
         roll: 'B-ROLL',
-        seedHex: 'ab' * 32,
         pkHex: 'cd' * 32,
         faceId: 'face-1',
         enrolledAt: DateTime.utc(2026, 9, 1),
@@ -349,7 +347,6 @@ void main() {
         email: 'b@univ.edu',
         name: 'B',
         roll: 'B-ROLL',
-        seedHex: '',
         pkHex: 'cd' * 32,
         sealedKeyHex: hexEncode(await FakeDeviceKey()
             .seal(Uint8List.fromList(hexDecode('ab' * 32)))),

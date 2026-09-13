@@ -174,17 +174,15 @@ void main() {
     expect(driver.isHosting, isFalse);
   });
 
-  test('sealed-only enrollment hosts via ephemeral identity (no raw seed)',
+  test('sealed-only enrollment hosts via ephemeral identity',
       () async {
-    // Security §2 regression: sealed-only docs carry seedHex:'' — hosting
-    // must fall back to the ephemeral lecture identity, never throw in
-    // hexDecode/newKeyFromSeed on the empty seed.
+    // Security §2 regression: sealed-only docs host via the ephemeral
+    // lecture identity — hosting never reads stored secrets.
     final store = InMemoryDeviceStore();
     await store.writeEnrollment(StoredEnrollment(
       email: 'prof@x.in',
       name: 'Prof',
       roll: '',
-      seedHex: '',
       pkHex: List.filled(32, 'aa').join(),
       sealedKeyHex: 'PXK1${List.filled(32, 'bb').join()}',
       faceId: 'face-prof',

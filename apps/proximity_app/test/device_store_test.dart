@@ -10,7 +10,6 @@ void main() {
       email: 'a@x.in',
       name: 'A',
       roll: '1',
-      seedHex: 'ab' * 32,
       pkHex: 'cd' * 32,
       sealedKeyHex: 'deadbeef',
       faceId: 'face-1',
@@ -34,14 +33,13 @@ void main() {
     expect(await store.readEnrollment(), isNull);
   });
 
-  test('legacy template enrollment migrates to stale (key kept)', () async {
-    // Pre-plugin docs carried templateCsv/modelVer (deleted): they load
-    // as faceId '' so the stale check forces re-face, key kept.
+  test('unknown pre-plugin keys ignored; missing face is stale', () async {
+    // Fresh-only: pre-plugin `templateCsv`/`modelVer`/`seedHex` keys are
+    // ignored on parse; missing faceId forces re-face, key kept.
     final legacy = StoredEnrollment.fromJson({
       'email': 'a@x.in',
       'name': 'A',
       'roll': '1',
-      'seedHex': 'ab' * 32,
       'pkHex': 'cd' * 32,
       'templateCsv': '1.0,0.0',
       'enrolledAt': '2026-01-01T00:00:00.000Z',
@@ -50,20 +48,19 @@ void main() {
     expect(legacy.faceId, isEmpty);
     expect(
         legacy.isFaceStale('face_verification/0.3.9+b45ab893'), isTrue);
-    expect(legacy.seedHex, 'ab' * 32); // key survives
-    // New docs never write the legacy keys.
-    expect(
-        StoredEnrollment(
-          email: 'a@x.in',
-          name: 'A',
-          roll: '1',
-          seedHex: 'ab' * 32,
-          pkHex: 'cd' * 32,
-          faceId: 'f',
-          enrolledAt: DateTime.utc(2026, 1, 1),
-          verifierVer: 'v',
-        ).toJson().containsKey('templateCsv'),
-        isFalse);
+    expect(legacy.pkHex, 'cd' * 32); // key survives
+    // Fresh docs never write the old keys.
+    final fresh = StoredEnrollment(
+      email: 'a@x.in',
+      name: 'A',
+      roll: '1',
+      pkHex: 'cd' * 32,
+      faceId: 'f',
+      enrolledAt: DateTime.utc(2026, 1, 1),
+      verifierVer: 'v',
+    ).toJson();
+    expect(fresh.containsKey('templateCsv'), isFalse);
+    expect(fresh.containsKey('seedHex'), isFalse);
   });
 
   test('history roundtrip + CSV export', () async {    final store = InMemoryDeviceStore();

@@ -73,41 +73,8 @@ class SecureDeviceStore implements DeviceStore {
     } catch (_) {
       return null;
     }
-    // One-shot SE migration (security §2 F1): a doc carrying BOTH a sealed
-    // envelope and a legacy raw seed rewrites at rest with the raw wiped
-    // (sealed wins; `toJson` already writes `seedHex: ''`). The wiped copy
-    // is returned so the raw never sits in memory either. Pure-legacy
-    // raw-only docs stay readable (host falls back to ephemeral) and are
-    // NEVER re-written — rewriting them with raw would re-persist the very
-    // secret the F1 fix removed.
-    final hasRaw =
-        (doc['seedHex'] as String?)?.trim().isNotEmpty ?? false;
-    if (hasRaw && parsed.sealedKeyHex.trim().isNotEmpty) {
-      final wiped = StoredEnrollment(
-        email: parsed.email,
-        name: parsed.name,
-        roll: parsed.roll,
-        // seedHex omitted → '' (sealed-only).
-        pkHex: parsed.pkHex,
-        sealedKeyHex: parsed.sealedKeyHex,
-        chainDERHex: List<String>.of(parsed.chainDERHex),
-        faceId: parsed.faceId,
-        enrolledAt: parsed.enrolledAt,
-        verifierVer: parsed.verifierVer,
-        org: parsed.org,
-        pkDHex: parsed.pkDHex,
-        attestationLevel: parsed.attestationLevel,
-        attestedAt: parsed.attestedAt,
-        attestedUntil: parsed.attestedUntil,
-        lastFaceRescanAtMillis: parsed.lastFaceRescanAtMillis,
-      );
-      try {
-        await writeEnrollment(wiped);
-      } catch (_) {
-        // Best-effort: the in-memory copy is wiped regardless.
-      }
-      return wiped;
-    }
+    // Fresh-only (security §2 F1): no raw-seed migration — the doc is
+    // sealed-only by construction. Unknown keys are ignored by fromJson.
     return parsed;
   }
 

@@ -8,42 +8,35 @@ import 'package:proximity_storage/storage.dart';
 import '../../security/revocation_cache.dart' show RevocationHashStore;
 
 class StoredEnrollment {
-  // One record, kept from the pre-plugin shape: new fields (faceId,
-  // verifierVer, sealed SKey, DKey binding) ride this same JSON doc
-  // because the secure-store layout, its additive migration (old docs
-  // parse with '' defaults — see fromJson), and its tests already handle
-  // exactly this shape. Splitting storage would create two sources of
-  // truth for one enrollment.
+  // One record (fresh-only): the HW-sealed enrollment (faceId,
+  // verifierVer, sealed SKey, DKey binding) rides a single JSON doc.
+  // There is no raw-seed field and no pre-plugin compat: unknown keys
+  // are ignored on parse, missing keys default to never-enrolled/stale
+  // (re-enroll). No IMEI/serial/phone-ID ever lives here (install UUID
+  // only).
   final String email;
   final String name;
   final String roll;
-  /// Deprecated raw SKey seed hex (security §2 F1 fix: never written).
-  ///
-  /// Parse-compat only: old docs carry a raw seed, new writes are always
-  /// `''` (see `toJson` + `EnrollmentController.upload` sealed-only).
-  /// Readers MUST NOT use this — unwrap via `sealedKeyHex` only.
-  /// No IMEI/serial/phone-ID ever lives here (install UUID only).
-  @Deprecated('Raw seed at rest (F1). Parse-compat only — never write.')
-  final String seedHex;
   final String pkHex;
   /// DKey-sealed SKey envelope hex ('' = never-enrolled; sealed-only —
   /// empty means re-enroll, never a raw fallback).
   final String sealedKeyHex;
   /// HW attestation chain, leaf-first DER hex (security §2 + §7
-  /// `attestationChain` wire form). `[]` = unbound legacy/test path.
-  /// Never contains IMEI/serial — X.509 certs only, verified offline
-  /// against pinned roots (see `AttestationChain` in protocol).
+  /// `attestationChain` wire form). `[]` = unbound (never confirms —
+  /// manual path only). Never contains IMEI/serial — X.509 certs only,
+  /// verified offline against pinned roots (see `AttestationChain` in
+  /// protocol).
   final List<String> chainDERHex;
   /// Opaque face identity: sha256(gmailLower+installId) hex — never raw
   /// Gmail. The plugin store is keyed by this. '' = never enrolled.
   final String faceId;
   final DateTime enrolledAt;
   /// Pipeline tag that produced the enrollment
-  /// (`face_verification/<pkgVer>+<assetHash8>`). '' = pre-plugin
-  /// template → always stale → forced re-face, key kept.
+  /// (`face_verification/<pkgVer>+<assetHash8>`). '' = never-enrolled →
+  /// always stale → forced re-face, key kept.
   final String verifierVer;
   final String org; // Google-account domain (see orgOf), '' = legacy
-  /// DKey public bytes hex ('' = unbound legacy).
+  /// DKey public bytes hex ('' = unbound — never confirms).
   final String pkDHex;
   /// Attestation level wire name ('FULL'/'STD'/'NONE').
   final String attestationLevel;
@@ -59,7 +52,6 @@ class StoredEnrollment {
     required this.email,
     required this.name,
     required this.roll,
-    this.seedHex = '',
     required this.pkHex,
     this.sealedKeyHex = '',
     List<String>? chainDERHex,
@@ -92,9 +84,7 @@ class StoredEnrollment {
         'email': email,
         'name': name,
         'roll': roll,
-        // Security §2: never write a raw seed — always '' (parse-compat
-        // read only). Sealed-only: `sealedKeyHex` + `pkDHex` + `chainDERHex`.
-        'seedHex': '',
+        // Security §2 sealed-only: `sealedKeyHex` + `pkDHex` + `chainDERHex`.
         'pkHex': pkHex,
         'sealedKeyHex': sealedKeyHex,
         'chainDERHex': List<String>.of(chainDERHex),
@@ -113,15 +103,11 @@ class StoredEnrollment {
       };
 
   factory StoredEnrollment.fromJson(Map<String, dynamic> j) {
-    // Legacy migration: pre-plugin docs carried templateCsv/modelVer
-    // (deleted — embeddings incomparable with the plugin FaceNet space).
-    // They map to faceId '' + verifierVer = old modelVer (or ''), so the
-    // stale check forces re-face while the SKey is kept.
-    final legacyModel = j['modelVer'] as String? ?? '';
-    final hasTemplate =
-        (j['templateCsv'] as String?)?.trim().isNotEmpty ?? false;
-    // chainDERHex parse-compat: local `chainDERHex` or Firestore wire
-    // `attestationChain` (security §7), else unbound legacy ([]).
+    // Fresh-only: unknown keys (incl. any pre-plugin `templateCsv` /
+    // `modelVer` / `seedHex`) are ignored. Missing keys default to
+    // never-enrolled/stale (faceId '' → forced re-face).
+    // chainDERHex: local `chainDERHex` or Firestore wire
+    // `attestationChain` (security §7), else unbound ([] — never confirms).
     List<String> chainFromJson(Map<String, dynamic> j) {
       final raw = j['chainDERHex'] ?? j['attestationChain'];
       if (raw is List) {
@@ -137,14 +123,12 @@ class StoredEnrollment {
       email: j['email'] as String,
       name: j['name'] as String,
       roll: j['roll'] as String? ?? '',
-      seedHex: j['seedHex'] as String? ?? '',
       pkHex: j['pkHex'] as String,
       sealedKeyHex: j['sealedKeyHex'] as String? ?? '',
       chainDERHex: chainFromJson(j),
       faceId: j['faceId'] as String? ?? '',
       enrolledAt: DateTime.parse(j['enrolledAt'] as String),
-      verifierVer: j['verifierVer'] as String? ??
-          (hasTemplate ? legacyModel : ''),
+      verifierVer: j['verifierVer'] as String? ?? '',
       org: j['org'] as String? ?? '',
       pkDHex: j['pkDHex'] as String? ?? '',
       attestationLevel: j['attestationLevel'] as String? ?? 'NONE',

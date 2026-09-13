@@ -6,8 +6,8 @@
 // - Software keys cannot enroll (Software-no-enroll at the controller).
 // - Sealed-only restore on a clone/invalidated key reports
 //   'restore detected — re-enroll' (controller _tryRestore path).
-// - Host legacy branch: corrupt raw hex falls back to the ephemeral
-//   lecture identity (never a hosting crash); valid raw still derives.
+// - Host ephemeral identity: hosting starts with a sealed doc or no
+//   enrollment (never derives from stored secrets, never crashes).
 // - Prompt-free DEK store stays unsynced/this-device-only on iOS.
 // - Heartbeat never rolls the window on a dead (invalidated) HW key.
 // - HW sign maps invalidation to restore-detected; auth cancellations
@@ -114,14 +114,12 @@ EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
 
 void main() {
   group('ID-edit roll rewrite stays sealed-only', () {
-    test('updateLocalRoll wipes raw seed, keeps envelope + rescan stamp',
-        () async {
+    test('updateLocalRoll keeps envelope + rescan stamp', () async {
       final store = InMemoryDeviceStore();
       await store.writeEnrollment(StoredEnrollment(
         email: 'a@gmail.com',
         name: 'A',
         roll: '1',
-        seedHex: 'ab' * 32,
         pkHex: 'cd' * 32,
         sealedKeyHex: 'deadbeef',
         chainDERHex: const ['ca11'],
@@ -138,8 +136,6 @@ void main() {
       await ctl.updateLocalRoll('2');
       final back = (await store.readEnrollment())!;
       expect(back.roll, '2');
-      // ignore: deprecated_member_use_from_same_package
-      expect(back.seedHex, isEmpty);
       expect(back.sealedKeyHex, 'deadbeef');
       expect(back.chainDERHex, const ['ca11']);
       expect(back.pkDHex, 'ee' * 32);
@@ -170,7 +166,6 @@ void main() {
         email: 'a@gmail.com',
         name: 'A',
         roll: '1',
-        seedHex: '',
         pkHex: 'cd' * 32,
         sealedKeyHex: sealed,
         faceId: 'face-1',
@@ -184,36 +179,34 @@ void main() {
     });
   });
 
-  group('host legacy seed branch', () {
+  group('host ephemeral identity (fresh-only)', () {
     RealHostDriver makeDriver({DeviceStore? store}) => RealHostDriver(
           store: store ?? InMemoryDeviceStore(),
           engine: ProxBleEngine(radio: FakeBleRadio()),
         );
 
-    Future<InMemoryDeviceStore> storeWith(String seedHex) async {
+    Future<InMemoryDeviceStore> storeWithSealed() async {
       final store = InMemoryDeviceStore();
       await store.writeEnrollment(StoredEnrollment(
         email: 'prof@x.in',
         name: 'Prof',
         roll: '',
-        seedHex: seedHex,
         pkHex: 'cd' * 32,
+        sealedKeyHex: 'deadbeef',
         enrolledAt: DateTime.utc(2026, 9, 1),
       ));
       return store;
     }
 
-    test('corrupt raw hex falls back to ephemeral (hosting still starts)',
-        () async {
-      final driver = makeDriver(store: await storeWith('zzzz-not-hex'));
+    test('hosting starts ephemeral with a sealed doc', () async {
+      final driver = makeDriver(store: await storeWithSealed());
       await driver.startHosting(classLabel: 'CS101', port: 0);
       expect(driver.isHosting, isTrue);
       await driver.endHosting();
     });
 
-    test('valid legacy raw seed still derives the hosting identity',
-        () async {
-      final driver = makeDriver(store: await storeWith('ab' * 32));
+    test('hosting starts ephemeral with no enrollment', () async {
+      final driver = makeDriver();
       await driver.startHosting(classLabel: 'CS101', port: 0);
       expect(driver.isHosting, isTrue);
       await driver.endHosting();

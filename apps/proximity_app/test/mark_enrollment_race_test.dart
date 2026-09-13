@@ -107,7 +107,6 @@ Future<InMemoryDeviceStore> _storeEnrolledAs(String email) async {
     email: email,
     name: 'User ${email[0].toUpperCase()}',
     roll: 'R-${email[0].toUpperCase()}',
-    seedHex: 'ab' * 32,
     pkHex: 'cd' * 32,
     faceId: 'face-$email',
     enrolledAt: DateTime.utc(2026, 9, 1),

@@ -4,6 +4,7 @@ library;
 
 import 'package:proximity_storage/storage.dart';
 
+import '../../security/revocation_cache.dart' show RevocationHashStore;
 import 'record_helpers.dart';
 import 'store_base.dart';
 
@@ -271,4 +272,10 @@ class InMemoryDeviceStore implements DeviceStore {
       ..clear()
       ..addAll(records);
   }
+
+  /// H8: memory/test stores carry no secure hash backend (null = the hash
+  /// travels in the prefs sidecar). Explicit because implements
+  /// does not inherit the interface default.
+  @override
+  RevocationHashStore? get revocationHashStore => null;
 }

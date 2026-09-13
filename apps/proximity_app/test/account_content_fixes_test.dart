@@ -49,7 +49,6 @@ Future<InMemoryDeviceStore> _enrolledStore({int lastFaceRescanAt = 0}) async {
     email: _email,
     name: 'Test User',
     roll: 'R1001',
-    seedHex: 'ab' * 32,
     pkHex: _pkHex,
     faceId: 'face-test-id',
     enrolledAt: DateTime.utc(2026, 9, 1),

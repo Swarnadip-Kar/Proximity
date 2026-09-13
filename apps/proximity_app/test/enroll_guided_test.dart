@@ -495,7 +495,6 @@ void main() {
         email: 's@x.in',
         name: 'S',
         roll: 'R1',
-        seedHex: '',
         pkHex: 'cd' * 32,
         sealedKeyHex: sealedFixture,
         faceId: 'face-1',

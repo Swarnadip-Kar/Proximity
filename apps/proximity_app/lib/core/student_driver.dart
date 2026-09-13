@@ -1063,7 +1063,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // the stored decode with no rebind: injecting a live pkD there would
       // force bound=true server-side (pkD non-empty gates bound) and fail
       // `face-unbound` — migration callers prove unbound until they carry a
-      // ticket. Sealed-only: no seedHex raw path (empty sealed already
+      // ticket. Sealed-only: no raw-key path (empty sealed already
       // returned above).
       Uint8List pkD = Uint8List(0);
       List<String> chainForProve = stored.chainDERHex;
@@ -1085,7 +1085,6 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
                 email: stored.email,
                 name: stored.name,
                 roll: stored.roll,
-                seedHex: '',
                 pkHex: stored.pkHex,
                 sealedKeyHex: stored.sealedKeyHex,
                 chainDERHex: List<String>.of(chainForProve),
