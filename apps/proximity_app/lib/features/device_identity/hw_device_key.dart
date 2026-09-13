@@ -382,12 +382,21 @@ abstract class HwSealStore {
 /// Production [HwSealStore] over `flutter_secure_storage` (already a direct
 /// app dep; prompt-free hardened options — NOT the biometric-gated
 /// `SecureStoreOptions.storage`, which would prompt on every prove).
+///
+/// Android `storageNamespace: 'prox_seal'` isolates this instance from the
+/// enrollment store (`SecureStoreOptions.aOpts`, namespace `'prox_enroll'`,
+/// AES-wrap key cipher vs plain `AndroidOptions` RSA wrap here). Sharing the
+/// default namespace flips algorithm markers and triggers migrate/reset
+/// wipes of the OTHER store's data — the namespaces must stay distinct.
 class FlutterSealStore implements HwSealStore {
   final FlutterSecureStorage storage;
 
   const FlutterSealStore(
       [this.storage = const FlutterSecureStorage(
-        aOptions: AndroidOptions(),
+        aOptions: AndroidOptions(
+          storageNamespace: 'prox_seal',
+          migrateWithBackup: true,
+        ),
         iOptions: IOSOptions(
           synchronizable: false,
           accessibility:

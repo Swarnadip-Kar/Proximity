@@ -37,6 +37,10 @@ class SecureDeviceStore implements DeviceStore {
   // syncable/migratable. This is the ENROLLMENT doc store (prompt-gated);
   // the HW seal DEK lives in the prompt-free `FlutterSealStore` (same FSS
   // plugin, ungated options — gated instead by the 4h HW grant + face).
+  // The two instances MUST keep distinct Android `storageNamespace`s
+  // ('prox_enroll' here via SecureStoreOptions.aOpts vs 'prox_seal' there):
+  // different key ciphers sharing one namespace flip algorithm markers and
+  // trigger migrate/reset wipes of each other's data.
   // Backup exclusion lives in AndroidManifest (`allowBackup=false`,
   // `fullBackupContent=false`) + res/xml/data_extraction_rules.xml.
   SecureDeviceStore({FlutterSecureStorage? secure})

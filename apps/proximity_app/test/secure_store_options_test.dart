@@ -16,6 +16,11 @@ void main() {
     expect(params['keyCipherAlgorithm'], KeyCipherAlgorithm.AES_GCM_NoPadding.name);
     expect(params['storageCipherAlgorithm'], StorageCipherAlgorithm.AES_GCM_NoPadding.name);
     expect(params['biometricPromptNegativeButton'], isNotEmpty);
+    // Namespace isolation (FSS v11): enrollment (AES-wrap) must never share
+    // the default namespace with the seal store (RSA-wrap) — shared markers
+    // flip and trigger migrate/reset wipes. Crash-resistant migration on.
+    expect(params['storageNamespace'], 'prox_enroll');
+    expect(params['migrateWithBackup'], 'true');
   });
 
   test('iOS options are this-device-only, unsynced, current-set bound', () {

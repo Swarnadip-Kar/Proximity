@@ -49,11 +49,23 @@ class SecureStoreOptions {
   ///
   /// The negative button label is required with `strongBiometricOnly`
   /// (no device-credential fallback exists to dismiss the prompt).
+  ///
+  /// `storageNamespace: 'prox_enroll'` isolates this instance's data prefs,
+  /// config/algorithm markers, KeyStore aliases and wrapped-key prefs from
+  /// the prompt-free seal store (`FlutterSealStore`, namespace
+  /// `'prox_seal'`), which uses a DIFFERENT key cipher (RSA wrap vs AES
+  /// wrap here). Without isolation the two instances flip each other's
+  /// algorithm markers and trigger migrate/reset wipes (FSS v11
+  /// `FlutterSecureStorageConfig`: namespace suffixes KeyStore aliases and
+  /// scopes all prefs). `migrateWithBackup: true` makes any future
+  /// algorithm migration crash-resistant (backup before migrate).
   static const aOpts = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.strongBiometricOnly,
     biometricPromptTitle: 'Authenticate to access Proximity',
     biometricPromptNegativeButton: 'Cancel',
+    storageNamespace: 'prox_enroll',
+    migrateWithBackup: true,
   );
 
   /// iOS: Keychain, this-device-only, current-biometric-set bound, no sync.

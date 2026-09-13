@@ -21,6 +21,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/security/secure_store_options.dart';
 import 'package:proximity_app/features/device_identity/hw_device_key.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -229,6 +230,21 @@ void main() {
       const seal = FlutterSealStore();
       expect(seal.storage.aOptions, isA<AndroidOptions>());
       expect(seal.storage.aOptions.toMap()['enforceBiometrics'], 'false');
+    });
+
+    test('seal and enrollment stores use distinct crash-safe namespaces', () {
+      // Regression pin for the shared-namespace wipe: different key ciphers
+      // (RSA-wrap here vs AES-wrap in SecureStoreOptions.aOpts) sharing one
+      // namespace flip algorithm markers and trigger migrate/reset wipes of
+      // each other's data (FSS v11 namespaced prefs + KeyStore suffixes).
+      const seal = FlutterSealStore();
+      final sealMap = seal.storage.aOptions.toMap();
+      final enrollMap = SecureStoreOptions.aOpts.toMap();
+      expect(sealMap['storageNamespace'], 'prox_seal');
+      expect(sealMap['migrateWithBackup'], 'true');
+      expect(enrollMap['storageNamespace'], 'prox_enroll');
+      expect(sealMap['storageNamespace'],
+          isNot(equals(enrollMap['storageNamespace'])));
     });
   });
 
