@@ -88,6 +88,14 @@ class _MemorySealStore implements HwSealStore {
   }
 }
 
+Uint8List _hexBytes(String hex) {
+  final out = Uint8List(hex.length ~/ 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+  }
+  return out;
+}
+
 HwDeviceKey _device(
         {HwKeyBackend? backend, HwSealStore? sealStore, String? alias}) =>
     HwDeviceKey(
@@ -113,16 +121,47 @@ void main() {
     });
 
     test('pkDFromXY decodes unpadded base64url x||y', () {
-      // 32B x=0x11.., 32B y=0x22.. → known 64B.
+      String b64u(Uint8List b) =>
+          base64Url.encode(b).replaceAll('=', '');
+      // P-256 generator G (on-curve) → known 64B.
+      final gx = _hexBytes(
+          '6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296');
+      final gy = _hexBytes(
+          '4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5');
+      expect(HwDeviceKey.isOnP256Curve(gx, gy), isTrue);
+      expect(HwDeviceKey.pkDFromXY(b64u(gx), b64u(gy)), [...gx, ...gy]);
+      expect(() => HwDeviceKey.pkDFromXY('!!!', b64u(gy)),
+          throwsA(isA<Exception>()));
+    });
+
+    test('pkDFromXY rejects off-curve / out-of-range points', () {
       String b64u(Uint8List b) =>
           base64Url.encode(b).replaceAll('=', '');
       // ignore: avoid_redundant_argument_values
       final x = Uint8List.fromList(List.filled(32, 0x11));
       final y = Uint8List.fromList(List.filled(32, 0x22));
-      final pkD = HwDeviceKey.pkDFromXY(b64u(x), b64u(y));
-      expect(pkD, [...x, ...y]);
-      expect(() => HwDeviceKey.pkDFromXY('!!!', b64u(y)),
-          throwsA(isA<Exception>()));
+      expect(HwDeviceKey.isOnP256Curve(x, y), isFalse);
+      expect(() => HwDeviceKey.pkDFromXY(b64u(x), b64u(y)),
+          throwsA(isA<FormatException>()));
+      final zero = Uint8List(32);
+      final gy = _hexBytes(
+          '4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5');
+      expect(HwDeviceKey.isOnP256Curve(zero, gy), isFalse);
+      expect(() => HwDeviceKey.pkDFromXY(b64u(zero), b64u(gy)),
+          throwsA(isA<FormatException>()));
+    });
+
+    test('decodeX5c rejects empty / non-DER bodies fail-closed', () {
+      expect(
+          () => AttestedSecureKeysBackend.decodeX5c(const []),
+          throwsA(isA<StateError>()));
+      expect(
+          () => AttestedSecureKeysBackend.decodeX5c(const ['aGk=']),
+          throwsA(isA<StateError>()));
+      final der = Uint8List.fromList([0x30, 0x03, 0x02, 0x01, 0x05]);
+      final back = AttestedSecureKeysBackend.decodeX5c(
+          [base64.encode(der)]);
+      expect(back, [der]);
     });
   });
 

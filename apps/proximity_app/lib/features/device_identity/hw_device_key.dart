@@ -165,6 +165,9 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     required String alias,
     required Uint8List attestationChallenge,
   }) async {
+    if (attestationChallenge.isEmpty) {
+      throw ArgumentError('attestationChallenge must not be empty.');
+    }
     late final HwKey key;
     try {
       key = await keys.generateKey(
@@ -218,6 +221,27 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     return Uint8List.fromList(sig.bytes);
   }
 
+  /// Pure x5c decoder (test seam for the DER-shape guard): standard
+  /// base64 → DER bytes. Rejects empty bodies and non-DER (must open with
+  /// the ASN.1 SEQUENCE tag 0x30) as [StateError] fail-closed — a
+  /// successful decode of garbage must never flow into chain verification
+  /// with a misleading reason. Decode failures surface as [FormatException]
+  /// (fail-closed via the [bindEnrollment] wrap, same as before).
+  static List<Uint8List> decodeX5c(List<String> x5c) {
+    final out = <Uint8List>[];
+    for (final b64 in x5c) {
+      final b = base64.decode(b64.trim());
+      if (b.isEmpty || b[0] != 0x30) {
+        throw StateError('bad attestation DER (fail-closed).');
+      }
+      out.add(Uint8List.fromList(b));
+    }
+    if (out.isEmpty) {
+      throw StateError('empty attestation chain (fail-closed).');
+    }
+    return out;
+  }
+
   @override
   Future<List<Uint8List>> attest({
     required String alias,
@@ -227,10 +251,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     // [HwDeviceKey.bindEnrollment] wraps it as StateError (fail-closed).
     final attestation =
         await keys.attest(alias: alias, serverNonce: serverNonce);
-    return [
-      for (final b64 in attestation.x5c)
-        Uint8List.fromList(base64.decode(b64.trim()))
-    ];
+    return decodeX5c(attestation.x5c);
   }
 
   @override
@@ -401,9 +422,52 @@ class HwDeviceKey implements DeviceKey {
       deviceBindingChallengeV2(
           emailLower: email, installId: installId, pkS: pkS);
 
+  /// P-256 field prime + curve constant (y² ≡ x³ − 3x + b).
+  static final BigInt _p256p = BigInt.parse(
+      'FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF',
+      radix: 16);
+  // Pinned against NIST SP 800-186 §3.2.1.3 / SEC2 secp256r1
+  // (b = 41058363725152142129326129780047268409114441015993725554835256314039467401291;
+  // G membership pinned by the pkDFromXY generator test below).
+  static final BigInt _p256b = BigInt.parse(
+      '5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B',
+      radix: 16);
+
+  static BigInt _beToBig(Uint8List b) {
+    var v = BigInt.zero;
+    for (final byte in b) {
+      v = (v << 8) | BigInt.from(byte);
+    }
+    return v;
+  }
+
+  /// True when 32B (x, y) lies on NIST P-256 (1 ≤ x,y < p and the curve
+  /// equation holds). Pure-BigInt, no deps. Genuine StrongBox/TEE /
+  /// Secure Enclave keys always satisfy this; an off-curve point means a
+  /// broken plugin read or a substituted JWK — reject at bind, not at
+  /// verify (downstream ES256 would fail there anyway, but with a
+  /// misleading reason).
+  static bool isOnP256Curve(Uint8List x, Uint8List y) {
+    if (x.length != 32 || y.length != 32) return false;
+    final bx = _beToBig(x);
+    final by = _beToBig(y);
+    if (bx <= BigInt.zero ||
+        bx >= _p256p ||
+        by <= BigInt.zero ||
+        by >= _p256p) {
+      return false;
+    }
+    final lhs = (by * by) % _p256p;
+    final rhs = (((bx * bx) % _p256p * bx) % _p256p -
+            (BigInt.from(3) * bx) % _p256p +
+            _p256b) %
+        _p256p;
+    return lhs == rhs;
+  }
+
   /// JWK → raw pkD helper for the production adapter: base64url-unpadded
   /// x||y (32B each) → 64B. Throws [FormatException] on bad input
-  /// (strict — never silent empty).
+  /// (strict — never silent empty) and when the point is not on P-256.
   static Uint8List pkDFromXY(String xB64, String yB64) {
     Uint8List dec(String s) {
       var n = s.trim();
@@ -418,6 +482,9 @@ class HwDeviceKey implements DeviceKey {
 
     final x = dec(xB64);
     final y = dec(yB64);
+    if (!isOnP256Curve(x, y)) {
+      throw FormatException('P-256 point not on curve (bind rejected).');
+    }
     return Uint8List.fromList([...x, ...y]);
   }
 

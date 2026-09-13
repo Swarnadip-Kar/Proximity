@@ -25,6 +25,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:pointycastle/export.dart';
 
 import '../bytes.dart';
@@ -117,11 +118,15 @@ Uint8List buildSealAad({
 /// [aad] binds the envelope to one enrollment (see [buildSealAad]); empty
 /// (legacy) verifies only with empty on open. Mismatched AAD fails the GCM
 /// tag → restore-detected, never a raw fallback.
+///
+/// [nonce12]/[rng] are test-only (deterministic vectors): production MUST
+/// omit them so every seal draws a fresh `Random.secure()` nonce — reuse
+/// across two seals under one DEK destroys GCM security.
 Uint8List sealWithDek({
   required Uint8List dek32,
   required Uint8List seed32,
-  Uint8List? nonce12,
-  Random? rng,
+  @visibleForTesting Uint8List? nonce12,
+  @visibleForTesting Random? rng,
   Uint8List? aad,
 }) {
   if (dek32.length != 32) {
