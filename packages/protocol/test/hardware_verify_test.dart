@@ -364,6 +364,72 @@ void main() {
       }
     });
 
+    test('two 32B SPKI key pins (RSA f92009 key + EC CA1 key)', () {
+      final pins = defaultPinnedAttestationSpki();
+      expect(pins, hasLength(2));
+      for (final p in pins) {
+        expect(p.length, 32);
+      }
+      expect(hexEncode(pins[0]), kGoogleHwAttestationRsaSpkiSha256Hex);
+      expect(hexEncode(pins[1]), kGoogleHwAttestationEcSpkiSha256Hex);
+    });
+
+    test('all RSA vintages share one SPKI == the RSA key pin', () {
+      final want = kGoogleHwAttestationRsaSpkiSha256Hex;
+      for (final fixture in [
+        _googleRsaRootDerHex, // 2022
+        _googleRsa2019RootDerHex, // 2019 (field root 1ef1a04b)
+        _googleRsa2021RootDerHex, // 2021
+      ]) {
+        final spkiHash = spkiSha256OfCert(hexDecode(fixture));
+        expect(spkiHash, isNotNull);
+        expect(hexEncode(spkiHash!), want);
+      }
+      final ecSpki = spkiSha256OfCert(hexDecode(_googleEcRootDerHex));
+      expect(ecSpki, isNotNull);
+      expect(hexEncode(ecSpki!), kGoogleHwAttestationEcSpkiSha256Hex);
+    });
+
+    test('key pin alone trusts an unlisted same-key vintage', () {
+      // A FUTURE same-key renewal has a cert hash nobody pinned yet: with
+      // EMPTY cert pins the gate still passes via the key pin. Proves "all
+      // true devices pass" does not depend on enumerating vintages.
+      final challenge = deviceBindingChallengeV2(
+          emailLower: 'a@x.in', installId: 'i1', pkS: randBytes(32));
+      final root = hexDecode(_googleRsa2019RootDerHex);
+      final leaf = Uint8List.fromList(
+          [...kKeyAttestationOidDer, ...challenge, ...List.filled(8, 0xAB)]);
+      final r = verifyAttestationChainPinForTest(
+        chain: AttestationChain([leaf, root]),
+        pinnedRootHashes: const [],
+        expectedChallenge: challenge,
+        level: AttestationLevel.full,
+        verifySignatures: false,
+      );
+      expect(r.ok, isTrue, reason: r.reason);
+    });
+
+    test('unknown key still fails closed with empty cert pins', () {
+      final challenge = Uint8List.fromList(List.filled(32, 7));
+      final leaf = Uint8List.fromList(
+          [...kKeyAttestationOidDer, ...challenge, 0xAA]);
+      final root = Uint8List.fromList(List.filled(64, 0xBB));
+      final r = verifyAttestationChainPinForTest(
+        chain: AttestationChain([leaf, root]),
+        pinnedRootHashes: const [],
+        expectedChallenge: challenge,
+        level: AttestationLevel.full,
+        verifySignatures: false,
+      );
+      expect(r.ok, isFalse);
+      expect(r.reason, 'unknown-root');
+    });
+
+    test('spkiSha256OfCert fails closed on malformed input', () {
+      expect(spkiSha256OfCert(Uint8List.fromList([1, 2, 3])), isNull);
+      expect(spkiSha256OfCert(Uint8List(0)), isNull);
+    });
+
     test('unknown root still fails closed against the real pins', () {
       final challenge = Uint8List.fromList(List.filled(32, 1));
       final leaf = Uint8List.fromList(

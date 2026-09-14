@@ -73,6 +73,10 @@ class _ParsedCert {
   final Uint8List issuerDer;
   final Uint8List subjectDer;
 
+  /// Exact DER of the TBS subjectPublicKeyInfo (for SPKI key-pinning —
+  /// same-key cert renewals share these bytes; see `spkiSha256OfCert`).
+  final Uint8List spkiDer;
+
   /// Parsed SPKI (subject public key of THIS cert — the issuer of its child).
   final _Spki spki;
 
@@ -82,6 +86,7 @@ class _ParsedCert {
     required this.sigBytes,
     required this.issuerDer,
     required this.subjectDer,
+    required this.spkiDer,
     required this.spki,
   });
 }
@@ -304,6 +309,31 @@ bool leafPkDEquals(Uint8List leafDer, Uint8List expectedPkD) {
   return acc == 0;
 }
 
+// -- Root SPKI key-pinning --------------------------------------------------
+
+/// SHA-256 over one cert's exact SPKI DER bytes (see `_ParsedCert.spkiDer`),
+/// or null when the cert does not parse (fail-closed: callers treat null as
+/// "no key-pin match", never as trust).
+///
+/// WHY (field 2026-09-14): Google re-issues the f92009e853b6b045 RSA root
+/// under the SAME key with fresh validity windows (2016/2019/2021/2022
+/// vintages, identical SPKI bytes) while the live endpoint publishes only
+/// the newest certs — whole-cert hash pins can never cover all genuine
+/// devices by construction (the A52s 1ef1a04b false-reject). Pinning the
+/// KEY covers every past and future same-key renewal with zero updates; a
+/// genuinely NEW root key is still caught by the rotation watch (see
+/// requirements/audit_attestation_roots.py). Structure bytes only — never
+/// decrypted or interpreted.
+Uint8List? spkiSha256OfCert(Uint8List certDer) {
+  try {
+    final parsed = _parseCert(certDer);
+    if (parsed.spkiDer.isEmpty) return null;
+    return SHA256Digest().process(parsed.spkiDer);
+  } catch (_) {
+    return null;
+  }
+}
+
 // -- Parsing --------------------------------------------------------------
 
 class _UnsupportedSigAlg implements Exception {}
@@ -373,6 +403,7 @@ _ParsedCert _parseCert(Uint8List der) {
     sigBytes: sigBytes,
     issuerDer: Uint8List.fromList(issuerObj.encodedBytes),
     subjectDer: Uint8List.fromList(subjectObj.encodedBytes),
+    spkiDer: Uint8List.fromList(spkiObj.encodedBytes),
     spki: _parseSpki(spkiObj),
   );
 }

@@ -372,6 +372,30 @@ List<Uint8List> defaultPinnedAttestationRoots() => [
       hexDecode(kGoogleHwAttestationRootEcSha256Hex),
     ];
 
+/// Pinned root PUBLIC KEYS, as SHA-256 over the root SPKI DER
+/// (see `spkiSha256OfCert` in `chain_verify.dart`). Public trust anchors,
+/// not secrets — derived via openssl from the same Google-published PEMs
+/// as the cert pins above (`openssl x509 -pubkey | openssl pkey -pubin
+/// -outform DER | sha256sum`):
+/// - RSA f92009e853b6b045 key: `feb2ea75…0fbae` — IDENTICAL across the
+///   2016/2019/2021/2022 vintages (openssl-verified 2026-09-14). Pinning the
+///   KEY (not each cert) is what makes "all true devices pass" hold: every
+///   past and future same-key renewal matches with zero updates.
+/// - EC Key Attestation CA1 key: `3ee44512…cd07ec`.
+/// Cert pins above stay as defense-in-depth (explicit vintage allowlist +
+/// diagnostics); the gate accepts EITHER match (see step 6 below).
+const String kGoogleHwAttestationRsaSpkiSha256Hex =
+    'feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae';
+const String kGoogleHwAttestationEcSpkiSha256Hex =
+    '3ee44512a1af2beb39c889490c60ea3f82e43f5d5a5532f5ab9419f676cd07ec';
+
+/// Default pinned root keys for Android key-attestation chains (see above).
+/// Returns fresh copies (callers must not mutate the pins).
+List<Uint8List> defaultPinnedAttestationSpki() => [
+      hexDecode(kGoogleHwAttestationRsaSpkiSha256Hex),
+      hexDecode(kGoogleHwAttestationEcSpkiSha256Hex),
+    ];
+
 /// True when [rootHash] is the known-expired 2016 Google root (see above).
 /// Callers map this to `expired-cert` copy (update OS / re-provision),
 /// never to generic `unknown-root`.
@@ -402,9 +426,16 @@ bool isKnownExpiredGoogleRoot(Uint8List rootHash) {
 ///    `unsupported-key` / `issuer-mismatch` / `expired-cert` (opt-in).
 ///    Never skipped in production (no downgrade flags — pin-pre-gate
 ///    units run through [verifyAttestationChainPinForTest]).
-/// 6. SHA256(root DER) ∈ [pinnedRootHashes] (Google roots provisioned at
-///    setup) — else `unknown-root`. Runs AFTER signature validation so an
-///    unvalidated chain is never trusted by pin alone.
+/// 6. Root trust (EITHER match, AFTER signature validation so an
+///    unvalidated chain is never trusted by pin alone):
+///    (a) SHA256(root DER) ∈ [pinnedRootHashes] (explicit vintage
+///    allowlist), OR (b) SHA256(root SPKI DER) ∈ [pinnedSpkiHashes]
+///    (key pin — covers every past/future same-key renewal with zero
+///    updates; null (default) means [defaultPinnedAttestationSpki]).
+///    Else `unknown-root` (`expired-cert` for the known-expired 2016
+///    vintage — note it shares the RSA key, so under
+///    `checkValidity:false` it passes via the key pin; production always
+///    checks validity and still fails it as expired).
 /// 7. optional leaf-pkD bind: when [expectedLeafPkD] is non-null, the
 ///    leaf EC SPKI (structure-only via `extractLeafEcPublicKeyRaw`, no
 ///    decryption) must equal it — else `leaf-pkd-mismatch`. This is the
@@ -452,6 +483,7 @@ ChainPinResult verifyAttestationChainPinForTest({
   bool requireKeyOid = true,
   bool verifySignatures = true,
   Uint8List? expectedLeafPkD,
+  List<Uint8List>? pinnedSpkiHashes,
 }) {
   final prev = _allowInsecurePinGate;
   _allowInsecurePinGate = true;
@@ -464,6 +496,7 @@ ChainPinResult verifyAttestationChainPinForTest({
       requireKeyOid: requireKeyOid,
       verifySignatures: verifySignatures,
       expectedLeafPkD: expectedLeafPkD,
+      pinnedSpkiHashes: pinnedSpkiHashes,
     );
   } finally {
     _allowInsecurePinGate = prev;
@@ -489,6 +522,7 @@ ChainPinResult verifyAttestationChainPin({
   Uint8List? expectedLeafPkD,
   DateTime? now,
   bool checkValidity = false,
+  List<Uint8List>? pinnedSpkiHashes,
 }) =>
     _verifyAttestationChainPin(
       chain: chain,
@@ -500,6 +534,7 @@ ChainPinResult verifyAttestationChainPin({
       expectedLeafPkD: expectedLeafPkD,
       now: now,
       checkValidity: checkValidity,
+      pinnedSpkiHashes: pinnedSpkiHashes,
     );
 
 ChainPinResult _verifyAttestationChainPin({
@@ -512,6 +547,7 @@ ChainPinResult _verifyAttestationChainPin({
   Uint8List? expectedLeafPkD,
   DateTime? now,
   bool checkValidity = false,
+  List<Uint8List>? pinnedSpkiHashes,
 }) {
   // The two downgrade hatches are test-only by construction: only
   // [verifyAttestationChainPinForTest] sets the zone flag (asserts fire in
@@ -579,15 +615,25 @@ ChainPinResult _verifyAttestationChainPin({
   final rootHash = ProxCrypto.sha256Sync(root);
   final pinned = pinnedRootHashes.any((h) => bytesEqual(h, rootHash));
   if (!pinned) {
-    // Known-expired Google root (2016, same key, expired 2026-05-24):
-    // genuine hardware with a stale anchor — name it as expired (update
-    // OS / re-provision), not generic unknown. Never trusted.
-    if (isKnownExpiredGoogleRoot(rootHash)) {
+    // Key-pin fallback: the root CERT is unrecognized, but its KEY may be
+    // Google-pinned (same-key renewal, past or future — vintages Google no
+    // longer publishes). Runs after signature validation, like the cert
+    // pin above — an unvalidated chain is never trusted by key alone.
+    final spkiPins = pinnedSpkiHashes ?? defaultPinnedAttestationSpki();
+    final spkiHash = spkiSha256OfCert(root);
+    final keyPinned =
+        spkiHash != null && spkiPins.any((h) => bytesEqual(h, spkiHash));
+    if (!keyPinned) {
+      // Known-expired Google root (2016, same key, expired 2026-05-24):
+      // genuine hardware with a stale anchor — name it as expired (update
+      // OS / re-provision), not generic unknown. Never trusted.
+      if (isKnownExpiredGoogleRoot(rootHash)) {
+        return const ChainPinResult(
+            ok: false, reason: 'expired-cert', flags: ['attest-expired']);
+      }
       return const ChainPinResult(
-          ok: false, reason: 'expired-cert', flags: ['attest-expired']);
+          ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
     }
-    return const ChainPinResult(
-        ok: false, reason: 'unknown-root', flags: ['attest-unknown-root']);
   }
   return const ChainPinResult(ok: true, reason: 'ok');
 }
