@@ -493,9 +493,9 @@ void main() {
       expect(tag('verified').label, 'Verified');
       expect(tag('verified').status, ProxStatus.marked);
       expect(tag('verified-live').label, 'Verified');
-      expect(tag('unverified').label, 'Unverified');
+      expect(tag('unverified').label, 'New');
       expect(tag('unverified').status, ProxStatus.review);
-      expect(tag('first-seen').label, 'Unverified');
+      expect(tag('first-seen').label, 'New');
       expect(tag('mismatch').label, 'Blocked');
       expect(tag('mismatch').status, ProxStatus.wrongOrg);
       // 'known' (cached pins, unmatched yet) stays caption-only: a cached
@@ -504,8 +504,7 @@ void main() {
       expect(browseVerifyTag(''), isNull);
     });
 
-    testWidgets('course-titled tile renders DS disc + Unverified tag',
-        (t) async {
+    testWidgets('course-titled tile renders DS disc + New tag', (t) async {
       await t.pumpWidget(_themed(BrowseTile(
         live: _live(label: 'DSL506 - introduction to machine learning'),
         profEmail: 'prof@univ.edu',
@@ -515,7 +514,8 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('DS'), findsOneWidget);
       expect(find.text('D-'), findsNothing);
-      expect(find.text('Unverified'), findsOneWidget);
+      expect(find.text('New'), findsOneWidget);
+      expect(find.text('Unverified'), findsNothing);
       expect(t.takeException(), isNull);
     });
 

@@ -46,16 +46,16 @@ bool browseRingFor({required bool windowOpen}) => windowOpen;
 String gatedPhotoFor(Map<String, String> byHost, String key) =>
     (byHost[key] ?? '').trim();
 
-/// Verification TAG for a browse tile (highlight pill in the status
-/// slot — green Verified on a prove-time key match, yellow Unverified on
-/// first-seen/unverified, red Blocked on mismatch). 'known' (pins cached
-/// but unmatched yet) stays caption-only: a cached pin is not a match.
-/// ''/unknown renders nothing. Pure for unit tests.
+/// Verification TAG for a browse tile (footer pill — green Verified on a
+/// prove-time key match, yellow New on first-seen/unverified, red Blocked
+/// on mismatch). 'known' (pins cached but unmatched yet) stays
+/// caption-only: a cached pin is not a match. ''/unknown renders nothing.
+/// Pure for unit tests.
 Widget? browseVerifyTag(String label) => switch (label) {
       'verified' || 'verified-live' =>
         const VerdictBadge(status: ProxStatus.marked, label: 'Verified'),
       'unverified' || 'first-seen' =>
-        const VerdictBadge(status: ProxStatus.review, label: 'Unverified'),
+        const VerdictBadge(status: ProxStatus.review, label: 'New'),
       'mismatch' =>
         const VerdictBadge(status: ProxStatus.wrongOrg, label: 'Blocked'),
       _ => null,
