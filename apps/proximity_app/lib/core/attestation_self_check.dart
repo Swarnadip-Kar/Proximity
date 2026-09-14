@@ -10,11 +10,12 @@
 // server exactly: unbound/legacy proofs (no pkD) and the iOS App Attest
 // branch (no Android X.509 chain) have nothing to pre-check.
 //
-// What `unknown-root` means (pins are complete — Google publishes exactly
-// the two pinned HW roots): the key attested under a NON-Google anchor —
-// emulator/software Keystore, custom ROM, or non-GMS hardware. Those keys
-// fail closed BY DESIGN (software attestation is not hardware trust); the
-// copy says so instead of stranding the holder at marking time.
+// What `unknown-root` means (pins cover Google's published f92009e853b6b045
+// RSA vintages — 2019/2021/2022 — plus the EC CA1 root): the key attested
+// under a NON-Google anchor — emulator/software Keystore, custom ROM, or
+// non-GMS hardware. Those keys fail closed BY DESIGN (software attestation
+// is not hardware trust); the copy says so instead of stranding the holder
+// at marking time.
 library;
 
 import 'dart:typed_data';
@@ -167,8 +168,10 @@ AttestationSelfCheck checkAttestationChain({
 /// COMPLETE chain (OID/challenge/signatures pass, only the pin fails) means
 /// non-Google attestation — software Keystore fallback, custom ROM, Knox-
 /// tripped/unprovisioned TEE, or non-GMS hardware — fail-closed by design.
-/// Genuine 2021 devices chaining to the 2019 Google renewal now pass (pinned);
-/// anything still unknown needs the checklist below, not a retry.
+/// Resolved 2026-09-14: 1ef1a04b IS the genuine Google 2019 RSA vintage
+/// (same key as the 2022 root, docs-page PEM) — 2019 + 2021 vintages now
+/// pinned, so factory-provisioned 2021 devices pass; anything still unknown
+/// needs the checklist below, not a retry.
 String attestationSelfCheckCopy(AttestationSelfCheck r) {
   switch (r.reason) {
     case 'unknown-root':

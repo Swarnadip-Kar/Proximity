@@ -1116,7 +1116,8 @@ class ProxServer {
           // Root diagnostic (log only): WHICH unrecognized anchor refused
           // the chain — the host log carries `root=<sha256-prefix>` so one
           // glance distinguishes a software/emulator/ROM root (fail-closed
-          // by design — compare against the two pinned Google HW roots)
+          // by design — compare against the pinned Google HW roots (RSA
+          // 2019/2021/2022 vintages + EC CA1))
           // from a truncated chain. Public anchor hash, never key material.
           var rootToken = '';
           if (pin.reason == 'unknown-root' && proveChain != null) {

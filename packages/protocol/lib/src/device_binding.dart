@@ -320,10 +320,21 @@ class ChainPinResult {
 /// - RSA root, serial f92009e853b6b045, 2022-03-20 → 2042-03-15.
 /// - EC root, CN "Key Attestation CA1", serial 84A9D0297B0EB58AE7FF0E80DE76,
 ///   2025-07-17 → 2035-07-15; starts signing device chains 2026-02-01.
-/// - RSA 2019 root (same key, renewed cert, serial ANUP8luj8taz,
-///   2019-11-22 → 2034-11-18): 2021-era devices (e.g. Samsung A52s) provisioned
-///   before the 2022 renewal still chain here — field 2026-09-13 false-reject
-///   fix. Same modulus as the 2022 root (one key, renewed certs).
+/// - RSA 2019 vintage (same key, renewed cert, serial D50FF25BA3F2D6B3,
+///   2019-11-22 → 2034-11-18): 2021-era devices (e.g. Samsung A52s)
+///   provisioned before the 2022 renewal chain here — field 2026-09-14:
+///   chain root 1ef1a04b IS this cert (docs-page PEM, same RSA modulus as
+///   the 2022 root — verified via openssl, not a gist). The previous
+///   e50511a9… pin (unverified 2020 gist, NOT a Google cert) is deleted —
+///   it trusted an unknown key and missed the real 2019 anchor.
+/// - RSA 2021 vintage (same key, renewed cert, serial C36B7C44B9AE1831,
+///   2021-11-17 → 2036-11-13): devices provisioned/re-provisioned under
+///   this renewal chain here (docs-page PEM, same RSA modulus — verified).
+/// All four RSA vintages share one modulus (openssl modulus-md5 identical);
+/// Google's guidance is to trust the f92009e853b6b045 subject regardless
+/// of vintage. The live /attestation/root endpoint serves only the newest
+/// two; the docs page lists the full trustable vintage set — re-check it
+/// on any unknown-root spike before adding pins.
 /// The 2016 RSA root (same key, 2016-05-26 → 2026-05-24, expired) is NOT
 /// pinned: chains to it fail as `expired-cert` (better copy than
 /// `unknown-root` — update OS / re-provision via Play Services), never as
@@ -335,10 +346,17 @@ const String kGoogleHwAttestationRootRsaSha256Hex =
 const String kGoogleHwAttestationRootEcSha256Hex =
     '6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0';
 
-/// RSA 2019 renewal (same key as above, valid till 2034 — see header).
-/// Hash verified 2026-09-13 from the 2020 gist PEM (serial ANUP8luj8taz).
+/// RSA 2019 vintage (same key as above, valid till 2034 — see header).
+/// Verified 2026-09-14 from the developer.android.com root-certificates PEM
+/// (serial D50FF25BA3F2D6B3, same modulus as the 2022 root via openssl).
 const String kGoogleHwAttestationRootRsa2019Sha256Hex =
-    'e50511a9400b527e58d8dd9018f88811bbb75415a8fe39d1faa3688e1daa7af1';
+    '1ef1a04b8ba58ab94589ac498c8982a783f24ea7307e0159a0c3a73b377d87cc';
+
+/// RSA 2021 vintage (same key as above, valid till 2036 — see header).
+/// Verified 2026-09-14 from the developer.android.com root-certificates PEM
+/// (serial C36B7C44B9AE1831, same modulus as the 2022 root via openssl).
+const String kGoogleHwAttestationRootRsa2021Sha256Hex =
+    'ab6641178a36e179aa0c1cdddf9a16eb45fa20943e2b8cd7c7c05c26cf8b487a';
 
 /// RSA 2016 original (same key, expired 2026-05-24) — diagnostics only,
 /// never pinned as trusted (see header).
@@ -350,6 +368,7 @@ const String kGoogleHwAttestationRootRsa2016Hex =
 List<Uint8List> defaultPinnedAttestationRoots() => [
       hexDecode(kGoogleHwAttestationRootRsaSha256Hex),
       hexDecode(kGoogleHwAttestationRootRsa2019Sha256Hex),
+      hexDecode(kGoogleHwAttestationRootRsa2021Sha256Hex),
       hexDecode(kGoogleHwAttestationRootEcSha256Hex),
     ];
 
