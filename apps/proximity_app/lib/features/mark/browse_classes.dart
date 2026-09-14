@@ -261,33 +261,41 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
           )),
           _slim(DetailsExpander(
             title: 'Details',
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
-              child: Text(
-                'Join the same network as your professor and keep Bluetooth on. '
-                'If your class is not visible, ask the professor to announce the IP '
-                'verbally and enter it with “Enter IP manually”. '
-                'Bars show how recently the class was heard: 3 = open now, '
-                '2 = heard momentarily, 1 = listed from history.',
-                // Same size as the previous ladder line (bodySmall).
-                style: ProxType.caption(color: c.contentSecondary),
-              ),
-            ),
-          )),
-          // Trust explainer (guidance only — no test-relevant copy inside):
-          // what the Verified / New / Blocked pills mean. Collapsed by
-          // default, same `DetailsExpander` language as every other
-          // explanation on this screen.
-          _slim(DetailsExpander(
-            title: 'What Verified means',
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
-              child: Text(
-                'Verified (green) — this professor’s key matched a saved pin. Safe to join.\n'
-                'New (yellow) — first time seeing this professor on this phone. You can still join; the app checks the key when you join and saves it for next time. The first scan of any professor is always New — even when everything is fine.\n'
-                'Blocked (red) — the key does not match. Do not join; nothing is sent from your phone.',
-                style: ProxType.caption(color: c.contentSecondary),
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: ProxSpacing.xs),
+                  child: Text(
+                    'Join the same network as your professor and keep Bluetooth on. '
+                    'If your class is not visible, ask the professor to announce the IP '
+                    'verbally and enter it with “Enter IP manually”. '
+                    'Bars show how recently the class was heard: 3 = open now, '
+                    '2 = heard momentarily, 1 = listed from history.',
+                    // Same size as the previous ladder line (bodySmall).
+                    style: ProxType.caption(color: c.contentSecondary),
+                  ),
+                ),
+                // Trust explainer nested inside Details (guidance only —
+                // no test-relevant copy): what the Verified / New /
+                // Blocked pills mean. Dropdown inside dropdown, same
+                // `DetailsExpander` language throughout.
+                DetailsExpander(
+                  title: 'What Verified means',
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.only(bottom: ProxSpacing.xs),
+                    child: Text(
+                      'Verified (green) — this professor’s key matched a saved pin. Safe to join.\n'
+                      'New (yellow) — first time seeing this professor on this phone. You can still join; the app checks the key when you join and saves it for next time. The first scan of any professor is always New — even when everything is fine.\n'
+                      'Blocked (red) — the key does not match. Do not join; nothing is sent from your phone.',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  ),
+                ),
+              ],
             ),
           )),
           if (widget.broadcastBlocked && !_blockedDismissed) ...[

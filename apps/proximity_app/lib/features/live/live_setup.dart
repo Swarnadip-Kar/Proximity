@@ -138,24 +138,26 @@ class LiveSetupSection extends StatelessWidget {
                   'Path: ${formatLadderLine(-1)}',
                   style: ProxType.monoCaption(color: c.contentSecondary),
                 ),
-              ],
-            ),
-          ),
-          // Trust explainer (guidance only — no test-relevant copy inside):
-          // what students see next to this class (Verified / New /
-          // Blocked) and why the first scan is always New. Same
-          // `DetailsExpander` language as the student browse screen.
-          DetailsExpander(
-            title: 'What students see: Verified or New',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Verified (green) — the student’s phone matched your saved class key. Nothing to do.\n'
-                  'New (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always New, even when everything is fine. It turns Verified after they join once while online.\n'
-                  'Blocked (red) — key mismatch. Ask the student to check they joined the right class; if it persists, re-announce the IP verbally.',
-                  style: ProxType.caption(color: c.contentSecondary),
+                // Trust explainer nested inside Details (guidance only —
+                // no test-relevant copy): what students see next to this
+                // class (Verified / New / Blocked) and why the first scan
+                // is always New. Dropdown inside dropdown, same language
+                // as the student browse screen.
+                DetailsExpander(
+                  title: 'What students see: Verified or New',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Verified (green) — the student’s phone matched your saved class key. Nothing to do.\n'
+                        'New (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always New, even when everything is fine. It turns Verified after they join once while online.\n'
+                        'Blocked (red) — key mismatch. Ask the student to check they joined the right class; if it persists, re-announce the IP verbally.',
+                        style: ProxType.caption(
+                            color: c.contentSecondary),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
