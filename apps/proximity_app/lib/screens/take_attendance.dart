@@ -850,7 +850,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       try {
         await ref.read(hostDriverProvider).hydrateStudentPins(pins);
       } catch (_) {}
-      BleLog.log('SEC', 'student key pins prefetched (${pins.length})');
+      BleLog.log('SEC',
+          'student key pins prefetched (${pins.length} directory keys cached for this org — re-enrolled keys converge on the next window)');
     } catch (_) {}
   }
 

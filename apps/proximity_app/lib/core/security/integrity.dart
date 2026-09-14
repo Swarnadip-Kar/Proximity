@@ -224,6 +224,22 @@ class IntegrityVerdict {
   /// offline (owned by sec-sync).
   String get flagForMarking => blocksEnroll ? IntegrityGate.flaggedValue : '';
 
+  /// One-line human summary for SEC logs: CLEAN (plus the debug-build
+  /// note — `d:true` alone is expected for `flutter run` / Mac desktop
+  /// and never blocks) or TAINTED with the exact signals. Pure.
+  String get summary {
+    final bad = [
+      if (rooted) 'rooted',
+      if (hooked) 'hooked (frida/xposed)',
+      if (tampered) 'tampered app',
+      if (emulator) 'emulator',
+    ];
+    if (bad.isEmpty) {
+      return debug ? 'clean (debug build — expected, never blocks)' : 'clean';
+    }
+    return 'TAINTED (${bad.join(', ')})${debug ? ' + debug build' : ''} — enroll refuses, marks flag, hosting stays advisory';
+  }
+
   @override
   String toString() =>
       'IntegrityVerdict(r:$rooted h:$hooked t:$tampered e:$emulator d:$debug hash:$hash)';
@@ -328,7 +344,7 @@ class IntegrityGate {
     _last = verdict;
     _lastAt = DateTime.now().toUtc();
     BleLog.log('SEC',
-        'integrity startup → $verdict${kIsWeb ? ' (web records-only)' : ''}');
+        'integrity startup → ${verdict.summary} $verdict${kIsWeb ? ' (web records-only)' : ''}');
     return verdict;
   }
 
@@ -368,7 +384,8 @@ class IntegrityGate {
       signals = const IntegritySignals();
     }
     final verdict = _build(signals);
-    BleLog.log('SEC', 'integrity pre-${op.name} → $verdict');
+    BleLog.log(
+        'SEC', 'integrity pre-${op.name} → ${verdict.summary} $verdict');
     return verdict;
   }
 

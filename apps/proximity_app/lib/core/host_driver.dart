@@ -636,7 +636,10 @@ class RealHostDriver implements HostDriver {
       final cachedPins = await _store.readStudentKeyPins();
       if (cachedPins.isNotEmpty) {
         final n = _server!.pinStudentKeys(cachedPins);
-        if (n > 0) BleLog.log('SEC', 'student key pins hydrated ($n)');
+        if (n > 0) {
+          BleLog.log('SEC',
+              'student key pins hydrated ($n pinned student keys into the live server — offline unknown-pkS enforcement survives restarts)');
+        }
       }
     } catch (_) {}
     // Readiness BEFORE any hint/beacon: the port must answer TLS locally.
