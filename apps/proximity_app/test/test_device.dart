@@ -32,7 +32,6 @@ class TestHwBackend implements HwKeyBackend {
   final int salt;
   BigInt? _d;
   Uint8List? _pkD;
-  Uint8List? _lastChallenge;
   Uint8List? _rootDer;
   List<Uint8List> _chain = const [];
 
@@ -51,7 +50,6 @@ class TestHwBackend implements HwKeyBackend {
     _d = pair.privateKey.d!;
     final ECPublicKey pub = pair.publicKey;
     _pkD = Uint8List.fromList(pub.Q!.getEncoded(false).sublist(1));
-    _lastChallenge = Uint8List.fromList(attestationChallenge);
     return HwKeyHandle(pkDRaw: Uint8List.fromList(_pkD!), level: AttestationLevel.full);
   }
 
@@ -101,7 +99,6 @@ class TestHwBackend implements HwKeyBackend {
   Future<void> deleteKey({required String alias}) async {
     _d = null;
     _pkD = null;
-    _lastChallenge = null;
     _chain = const [];
   }
 }

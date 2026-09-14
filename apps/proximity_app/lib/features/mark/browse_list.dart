@@ -15,7 +15,6 @@ import 'package:proximity_transport/transport.dart';
 
 import '../../design/tokens.dart';
 import '../../widgets/class_ordinal.dart';
-import '../../widgets/prox_cards.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/verdict_badge.dart';
 
