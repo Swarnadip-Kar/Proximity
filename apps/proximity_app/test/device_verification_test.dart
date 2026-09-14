@@ -18,10 +18,10 @@ class _FakeProbe implements IntegrityProbe {
   }
 }
 
-Widget _card() => ProviderScope(
+Widget _card({bool forProfessor = false}) => ProviderScope(
       child: MaterialApp(
         theme: proxLightTheme(),
-        home: const Scaffold(body: DeviceVerificationCard()),
+        home: Scaffold(body: DeviceVerificationCard(forProfessor: forProfessor)),
       ),
     );
 
@@ -73,6 +73,22 @@ void main() {
     expect(probe.calls, 1);
     expect(find.text('Unverified'), findsOneWidget);
     expect(find.textContaining('Checked just now.'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('professor card states hosting guarantees, not root',
+      (t) async {
+    IntegrityGate.probe = _FakeProbe(const IntegritySignals());
+    await IntegrityGate.performCheck();
+    await t.pumpWidget(_card(forProfessor: true));
+    await t.pumpAndSettle();
+    expect(find.text('Hosting verification'), findsOneWidget);
+    expect(find.text('Device verification'), findsNothing);
+    expect(find.text('Verified'), findsOneWidget);
+    // Prof guarantees: lecture-key pin + ephemeral + signed + org.
+    expect(find.textContaining('students verify'), findsOneWidget);
+    expect(find.textContaining('lecture key'), findsOneWidget);
+    expect(find.textContaining('rooting'), findsNothing);
     expect(t.takeException(), isNull);
   });
 }

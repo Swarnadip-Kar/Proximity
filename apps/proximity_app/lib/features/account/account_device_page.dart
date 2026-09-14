@@ -78,9 +78,10 @@ class AccountProfDevicePage extends ConsumerWidget {
           const SizedBox(height: ProxSpacing.sm),
           AccountProfDeviceFacts(acct: acct),
           const SizedBox(height: ProxSpacing.sm),
-          // Same integrity standing card as the student Device page
-          // (shared widget — one probe, one explanation).
-          const DeviceVerificationCard(),
+          // Hosting standing (shared widget, professor copy — lecture-key
+          // pin, ephemeral keys, signed windows, org writes — never the
+          // student root/hook headline).
+          const DeviceVerificationCard(forProfessor: true),
           const SizedBox(height: ProxSpacing.xl),
         ],
       ),
