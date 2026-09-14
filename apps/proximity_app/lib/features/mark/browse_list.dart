@@ -115,11 +115,11 @@ class BrowseTile extends StatelessWidget {
       lastSeen: live.lastSeen,
       now: DateTime.now().toUtc(),
     );
-    // Status slot: the Open pill only. The verification highlight tag
-    // (Verified green / Unverified yellow / Blocked red) rides its own
-    // footer line below the card row — two pills beside the course name
-    // squeezed the title out on narrow phones, so line 1 keeps one pill
-    // max (same one-status rule as every other `StudentCard`).
+    // Pills live TOGETHER on the footer line below the card row — never
+    // beside the course name: even one pill squeezed the title out on
+    // narrow phones, so line 1 carries no status at all (same clean
+    // title rule as every other `StudentCard`; the Open pill used to
+    // sit there). Order: verify tag first, then Open.
     final tag = browseVerifyTag(verifyLabel);
     final openTag = a.windowOpen
         ? const VerdictBadge(
@@ -163,16 +163,24 @@ class BrowseTile extends StatelessWidget {
           : (browseVerifyCaption(verifyLabel).isEmpty
               ? null
               : browseVerifyCaption(verifyLabel)),
-      status: openTag,
-      // Verification pill on its own footer line (never beside the
-      // title): full content-column width, left-aligned, below the
-      // email/caption lines. Null (neutral hosts) renders exactly as
+      status: null,
+      // Both pills share one footer line (never beside the title):
+      // verify tag first, Open just right of it, left-aligned below
+      // the email/caption lines. Both absent renders exactly as
       // before — no extra line.
-      footer: tag == null
+      footer: (tag == null && openTag == null)
           ? null
           : Align(
               alignment: Alignment.centerLeft,
-              child: tag,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (tag != null) tag,
+                  if (tag != null && openTag != null)
+                    const SizedBox(width: ProxSpacing.xs),
+                  if (openTag != null) openTag,
+                ],
+              ),
             ),
       onTap: onTap,
     );
