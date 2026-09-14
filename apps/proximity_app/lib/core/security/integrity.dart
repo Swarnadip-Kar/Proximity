@@ -41,10 +41,13 @@
 //                instrumentation + attached debugger per the
 //                runtime-protection contract)
 //     tampered → SecurityStatus.isTampered (+ `!isAppIntegrityValid` on
-//                non-debug builds ONLY — the suite folds FLAG_DEBUGGABLE +
-//                installer allowlist into that bit, so it reads false on
-//                every dev/debug and sideloaded build; gating it raw would
-//                hard-block all dev enrollment, see [PlatformIntegrityProbe])
+//                non-debug, non-pilot builds ONLY — the suite folds
+//                FLAG_DEBUGGABLE + installer allowlist into that bit, so it
+//                reads false on every dev/debug and sideloaded build; gating
+//                it raw would hard-block all dev enrollment, see
+//                [PlatformIntegrityProbe]; pilot-sideload binaries
+//                (`--dart-define=PROX_PILOT_SIDELOAD=true`) waive the
+//                installer half of the bit only — re-sign still taints)
 //     emulator → SecurityStatus.isEmulator
 //     debug    → kDebugMode (pure Dart observed — the suite exposes no
 //                separate debugger bit; debug alone never blocks enroll)
@@ -132,6 +135,34 @@ abstract class IntegrityProbe {
 class PlatformIntegrityProbe implements IntegrityProbe {
   const PlatformIntegrityProbe();
 
+  /// Pilot escape hatch for sideload distribution without a Play account.
+  /// Compiled in ONLY with `--dart-define=PROX_PILOT_SIDELOAD=true`, which
+  /// bakes `true` into the binary at compile time (never flippable at
+  /// runtime, never readable from prefs/intents). When true, the
+  /// installer-trust bit below is waived so a properly-signed sideloaded
+  /// pilot APK can enroll; re-sign/root/hook/emulator still hard-block
+  /// (see [installerBitTaints]). Store builds compile WITHOUT the flag
+  /// (default false) and keep the full gate. Kill-switch: ship the store
+  /// build at a higher core version and raise the `app_config/min_version`
+  /// floor — pilot builds barrier out with update copy, no code revert
+  /// needed to stop them. Mutable (not final) so unit tests can flip it
+  /// with a tearDown reset; production never assigns it.
+  static bool pilotAllowSideload =
+      const bool.fromEnvironment('PROX_PILOT_SIDELOAD');
+
+  /// Pure installer-trust decision: the suite's `isAppIntegrityValid` folds
+  /// FLAG_DEBUGGABLE + installer allowlist into one bit, so it reads false
+  /// on every `flutter run` debug build and every sideloaded build.
+  /// Taints only a release, non-pilot build — debug keeps the dev carve-out,
+  /// pilot keeps sideload enrollment; a genuine re-sign (`isTampered`) is
+  /// OR-ed separately at the call site and is never waived by either.
+  static bool installerBitTaints({
+    required bool integrityValid,
+    required bool debug,
+    required bool pilot,
+  }) =>
+      !integrityValid && !debug && !pilot;
+
   /// Native read budget: a hung channel must never stall startup or a
   /// sensitive op — past this the probe degrades to debug-only (clean).
   static const probeBudget = Duration(seconds: 8);
@@ -170,20 +201,32 @@ class PlatformIntegrityProbe implements IntegrityProbe {
         enableTamperDetection: true,
         enableRuntimeProtection: true,
       ).runSecurityCheck().timeout(probeBudget);
+      // isAppIntegrityValid folds FLAG_DEBUGGABLE + installer allowlist
+      // into one bit (suite 1.1.1 AppIntegrityHandler:
+      // `!isDebuggable && isInstalledFromTrustedSource`; sideloaded
+      // installer null → invalid) — gating it raw taints EVERY
+      // `flutter run` debug build and every sideloaded build, hard-
+      // blocking all dev enrollment against the "debug alone never
+      // blocks" law. Debug builds (never store builds) rely on
+      // isTampered (re-sign/strip) only; release/profile builds keep
+      // the full bit, so sideloaded release builds still taint — UNLESS
+      // this is a pilot-sideload binary (see [pilotAllowSideload]), which
+      // waives the installer bit only.
+      final installerTaint = installerBitTaints(
+        integrityValid: status.isAppIntegrityValid,
+        debug: kDebugMode,
+        pilot: pilotAllowSideload,
+      );
+      if (pilotAllowSideload &&
+          !status.isAppIntegrityValid &&
+          !status.isTampered) {
+        BleLog.log('SEC',
+            'pilot-sideload: installer-trust waived (re-sign/root/hook/emulator still block)');
+      }
       return IntegritySignals(
         rooted: status.isRooted,
         hooked: status.isRuntimeHooked,
-        // isAppIntegrityValid folds FLAG_DEBUGGABLE + installer allowlist
-        // into one bit (suite 1.1.1 AppIntegrityHandler:
-        // `!isDebuggable && isInstalledFromTrustedSource`; sideloaded
-        // installer null → invalid) — gating it raw taints EVERY
-        // `flutter run` debug build and every sideloaded build, hard-
-        // blocking all dev enrollment against the "debug alone never
-        // blocks" law. Debug builds (never store builds) rely on
-        // isTampered (re-sign/strip) only; release/profile builds keep
-        // the full bit, so sideloaded release builds still taint.
-        tampered: status.isTampered ||
-            (!status.isAppIntegrityValid && !kDebugMode),
+        tampered: status.isTampered || installerTaint,
         emulator: status.isEmulator,
         debug: kDebugMode,
       );

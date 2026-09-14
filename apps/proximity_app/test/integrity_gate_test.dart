@@ -55,6 +55,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   tearDown(() {
     IntegrityGate.probe = const PlatformIntegrityProbe();
+    PlatformIntegrityProbe.pilotAllowSideload = false;
   });
 
   group('verdictHashOf', () {
@@ -395,6 +396,65 @@ void main() {
           await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
       expect(verdict.rooted, isTrue);
       expect(verdict.hooked, isTrue);
+      expect(IntegrityGate.enrollBlockReason(verdict), isNotEmpty);
+      expect(IntegrityGate.markingFlag(verdict), 'integrity-flagged');
+    });
+
+    test('pilot: flag defaults off, matrix waives installer bit only', () {
+      // Test binaries compile WITHOUT the dart-define, so the pilot
+      // relaxation must be inert here — same contract as store builds.
+      expect(PlatformIntegrityProbe.pilotAllowSideload, isFalse);
+      // Store release, sideloaded (integrity-invalid) → taints.
+      expect(
+          PlatformIntegrityProbe.installerBitTaints(
+              integrityValid: false, debug: false, pilot: false),
+          isTrue);
+      // Pilot release, sideloaded → waived (the pilot binary contract).
+      expect(
+          PlatformIntegrityProbe.installerBitTaints(
+              integrityValid: false, debug: false, pilot: true),
+          isFalse);
+      // Debug carve-out unchanged with or without the flag.
+      expect(
+          PlatformIntegrityProbe.installerBitTaints(
+              integrityValid: false, debug: true, pilot: false),
+          isFalse);
+      expect(
+          PlatformIntegrityProbe.installerBitTaints(
+              integrityValid: false, debug: true, pilot: true),
+          isFalse);
+      // Trusted installer never taints in any mode.
+      for (final pilot in [false, true]) {
+        expect(
+            PlatformIntegrityProbe.installerBitTaints(
+                integrityValid: true, debug: false, pilot: pilot),
+            isFalse);
+      }
+    });
+
+    test('pilot waives installer bit but re-sign still taints', () async {
+      PlatformIntegrityProbe.pilotAllowSideload = true;
+      // Sideloaded + properly signed: enroll proceeds under pilot.
+      await mockSuite(integrityValid: false, tampered: false);
+      const probe = PlatformIntegrityProbe();
+      expect((await probe.check()).tampered, isFalse);
+      final clean =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+      expect(IntegrityGate.enrollBlockReason(clean), isEmpty);
+      // Sideloaded + stripped signature: still hard-blocks under pilot.
+      await mockSuite(integrityValid: false, tampered: true);
+      expect((await probe.check()).tampered, isTrue);
+      final tainted =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
+      expect(IntegrityGate.enrollBlockReason(tainted), isNotEmpty);
+      expect(IntegrityGate.markingFlag(tainted), 'integrity-flagged');
+    });
+
+    test('pilot changes nothing for root/hook/emulator', () async {
+      PlatformIntegrityProbe.pilotAllowSideload = true;
+      await mockSuite(rooted: true, hooked: true, emulator: true);
+      final verdict =
+          await IntegrityGate.verifyBeforeSensitiveOp(IntegrityOp.enroll);
       expect(IntegrityGate.enrollBlockReason(verdict), isNotEmpty);
       expect(IntegrityGate.markingFlag(verdict), 'integrity-flagged');
     });

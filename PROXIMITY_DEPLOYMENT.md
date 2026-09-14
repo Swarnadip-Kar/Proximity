@@ -7,6 +7,16 @@ Code is already wired — this file is console + CLI steps only.
 Companions: `PROXIMITY_SECURITY.md` §9 (why the floor event exists),
 `apps/proximity_app/lib/core/security/integrity.dart` (`IntegrityAppCheck` docs).
 
+> **⚠️ PILOT LINEAGE (no Play account, 2026-09-14): this release ships as a
+> DIRECT-SIDELOAD pilot APK built with `--dart-define=PROX_PILOT_SIDELOAD=true`
+> — NOT via Play. That one flag waives ONLY the installer-trust half of the
+> enroll integrity gate so a properly-signed sideloaded APK can enroll
+> (re-sign/root/hook/emulator still hard-block). Full contract, tester
+> instructions, kill-switch, and the honest accounting of what the pilot
+> costs (§5c–§5d) — READ BOTH BEFORE
+> forwarding the APK to anyone. NEVER upload a pilot-flagged binary to any
+> store track; NEVER build the store release with the flag.**
+
 ---
 
 ## 0. Standing state (2026-09-13)
@@ -209,7 +219,6 @@ security-suite plugin fixes its SPM product name (then delete the flag +
 freeze at the last CocoaPods-published SDK.
 
 ### 5b. Cutting the release
-
 1. All §1–§3 steps done; `build` workflow green on every shippable
    platform (iOS included after §5a).
 2. Bump `apps/proximity_app/pubspec.yaml` `version:` if this is a new
@@ -253,3 +262,184 @@ freeze at the last CocoaPods-published SDK.
    ```
 5. Paste the Play/App Store links back into the §2 floor doc
    (`storeAndroid`/`storeIos`) once listed.
+
+### 5c. ⚠️ Pilot sideload build (no Play account — disposable lineage)
+
+> **Read this whole section before distributing.** The pilot APK is a
+> release-grade binary (`--release`: AOT + `-O`, same flags as the store
+> build, no `--obfuscate`) with exactly ONE baked-in difference: the
+> `PROX_PILOT_SIDELOAD` compile flag. There is no runtime toggle, no
+> settings switch, no intent/prefs override — the waiver lives or dies
+> with the binary.
+
+#### What the flag does (and does NOT do)
+
+- **Waives:** ONLY the installer-trust half of `isAppIntegrityValid`
+  (sideloaded installs report installer-null ⇒ invalid). A
+  properly-signed pilot APK therefore clears `entryRequireEnrollIntegrity`
+  and can complete the device claim. The waiver logs
+  `SEC pilot-sideload: installer-trust waived …` on-device.
+- **Keeps:** re-sign/strip (`isTampered`), rooted OS, Frida/Xposed hooks,
+  and emulators still hard-block enrollment with the same copy as store
+  builds; marking still flags (never auto-absents) on taint; the 30-day
+  device-move cooldown, one-device-per-Gmail claim, HW key tiering, and
+  the version floor all behave identically.
+- **Kill-switch (no code revert needed):** ship the store build at a higher
+  core version (e.g. `0.2.0`) and raise the §2 floor to that core with
+  `force:true` — pilot builds barrier out with update copy on next online
+  contact (and immediately if they have ever seen the floor, via the
+  disk-backed cache).
+
+#### Prerequisites (do §1–§3 first — pilot changes NONE of this)
+
+1. §1 rules + indexes deployed (console timestamp verified) and the
+   rules drill green.
+2. §2 floor `app_config/min_version = {minVersion:"0.1.0",
+   latest:"0.1.0", force:true, …}` set. Pilot core is `0.1.0`, so the
+   floor does NOT block the pilot — it blocks only pre-break builds.
+3. Release SHA-1 + SHA-256 registered under the Android app AND pasted
+   into App Check → Android app; `google-services.json` re-downloaded
+   (must contain the `8286f07a…` `oauth_client` entry — verify with
+   `git log --oneline -1 -- android/app/google-services.json`).
+   App Check stays **Monitor**, `PLAY_RECOGNIZED` **OFF** for the pilot.
+
+#### Cut the pilot APK
+
+```bash
+cd apps/proximity_app
+flutter build apk --release --dart-define=PROX_PILOT_SIDELOAD=true
+# → build/app/outputs/flutter-apk/app-release.apk
+```
+
+Verify before forwarding (fail the cut if any check fails):
+
+```bash
+# 1. Signed with the release key (NOT debug) — APKs use v2/v3 signing,
+# so keytool -printcert -jarfile reports "Not a signed jar file": use
+# apksigner from the SDK build-tools instead:
+~/dev/android-sdk/build-tools/36.0.0/apksigner verify --print-certs \
+  build/app/outputs/flutter-apk/app-release.apk | grep -iE "sha-256|sha-1"
+# must print SHA-256 9da9291753755c22456f3cc1bda1f9ff…:30a56569 and
+# SHA-1 8286f07a6cdbfa6b64c3772e8b84c6ed06dbd67a
+# (release-secrets/README.md) — NEVER the debug 72:bc:bc:ae:…
+# 2. Face models bundled:
+unzip -l build/app/outputs/flutter-apk/app-release.apk \
+  | grep -E "facenet.tflite|silentface-minifasnetv2"
+# 3. On-device pilot proof (after install, before enroll):
+adb logcat -s flutter | grep -i "pilot-sideload"
+# enroll once → the SEC pilot-sideload line appears; absence means the
+# binary was built WITHOUT the flag (stock store behavior: sideload
+# refuses with the tampered message — correct for that binary).
+```
+
+#### Tester instructions (send WITH the APK — copy/paste)
+
+1. **Uninstall any existing Proximity first** (debug and release keys
+   conflict: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`). Then install the APK.
+2. Sign in with your **institute Gmail**, enroll as student (one device
+   per Gmail).
+3. **⚠️BINDING WARNING: enrolling binds your Gmail to THIS phone for 30
+   days** (moves ≤1 per 30 days, server-enforced, no reset shortcut).
+   Do NOT enroll a casual/loaner phone — use the phone you will mark
+   attendance from. Until any re-enroll date, attendance comes from the
+   professor's manual path.
+4. If enrollment refuses with "tampered or re-signed": you received a
+   non-pilot binary — ask for the pilot build, do not retry.
+5. Professor side: host from an Android phone on the same WiFi; the
+   pilot has no Play Integrity verdicts yet, so treat `STALE`/unverified
+   banners as informational during the pilot.
+
+#### Never-do list (pilot lineage)
+
+- NEVER upload a pilot-flagged binary to Play (any track) — the flag
+  would ride into the store lineage. Store uploads are ALWAYS plain
+  `flutter build appbundle --release` with NO dart-define.
+- NEVER forward the release keystore or `keystore.properties` with the
+  APK (lose = bricked updates; leak = anyone ships "Proximity").
+- NEVER "fix" a tester failure by turning the flag into a runtime
+  setting — the compile-time bake is the guarantee a store binary
+  cannot inherit the waiver.
+- When the Play account lands: §5b as written, core `0.2.0`, floor bump
+  per §2 — pilot installs barrier out on their own.
+
+### 5d. NOTE — Pilot vs official route: why, what it costs, what still holds
+
+#### Why the official route is not available
+
+The stock release binary is already Play-ready (signed, pinned, gated) —
+what is missing is the *accounts*, not the code:
+
+1. **No Google Play Developer account** ($25 one-time + identity
+   verification + review wait). Without it there is no trusted installer
+   on any tester phone: every install reports installer-null, so the
+   suite's `isAppIntegrityValid` reads false and the stock gate refuses
+   enrollment with the tampered message — on a perfectly legitimate
+   binary. The pilot flag exists solely to bridge this account gap.
+2. **No paid Apple Developer membership** (separate, Apple-side). This
+   blocks macOS/iOS *distribution* (notarization, signed DMG that keeps
+   keychain groups working on other Macs) and App Attest-backed STD tier
+   on iPhones — which is why macOS is deliberately undistributed for the
+   pilot (§5 scope: Android only). It does not affect the Android pilot.
+
+Neither gap changes a line of protocol, rules, or verifier code — both
+are pure distribution plumbing, closable later without rebuilds of logic.
+
+#### Practical implications of the pilot (read honestly)
+
+- **Manual install + manual updates.** Testers sideload (unknown-sources
+  prompt, uninstall-first on key conflict) and there are NO auto-updates:
+  every fix needs a re-forwarded APK and a manual reinstall. Stale pilots
+  linger on phones — the only leash is the §2 floor, which needs one
+  online contact to bite (a fully-offline stale pilot keeps marking, same
+  as a fully-offline stale store build would).
+- **No Play Integrity verdicts.** App Check stays Monitor; the
+  PlayIntegrity provider has no recognized installer to vouch for, so
+  pilot devices never yield `MEETS_DEVICE_INTEGRITY`/`STRONG`. Attestation
+  tiers during the pilot are client-presented + professor-verified offline
+  (chain-vs-pinned-roots), exactly as designed for offline-first — but
+  there is no independent Play verdict backing them until the store
+  build ships.
+- **No staged rollout, no per-user revocation.** One APK for everyone;
+  stopping a single device means the 30-day move machinery or the global
+  floor — both coarse. Keep the tester set small and known.
+- **Support surface is yours.** Unknown-sources friction, "app not
+  installed" on key conflicts, and the 30-day binding surprise all land
+  on you, not on a store listing. The §5c tester note exists to pre-empt
+  all three — send it verbatim.
+- **A repackaged pilot binary still dies at launch.** This is the point
+  most "sideload = insecure" summaries miss: the pilot waives the
+  *installer* check, NOT the *signing-cert* pin. `MainActivity`
+  compares the APK's actual signing cert against the baked-in
+  `9DA9…6569` SHA-256 and throws on mismatch — anyone who unzips,
+  modifies, and re-signs the APK produces a build that crashes before
+  any UI. Stealing the *file* is useless; only stealing the *keystore*
+  breaks this (hence the never-do list).
+
+#### What still holds, in full, on the pilot
+
+- **Server-side gates (untouched, installer-independent):** one student
+  device per Gmail (single-transaction claim — racing devices resolve to
+  exactly one winner), ≤1 move per 30 days with exact re-enroll date,
+  same-install re-key free, no self-reset path, org-scoped rules/queries,
+  owner-lazy purge. A phone that "lies" locally still hits the same
+  Firestore rules as a store phone.
+- **Classroom crypto (identical binaries, identical air):** 10 s
+  challenge rotation, 17 s acceptance, single-use `(windowID,ID,j)`,
+  Ed25519 proofs under pinned `pkS`, TLS channel binding, BLE sighting
+  with RSSI gates, face ticket ≥ 0.70 + 5-min freshness, liveness ≥ 0.85
+  with allowlisted versions, HW `dSig` chain-vs-pinned-roots. The
+  professor's phone verifies a pilot proof byte-for-byte like a store
+  proof — there is no "pilot mode" on the air.
+- **Client hard-blocks that remain:** rooted OS, Frida/Xposed hooks,
+  emulators, and re-signed binaries still refuse enrollment; marking
+  still flags (never auto-absents) on taint; the cert-pin still kills
+  repackaged binaries at launch (above).
+- **Floor kill-switch:** §5c — the pilot lineage ends the day the store
+  build + floor ship, with no cooperation needed from pilot installs
+  beyond one online contact.
+
+**One-line summary for stakeholders:** the pilot is the production app
+minus Play's installer vouch and auto-update — every attendance-critical
+guarantee (claim rules, proof crypto, device binding, re-sign death)
+holds; what you lose is convenience (manual installs/updates) and the
+independent Play verdict, both restored the day the Play account lands.
