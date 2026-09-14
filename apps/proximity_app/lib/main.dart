@@ -655,10 +655,29 @@ class AdaptiveScaffold extends StatelessWidget {
         floatingActionButton: floatingActionButton,
       );
     }
+    // Cupertino (iOS/macOS + all desktops route here via platform check):
+    // every push in this app is a MaterialPageRoute (records, sessions,
+    // account, Take), which carries no Cupertino title — the automatic
+    // Cupertino back button then renders its "?" placeholder instead of a
+    // chevron. Never rely on it: explicit Cupertino back whenever the
+    // route can pop (custom `leading` still wins — e.g. Take's
+    // leave-with-save). Chevron-only (no previousTitle) so no route
+    // rename ever leaks into the bar.
+    Widget? effectiveLeading = leading;
+    if (effectiveLeading == null) {
+      try {
+        if (Navigator.maybeOf(context)?.canPop() ?? false) {
+          effectiveLeading = CupertinoNavigationBarBackButton(
+            previousPageTitle: null,
+            onPressed: () => Navigator.maybeOf(context)?.maybePop(),
+          );
+        }
+      } catch (_) {}
+    }
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
         middle: titleWidget ?? Text(title),
-        leading: leading,
+        leading: effectiveLeading,
         trailing: actions == null
             ? null
             : Row(mainAxisSize: MainAxisSize.min, children: actions!),
@@ -671,4 +690,22 @@ class AdaptiveScaffold extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Platform back button: Cupertino chevron on iOS/macOS (where pushes are
+/// MaterialPageRoutes with no Cupertino title — the automatic button shows
+/// "?"), Material arrow elsewhere. Custom [onPressed] (e.g. Take's
+/// leave-with-save) is preserved on both; null pops (Cupertino's built-in
+/// default when onPressed is null).
+Widget adaptiveBackButton({VoidCallback? onPressed}) {
+  // ignore: avoid-global-platform-check — platform selects the nav idiom.
+  final cupertino = defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS;
+  if (cupertino) {
+    return CupertinoNavigationBarBackButton(
+      previousPageTitle: null,
+      onPressed: onPressed,
+    );
+  }
+  return BackButton(onPressed: onPressed);
 }

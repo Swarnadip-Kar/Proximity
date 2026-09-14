@@ -1380,10 +1380,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             ),
           ],
         ),
-        leading: BackButton(onPressed: () {
+        leading: adaptiveBackButton(onPressed: () {
           // Composition wrapper (body untouched): leaving the Live tab
           // bumps the history-refresh tick so the Courses tab re-reads on
           // re-show (its IndexedStack-kept state never re-reads alone).
+          // Adaptive (Cupertino chevron on iOS/macOS — a Material
+          // BackButton inside a Cupertino bar renders "?" there).
           _leave().whenComplete(bumpLiveHistoryTick);
         }),
         // Zero-intersection: no AppBar add entry — manual entry lives

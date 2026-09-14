@@ -935,10 +935,20 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // confirms no identity.
     for (final c in out) {
       final key = c.last.key;
-      if ((_gatedEmailByHost[key] ?? '').isEmpty && orgAllows(c.last.org)) {
+      if (!orgAllows(c.last.org)) continue;
+      if ((_gatedEmailByHost[key] ?? '').isEmpty) {
         if (!_profVerifyByHost.containsKey(key)) {
           _profVerifyByHost[key] = 'first-seen';
         }
+        unawaited(_backfillGatedEmail(c.last.host, c.last.port));
+      } else {
+        // Class-number freshness: the email backfill above runs once per
+        // host (then stops), so the live round number would freeze at its
+        // first value — an open R3 tile keeps reading R1/R2 or nothing,
+        // and a closed tile keeps a stale number. Re-probe on every pass
+        // (throttled to one short GET per host per 15s inside) so open
+        // increments and close→0 both converge; the same probe already
+        // carries the number, so no extra radio cost.
         unawaited(_backfillGatedEmail(c.last.host, c.last.port));
       }
     }
