@@ -214,9 +214,23 @@ class WaitingRoomView extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                 ),
-                const SizedBox(height: ProxSpacing.sm),
+                // Highlighted course name (title case, primary): the room
+                // reads as THIS class first, status second. Hidden when
+                // the class label is still unknown (typed-IP pre-fetch) —
+                // the paragraph below reads fine without it.
+                if (roomClass.trim().isNotEmpty) ...[
+                  const SizedBox(height: ProxSpacing.sm),
+                  Text(
+                    roomClass,
+                    style: ProxType.title(color: c.contentPrimary),
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                ],
+                const SizedBox(height: ProxSpacing.xs),
                 Text(
-                  'Attendance has not yet started for\n$roomClass.\nKeep this open — you will continue automatically when the professor starts marking.',
+                  'Attendance has not yet started.\nKeep this open — you will continue automatically when the professor starts marking.',
                   style: ProxType.body(color: c.contentSecondary),
                   textAlign: TextAlign.center,
                 ),
@@ -243,7 +257,10 @@ class WaitingRoomView extends StatelessWidget {
                   // Pin verdict for the gated email (verified live/cache,
                   // first-seen unverified with online auto-verify, or
                   // mismatch-blocked). Null/unknown renders nothing —
-                  // the card above reads exactly as before.
+                  // the card above reads exactly as before. The sm gap
+                  // above matches the card's own group rhythm (was 0 —
+                  // the text touched the card while lg sat below it).
+                  const SizedBox(height: ProxSpacing.sm),
                   ProfVerifiedBadge(verification: profVerification),
                 ],
                 if (!connected) ...[
