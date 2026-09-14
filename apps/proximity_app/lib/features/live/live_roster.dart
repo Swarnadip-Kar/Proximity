@@ -473,10 +473,15 @@ class _AttendanceSummary extends StatelessWidget {
         ProxSectionHeader(
           title: 'Attendance',
           padding: EdgeInsets.zero,
+          // Class number reads at the SAME size as the title (one
+          // header line, two facts — never a shrunken caption).
           trailing: classNo > 0
               ? Text(
                   'Class $classNo',
-                  style: ProxType.caption(color: c.contentSecondary),
+                  style: ProxType.title(color: c.contentPrimary).copyWith(
+                    fontSize: 17,
+                    letterSpacing: -0.2,
+                  ),
                 )
               : null,
         ),

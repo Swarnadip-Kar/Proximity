@@ -148,8 +148,8 @@ class LiveSetupSection extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Verified (green) — that student’s proof checked out clean.\n'
-                      'Unverified (yellow) — that proof was flagged for review (device check or a duplicate-face pair). Presence is kept; check with the student after class.\n'
+                      'Verified (green) — that phone proved presence with its hardware device key over a fresh challenge, plus a passed face check in this round. The mark counts as present.\n'
+                      'Unverified (yellow) — the mark is kept, but the proof was flagged for review: a failed device-integrity check on that phone, or the same face marking under two Gmails. Check with the student after class; nothing is ever auto-removed.\n'
                       'Waiting students carry no pill — there is no proof to judge yet.\n'
                       'You can check your own device status in Account → Device.',
                       style: ProxType.caption(
