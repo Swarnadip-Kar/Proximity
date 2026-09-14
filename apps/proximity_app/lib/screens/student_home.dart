@@ -76,6 +76,19 @@ Duration? nextAutoFaceRetryDelay({
   return gap;
 }
 
+/// Same-round re-face policy (pure): auto-advance may face-check a window
+/// only when it is NOT the round already marked on this host. Unknown
+/// display with a recorded mark holds (the room poll refines it); first
+/// joins (no recorded mark) always pass. Manual joins bypass this —
+/// explicit user action, server dedupes.
+bool mayAutoFaceFor({String? markedDisplay, required String display}) {
+  final marked = (markedDisplay ?? '').trim();
+  if (marked.isEmpty) return true;
+  final d = display.trim();
+  if (d.isEmpty || d == marked) return false;
+  return true;
+}
+
 class StudentHomeScreen extends ConsumerStatefulWidget {
   const StudentHomeScreen({super.key});
 
@@ -172,6 +185,30 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // Consecutive unreachable room polls: hosting ended under a waiter
   // (End attendance stops the professor server) vs a network blip.
   int _roomMisses = 0;
+  // Latest observed window display code for the waiting room (round
+  // identity — drives the same-round re-face guard below).
+  String _roomDisplay = '';
+  // Rounds already marked, by `host:port` → display code. Auto-advance
+  // (room poll, entry fast paths) must never face-check these again: a
+  // transient closed sample mid-round used to bounce marked → waiting →
+  // face for the SAME round. Manual joins bypass (explicit user action;
+  // the server dedupes already-marked re-proves idempotently). Entries
+  // drop with their host (see _dropHostEntries); a new mark overwrites.
+  final Map<String, String> _markedDisplayByHost = {};
+
+  /// Auto-advance gate for [target] showing [display]: false when this is
+  /// the round already marked on this host (same display, both known).
+  /// Unknown display with a recorded mark holds too — the 2s room poll
+  /// refines it before any face check. First joins (no mark) always pass.
+  bool _mayAutoFace(ClassBeacon target, String display) {
+    final marked = _markedDisplayByHost['${target.host}:${target.port}'];
+    if (!mayAutoFaceFor(markedDisplay: marked, display: display)) {
+      BleLog.log(ProxLogTags.face,
+          'already marked $marked here — holding (no same-round re-face)');
+      return false;
+    }
+    return true;
+  }
   Timer? _roomPoll;
   Timer? _presenceBeat;
   // Overlap guard for the 2s room poll: Timer.periodic does not await the
@@ -611,6 +648,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _gatedPhotoByHost.remove(key);
     _profVerifyByHost.remove(key);
     _profVerifyEmailByHost.remove(key);
+    _markedDisplayByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -1315,10 +1353,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _connected = true;
         _roomMisses = 0;
         _roomWindowOpen = entry.windowOpen;
+        if (entry.display.trim().isNotEmpty) {
+          _roomDisplay = entry.display.trim();
+        }
       });
       // Fast path: window already open (e.g. rejoin mid-window, or a
       // stale-closed beacon on the tile path) → face check, zero extra GET.
-      if (entry.windowOpen) {
+      // Never for the round already marked here (transient-closed bounce).
+      if (entry.windowOpen && _mayAutoFace(target, entry.display)) {
         _advanceToFace(target);
         return;
       }
@@ -1326,7 +1368,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       await _pollRoomOnce(run);
       // Fast path: window already open (e.g. rejoin mid-window) → face check.
       if (!mounted) return;
-      if (_roomWindowOpen) {
+      if (_roomWindowOpen && _mayAutoFace(target, _roomDisplay)) {
         _advanceToFace(target);
         return;
       }
@@ -1371,7 +1413,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         if (run == _runId) _roomPollBusy = false;
       }
       if (!mounted || run != _runId) return;
-      if (_roomWindowOpen && phase == StudentPhase.waiting) {
+      if (_roomWindowOpen &&
+          phase == StudentPhase.waiting &&
+          _mayAutoFace(target, _roomDisplay)) {
         _advanceToFace(target);
       }
     });
@@ -1471,6 +1515,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       setState(() {
         _connected = probe.reachable;
         _roomWindowOpen = probe.windowOpen;
+        if (probe.display.trim().isNotEmpty) {
+          _roomDisplay = probe.display.trim();
+        }
         if (probe.classLabel.isNotEmpty) _roomClass = probe.classLabel;
         if (email.isNotEmpty) _roomProfEmail = email;
         if (probe.profPhoto.trim().isNotEmpty) {
@@ -2083,6 +2130,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
     if (receipt.result == StudentResult.marked ||
         receipt.result == StudentResult.late) {
+      // Record the marked round so auto-advance never re-faces it (see
+      // _mayAutoFace): a transient closed sample mid-round used to bounce
+      // marked → waiting → face for the SAME round.
+      if (receipt.display.trim().isNotEmpty) {
+        _markedDisplayByHost['${target.host}:${target.port}'] =
+            receipt.display.trim();
+      }
       // Stay for the next round: once THIS round ends, rejoin the waiting
       // room (fast-paths straight back to face if the next window is
       // already open). No taps, face re-checks every round.
@@ -2093,9 +2147,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// Parks on the verdict badge until the just-marked round ends, then
   /// rejoins the waiting room for the next round. Same-window re-face is
   /// impossible: we only leave when the probe says closed/unreachable, or
-  /// when the window code changes (fast professor retake). Single-shot
-  /// chained timer (never a bare delayed future) so dispose/test teardown
-  /// stays timer-clean.
+  /// when the window code changes (fast professor retake) — and every
+  /// auto-advance re-checks the marked round via [_mayAutoFace], so even
+  /// a transient closed sample mid-round can only park in waiting, never
+  /// re-face. Single-shot chained timer (never a bare delayed future) so
+  /// dispose/test teardown stays timer-clean.
   ///
   /// Hosting-ended vs round-over: End attendance STOPS the professor
   /// server, so the probe goes unreachable — that is not "next round",

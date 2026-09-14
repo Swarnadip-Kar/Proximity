@@ -63,4 +63,23 @@ void main() {
           isNull);
     });
   });
+
+  group('mayAutoFaceFor', () {
+    test('first join (no mark) always passes', () {
+      expect(mayAutoFaceFor(display: 'KQ7'), isTrue);
+      expect(mayAutoFaceFor(markedDisplay: '', display: 'KQ7'), isTrue);
+    });
+
+    test('same round holds (no same-round re-face)', () {
+      expect(mayAutoFaceFor(markedDisplay: 'KQ7', display: 'KQ7'), isFalse);
+    });
+
+    test('new round passes', () {
+      expect(mayAutoFaceFor(markedDisplay: 'KQ7', display: 'ZP2'), isTrue);
+    });
+
+    test('unknown display with a mark holds for the room poll', () {
+      expect(mayAutoFaceFor(markedDisplay: 'KQ7', display: ''), isFalse);
+    });
+  });
 }
