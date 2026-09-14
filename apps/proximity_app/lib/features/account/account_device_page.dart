@@ -16,6 +16,7 @@ import '../../widgets/prox_states.dart';
 import 'account_device.dart';
 import 'account_prof.dart';
 import 'device_rules.dart';
+import 'device_verification.dart';
 
 /// Student Device sub-page.
 class AccountDevicePage extends ConsumerWidget {
@@ -42,6 +43,11 @@ class AccountDevicePage extends ConsumerWidget {
             const ProxSectionHeader(title: 'Device'),
             const SizedBox(height: ProxSpacing.sm),
             AccountDeviceSection(acct: acct),
+            const SizedBox(height: ProxSpacing.sm),
+            // This phone's integrity standing (same probe as
+            // enrollment/marking) with its explanation — one shared
+            // card with the professor Device page.
+            const DeviceVerificationCard(),
             const SizedBox(height: ProxSpacing.xl),
             _DeviceDaysWhy(),
             const SizedBox(height: ProxSpacing.xl),
@@ -71,6 +77,10 @@ class AccountProfDevicePage extends ConsumerWidget {
           const ProxSectionHeader(title: 'This device'),
           const SizedBox(height: ProxSpacing.sm),
           AccountProfDeviceFacts(acct: acct),
+          const SizedBox(height: ProxSpacing.sm),
+          // Same integrity standing card as the student Device page
+          // (shared widget — one probe, one explanation).
+          const DeviceVerificationCard(),
           const SizedBox(height: ProxSpacing.xl),
         ],
       ),
