@@ -14,14 +14,15 @@ import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
 
 import '../../core/device_store.dart';
-import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/course_attendance.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_states.dart';
 import '../../widgets/student_card.dart';
+import '../../widgets/verdict_badge.dart';
 import '../../widgets/web_banner.dart';
+import 'session_row_card.dart';
 
 class CourseAttendanceDetailScreen extends ConsumerStatefulWidget {
   final String course;
@@ -126,46 +127,62 @@ class _CourseAttendanceDetailScreenState
                   border: Border.all(color: c.divider),
                   boxShadow: [c.elevationRaised],
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Semantics(
-                      label: summary.line,
-                      // Same widget as the course-list cards (copy-paste
-                      // parity by construction — one assembly, never drift).
-                      child: AttendanceRingAvatar(
-                        photoUrl: widget.profPhotoUrl,
-                        course: widget.course,
-                        value: value,
-                      ),
-                    ),
-                    const SizedBox(width: ProxSpacing.lg),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Two-line header: "X/Y days attended" on line 1,
-                          // "· n partial" (when any) wraps to line 2 instead
-                          // of truncating after the fraction on narrow phones.
-                          Text(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Semantics(
+                          label: summary.line,
+                          // Same widget as the course-list cards (copy-paste
+                          // parity by construction — one assembly, never drift).
+                          child: AttendanceRingAvatar(
+                            photoUrl: widget.profPhotoUrl,
+                            course: widget.course,
+                            value: value,
+                          ),
+                        ),
+                        const SizedBox(width: ProxSpacing.lg),
+                        Expanded(
+                          child: Text(
                             summary.line,
                             style: ProxType.title(color: c.contentPrimary),
                             softWrap: true,
                             overflow: TextOverflow.visible,
                             maxLines: 2,
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${summary.present} present · ${summary.partial} partial · ${summary.absent} absent · ${summary.sessions} days taken',
-                            style: proxTabular(context,
-                                ProxType.caption(color: c.contentSecondary)),
-                            softWrap: true,
-                            overflow: TextOverflow.visible,
-                            maxLines: 3,
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
+                    ),
+                    // Same Present/Partial/Absent badges + tri-color share
+                    // bar as the prof live header (exact same widgets —
+                    // VerdictBadge trio + SessionShareBar, day counts).
+                    const SizedBox(height: ProxSpacing.sm),
+                    Row(
+                      children: [
+                        _StudentSummaryCell(VerdictBadge(
+                          status: ProxStatus.marked,
+                          label: 'Present ${summary.present}',
+                        )),
+                        const SizedBox(width: ProxSpacing.xs),
+                        _StudentSummaryCell(VerdictBadge(
+                          status: ProxStatus.late,
+                          label: 'Partial ${summary.partial}',
+                        )),
+                        const SizedBox(width: ProxSpacing.xs),
+                        _StudentSummaryCell(VerdictBadge(
+                          status: ProxStatus.absent,
+                          label: 'Absent ${summary.absent}',
+                        )),
+                      ],
+                    ),
+                    const SizedBox(height: ProxSpacing.sm),
+                    SessionShareBar(
+                      present: summary.present,
+                      partial: summary.partial,
+                      absent: summary.absent,
                     ),
                   ],
                 ),
@@ -200,6 +217,23 @@ class _CourseAttendanceDetailScreenState
       ),
     );
   }
+}
+
+/// One badge cell: equal third of the row, scales down instead of
+/// wrapping — the trio always fits one line (same contract as the prof
+/// live `_AttendanceSummary` cell + the session-card counts row).
+class _StudentSummaryCell extends StatelessWidget {
+  final VerdictBadge badge;
+  const _StudentSummaryCell(this.badge);
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.center,
+          child: badge,
+        ),
+      );
 }
 
 /// Data limit (same as the cards): past-course records carry no photo, so
