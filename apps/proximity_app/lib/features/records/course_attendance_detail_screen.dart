@@ -135,7 +135,8 @@ class _CourseAttendanceDetailScreenState
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Semantics(
-                          label: summary.line,
+                          label:
+                              '${summary.present}/${summary.sessions} days attended, attendance percentage ${(value * 100).round()}%',
                           // Same widget as the course-list cards (copy-paste
                           // parity by construction — one assembly, never drift).
                           child: AttendanceRingAvatar(
@@ -146,12 +147,28 @@ class _CourseAttendanceDetailScreenState
                         ),
                         const SizedBox(width: ProxSpacing.lg),
                         Expanded(
-                          child: Text(
-                            summary.line,
-                            style: ProxType.title(color: c.contentPrimary),
-                            softWrap: true,
-                            overflow: TextOverflow.visible,
-                            maxLines: 2,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '${summary.present}/${summary.sessions} days attended',
+                                style: ProxType.title(
+                                    color: c.contentPrimary),
+                                softWrap: true,
+                                overflow: TextOverflow.visible,
+                                maxLines: 2,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Attendance percentage : ${(value * 100).round()}%',
+                                style: ProxType.body(
+                                    color: c.contentSecondary),
+                                softWrap: true,
+                                overflow: TextOverflow.visible,
+                                maxLines: 1,
+                              ),
+                            ],
                           ),
                         ),
                       ],
