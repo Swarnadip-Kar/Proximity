@@ -1137,6 +1137,28 @@ class ProxServer {
                 ...pin.flags,
                 if (rootToken.isNotEmpty) rootToken
               ]);
+        } else {
+          // Flag-only KeyDescription boot telemetry (attendance posture,
+          // fail-open): unlocked / unverified-boot / software-level ride as
+          // advisory flags alongside the confirming verdict — never a
+          // verdict change. Unparseable leaves (fake units, future KeyMint)
+          // emit no flags. iOS branch skipped (App Attest leaves carry no
+          // Android KeyDescription).
+          if (!iosBranch && proveChain != null) {
+            try {
+              final leaf = proveChain.leaf;
+              if (leaf != null && leaf.isNotEmpty) {
+                final bootFlags = bootFlagsOf(leaf);
+                if (bootFlags.isNotEmpty) {
+                  outcome = VerifyOutcome(
+                    outcome.decision,
+                    outcome.reason,
+                    [...outcome.attestationFlags, ...bootFlags],
+                  );
+                }
+              }
+            } catch (_) {}
+          }
         }
       }
 
