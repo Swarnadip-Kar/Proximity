@@ -49,15 +49,16 @@ String gatedPhotoFor(Map<String, String> byHost, String key) =>
     (byHost[key] ?? '').trim();
 
 /// Verification TAG for a browse tile (footer pill — green Verified on a
-/// prove-time key match, yellow New on first-seen/unverified, red Blocked
-/// on mismatch). 'known' (pins cached but unmatched yet) stays
-/// caption-only: a cached pin is not a match. ''/unknown renders nothing.
-/// Pure for unit tests.
+/// prove-time key match, yellow Unverified while unmatched
+/// (first-seen included: the caption + Details explainer carry the
+/// first-scan honesty), red Blocked on mismatch). 'known' (pins cached
+/// but unmatched yet) stays caption-only: a cached pin is not a match.
+/// ''/unknown renders nothing. Pure for unit tests.
 Widget? browseVerifyTag(String label) => switch (label) {
       'verified' || 'verified-live' =>
         const VerdictBadge(status: ProxStatus.marked, label: 'Verified'),
       'unverified' || 'first-seen' =>
-        const VerdictBadge(status: ProxStatus.review, label: 'New'),
+        const VerdictBadge(status: ProxStatus.review, label: 'Unverified'),
       'mismatch' =>
         const VerdictBadge(status: ProxStatus.wrongOrg, label: 'Blocked'),
       _ => null,
@@ -161,10 +162,10 @@ class BrowseTile extends StatelessWidget {
         if (a.prof.isNotEmpty) a.prof,
         if (a.display.isNotEmpty) 'Code ${a.display}',
       ].join(' · '),
-      // Email on its own line below (never repeats the announced name —
-      // same dedupe contract as the host card second line). The pin
-      // verdict rides under it (never as verified without a key match —
-      // see browseVerifyCaption).
+      // Email + verify caption below (two lines — the caption would
+      // truncate after the email at maxLines 1). The pin verdict rides
+      // under it (never as verified without a key match — see
+      // browseVerifyCaption).
       subtitle2: (profEmail.isNotEmpty &&
               profEmail.toLowerCase() != a.prof.toLowerCase())
           ? (browseVerifyCaption(verifyLabel).isEmpty
@@ -173,6 +174,7 @@ class BrowseTile extends StatelessWidget {
           : (browseVerifyCaption(verifyLabel).isEmpty
               ? null
               : browseVerifyCaption(verifyLabel)),
+      subtitle2MaxLines: 2,
       status: null,
       // Both pills share one footer line (never beside the title):
       // verify tag first, Open just right of it, left-aligned below

@@ -493,9 +493,9 @@ void main() {
       expect(tag('verified').label, 'Verified');
       expect(tag('verified').status, ProxStatus.marked);
       expect(tag('verified-live').label, 'Verified');
-      expect(tag('unverified').label, 'New');
+      expect(tag('unverified').label, 'Unverified');
       expect(tag('unverified').status, ProxStatus.review);
-      expect(tag('first-seen').label, 'New');
+      expect(tag('first-seen').label, 'Unverified');
       expect(tag('mismatch').label, 'Blocked');
       expect(tag('mismatch').status, ProxStatus.wrongOrg);
       // 'known' (cached pins, unmatched yet) stays caption-only: a cached
@@ -504,7 +504,8 @@ void main() {
       expect(browseVerifyTag(''), isNull);
     });
 
-    testWidgets('course-titled tile renders DS disc + New tag', (t) async {
+    testWidgets('course-titled tile renders DS disc + Unverified tag',
+        (t) async {
       await t.pumpWidget(_themed(BrowseTile(
         live: _live(label: 'DSL506 - introduction to machine learning'),
         profEmail: 'prof@univ.edu',
@@ -514,8 +515,7 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('DS'), findsOneWidget);
       expect(find.text('D-'), findsNothing);
-      expect(find.text('New'), findsOneWidget);
-      expect(find.text('Unverified'), findsNothing);
+      expect(find.text('Unverified'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
@@ -539,6 +539,30 @@ void main() {
       )));
       await t.pumpAndSettle();
       expect(find.textContaining('Class'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('list passes labels + round through to footer pills',
+        (t) async {
+      await t.pumpWidget(_themed(
+        BrowseClassesView(
+          avatarName: 'S',
+          ipInitial: '',
+          onIpChanged: (_) {},
+          onJoin: () {},
+          joinError: '',
+          live: [_live(label: 'CS201', open: true)],
+          profEmailByHost: const {'10.0.0.5:8443': 'prof.x@univ.edu'},
+          profVerifyByHost: const {'10.0.0.5:8443': 'verified'},
+          windowNoByHost: const {'10.0.0.5:8443': 3},
+          onTapLive: (_) {},
+          onRefresh: () async {},
+        ),
+      ));
+      await t.pumpAndSettle();
+      expect(find.text('Verified'), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('3rd Class'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 

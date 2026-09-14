@@ -353,6 +353,11 @@ class StudentCard extends StatefulWidget {
   /// Null hides the line — every other card is unchanged.
   final String? subtitle2;
 
+  /// Max lines for [subtitle2] (default 1 — every existing caller). Mark
+  /// browse tiles pass 2 so the email + verify caption pair
+  /// (`email\ncaption`) both read instead of truncating after the email.
+  final int subtitle2MaxLines;
+
   /// Status slot (§4.2), right-aligned on line 1. Usually one
   /// [VerdictBadge]; the course-overview session rows pass a stacked
   /// present/absent badge column instead. Null hides the slot.
@@ -425,6 +430,7 @@ class StudentCard extends StatefulWidget {
     required this.name,
     this.subtitle,
     this.subtitle2,
+    this.subtitle2MaxLines = 1,
     this.status,
     this.roundTrail = const [],
     this.selectionMode = false,
@@ -693,7 +699,7 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                       widget.subtitle2!,
                       style: ProxType.caption(color: c.contentSecondary),
                       overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
+                      maxLines: widget.subtitle2MaxLines,
                     ),
                   ],
                   if (widget.roundTrail.isNotEmpty) ...[

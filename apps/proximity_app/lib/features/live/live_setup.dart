@@ -130,7 +130,7 @@ class LiveSetupSection extends StatelessWidget {
                   children: [
                     Text(
                       'Verified (green) — the student’s phone matched your saved class key. Nothing to do.\n'
-                      'New (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always New, even when everything is fine. It turns Verified after they join once while online.\n'
+                      'Unverified (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always Unverified, even when everything is fine. It turns Verified after they join once while online.\n'
                       'Blocked (red) — key mismatch. Ask the student to check they joined the right class; if it persists, re-announce the IP verbally.',
                       style: ProxType.caption(
                           color: c.contentSecondary),

@@ -293,7 +293,7 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                         const EdgeInsets.only(bottom: ProxSpacing.xs),
                     child: Text(
                       'Verified (green) — this professor’s key matched a saved pin. Safe to join.\n'
-                      'New (yellow) — first time seeing this professor on this phone. You can still join; the app checks the key when you join and saves it for next time. The first scan of any professor is always New — even when everything is fine.\n'
+                      'Unverified (yellow) — first time seeing this professor on this phone. You can still join; the app checks the key when you join and saves it for next time. The first scan of any professor is always Unverified — even when everything is fine.\n'
                       'Blocked (red) — the key does not match. Do not join; nothing is sent from your phone.',
                       style: ProxType.caption(
                           color: c.contentSecondary),
