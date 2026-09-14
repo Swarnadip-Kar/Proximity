@@ -519,6 +519,29 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
+    testWidgets('live round ordinal tucks under the disc', (t) async {
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'CS201', open: true),
+        profEmail: 'prof@univ.edu',
+        classNo: 2,
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.text('2nd Class'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('unknown round hides the ordinal', (t) async {
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'CS201'),
+        profEmail: '',
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.textContaining('Class'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('idle tile renders class letters, no ring, no photo',
         (t) async {
       final now = DateTime.now().toUtc();

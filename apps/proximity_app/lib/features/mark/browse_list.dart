@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 import 'package:proximity_transport/transport.dart';
 
 import '../../design/tokens.dart';
+import '../../widgets/class_ordinal.dart';
+import '../../widgets/prox_cards.dart';
 import '../../widgets/student_card.dart';
 import '../../widgets/verdict_badge.dart';
 
@@ -97,12 +99,17 @@ class BrowseTile extends StatelessWidget {
 
   final VoidCallback onTap;
 
+  /// Live round number for the ordinal under the course disc (0/negative
+  /// = unknown/closed → disc renders exactly as before, no caption).
+  final int classNo;
+
   const BrowseTile({
     super.key,
     required this.live,
     required this.profEmail,
     this.profPhotoUrl = '',
     this.verifyLabel = '',
+    this.classNo = 0,
     required this.onTap,
   });
 
@@ -141,7 +148,10 @@ class BrowseTile extends StatelessWidget {
       // initials fallback — never blank, never a network spinner).
       //
       // Mark tiles use the large 56 avatar (rosters/records keep 40).
+      // Live round ordinal tucks under the disc, inside the avatar
+      // column only ("1st Class") — never the title section.
       avatarSize: 56,
+      avatarCaption: classOrdinalLabel(classNo),
       photoUrl: profPhotoUrl,
       name: a.classLabel,
       // No host IP, no org on the card (join + org gate still use them

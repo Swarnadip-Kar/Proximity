@@ -89,6 +89,10 @@ class BrowseClassesView extends StatefulWidget {
   /// Absent/'' renders exactly as before.
   final Map<String, String> profVerifyByHost;
 
+  /// Live round numbers by `host:port` (gated /window unicast). Absent/0
+  /// hides the under-disc ordinal (see BrowseTile.classNo).
+  final Map<String, int> windowNoByHost;
+
   const BrowseClassesView({
     super.key,
     this.avatarName = '',
@@ -108,6 +112,7 @@ class BrowseClassesView extends StatefulWidget {
     this.profEmailByHost = const {},
     this.profPhotoByHost = const {},
     this.profVerifyByHost = const {},
+    this.windowNoByHost = const {},
   });
 
   @override
@@ -327,6 +332,9 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                   verifyLabel: widget.profVerifyByHost[
                           widget.live[i].last.key] ??
                       '',
+                  classNo: widget.windowNoByHost[
+                          widget.live[i].last.key] ??
+                      0,
                   onTap: () => widget.onTapLive(widget.live[i]),
                 ),
               )),

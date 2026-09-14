@@ -179,6 +179,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // anonymous), the old label is dropped and recomputed — a 'verified'
   // earned by the previous professor must never badge the next one.
   final Map<String, String> _profVerifyEmailByHost = {};
+  // Live round numbers by `host:port` (same gated /window unicast —
+  // browse tiles render the under-disc ordinal from these; 0/absent
+  // hides it). Refreshed on every backfill while reachable.
+  final Map<String, int> _windowNoByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
   final Map<String, DateTime> _emailFetchThrottle = {};
@@ -585,7 +589,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         if (_gatedPhotoByHost.remove(key) != null) changed = true;
         if (_profVerifyByHost.remove(key) != null) changed = true;
         _profVerifyEmailByHost.remove(key);
+        if (_windowNoByHost.remove(key) != null) changed = true;
       } else {
+        if (_windowNoByHost[key] != probe.windowNo) {
+          _windowNoByHost[key] = probe.windowNo;
+          changed = true;
+        }
         if (_gatedEmailByHost[key] != email) {
           _gatedEmailByHost[key] = email;
           changed = true;
@@ -649,6 +658,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _profVerifyByHost.remove(key);
     _profVerifyEmailByHost.remove(key);
     _markedDisplayByHost.remove(key);
+    _windowNoByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -1494,6 +1504,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _gatedPhotoByHost.remove(key);
         _profVerifyByHost.remove(key);
         _profVerifyEmailByHost.remove(key);
+        _windowNoByHost.remove(key);
         BleLog.log(ProxLogTags.lan,
             'host $key went anonymous — room identity cleared');
       }
@@ -2368,6 +2379,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       profEmailByHost: Map.of(_gatedEmailByHost),
       profPhotoByHost: Map.of(_gatedPhotoByHost),
       profVerifyByHost: Map.of(_profVerifyByHost),
+      windowNoByHost: Map.of(_windowNoByHost),
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final target = ClassBeacon(

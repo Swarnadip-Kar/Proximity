@@ -404,6 +404,12 @@ class StudentCard extends StatefulWidget {
   /// Mark browse class tiles pass 56.
   final double avatarSize;
 
+  /// Tiny caption tucked directly beneath the avatar disc, inside the
+  /// avatar column only (never overlapping the title/content section).
+  /// Mark browse tiles show the live round ordinal here ("1st Class").
+  /// Null/empty renders exactly as before (bare disc, same metrics).
+  final String? avatarCaption;
+
   /// False hides the avatar disc (the export page shows date-only rows).
   /// True (every other caller) keeps the classic avatar.
   final bool showAvatar;
@@ -433,6 +439,7 @@ class StudentCard extends StatefulWidget {
     this.avatarSize = 40,
     this.showAvatar = true,
     this.isCourse = false,
+    this.avatarCaption,
   });
 
   @override
@@ -564,12 +571,23 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
             // (easeOutBack dips below 0 → AnimatedContainer asserts
             // padding.isNonNegative). Keep the spring for scale only.
             if (widget.showAvatar)
-              AnimatedContainer(
-                duration: ProxDurations.small,
-                curve: ProxCurves.standard,
-                width: widget.avatarSize,
-                height: widget.avatarSize,
-                padding: EdgeInsets.all(ringOn ? 2.5 : 0),
+              SizedBox(
+                // Caption column: fixed width so the ordinal ("12th
+                // Class") fits beside the disc without touching the
+                // title section; the disc stays centered over it. Bare
+                // discs keep the exact legacy width (no content shift).
+                width: (widget.avatarCaption?.trim().isNotEmpty ?? false)
+                    ? widget.avatarSize + 8
+                    : widget.avatarSize,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: ProxDurations.small,
+                      curve: ProxCurves.standard,
+                      width: widget.avatarSize,
+                      height: widget.avatarSize,
+                      padding: EdgeInsets.all(ringOn ? 2.5 : 0),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: ringOn
@@ -618,6 +636,20 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                         size: widget.avatarSize,
                         isCourse: widget.isCourse,
                       ),
+                    ),
+                    // Round ordinal under the disc (avatar column only).
+                    if (widget.avatarCaption?.trim().isNotEmpty ?? false) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.avatarCaption!.trim(),
+                        style: ProxType.caption(color: c.contentSecondary),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ],
+                  ],
+                ),
               ),
             if (widget.showAvatar) const SizedBox(width: ProxSpacing.md),
             Expanded(

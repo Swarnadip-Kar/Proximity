@@ -436,10 +436,15 @@ class _AttendanceSummary extends StatelessWidget {
   final int partial;
   final int absent;
 
+  /// Live round number beside the `Attendance` title (0 = none taken yet
+  /// → no trailing, header reads exactly as before).
+  final int classNo;
+
   const _AttendanceSummary({
     required this.present,
     required this.partial,
     required this.absent,
+    this.classNo = 0,
   });
 
   /// One badge cell: equal third of the row, scales down instead of
@@ -455,16 +460,25 @@ class _AttendanceSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
     // Header copies the Add-tab contract exactly (ProxSectionHeader:
     // gradient accent bar + 17px title, zero padding); badges + bar sit
-    // below it, mirroring the session-card stack minus course/date.
+    // below it, mirroring the session-card stack minus course/date. The
+    // live round number rides the header trailing slot ("Class 3") —
+    // the title itself stays exact 'Attendance'.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const ProxSectionHeader(
+        ProxSectionHeader(
           title: 'Attendance',
           padding: EdgeInsets.zero,
+          trailing: classNo > 0
+              ? Text(
+                  'Class $classNo',
+                  style: ProxType.caption(color: c.contentSecondary),
+                )
+              : null,
         ),
         const SizedBox(height: ProxSpacing.xs),
         Row(
@@ -575,6 +589,7 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
               present: present,
               partial: partialRows.length,
               absent: absent,
+              classNo: windowsTaken,
             );
           },
         ),
