@@ -427,6 +427,7 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
                   onDeleteCourse:
                       sessions.isEmpty ? null : () => _deleteCourse(sessions),
                   sessionLabel: _sessionLabel,
+                  onSyncNow: _syncing ? null : () => _syncFromCloud(),
                 ),
               );
             },
@@ -503,6 +504,7 @@ class _OverviewBody extends ConsumerStatefulWidget {
   final Future<void> Function(Set<String>) onExportSessions;
   final VoidCallback? onDeleteCourse;
   final String Function(ClassRecord) sessionLabel;
+  final VoidCallback? onSyncNow;
 
   const _OverviewBody({
     required this.courseName,
@@ -521,6 +523,7 @@ class _OverviewBody extends ConsumerStatefulWidget {
     required this.onExportSessions,
     required this.onDeleteCourse,
     required this.sessionLabel,
+    this.onSyncNow,
   });
 
   @override
@@ -584,9 +587,20 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
                     const ProxLoadingRow(label: 'Syncing with cloud…')
                   else if (syncMsg != null)
                     ProxSyncNote(syncMsg),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: UnsyncedBadge(),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: UnsyncedBadge(),
+                        ),
+                      ),
+                      ProxSecondaryButton(
+                        icon: const Icon(Icons.sync, size: 18),
+                        label: const Text('Sync now'),
+                        onPressed: widget.onSyncNow,
+                      ),
+                    ],
                   ),
                   const SizedBox(height: ProxSpacing.sm),
                   // Course identity: my Gmail photo when the setup toggle is
@@ -693,6 +707,9 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
                               present: r.presentCount,
                               partial: partial,
                               absent: absent,
+                              // No avatar disc here: it eats the width the
+                              // day/time + counts need on narrow phones.
+                              showAvatar: false,
                               selectionMode: effective,
                               selected: controller.isSelected(r.id),
                               // No multi-delete selection on web records builds.

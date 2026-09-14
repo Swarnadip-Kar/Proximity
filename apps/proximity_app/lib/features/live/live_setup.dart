@@ -149,7 +149,8 @@ class LiveSetupSection extends StatelessWidget {
                   children: [
                     Text(
                       'Verified (green) — that phone proved presence with its hardware device key over a fresh challenge, plus a passed face check in this round. The mark counts as present.\n'
-                      'Unverified (yellow) — the mark is kept, but the proof was flagged for review: a failed device-integrity check on that phone, or the same face marking under two Gmails. Check with the student after class; nothing is ever auto-removed.\n'
+                      'Unverified (yellow) — the mark is kept, but the proof was flagged for review: a failed device-integrity check on that phone. Check with the student after class.\n'
+                      'Duplicate (red) — the same face marked under two Gmails. Both are auto-absent until you clear them: tap “Not a duplicate, count them” and both marks restore.\n'
                       'Waiting students carry no pill — there is no proof to judge yet.\n'
                       'You can check your own device status in Account → Device.',
                       style: ProxType.caption(

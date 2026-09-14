@@ -692,18 +692,45 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   String _draftSig() =>
       '$_windowNo|${tally.windowsAsMaps}|${tally.size}|${tally.confirmedCount}';
 
-  Map<String, dynamic> _draftJson() => {
-        'windowNo': _windowNo,
-        'dateIso': _draftDateIso ?? dateIsoOf(DateTime.now()),
-        'recordId': _recordId,
-        'recordStartIso': _recordStartIso,
-        'recordOrg': _recordOrg,
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-        'names': tally.nameMap(),
-        'rolls': tally.rollMap(),
-        'windows': tally.windowsAsMaps,
-        'windowNos': tally.windowNos,
-      };
+  Map<String, dynamic> _draftJson() {
+    // Crash-safe R1: the live-open round is never noted in-memory (so the
+    // intersection never collapses mid-round), but the draft must still
+    // carry it — a kill mid-R1 with no marks yet would otherwise restore
+    // with windowNos=[] and R1 would vanish from the trail (R2..R6 show,
+    // R1 missing). Union the live _windowNo here (plus an empty window map
+    // when the live round has no marks yet, so lengths stay aligned for
+    // restore); the in-memory live intersection is untouched (draft only
+    // matters on restore, when the window is closed and the round honestly
+    // happened).
+    final wn = tally.windowNos.toList();
+    var maps = tally.windowsAsMaps;
+    if (_windowNo > 0 && !wn.contains(_windowNo)) {
+      wn.add(_windowNo);
+      final sortedIdx = wn.toList()..sort();
+      final pos = sortedIdx.indexOf(_windowNo);
+      final grown = List<Map<String, bool>>.from(maps);
+      // Pad with empty maps if the live round sorts beyond current maps
+      // (dense case: append; sparse: insert at sorted position).
+      while (grown.length < pos) {
+        grown.add(const <String, bool>{});
+      }
+      grown.insert(pos.clamp(0, grown.length), const <String, bool>{});
+      wn.sort();
+      maps = grown;
+    }
+    return {
+      'windowNo': _windowNo,
+      'dateIso': _draftDateIso ?? dateIsoOf(DateTime.now()),
+      'recordId': _recordId,
+      'recordStartIso': _recordStartIso,
+      'recordOrg': _recordOrg,
+      'savedAt': DateTime.now().toUtc().toIso8601String(),
+      'names': tally.nameMap(),
+      'rolls': tally.rollMap(),
+      'windows': maps,
+      'windowNos': wn,
+    };
+  }
 
   /// Writes the draft when marks are absent entirely it clears any stale
   /// draft instead, so untouched courses never show a resume banner.
@@ -1032,7 +1059,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       bumpLiveHistoryTick();
       return;
     }
-    _windowNo = tally.windowCount;
+    // Rewind to the newest SURVIVING round (max, not count): sparse
+    // numbering (e.g. [1,2,5] after discarding 3-4) must never renumber,
+    // or the next Take-another collides with an existing round and R1
+    // can vanish from the trail. Empty (no rounds) is handled above.
+    final nos = tally.windowNos;
+    _windowNo = nos.isEmpty ? 0 : nos.last;
     // No round to resume from anymore: drop the frozen elapsed so the
     // next fresh Start begins at zero.
     _bankedElapsed = null;
@@ -1230,8 +1262,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     setState(() => _section = i);
   }
 
-  /// 1-tap duplicate-face override: the driver clears the whole group and
-  /// exempts the pair for the session; presence is untouched.
+  /// 1-tap duplicate-face override: the driver clears the whole group,
+  /// exempts the pair for the session, and re-marks every win dup
+  /// auto-absent dropped (both members count again).
   Future<void> _resolveDup(String email) async {
     try {
       await _driver?.resolveDupFlag(email);
@@ -1294,7 +1327,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Widget build(BuildContext context) {
     final present = tally.confirmedCount;
     final waiting = _driver?.waitingCount ?? 0;
-    final windowsTaken = tally.windowCount;
+    // Live round number (max, not count): sparse numbering after a discard
+    // ([1,2,5]) must still read Class 5, and a live-open round with no
+    // marks yet (not yet noted) must already count. Count would show 3
+    // and hide R1-style gaps.
+    final wn = tally.windowNos;
+    final windowsTaken =
+        [_windowNo, if (wn.isNotEmpty) wn.last].reduce((a, b) => a > b ? a : b);
     final waitingRows = _driver?.waitingRows ?? const [];
     final manualPending = _driver?.manualPending ?? const [];
     // AppBar avatar (gated Gmail photo iff the per-course opt-in is on,

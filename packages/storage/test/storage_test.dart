@@ -172,6 +172,31 @@ void main() {
       expect(t.flaggedEmails, ['b@x.in']);
     });
 
+    test('unmark drops wins, keeps the row + flags (dup auto-absent)', () {
+      final t = TallyStore();
+      t.noteWindow(1);
+      t.noteWindow(2);
+      t.mark('a@x.in', 'A', 1);
+      t.mark('a@x.in', 'A', 2);
+      t.setFaceFlag('a@x.in');
+      expect(t.winsOf('a@x.in'), {1, 2});
+      expect(t.nameOf('a@x.in'), 'A');
+      expect(t.unmark('a@x.in', 1), isTrue);
+      expect(t.unmark('a@x.in', 1), isFalse);
+      expect(t.winsOf('a@x.in'), {2});
+      expect(t.unmark('A@X.IN', 2), isTrue); // case-insensitive
+      expect(t.winsOf('a@x.in'), isEmpty);
+      // Round itself survives (opened, not win-derived); the row stays
+      // (absent, flagged) instead of vanishing; unknown emails no-op.
+      expect(t.windowNos, [1, 2]);
+      expect(t.presentAny.map((r) => r.email), isNot(contains('a@x.in')));
+      expect(t.size, 1);
+      expect(t.flaggedEmails, ['a@x.in']);
+      expect(t.unmark('ghost@x.in', 1), isFalse);
+      expect(t.winsOf('ghost@x.in'), isEmpty);
+      expect(t.nameOf('ghost@x.in'), '');
+    });
+
     test('toClassRecord carries flags; json roundtrips; legacy omits', () {
       final t = TallyStore();
       t.mark('a@x.in', 'A', 1);

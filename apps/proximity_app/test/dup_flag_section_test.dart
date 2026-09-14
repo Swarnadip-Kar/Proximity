@@ -23,11 +23,13 @@ void main() {
         ),
       ));
       expect(find.textContaining('Duplicate face detected between'), findsOneWidget);
-      expect(find.textContaining('A (a@x.in)'), findsOneWidget);
-      expect(find.textContaining('B (b@x.in)'), findsOneWidget);
-      // Never an accusation, never an absence threat.
-      expect(find.textContaining(RegExp(r'fraud|cheat|absent')), findsNothing);
-      await tester.tap(find.text('Not a duplicate'));
+      // Red member pill per address (exact label) alongside the paragraph.
+      expect(find.text('A (a@x.in)'), findsOneWidget);
+      expect(find.text('B (b@x.in)'), findsOneWidget);
+      // Auto-absent by default (never an accusation of fraud/cheating).
+      expect(find.textContaining('ABSENT'), findsOneWidget);
+      expect(find.textContaining(RegExp(r'fraud|cheat')), findsNothing);
+      await tester.tap(find.text('Not a duplicate, count them'));
       await tester.pumpAndSettle();
       expect(resolved, 'a@x.in');
       // Optimistic dismiss: the card is gone even before a rebuild.

@@ -97,8 +97,8 @@ abstract class HostDriver {
   /// 1-tap professor override: clears flags for [email] and its whole
   /// group and exempts every pair in the group for the rest of the
   /// session (the professor sees both faces in the room — the human
-  /// resolves what the matcher cannot). Never auto-absent: entries keep
-  /// their presence.
+  /// resolves what the matcher cannot). Counts them: every win dup
+  /// auto-absent dropped is re-marked.
   Future<void> resolveDupFlag(String email);
 
   /// Replaces the live tally with persisted draft data (back/app-kill
@@ -233,6 +233,12 @@ class RealHostDriver implements HostDriver {
   String _lastBeaconTargets = '';
   // Local same-face dup groups (session-scoped RAM — see [dupGroups]).
   final Map<String, Set<String>> _dupGroups = {};
+  // Wins stripped by dup auto-absent (email → removed window numbers) +
+  // display names for the override re-mark. Session-scoped RAM like the
+  // groups above (a restart rebuilds wins without dup state, so nothing
+  // is owed back). Cleared on resolve + eject.
+  final Map<String, Set<int>> _dupStashedWins = {};
+  final Map<String, String> _dupStashNames = {};
   Timer? _scanHold; // post-stop grace: scan lingers AND proofs still
   // accepted (cancelled by retake/end, which own both immediately).
   Timer? _crlRefresh; // CRL periodic refresh (cancelled on endHosting).
@@ -397,14 +403,16 @@ class RealHostDriver implements HostDriver {
     try {
       if ((_server?.removeStudent(key) ?? false)) removed = true;
     } catch (_) {}
-    // Dup-flag cleanup mirrors resolveDupFlag (presence already dropped
-    // with the tally row inside the room).
+    // Dup-flag cleanup mirrors resolveDupFlag (no win restore on eject —
+    // an ejected row stays gone; rejoin/re-mark re-adds).
     final peers = Set<String>.from(_dupGroups[key] ?? const {});
     for (final p in peers) {
       _dupGroups[p]?.remove(key);
       if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
     }
     if (_dupGroups.remove(key) != null) removed = true;
+    _dupStashedWins.remove(key);
+    _dupStashNames.remove(key);
     if (removed) {
       BleLog.log('STATE', 'roster eject $key');
     }
@@ -1041,9 +1049,13 @@ class RealHostDriver implements HostDriver {
   }
 
   /// Parses the server's `dupface:a,b` reason token into roster flags +
-  /// groups. The token is machine-readable (never shown); the UI renders
-  /// neutral copy from [dupGroups]. Unknown/unmarked peers no-op (their
-  /// own prove plants the flag symmetrically when it lands).
+  /// groups, then enforces dup auto-absent: every unresolved member's
+  /// wins are stashed + stripped (presence dropped, red-flagged to the
+  /// professor) until the 1-tap override counts them again. The token is
+  /// machine-readable (never shown); the UI renders copy from [dupGroups].
+  /// Unknown/unmarked peers no-op (their own prove plants the flag
+  /// symmetrically when it lands). Runs on every prove, so marks taken
+  /// while unresolved never silently restore presence.
   void _applyDupFaceToken(String email, String reason) {
     var peers = const <String>[];
     for (final seg in reason.split('|')) {
@@ -1056,17 +1068,47 @@ class RealHostDriver implements HostDriver {
             .toList();
       }
     }
-    if (peers.isEmpty) return;
     final me = email.toLowerCase();
-    _tally.setFaceFlag(me);
-    final mine = _dupGroups.putIfAbsent(me, () => <String>{});
-    for (final p in peers) {
-      _tally.setFaceFlag(p);
-      mine.add(p);
-      _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
+    if (peers.isNotEmpty) {
+      _tally.setFaceFlag(me);
+      final mine = _dupGroups.putIfAbsent(me, () => <String>{});
+      for (final p in peers) {
+        _tally.setFaceFlag(p);
+        mine.add(p);
+        _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
+      }
+      BleLog.log(
+          'SEC', 'duplicate face flagged: $me ~ ${peers.join(', ')}');
     }
-    BleLog.log(
-        'SEC', 'duplicate face flagged: $me ~ ${peers.join(', ')}');
+    // Auto-absent enforcement for every unresolved member (this prove may
+    // have just marked): strip any unstashed wins. Members whose group
+    // already resolved (or that were never grouped) are untouched.
+    final members = <String>{me, ...?_dupGroups[me]};
+    for (final p in peers) {
+      members.add(p);
+      members.addAll(_dupGroups[p] ?? const <String>{});
+    }
+    for (final m in members) {
+      if ((_dupGroups[m] ?? const <String>{}).isEmpty) continue;
+      _stripWinsForDup(m);
+    }
+  }
+
+  /// Stashes + strips [email]'s current wins (dup auto-absent). The row,
+  /// its name, and its faceFlag audit trail stay — exports read Absent,
+  /// flagged. Idempotent: already-stripped wins are not re-stashed.
+  void _stripWinsForDup(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return;
+    final wins = _tally.winsOf(key);
+    if (wins.isEmpty) return;
+    final name = _tally.nameOf(key);
+    if (name.isNotEmpty) _dupStashNames[key] = name;
+    final stash = _dupStashedWins.putIfAbsent(key, () => <int>{});
+    for (final w in wins) {
+      if (_tally.unmark(key, w)) stash.add(w);
+    }
+    BleLog.log('SEC', 'duplicate face auto-absent pending review: $key');
   }
 
   @override
@@ -1086,6 +1128,15 @@ class RealHostDriver implements HostDriver {
     }
     _tally.clearFaceFlag(me);
     _dupGroups.remove(me);
+    // The override counts them: restore every win auto-absent dropped
+    // (both members — the tap clears the whole group).
+    for (final m in <String>{me, ...peers}) {
+      final wins = _dupStashedWins.remove(m) ?? const <int>{};
+      final name = _dupStashNames.remove(m) ?? m;
+      for (final w in wins) {
+        _tally.mark(m, name, w);
+      }
+    }
     BleLog.log('SEC', 'duplicate face resolved by professor: $me');
   }
 

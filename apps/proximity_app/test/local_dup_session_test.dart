@@ -1,8 +1,9 @@
 // Local same-face duplicate path, end to end: two/three stock-app phones
 // carrying one holder face prove into one live window; the professor's
-// phone flags every involved entry (presence kept), the roster copy stays
-// neutral, 1-tap override resolves + exempts, teardown wipes session
-// state, and the cloud write path carries statuses only (no vectors).
+// phone red-flags every involved entry and auto-absents them by default
+// (wins stashed + stripped, restorable), 1-tap override counts them again
+// + exempts, teardown wipes session state, and the cloud write path
+// carries statuses only (no vectors).
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -212,7 +213,7 @@ void _assertNoVectorKeys(Map<String, dynamic> doc) {
 
 void main() {
   group('local same-face session (professor phone, in-memory)', () {
-    test('pair flags: both marked, both flagged, neutral groups',
+    test('pair flags: server accepts, prof auto-absents, red groups',
         timeout: const Timeout(Duration(minutes: 3)), () async {
       final (:host, :engine) = _hosting();
       await host.startHosting(classLabel: 't', port: 0);
@@ -239,9 +240,12 @@ void main() {
                 embedding: face,
                 email: 'b@x.in'),
             StudentResult.marked);
-        // Both marked (never auto-absent)…
-        expect(host.tally.presentCount, 2);
-        // …and both flagged with a symmetric neutral group.
+        // Server accepted both proves (student badges read marked)…
+        // …but the professor auto-absents the pair by default: wins
+        // stashed + stripped, both flagged with a symmetric group.
+        expect(host.tally.presentCount, 0);
+        expect(host.tally.winsOf('a@x.in'), isEmpty);
+        expect(host.tally.winsOf('b@x.in'), isEmpty);
         expect(host.tally.flaggedEmails, ['a@x.in', 'b@x.in']);
         expect(host.dupGroups['a@x.in'], {'b@x.in'});
         expect(host.dupGroups['b@x.in'], {'a@x.in'});
@@ -286,7 +290,8 @@ void main() {
                 embedding: _vec(6),
                 email: 's@x.in'),
             StudentResult.marked);
-        expect(host.tally.presentCount, 4);
+        // Triple auto-absent; the stranger still counts.
+        expect(host.tally.presentCount, 1);
         expect(host.tally.flaggedEmails, ['a@x.in', 'b@x.in', 'c@x.in']);
         expect(host.dupGroups['c@x.in'], {'a@x.in', 'b@x.in'});
         expect(host.dupGroups['s@x.in'], isNot(contains('a@x.in')));
@@ -318,7 +323,8 @@ void main() {
               StudentResult.marked);
         }
         expect(host.tally.flaggedEmails, ['a@x.in', 'b@x.in']);
-        // 1-tap override: flags gone, presence kept.
+        expect(host.tally.presentCount, 0);
+        // 1-tap override: flags gone, stashed wins re-marked (counts them).
         await host.resolveDupFlag('a@x.in');
         expect(host.tally.flaggedEmails, isEmpty);
         expect(host.dupGroups, isEmpty);
@@ -367,6 +373,10 @@ void main() {
               email: e);
         }
         expect(host.tally.flaggedEmails, ['a@x.in', 'b@x.in']);
+        // Production snapshots after Stop (noteWindow), so close the round
+        // first — otherwise the still-open round with stripped wins leaves
+        // windowNos empty and the window map omits the keys entirely.
+        await host.stopWindow();
         final record = host.tally.toClassRecord(
           courseId: 't',
           classLabel: 't',
@@ -380,9 +390,9 @@ void main() {
           profName: 'P',
           record: record,
         );
-        // FLAGGED status present…
+        // FLAGGED status present, marks dropped (absent, not vanished)…
         expect(doc['faceFlags'], ['a@x.in', 'b@x.in']);
-        expect((doc['windows'] as List).single['a@x.in'], isTrue);
+        expect((doc['windows'] as List).single['a@x.in'], isFalse);
         // …and zero face data under any key, at any depth.
         _assertNoVectorKeys(doc);
         _assertNoVectorKeys(

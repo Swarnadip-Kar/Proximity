@@ -123,16 +123,27 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
   /// Pull-merge on open through the SyncEngine (single-flight flush:
   /// outbox pushes + pull-union converge). Offline keeps local data
   /// quietly; the unsynced badge shows what is still queued.
+  bool _syncing = false;
   Future<void> _syncFromCloud() async {
-    final res = await flushNow(ref);
-    if (!mounted) return;
-    if (!res.online) {
-      setState(() => _syncMsg = 'Offline — this device only.');
-      return;
+    if (_syncing) return;
+    if (mounted) setState(() => _syncing = true);
+    try {
+      final res = await flushNow(ref);
+      if (!mounted) return;
+      if (!res.online) {
+        setState(() => _syncMsg = 'Offline — this device only.');
+        return;
+      }
+      setState(() {
+        _syncMsg = res.remaining > 0
+            ? 'Synced with cloud (${res.remaining} still pending).'
+            : 'Synced with cloud.';
+        // History may have converged (adoptions, pulls, tombstones) — the
+        // inline futures below re-read on setState, even while offstage.
+      });
+    } finally {
+      if (mounted) setState(() => _syncing = false);
     }
-    setState(() => _syncMsg = res.remaining > 0
-        ? 'Synced with cloud (${res.remaining} still pending).'
-        : 'Synced with cloud.');
   }
 
   Future<void> _register() async {
@@ -371,10 +382,25 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
                     children: [
                       const ClockHeader(),
                       const WebRecordsBanner(),
-                      if (_syncMsg != null) ProxSyncNote(_syncMsg!),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: UnsyncedBadge(),
+                      if (_syncing)
+                        const ProxLoadingRow(label: 'Syncing with cloud…')
+                      else if (_syncMsg != null)
+                        ProxSyncNote(_syncMsg!),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: UnsyncedBadge(),
+                            ),
+                          ),
+                          ProxSecondaryButton(
+                            icon: const Icon(Icons.sync, size: 18),
+                            label: const Text('Sync now'),
+                            onPressed:
+                                _syncing ? null : () => _syncFromCloud(),
+                          ),
+                        ],
                       ),
                       if (linked != null)
                         Padding(

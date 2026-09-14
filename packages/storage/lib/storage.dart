@@ -132,6 +132,24 @@ class TallyStore {
   bool isMarked(String email, int windowNo) =>
       _rows[email.toLowerCase()]?.presentIn(windowNo) ?? false;
 
+  /// Marked window numbers for [email] (copy — dup auto-absent support).
+  Set<int> winsOf(String email) =>
+      Set<int>.of(_rows[email.toLowerCase()]?.wins ?? const <int>{});
+
+  /// Display name for [email] (dup restore re-marks with it; '' unknown).
+  String nameOf(String email) => _rows[email.toLowerCase()]?.name ?? '';
+
+  /// Drops one mark, keeping the row (name/roll/flags/photo). Dup
+  /// auto-absent support: the professor-phone strips wins while the pair
+  /// is unresolved and re-marks them on override — the row itself (and
+  /// its faceFlag audit trail) never leaves, so exports read Absent, not
+  /// vanished. Returns true when a mark was removed.
+  bool unmark(String email, int windowNo) {
+    final r = _rows[email.toLowerCase()];
+    if (r == null) return false;
+    return r.wins.remove(windowNo);
+  }
+
   /// Sorted distinct window numbers taken so far: every OPENED round
   /// plus every marked one. Empty maps still persist (the round happened,
   /// nobody marked), so the count matches the professor's rounds.
@@ -167,9 +185,9 @@ class TallyStore {
       _rows.values.where((r) => r.late).toList();
 
   /// Local same-face dup flag (professor-phone, session-scoped): sets the
-  /// roster-visible `DUPLICATE_FLAGGED` state WITHOUT touching presence —
-  /// flagged entries are never auto-absent. The professor resolves via
-  /// [clearFaceFlag] (1-tap override); the tally itself is in-memory P0.
+  /// roster-visible flagged state. The flag itself never touches presence —
+  /// the host driver drops + restores wins around it (dup auto-absent by
+  /// default, 1-tap override counts them). The tally itself is in-memory P0.
   void setFaceFlag(String email) {
     final r = _rows[email.toLowerCase()];
     if (r != null) r.faceFlag = true;

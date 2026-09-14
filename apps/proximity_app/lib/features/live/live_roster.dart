@@ -54,14 +54,20 @@ List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
 }
 
 /// Trust pill for one marked row (prof live view, small): a clean
-/// confirmed proof reads Verified (green); a flagged proof — tainted
-/// device via `integrity-flagged`, or a duplicate-face pair member —
-/// reads Unverified (yellow, review). Same small `VerdictBadge` as every
+/// confirmed proof reads Verified (green); a tainted device via
+/// `integrity-flagged` reads Unverified (yellow, review — mark kept);
+/// a duplicate-face pair member reads Duplicate (red — auto-absent until
+/// the 1-tap override counts them). Same small `VerdictBadge` as every
 /// other status, never a banner. Waiting rows carry no pill (no proof to
 /// judge yet). Pure for unit tests.
-Widget rosterTrustTag(bool faceFlag) => faceFlag
-    ? const VerdictBadge(status: ProxStatus.review, label: 'Unverified')
-    : const VerdictBadge(status: ProxStatus.marked, label: 'Verified');
+Widget rosterTrustTag(bool faceFlag, {bool isDup = false}) {
+  if (isDup) {
+    return const VerdictBadge(status: ProxStatus.wrongOrg, label: 'Duplicate');
+  }
+  return faceFlag
+      ? const VerdictBadge(status: ProxStatus.review, label: 'Unverified')
+      : const VerdictBadge(status: ProxStatus.marked, label: 'Verified');
+}
 
 /// Swipe-to-remove row: professor eject with a confirm step. Renders the
 /// plain [child] when [onRemove] is null (tests/read-only surfaces).
@@ -266,7 +272,8 @@ class LiveRosterBody extends StatelessWidget {
         MarkedRosterSection(
             tally: tally,
             onRemove: onRemoveStudent,
-            rosterTotal: rosterTotal),
+            rosterTotal: rosterTotal,
+            groups: groups),
       ],
     );
   }
@@ -302,6 +309,10 @@ class PresentSection extends StatelessWidget {
   final List<AttendanceRecord> confirmedRows;
   final List<int> windowNos;
 
+  /// Symmetric dup groups (email → peers) to render Duplicate red instead
+  /// of Unverified yellow for pair members. Null/empty = no dup styling.
+  final Map<String, Set<String>> groups;
+
   /// Professor eject sink (null = read-only, no swipe affordance).
   final Future<bool> Function(String email)? onRemove;
 
@@ -311,6 +322,7 @@ class PresentSection extends StatelessWidget {
     required this.windowsTaken,
     required this.confirmedRows,
     required this.windowNos,
+    this.groups = const {},
     this.onRemove,
   });
 
@@ -354,7 +366,8 @@ class PresentSection extends StatelessWidget {
                         const VerdictBadge(status: ProxStatus.late),
                         const SizedBox(width: ProxSpacing.xs),
                       ],
-                      rosterTrustTag(r.faceFlag),
+                      rosterTrustTag(r.faceFlag,
+                          isDup: (groups[r.email] ?? const {}).isNotEmpty),
                     ],
                   ),
                   roundTrail: rosterTickPills(r.wins, windowNos),
@@ -372,6 +385,9 @@ class PartialSection extends StatelessWidget {
   final List<AttendanceRecord> partialRows;
   final List<int> windowNos;
 
+  /// Symmetric dup groups (see [PresentSection.groups]).
+  final Map<String, Set<String>> groups;
+
   /// Professor eject sink (null = read-only, no swipe affordance).
   final Future<bool> Function(String email)? onRemove;
 
@@ -379,6 +395,7 @@ class PartialSection extends StatelessWidget {
     super.key,
     required this.partialRows,
     required this.windowNos,
+    this.groups = const {},
     this.onRemove,
   });
 
@@ -412,7 +429,8 @@ class PartialSection extends StatelessWidget {
                       const VerdictBadge(status: ProxStatus.late),
                       const SizedBox(width: ProxSpacing.xs),
                     ],
-                    rosterTrustTag(r.faceFlag),
+                    rosterTrustTag(r.faceFlag,
+                        isDup: (groups[r.email] ?? const {}).isNotEmpty),
                   ],
                 ),
                 roundTrail: rosterTickPills(r.wins, windowNos),
@@ -515,21 +533,29 @@ class _AttendanceSummary extends StatelessWidget {
   }
 }
 
-/// Search + present (intersection) + partial. Owns the search field state
-/// and the intersection-gated filtering; renders via [RosterSearchField],
-/// driver reads and filtering are unchanged).
+/// Search + present (intersection) + partial + dup-absent. Owns the search
+/// field state and the intersection-gated filtering; renders via
+/// [RosterSearchField], driver reads and filtering are unchanged).
 class MarkedRosterSection extends StatefulWidget {
   final TallyStore tally;
 
-  /// Professor eject sink, threaded to present + partial rows.
+  /// Professor eject sink, threaded to present + partial + dup-absent rows.
   final Future<bool> Function(String email)? onRemove;
 
   /// Class-strength ceiling for the absent count (history union, loaded
   /// by the host screen). Null keeps the legacy tally-size ceiling.
   final int? rosterTotal;
 
+  /// Symmetric dup groups (see [PresentSection.groups]): drives red
+  /// Duplicate pills + the auto-absent row list below.
+  final Map<String, Set<String>> groups;
+
   const MarkedRosterSection(
-      {super.key, required this.tally, this.onRemove, this.rosterTotal});
+      {super.key,
+      required this.tally,
+      this.onRemove,
+      this.rosterTotal,
+      this.groups = const {}});
 
   @override
   State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
@@ -543,7 +569,9 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
     final tally = widget.tally;
     final present = tally.confirmedCount;
     final windowNos = tally.windowNos;
-    final windowsTaken = tally.windowCount;
+    // Live round number (max, not count): sparse numbering after a discard
+    // must still read Class N as the newest round, never the count.
+    final windowsTaken = windowNos.isEmpty ? 0 : windowNos.last;
     // Intersection + partials: search narrows the confirmed set but keeps
     // the intersection gate (a partial never promotes via search).
     final confirmedRows = _search.isEmpty
@@ -566,6 +594,17 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
               }
             }
             return !all;
+          }).toList()
+        : const <AttendanceRecord>[];
+    // Dup auto-absent rows: wins stripped (empty) but still grouped — the
+    // row, name and faceFlag stay so exports read Absent, flagged. They
+    // vanish from presentAny (wins empty), so list them explicitly here
+    // with red Duplicate pills instead of letting them disappear. Hidden
+    // during search (search narrows present only, same as partials).
+    final dupAbsentRows = _search.isEmpty
+        ? tally.search('').where((r) {
+            if (r.wins.isNotEmpty) return false;
+            return (widget.groups[r.email] ?? const {}).isNotEmpty;
           }).toList()
         : const <AttendanceRecord>[];
 
@@ -604,25 +643,60 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           windowsTaken: windowsTaken,
           confirmedRows: confirmedRows,
           windowNos: windowNos,
+          groups: widget.groups,
           onRemove: widget.onRemove,
         ),
         PartialSection(
           partialRows: partialRows,
           windowNos: windowNos,
+          groups: widget.groups,
           onRemove: widget.onRemove,
         ),
+        if (dupAbsentRows.isNotEmpty) ...[
+          const SizedBox(height: ProxSpacing.sm),
+          for (final r in dupAbsentRows)
+            Padding(
+              key: ValueKey<String>('dupabsent-${r.email}'),
+              padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+              child: RemovableRosterRow(
+                email: r.email,
+                displayName: r.name.isNotEmpty ? r.name : r.email,
+                onRemove: widget.onRemove,
+                child: StudentCard(
+                  name: r.name.isNotEmpty ? r.name : r.email,
+                  subtitle:
+                      '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                  photoUrl: r.photoUrl,
+                  status: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (r.late) ...[
+                        const VerdictBadge(status: ProxStatus.late),
+                        const SizedBox(width: ProxSpacing.xs),
+                      ],
+                      rosterTrustTag(r.faceFlag, isDup: true),
+                    ],
+                  ),
+                  roundTrail: rosterTickPills(r.wins, windowNos),
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }
 }
 
-/// Roster-visible duplicate-face flags (local-session path): one neutral
-/// card per group — "Duplicate face detected between [A] and [B]" (+N for
-/// larger groups) — with a 1-tap professor override. Never an accusation
-/// (twins/siblings are the known false-positive class and both faces are
-/// in the room); never auto-absent (presence untouched — this only clears
-/// the flag + exempts the pair for the session). Renders nothing when
-/// there are no groups.
+/// Roster-visible duplicate-face flags (local-session path): one red card
+/// per group — "Duplicate face detected between [A] and [B]" (+N for
+/// larger groups) — with red member pills + a 1-tap professor override
+/// ("Not a duplicate, count them"). Never an accusation (twins/siblings
+/// are the known false-positive class and both faces are in the room);
+/// auto-absent by default (both members' wins stripped until cleared —
+/// exports read Absent, flagged; the override re-marks them). Member rows
+/// also read Duplicate red (see [rosterTrustTag]) + appear under
+/// MarkedRosterSection as red absent rows while unresolved. Renders nothing
+/// when there are no groups.
 class DupFlagSection extends StatefulWidget {
   /// Symmetric email → peer emails, from [HostDriver.dupGroups].
   final Map<String, Set<String>> groups;
@@ -722,17 +796,33 @@ class _DupFlagSectionState extends State<DupFlagSection> {
                   children: [
                     Icon(
                       Icons.face_retouching_off_outlined,
-                      color: ProxStateColors.of(context, ProxState.waiting),
+                      color: ProxStateColors.of(context, ProxState.error),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Duplicate face detected between '
                         '${members.map(label).join(', ')} — '
-                        'both stay marked; this sometimes happens with '
-                        'siblings. Tap below if these are different people.',
+                        'both marked ABSENT until cleared; this sometimes '
+                        'happens with siblings. Tap below if these are '
+                        'different people.',
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Red member pills (one per address — flagged to the
+                // professor at a glance, same small VerdictBadge as
+                // every other status).
+                Wrap(
+                  spacing: ProxSpacing.xs,
+                  runSpacing: ProxSpacing.xs,
+                  children: [
+                    for (final m in members)
+                      VerdictBadge(
+                        status: ProxStatus.wrongOrg,
+                        label: label(m),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -740,7 +830,7 @@ class _DupFlagSectionState extends State<DupFlagSection> {
                   icon: const Icon(Icons.check),
                   label: Text(_resolving.contains(_key(members))
                       ? 'Resolving…'
-                      : 'Not a duplicate'),
+                      : 'Not a duplicate, count them'),
                   expanded: true,
                   onPressed: _resolving.contains(_key(members))
                       ? null

@@ -145,19 +145,24 @@ class _CourseAttendanceDetailScreenState
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Two-line header: "X/Y days attended" on line 1,
+                          // "· n partial" (when any) wraps to line 2 instead
+                          // of truncating after the fraction on narrow phones.
                           Text(
                             summary.line,
                             style: ProxType.title(color: c.contentPrimary),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
+                            softWrap: true,
+                            overflow: TextOverflow.visible,
+                            maxLines: 2,
                           ),
                           const SizedBox(height: 2),
                           Text(
                             '${summary.present} present · ${summary.partial} partial · ${summary.absent} absent · ${summary.sessions} days taken',
                             style: proxTabular(context,
                                 ProxType.caption(color: c.contentSecondary)),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 2,
+                            softWrap: true,
+                            overflow: TextOverflow.visible,
+                            maxLines: 3,
                           ),
                         ],
                       ),

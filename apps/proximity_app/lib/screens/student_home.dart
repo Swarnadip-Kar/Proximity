@@ -626,14 +626,23 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         // a cached pin means the key WILL be checked on join; no pin means
         // first-seen TOFU. Never claims verified without a key match —
         // the prove-time verdict upgrades this to verified/mismatch).
-        if (!_profVerifyByHost.containsKey(key)) {
+        // Provisional 'first-seen' from _allLive (first-open blank fix)
+        // upgrades to 'known' here when pins are already cached.
+        final cur = _profVerifyByHost[key];
+        final isProvisional = cur == 'first-seen' &&
+            (_profVerifyEmailByHost[key] == null ||
+                _profVerifyEmailByHost[key] == email);
+        if (!_profVerifyByHost.containsKey(key) || isProvisional) {
           try {
             final pins =
                 await ref.read(deviceStoreProvider).readProfPin(email);
             final label = pins.isNotEmpty ? 'known' : 'first-seen';
-            _profVerifyByHost[key] = label;
-            _profVerifyEmailByHost[key] = email;
-            changed = true;
+            if (_profVerifyByHost[key] != label ||
+                _profVerifyEmailByHost[key] != email) {
+              _profVerifyByHost[key] = label;
+              _profVerifyEmailByHost[key] = email;
+              changed = true;
+            }
           } catch (_) {}
         }
       }
@@ -917,9 +926,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // Gated email backfill for newly listed matching hosts (cheap,
     // throttled — see _backfillGatedEmail): browse tiles render the Gmail
     // once the unicast lands, without any tap.
+    // First-open honesty: a newly listed host with no verify label yet
+    // provisionally reads 'first-seen' (Unverified pill + caption) on this
+    // very frame — the tile never renders blank while the gated unicast
+    // is still in flight. The backfill below corrects it to 'known'
+    // (caption-only, no pill) when pins are already cached, or leaves it
+    // as first-seen; legacy anonymous hosts clear it to '' once the probe
+    // confirms no identity.
     for (final c in out) {
       final key = c.last.key;
       if ((_gatedEmailByHost[key] ?? '').isEmpty && orgAllows(c.last.org)) {
+        if (!_profVerifyByHost.containsKey(key)) {
+          _profVerifyByHost[key] = 'first-seen';
+        }
         unawaited(_backfillGatedEmail(c.last.host, c.last.port));
       }
     }

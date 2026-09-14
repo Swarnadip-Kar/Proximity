@@ -441,14 +441,60 @@ class SyncEngine {
     final due = parsed.where((p) => p.due(now)).toList()
       ..sort(PendingSession.order);
     final acked = <String>{};
-    for (final p in due) {
+    for (var pi = 0; pi < due.length; pi++) {
+      var p = due[pi];
       // Org drill: a queued entry only lands in its own org. Org-less
-      // entries never push (refused + kept — rules deny org-less writes,
-      // so pushing would only burn quota on a certain deny).
+      // entries adopt the signed-in prof org (offline-created visits stamp
+      // '' — on first online sign-in they transfer to that org so the data
+      // is not stranded; rules deny org-less writes, so pushing unstamped
+      // would only burn quota on a certain deny).
       if (p.org.isEmpty || p.record.org.isEmpty) {
-        BleLog.log(ProxLogTags.sync,
-            'outbox skip org-less ${p.id} — kept (hand-built row, never a migration artifact)');
-        continue;
+        if (prof.org.isNotEmpty) {
+          final stamped = ClassRecord(
+            id: p.record.id,
+            courseId: p.record.courseId,
+            classLabel: p.record.classLabel,
+            dateIso: p.record.dateIso,
+            timestampIso: p.record.timestampIso,
+            startIso: p.record.startIso,
+            windows: [
+              for (final w in p.record.windows) Map<String, bool>.from(w)
+            ],
+            names: Map<String, String>.from(p.record.names),
+            rolls: Map<String, String>.from(p.record.rolls),
+            org: prof.org,
+            faceFlags: List<String>.from(p.record.faceFlags),
+          );
+          try {
+            await store.upsertHistory(stamped);
+          } catch (_) {}
+          final idx = parsed.indexWhere((x) => x.id == p.id);
+          if (idx >= 0) {
+            parsed[idx] = PendingSession(
+              id: p.id,
+              record: stamped,
+              org: prof.org,
+              attempts: parsed[idx].attempts,
+              nextRetryAtIso: parsed[idx].nextRetryAtIso,
+              updatedAtIso: now.toIso8601String(),
+            );
+          }
+          p = PendingSession(
+            id: p.id,
+            record: stamped,
+            org: prof.org,
+            attempts: p.attempts,
+            nextRetryAtIso: p.nextRetryAtIso,
+            updatedAtIso: p.updatedAtIso,
+          );
+          due[pi] = p;
+          BleLog.log(ProxLogTags.sync,
+              'outbox org-less adopted ${p.id} → ${prof.org} (offline visit transferred on sign-in)');
+        } else {
+          BleLog.log(ProxLogTags.sync,
+              'outbox skip org-less ${p.id} — kept (no signed-in org to adopt yet)');
+          continue;
+        }
       }
       if (prof.org.isNotEmpty && p.org != prof.org) {
         BleLog.log(ProxLogTags.sync,
