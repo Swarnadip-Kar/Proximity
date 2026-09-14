@@ -98,10 +98,74 @@ class LiveSetupSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Details sits ABOVE and OUTSIDE the session setup (always
+        // visible — idle and mid-class): discovery + trust guidance must
+        // stay reachable while attendance is live, when the setup block
+        // below collapses to the server line.
+        DetailsExpander(
+          title: 'Details',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, have them type the IP shown below (this screen) with Bluetooth on — discovery broadcasts are advisory, the typed IP always works.',
+                style: ProxType.caption(color: c.contentSecondary),
+              ),
+              const SizedBox(height: ProxSpacing.xs),
+              Text(
+                'Path: ${formatLadderLine(-1)}',
+                style: ProxType.monoCaption(color: c.contentSecondary),
+              ),
+              // Trust explainer nested inside Details (guidance only —
+              // no test-relevant copy): what students see next to this
+              // class (Verified / New / Blocked) and why the first scan
+              // is always New. Dropdown inside dropdown, same language
+              // as the student browse screen.
+              DetailsExpander(
+                title: 'What students see: Verified or New',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Verified (green) — the student’s phone matched your saved class key. Nothing to do.\n'
+                      'New (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always New, even when everything is fine. It turns Verified after they join once while online.\n'
+                      'Blocked (red) — key mismatch. Ask the student to check they joined the right class; if it persists, re-announce the IP verbally.',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              // Second nested explainer: the small Verified/Unverified
+              // pill on each marked student row in the live roster, and
+              // where to check your own device status.
+              DetailsExpander(
+                title: 'Student rows: Verified or Unverified',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Verified (green) — that student’s proof checked out clean.\n'
+                      'Unverified (yellow) — that proof was flagged for review (device check or a duplicate-face pair). Presence is kept; check with the student after class.\n'
+                      'Waiting students carry no pill — there is no proof to judge yet.\n'
+                      'You can check your own device status in Account → Device.',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: ProxSpacing.sm),
         // Same header as every other Live tab (exact Add-tab contract:
-        // ProxSectionHeader with gradient accent bar + 17px title, zero
-        // padding). Worded `Session setup` so the exact-match `Setup`
-        // sub-nav finder keeps resolving to the tab alone.
+        // gradient accent bar + 17px title, zero padding — see
+        // ProxSectionHeader). Worded `Session setup` so the exact-match
+        // `Setup` sub-nav finder keeps resolving to the tab alone.
         const ProxSectionHeader(
           title: 'Session setup',
           padding: EdgeInsets.zero,
@@ -122,45 +186,6 @@ class LiveSetupSection extends StatelessWidget {
             style: ProxType.body(color: c.contentPrimary),
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-          ),
-          DetailsExpander(
-            title: 'Details',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, have them type the IP shown below (this screen) with Bluetooth on — discovery broadcasts are advisory, the typed IP always works.',
-                  style: ProxType.caption(color: c.contentSecondary),
-                ),
-                const SizedBox(height: ProxSpacing.xs),
-                Text(
-                  'Path: ${formatLadderLine(-1)}',
-                  style: ProxType.monoCaption(color: c.contentSecondary),
-                ),
-                // Trust explainer nested inside Details (guidance only —
-                // no test-relevant copy): what students see next to this
-                // class (Verified / New / Blocked) and why the first scan
-                // is always New. Dropdown inside dropdown, same language
-                // as the student browse screen.
-                DetailsExpander(
-                  title: 'What students see: Verified or New',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Verified (green) — the student’s phone matched your saved class key. Nothing to do.\n'
-                        'New (yellow) — the student is seeing your class key for the first time on that phone. This is normal: the first scan is always New, even when everything is fine. It turns Verified after they join once while online.\n'
-                        'Blocked (red) — key mismatch. Ask the student to check they joined the right class; if it persists, re-announce the IP verbally.',
-                        style: ProxType.caption(
-                            color: c.contentSecondary),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
           ),
           const SizedBox(height: ProxSpacing.sm),
           TextField(
