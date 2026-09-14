@@ -149,17 +149,6 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
-  # Release fix (2026-09-14, iOS CI): flutter_security_suite 1.1.1 ships a
-  # broken SwiftPM manifest — Package.swift declares product
-  # `flutter_security_suite` (underscores) but Flutter's generated
-  # FlutterGeneratedPluginSwiftPackage depends on `flutter-security-suite`
-  # (dashes), so `xcodebuild -resolvePackageDependencies` fails CI with
-  # "product not found in package". The plugin's .podspec is valid, so force
-  # CocoaPods for now. Re-enable SPM (delete this block + `flutter pub get`)
-  # once the plugin fixes its product name or is replaced. macOS is
-  # unaffected (plugin is Android/iOS-only) and keeps working via Pods too.
-  config:
-    enable-swift-package-manager: false
   assets:
     - assets/models/
     - assets/fonts/
