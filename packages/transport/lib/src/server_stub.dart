@@ -107,6 +107,20 @@ class ProxServer {
 
   Duration sightingGrace = const Duration(seconds: 4);
 
+  /// Mirror of server.dart: C1 TOFU pin (web never hosts).
+  bool pinStudentKey(String emailLower, String pkSHex,
+          {bool force = false}) =>
+      _web();
+
+  /// Mirror of server.dart: bulk pin helper (web never hosts).
+  int pinStudentKeys(Map<String, String> emailToPkSHex,
+          {bool force = false}) =>
+      _web();
+
+  int get pinnedKeyCount => _web();
+
+  int get faceVectorCount => _web();
+
   int get port => _web();
   String get boundAddress => _web();
   bool get windowOpen => _web();
@@ -132,15 +146,19 @@ class ProxServer {
   /// (mirror of server.dart; web never hosts).
   void exemptFacePair(String a, String b) => _web();
 
-  void registerWaiting(String email, String name,
+  String registerWaiting(String email, String name,
           [String roll = '', String photoUrl = '']) =>
       _web();
 
-  bool removeWaiting(String email) => _web();
+  bool removeWaiting(String email, {String leaveToken = ''}) => _web();
+
+  bool dropWaiting(String email) => _web();
 
   void requestManual(String email, String name,
           [String roll = '', String photoUrl = '']) =>
       _web();
+
+  String manualStatus(String email) => _web();
 
   bool decideManual(String email, bool approve) => _web();
 

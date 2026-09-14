@@ -87,6 +87,7 @@ class ProxClient {
         String classLabel,
         int waiting,
         String display,
+        int windowNo,
         String org,
         String profEmail,
         String profPhoto,
@@ -156,6 +157,12 @@ class ProxClient {
     // LAN-only session vector (`face:{vec}` — mirror of client.dart;
     // web never proves).
     String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
+    List<String> attestationChain = const [],
+    String installId = '',
     String appAttestRaw = '',
     String appAttestCredKey = '',
   }) =>

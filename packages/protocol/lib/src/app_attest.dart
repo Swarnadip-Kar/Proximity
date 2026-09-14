@@ -134,10 +134,16 @@ class _CborReader {
     if (ai == 27) {
       var v = 0;
       for (var i = 0; i < 8; i++) {
-        v = (v << 8) | _byte();
-        if (v > 0x7FFFFFFFFFFFFFFF) {
+        final b = _byte();
+        // Fail-closed on lengths overflowing int64: an 8-byte big-endian
+        // value exceeds 0x7FFFFFFFFFFFFFFF iff the first byte's high bit
+        // is set. Checked without the literal itself — dart2js cannot
+        // represent 0x7FFFFFFFFFFFFFFF exactly, so the literal fails the
+        // web build (records-only compile gate).
+        if (i == 0 && (b & 0x80) != 0) {
           throw const FormatException('cbor: length overflow');
         }
+        v = (v << 8) | b;
       }
       return v;
     }
