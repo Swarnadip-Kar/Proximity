@@ -572,13 +572,28 @@ class _StudentShellState extends ConsumerState<StudentShell> {
 
   @override
   void dispose() {
+    try {
+      markInFlow.removeListener(_refreshPageLock);
+    } catch (_) {}
     _pages.dispose();
     super.dispose();
   }
 
   void _refreshPageLock() {
-    final locked = [_markNav, _coursesNav, _accountNav]
+    var locked = [_markNav, _coursesNav, _accountNav]
         .any((k) => k.currentState?.canPop() ?? false);
+    // In-flow Mark holds only a LocalHistoryEntry (view-state, see
+    // markInFlow): swipes must stay enabled then, or Courses↔Mark swipes
+    // refuse to land while Mark sits on a connected waiting room. Any
+    // OTHER tab holding a real push still locks (pushed routes keep
+    // their gestures).
+    if (locked && markInFlow.value) {
+      try {
+        final others = [_coursesNav, _accountNav]
+            .any((k) => k.currentState?.canPop() ?? false);
+        if (!others) locked = false;
+      } catch (_) {}
+    }
     if (locked != _pageLocked && mounted) {
       setState(() => _pageLocked = locked);
     }
@@ -587,6 +602,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   @override
   void initState() {
     super.initState();
+    markInFlow.addListener(_refreshPageLock);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_initialResolve());
     });
@@ -606,8 +622,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       _stayOnAccountAndPushFlow();
       return;
     }
+    // Capture the origin BEFORE setState: [_animateTo] must know the true
+    // distance (same multi-step guard as the professor shell — a 2<->0
+    // animate crosses Courses mid-flight and can strand the pager there).
+    final from = _index;
     setState(() => _index = i);
-    _animateTo(i);
+    _animateTo(i, from);
   }
 
   /// Locked-tap landing: park on Accounts, then re-resolve the CURRENT
@@ -617,13 +637,14 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   void _stayOnAccountAndPushFlow() {
     if (!mounted) return;
     if (_index != 2) {
+      final from = _index;
       setState(() => _index = 2);
-      _animateTo(2);
+      _animateTo(2, from);
     }
     unawaited(_refreshEnrollmentState());
   }
 
-  void _animateTo(int i) {
+  void _animateTo(int i, int from) {
     if (!_pages.hasClients) {
       // Pager not attached yet (first-frame resolve): retry post-frame so
       // _index and the PageView never desync (Mark highlighted while
@@ -639,8 +660,10 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // Multi-step jumps (2<->0) must NOT animate across the middle page:
     // the intermediate onPageChanged would land _index on Courses
     // mid-flight (the reported Account<->Mark sometimes-lands-on-Courses
-    // bug). Jump atomically; animate only adjacent tabs.
-    if ((i - _index).abs() > 1 || ProxMotion.reduced(context)) {
+    // bug). Jump atomically; animate only adjacent tabs. [from] is the
+    // pre-tap index — _index already holds the target here, so the
+    // distance cannot be derived from it (same guard as the prof shell).
+    if ((i - from).abs() > 1 || ProxMotion.reduced(context)) {
       try {
         _pages.jumpToPage(i);
       } catch (_) {}
@@ -667,6 +690,18 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// the resolve pushes only when genuinely unenrolled.
   void _syncIndexFromPage(int page) {
     if (page == _index) return;
+    // Mark (0) is view-state, not a pushed stack: its tab root runs the
+    // join/wait/prove phases in place (back via a LocalHistoryEntry),
+    // preserved by KeepAlive. Landing on it must never snap back — a
+    // swipe Courses→Mark while Mark sits on a connected waiting room
+    // otherwise refuses to land (the reported stuck-tabs bug). Explicit
+    // Cancel/back-entry still tears the flow down; real pushes on Mark
+    // (debug/log) survive as kept-alive state and back still pops them.
+    if (page == 0) {
+      if (!mounted) return;
+      setState(() => _index = page);
+      return;
+    }
     bool canPop = false;
     try {
       canPop = _nav(page).currentState?.canPop() ?? false;
@@ -822,8 +857,9 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     if (!_tabsLocked && mounted) setState(() => _tabsLocked = true);
     if (mounted && _index != 2) {
+      final from = _index;
       setState(() => _index = 2);
-      _animateTo(2);
+      _animateTo(2, from);
     }
     _maybePushFlow(gen);
   }

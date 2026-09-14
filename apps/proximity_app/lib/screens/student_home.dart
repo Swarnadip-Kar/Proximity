@@ -50,6 +50,15 @@ export '../features/mark/mark_phase.dart' show StudentPhase;
 /// UDP discovery port (injectable so tests avoid clashing with a running app).
 final discoveryPortProvider = Provider<int>((_) => kDiscoveryPort);
 
+/// True while the Mark tab sits on an inner flow phase (waiting / face /
+/// proving / verdict — anything past browsing). The tab root holds only a
+/// LocalHistoryEntry then (view-state, KeepAlive-preserved), never a real
+/// pushed route. The shell reads this to keep pager swipes enabled
+/// in-flow (swipes into/out of Mark must land — the entry alone must not
+/// page-lock) while swipes off real pushed sub-pages stay locked.
+/// Reset on dispose; single Mark tab per shell, so one global is enough.
+final markInFlow = ValueNotifier<bool>(false);
+
 /// Hands-free retry decision for one inconclusive face verdict (pure):
 /// returns the delay before the next automatic scan, or null when the
 /// window is spent (caller falls back to the manual Scan button). The
@@ -2143,10 +2152,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (route == null) return;
     _innerBackEntry = LocalHistoryEntry(onRemove: () {
       _innerBackEntry = null;
+      markInFlow.value = false;
       if (_suppressEntryTeardown || _disposed || !mounted) return;
       _cancelToBrowsing();
     });
     route.addLocalHistoryEntry(_innerBackEntry!);
+    markInFlow.value = true;
   }
 
   /// Drops the in-flow back entry without running teardown (the landing
@@ -2156,6 +2167,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   void _dropInnerBackEntry() {
     final entry = _innerBackEntry;
     _innerBackEntry = null;
+    markInFlow.value = false;
     if (entry == null) return;
     _suppressEntryTeardown = true;
     try {
