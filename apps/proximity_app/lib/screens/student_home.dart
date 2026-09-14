@@ -159,6 +159,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // 'mismatch' / 'unverified' by the prove-time pin verdict. Absent/'' =
   // unknown host — renders exactly as before.
   final Map<String, String> _profVerifyByHost = {};
+  // Email each browse label above was computed for, by `host:port`. A
+  // label is only valid for its email: when the gated fetch reports a
+  // DIFFERENT professor on the same host (sign-out → different account
+  // re-hosting the same IP, or a stale cache after the host went
+  // anonymous), the old label is dropped and recomputed — a 'verified'
+  // earned by the previous professor must never badge the next one.
+  final Map<String, String> _profVerifyEmailByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
   final Map<String, DateTime> _emailFetchThrottle = {};
@@ -525,30 +532,62 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final email = probe.profEmail.trim().toLowerCase();
       final photo = probe.profPhoto.trim();
       var changed = false;
-      if (email.isNotEmpty && _gatedEmailByHost[key] != email) {
-        _gatedEmailByHost[key] = email;
-        changed = true;
-      }
-      // Same gated photo cached per host for the browse tiles (photo shows
-      // iff the host published one — i.e. the per-course opt-in is on).
-      if (photo.isNotEmpty && _gatedPhotoByHost[key] != photo) {
-        _gatedPhotoByHost[key] = photo;
-        changed = true;
-      }
-      // Pin-cache presence for the tile caption (honest pre-join state:
-      // a cached pin means the key WILL be checked on join; no pin means
-      // first-seen TOFU. Never claims verified without a key match —
-      // the prove-time verdict upgrades this to verified/mismatch).
-      if (email.isNotEmpty && !_profVerifyByHost.containsKey(key)) {
-        try {
-          final pins =
-              await ref.read(deviceStoreProvider).readProfPin(email);
-          final label = pins.isNotEmpty ? 'known' : 'first-seen';
-          if (_profVerifyByHost[key] != label) {
-            _profVerifyByHost[key] = label;
+      if (email.isEmpty) {
+        // Reachable host serving NO identity (signed-out/anonymous host —
+        // sign-out ends hosting, but a lingering server may answer one
+        // more poll first): drop any cached identity so tiles stop
+        // showing the previous professor's email/photo/verified tag.
+        // Legacy hosts never populate these maps — no-op for them.
+        if (_gatedEmailByHost.remove(key) != null) {
+          changed = true;
+          BleLog.log(ProxLogTags.lan,
+              'host $key went anonymous — dropped cached prof identity');
+        }
+        if (_gatedPhotoByHost.remove(key) != null) changed = true;
+        if (_profVerifyByHost.remove(key) != null) changed = true;
+        _profVerifyEmailByHost.remove(key);
+      } else {
+        if (_gatedEmailByHost[key] != email) {
+          _gatedEmailByHost[key] = email;
+          changed = true;
+        }
+        // Different professor on the same host:port (sign-out → another
+        // account re-hosting the same IP): the old label was earned by
+        // someone else — drop it so the recompute below starts honest.
+        // A 'verified' from the previous professor must never badge the
+        // next one.
+        if (_profVerifyEmailByHost[key] != null &&
+            _profVerifyEmailByHost[key] != email &&
+            _profVerifyByHost.remove(key) != null) {
+          changed = true;
+          BleLog.log(ProxLogTags.sec,
+              'host $key changed professor — dropped stale verify label');
+        }
+        // Same gated photo cached per host for the browse tiles (photo
+        // shows iff the host published one — i.e. the per-course opt-in
+        // is on). Empty photo with a cached one = opt-out mid-session.
+        if (photo.isNotEmpty) {
+          if (_gatedPhotoByHost[key] != photo) {
+            _gatedPhotoByHost[key] = photo;
             changed = true;
           }
-        } catch (_) {}
+        } else if (_gatedPhotoByHost.remove(key) != null) {
+          changed = true;
+        }
+        // Pin-cache presence for the tile caption (honest pre-join state:
+        // a cached pin means the key WILL be checked on join; no pin means
+        // first-seen TOFU. Never claims verified without a key match —
+        // the prove-time verdict upgrades this to verified/mismatch).
+        if (!_profVerifyByHost.containsKey(key)) {
+          try {
+            final pins =
+                await ref.read(deviceStoreProvider).readProfPin(email);
+            final label = pins.isNotEmpty ? 'known' : 'first-seen';
+            _profVerifyByHost[key] = label;
+            _profVerifyEmailByHost[key] = email;
+            changed = true;
+          } catch (_) {}
+        }
       }
       if (changed && phase == StudentPhase.browsing && mounted) {
         setState(() => _live = _allLive());
@@ -569,6 +608,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _gatedEmailByHost.remove(key);
     _gatedPhotoByHost.remove(key);
     _profVerifyByHost.remove(key);
+    _profVerifyEmailByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -619,10 +659,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (driver is! RealStudentDriver) return provisional;
       final v = driver.lastProfVerification;
       if (v == null || v.profEmail.isEmpty) return provisional;
-      if (_roomProfEmail.trim().isNotEmpty &&
-          v.profEmail != _roomProfEmail.trim().toLowerCase()) {
-        return provisional;
-      }
+      // The verdict belongs to this room only when its email matches the
+      // room's gated identity (falling back to the provisional email while
+      // the gated fetch is still landing). Otherwise it is stale history
+      // from a previous class — or a signed-out host — and must not badge
+      // this room (unknown hosts render nothing).
+      final roomEmail = _roomProfEmail.trim().toLowerCase();
+      final wantEmail = roomEmail.isNotEmpty
+          ? roomEmail
+          : _waitingCacheEmail.trim().toLowerCase();
+      if (wantEmail.isEmpty) return provisional;
+      if (v.profEmail != wantEmail) return provisional;
       return v;
     } catch (_) {
       return provisional;
@@ -676,6 +723,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           if (host.value == entry.key && entry.value.name == 'known') {
             if (_profVerifyByHost[host.key] != 'verified-live') {
               _profVerifyByHost[host.key] = 'verified-live';
+              _profVerifyEmailByHost[host.key] = entry.key;
               changed = true;
             }
           }
@@ -1384,6 +1432,25 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       }
       // Gated email lands here (matching/legacy org): cache + waiting card.
       final email = probe.profEmail.trim().toLowerCase();
+      if (email.isEmpty && _roomProfEmail.trim().isNotEmpty) {
+        // Host went anonymous mid-wait (professor signed out — sign-out
+        // ends hosting, but a lingering server may answer one more poll
+        // first): drop the room identity + provisional verdict so the
+        // card stops showing the previous professor's email/photo and
+        // the badge stops claiming verified for them. Browse maps for
+        // this host go too (backfill re-adds if identity returns).
+        final key = '${target.host}:${target.port}';
+        _roomProfEmail = '';
+        _roomProfPhoto = '';
+        _waitingCacheVerdict = null;
+        _waitingCacheEmail = '';
+        _gatedEmailByHost.remove(key);
+        _gatedPhotoByHost.remove(key);
+        _profVerifyByHost.remove(key);
+        _profVerifyEmailByHost.remove(key);
+        BleLog.log(ProxLogTags.lan,
+            'host $key went anonymous — room identity cleared');
+      }
       if (email.isNotEmpty) {
         _gatedEmailByHost['${target.host}:${target.port}'] = email;
         // First landing of this room's email: one pin-cache read for the
@@ -1987,6 +2054,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         };
         if (label.isNotEmpty && _profVerifyByHost[hostKey] != label) {
           _profVerifyByHost[hostKey] = label;
+          _profVerifyEmailByHost[hostKey] = v.profEmail;
         }
       }
     } catch (_) {}
