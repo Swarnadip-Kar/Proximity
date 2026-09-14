@@ -115,9 +115,11 @@ class BrowseTile extends StatelessWidget {
       lastSeen: live.lastSeen,
       now: DateTime.now().toUtc(),
     );
-    // Status slot: the verification highlight tag (Verified green /
-    // Unverified yellow / Blocked red) rides with the Open pill — tag
-    // first, then Open. Both absent renders exactly as before (null).
+    // Status slot: the Open pill only. The verification highlight tag
+    // (Verified green / Unverified yellow / Blocked red) rides its own
+    // footer line below the card row — two pills beside the course name
+    // squeezed the title out on narrow phones, so line 1 keeps one pill
+    // max (same one-status rule as every other `StudentCard`).
     final tag = browseVerifyTag(verifyLabel);
     final openTag = a.windowOpen
         ? const VerdictBadge(
@@ -161,16 +163,16 @@ class BrowseTile extends StatelessWidget {
           : (browseVerifyCaption(verifyLabel).isEmpty
               ? null
               : browseVerifyCaption(verifyLabel)),
-      status: (tag == null && openTag == null)
+      status: openTag,
+      // Verification pill on its own footer line (never beside the
+      // title): full content-column width, left-aligned, below the
+      // email/caption lines. Null (neutral hosts) renders exactly as
+      // before — no extra line.
+      footer: tag == null
           ? null
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (tag != null) tag,
-                if (tag != null && openTag != null)
-                  const SizedBox(width: ProxSpacing.xs),
-                if (openTag != null) openTag,
-              ],
+          : Align(
+              alignment: Alignment.centerLeft,
+              child: tag,
             ),
       onTap: onTap,
     );
