@@ -11,14 +11,16 @@
 // - Tag chips colored by category (see [logCategoryColor], drawn from the
 //   `status.*`/`accent.brand` family); log lines keep the frozen
 //   [ProxLogColors] terminal vocabulary.
-// - `Expand` replaces the sheet with the ONE named `debug/log` route
-//   (carrying the drawer's tag selection, single back step tab-ward —
-//   never sheet-below-debug double-back); the Account menu's `System log`
-//   row remains the permanent entry point.
+// - `Expand` closes the sheet and pushes the ONE named `debug/log` route
+//   (carrying the drawer's tag selection, single back step tab-ward);
+//   the Account menu's `System log` row remains the permanent entry point.
 //
-// The drawer is an overlay, never a route push of its own — proving/face
-// screens keep listening while it is open (no navigation/lifecycle
-// interruption).
+// The drawer is a persistent (non-modal) bottom sheet, never a route of
+// its own: the shell tab bar stays tappable while it is open (Mark ↔
+// Courses ↔ Account jumps keep working with the log peeked), and
+// proving/face keep listening with no navigation/lifecycle interruption.
+// Dismiss via the ✕ header action or drag-down; system back goes to the
+// tab back contract, not the sheet.
 library;
 
 import 'dart:async';
@@ -33,9 +35,51 @@ import 'log_category.dart';
 /// Opens the log drawer (peek ~30%, draggable full). Tag selection made
 /// here carries into `Expand`.
 ///
+/// Persistent (non-modal) sheet on the nearest Scaffold: no scrim, so the
+/// shell tab bar stays tappable while the log is peeked. Falls back to a
+/// modal sheet only when no Scaffold ancestor exists (never in production
+/// — every opener sits under the shell or its own Scaffold).
+///
 /// UI Overhaul: uses a darker glass terminal treatment for a system
 /// overlay feel rather than a standard sheet.
 Future<void> showLogDrawer(
+  BuildContext context, {
+  Set<String>? initialTags,
+}) {
+  if (!context.mounted) return Future.value();
+  final scaffold = Scaffold.maybeOf(context);
+  if (scaffold == null) {
+    return _showLogModal(context, initialTags: initialTags);
+  }
+  final height = MediaQuery.sizeOf(context).height;
+  late final PersistentBottomSheetController controller;
+  controller = scaffold.showBottomSheet(
+    (sheetContext) => SizedBox(
+      // Bounded height for the DraggableScrollableSheet (persistent
+      // sheets size to content, which is unbounded): full-screen box,
+      // the sheet inside still peeks at 30% and drags to full.
+      height: height,
+      child: DraggableScrollableSheet(
+        initialChildSize: 0.3,
+        minChildSize: 0.3,
+        maxChildSize: 1.0,
+        expand: false,
+        builder: (_, scrollController) => LogDrawerContent(
+          scrollController: scrollController,
+          initialTags: initialTags,
+          onClose: () => controller.close(),
+        ),
+      ),
+    ),
+    backgroundColor: Colors.transparent,
+    enableDrag: true,
+  );
+  return controller.closed;
+}
+
+/// Modal fallback for Scaffold-less contexts (tests excluded — they pump
+/// a Scaffold; production never hits this).
+Future<void> _showLogModal(
   BuildContext context, {
   Set<String>? initialTags,
 }) {
@@ -62,6 +106,7 @@ Future<void> showLogDrawer(
       builder: (_, scrollController) => LogDrawerContent(
         scrollController: scrollController,
         initialTags: initialTags,
+        onClose: () => Navigator.of(sheetContext).maybePop(),
       ),
     ),
   );
@@ -76,10 +121,15 @@ class LogDrawerContent extends StatefulWidget {
   /// Pre-selected tag filter (empty = all). Carried into `Expand`.
   final Set<String>? initialTags;
 
+  /// Dismisses the sheet (persistent-sheet close; modal pops). Null hides
+  /// the ✕ action (direct test pumps that never open a sheet).
+  final VoidCallback? onClose;
+
   const LogDrawerContent({
     super.key,
     required this.scrollController,
     this.initialTags,
+    this.onClose,
   });
 
   @override
@@ -169,13 +219,17 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
   }
 
   void _expand() {
-    // ONE named `debug/log` identity: replaces the sheet so back goes
-    // tab-ward in a single step (push-on-top left sheet-below-debug
-    // double-back). Named via settings (same `debug/log` as the route
-    // table) while carrying the drawer's tag selection via constructor —
-    // no table change needed.
+    // ONE named `debug/log` identity: the persistent sheet is NOT a route
+    // (replacing would eat the tab root), so close the sheet first, then
+    // push — back still goes tab-ward in a single step. Named via
+    // settings (same `debug/log` as the route table) while carrying the
+    // drawer's tag selection via constructor — no table change needed.
+    // The Navigator is captured before the close (the sheet subtree
+    // unmounts under it).
     final tags = Set<String>.of(_only);
-    Navigator.of(context).pushReplacement(
+    final nav = Navigator.of(context);
+    widget.onClose?.call();
+    nav.push(
       MaterialPageRoute(
         settings: RouteSettings(
           name: 'debug/log',
@@ -255,6 +309,17 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
                   onPressed: _clear,
                   icon: const Icon(Icons.delete_outline),
                 ),
+                if (widget.onClose != null)
+                  IconButton(
+                    tooltip: 'Close',
+                    iconSize: 20,
+                    constraints: const BoxConstraints(
+                      minWidth: ProxSpacing.minTap,
+                      minHeight: ProxSpacing.minTap,
+                    ),
+                    onPressed: widget.onClose,
+                    icon: const Icon(Icons.close),
+                  ),
               ],
             ),
           ),
