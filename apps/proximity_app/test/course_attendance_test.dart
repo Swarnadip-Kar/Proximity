@@ -60,7 +60,8 @@ void main() {
         home: CourseAttendanceDetailScreen(
             course: 'CS201', sessions: sessions, email: _email))));
     await t.pumpAndSettle();
-    expect(find.text('1/2 days attended · 1 partial'), findsOneWidget);
+    expect(find.text('1/2 days attended'), findsOneWidget);
+    expect(find.text('Attendance percentage : 50%'), findsOneWidget);
     expect(find.textContaining('04-09-2026'), findsOneWidget);
     expect(find.textContaining('Partial 1/2'), findsOneWidget);
     expect(t.takeException(), isNull);
