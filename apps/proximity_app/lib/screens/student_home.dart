@@ -206,7 +206,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   int _autoFaceTries = 0;
   DateTime? _autoFaceDeadline;
   static const _autoFaceWindow = Duration(seconds: 7);
-  static const _autoFaceGap = Duration(seconds: 1);
+  // Marking retry stills land ~0.6s apart (was 1s): shorter total check,
+  // same 7s budget + try cap. In-burst stills stay ~350ms apart.
+  static const _autoFaceGap = Duration(milliseconds: 600);
   static const _autoFaceTryCap = 8;
   // Samsung-style auto-start guard: the scan fires once per faceCheck
   // entry (post-frame); the manual button stays as fallback/retry.
