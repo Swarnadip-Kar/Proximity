@@ -143,10 +143,26 @@ AttestationSelfCheck checkAttestationChain({
       level: level,
       checkValidity: true,
     );
+    if (!pin.ok) {
+      return AttestationSelfCheck(
+          ok: false,
+          reason: pin.reason,
+          flags: List<String>.of(pin.flags),
+          rootPrefix: rootPrefix,
+          chainLen: chainLen);
+    }
+    // Flag-only KeyDescription boot telemetry (attendance posture,
+    // fail-open): unlocked / unverified-boot / software-level ride as
+    // advisory flags alongside ok — never a refusal. Unparseable leaves
+    // (fake units, future KeyMint) emit no flags. Server stays final.
+    final bootFlags = <String>[];
+    try {
+      bootFlags.addAll(bootFlagsOf(certs.first));
+    } catch (_) {}
     return AttestationSelfCheck(
-        ok: pin.ok,
-        reason: pin.ok ? 'ok' : pin.reason,
-        flags: List<String>.of(pin.flags),
+        ok: true,
+        reason: 'ok',
+        flags: [...pin.flags, ...bootFlags],
         rootPrefix: rootPrefix,
         chainLen: chainLen);
   } catch (e) {
