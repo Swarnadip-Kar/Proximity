@@ -53,6 +53,16 @@ List<RoundTick> rosterTickPills(Set<int> wins, List<int> windowNos) {
   ];
 }
 
+/// Trust pill for one marked row (prof live view, small): a clean
+/// confirmed proof reads Verified (green); a flagged proof — tainted
+/// device via `integrity-flagged`, or a duplicate-face pair member —
+/// reads Unverified (yellow, review). Same small `VerdictBadge` as every
+/// other status, never a banner. Waiting rows carry no pill (no proof to
+/// judge yet). Pure for unit tests.
+Widget rosterTrustTag(bool faceFlag) => faceFlag
+    ? const VerdictBadge(status: ProxStatus.review, label: 'Unverified')
+    : const VerdictBadge(status: ProxStatus.marked, label: 'Verified');
+
 /// Swipe-to-remove row: professor eject with a confirm step. Renders the
 /// plain [child] when [onRemove] is null (tests/read-only surfaces).
 /// Delete affordance is a trailing red wash + icon (end-to-start swipe),
@@ -337,9 +347,16 @@ class PresentSection extends StatelessWidget {
                   subtitle:
                       '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
                   photoUrl: r.photoUrl,
-                  status: r.late
-                      ? const VerdictBadge(status: ProxStatus.late)
-                      : null,
+                  status: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (r.late) ...[
+                        const VerdictBadge(status: ProxStatus.late),
+                        const SizedBox(width: ProxSpacing.xs),
+                      ],
+                      rosterTrustTag(r.faceFlag),
+                    ],
+                  ),
                   roundTrail: rosterTickPills(r.wins, windowNos),
                 ),
               ),
@@ -388,6 +405,16 @@ class PartialSection extends StatelessWidget {
                 subtitle:
                     '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
                 photoUrl: r.photoUrl,
+                status: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (r.late) ...[
+                      const VerdictBadge(status: ProxStatus.late),
+                      const SizedBox(width: ProxSpacing.xs),
+                    ],
+                    rosterTrustTag(r.faceFlag),
+                  ],
+                ),
                 roundTrail: rosterTickPills(r.wins, windowNos),
               ),
             ),
