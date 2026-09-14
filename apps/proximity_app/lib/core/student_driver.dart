@@ -125,6 +125,10 @@ class WindowProbe {
   final String classLabel;
   final int waiting;
   final String display; // window code when open (round identity)
+  /// Live round number when open (1-based; 0 = unknown/closed). Rides the
+  /// same gated /window unicast (the server already sends it on open
+  /// windows) — browse tiles render it as the 1st/2nd/… class ordinal.
+  final int windowNo;
   final String org; // prof org from gated /window, '' = unstamped host
   /// Hosting professor's Gmail from the GATED /window unicast (matching
   /// or legacy org only; '' = unknown/legacy or gated silence). NEVER from
@@ -153,6 +157,7 @@ class WindowProbe {
       required this.classLabel,
       this.waiting = 0,
       this.display = '',
+      this.windowNo = 0,
       this.org = '',
       this.profEmail = '',
       this.profPhoto = '',
@@ -621,6 +626,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           classLabel: r.classLabel,
           waiting: r.waiting,
           display: r.display,
+          windowNo: r.windowNo,
           org: r.org,
           profEmail: r.profEmail,
           profPhoto: r.profPhoto,
