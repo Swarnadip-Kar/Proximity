@@ -151,3 +151,105 @@ behavior stays faithful — only the DATA is throwaway.
 - [ ] Play release live → `PLAY_RECOGNIZED` ON in Monitor → no legit denials → Firestore Enforce.
 - [ ] Web decision before Enforce: reCAPTCHA registration or mobile-only enforcement.
 - [ ] Each future break: bump `pubspec` version → repeat §1 + §2 with the new `minVersion` + `storeAndroid`/`storeIos` links.
+- [ ] §5 release cut (per-platform builds green → installers → GitHub release).
+
+---
+
+## 5. Release builds (per-platform, CI-gated)
+
+CI (`.github/workflows/build.yml`) runs every platform as an **independent
+job** gated only on `analyze-test`. A red platform never blocks the others:
+each green job uploads its own artifact, and a release ships whatever is
+green. Check status with:
+
+```bash
+gh run list --limit 3 --branch First-Release
+gh api repos/Swarnadip-Kar/Proximity/actions/runs/<RUN_ID>/jobs \
+  --paginate --jq '.jobs[] | "\(.name) \(.conclusion // "pending")"'
+```
+
+### 5a. iOS flag (SwiftPM off, CocoaPods on) — DO NOT REVERT
+
+`apps/proximity_app/pubspec.yaml` carries:
+
+```yaml
+flutter:
+  config:
+    enable-swift-package-manager: false
+```
+
+Why (2026-09-14, verified against CI logs): `flutter_security_suite`
+1.1.1 ships a broken SwiftPM manifest — `Package.swift` declares product
+`flutter_security_suite` (underscores) while Flutter's generated
+`FlutterGeneratedPluginSwiftPackage` depends on `flutter-security-suite`
+(dashes), so SPM resolution fails with "product not found in package".
+Reverting the flag re-breaks iOS CI (confirmed: runs `34828971554`,
+`34831096297`, `34836223368` all red on iOS). The plugin's `.podspec` is
+valid, so CocoaPods builds fine.
+
+Companion rule: **`ios/Podfile.lock` + `macos/Podfile.lock` are tracked —
+re-resolve them on every Firebase major bump.** The Firebase 4.x migration
+bumped the Dart deps (Firebase iOS SDK `11.15.0` → `12.18.0`) without
+refreshing the iOS lockfile, so the CocoaPods fallback failed with the
+well-known `Firebase/Auth (= 11.15.0 vs = 12.18.0)` snapshot conflict
+(run `34834268759`). Fix, verified locally and on CI:
+
+```bash
+cd apps/proximity_app
+flutter pub get
+cd ios && pod update        # NOT bare `pod install` — the stale snapshot
+cd ../macos && pod update   # pins must be re-resolved, then committed
+git add ../ios/Podfile.lock ../macos/Podfile.lock
+```
+
+Deadline: Firebase deprecated CocoaPods after **October 2026** (new SDK
+versions stop publishing to the Specs repo). Before that, either the
+security-suite plugin fixes its SPM product name (then delete the flag +
+`flutter pub get`) or the plugin is replaced — otherwise iOS/macOS builds
+freeze at the last CocoaPods-published SDK.
+
+### 5b. Cutting the release
+
+1. All §1–§3 steps done; `build` workflow green on every shippable
+   platform (iOS included after §5a).
+2. Bump `apps/proximity_app/pubspec.yaml` `version:` if this is a new
+   floor (keep in sync with the §2 `minVersion` core).
+3. Build + package per platform (release mode, signed where possible):
+
+   ```bash
+   cd apps/proximity_app
+   # Android (any OS with the SDK) — the APK IS the installer:
+   flutter build apk --release
+   # → build/app/outputs/flutter-apk/app-release.apk
+   # (debug keystore signs it; Play Store upload needs the release
+   # keystore in android/keystore.properties — not wired yet.)
+
+   # macOS (on a Mac) — ad-hoc signed DMG, Gatekeeper = right-click > Open:
+   flutter build macos --release
+   packaging/macos/make_dmg.sh
+   # → dist/Proximity-<version>-macOS-<arch>.dmg
+
+   # Windows (on Windows, Inno Setup 6 installed):
+   powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
+   # → dist\Proximity-Setup-<version>-Windows-x64.exe
+
+   # Linux (on Linux):
+   flutter build linux --release
+   packaging/linux/make_deb.sh        # → dist/proximity_<version>_amd64.deb
+   packaging/linux/make_tarball.sh    # → dist/Proximity-<version>-Linux-x64.tar.gz (no-install fallback)
+   ```
+
+   Windows/Linux cannot be built on macOS — take them from CI instead:
+   `gh run download <RUN_ID> --dir dist/ci` (jobs `proximity-windows`,
+   `proximity-linux`).
+4. Publish the GitHub release (tag = version):
+
+   ```bash
+   git tag v0.1.0 && git push origin v0.1.0
+   gh release create v0.1.0 --title "Proximity 0.1.0" \
+     --notes "First release. See PROXIMITY_DEPLOYMENT.md §1–§3 for the rules + version-floor steps that ship WITH these builds." \
+     build/app/outputs/flutter-apk/app-release.apk \
+     dist/*.dmg dist/*.exe dist/*.deb dist/*.tar.gz
+   ```
+5. Paste the Play/App Store links back into the §2 floor doc
+   (`storeAndroid`/`storeIos`) once listed.

@@ -149,6 +149,16 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  # iOS CI (2026-09-14): flutter_security_suite 1.1.1 ships a broken SwiftPM
+  # manifest — Package.swift declares product `flutter_security_suite`
+  # (underscores) but Flutter's FlutterGeneratedPluginSwiftPackage depends on
+  # `flutter-security-suite` (dashes), so SPM resolution fails CI. Force
+  # CocoaPods until the plugin fixes its product name or is replaced. Keep
+  # ios/Podfile.lock + macos/Podfile.lock freshly resolved on every Firebase
+  # major bump (stale lock = `Firebase/Auth 11.x vs 12.x` pod-install
+  # failure) — see PROXIMITY_DEPLOYMENT.md §5.
+  config:
+    enable-swift-package-manager: false
   assets:
     - assets/models/
     - assets/fonts/
