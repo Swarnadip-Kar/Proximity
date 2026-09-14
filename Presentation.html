@@ -74,6 +74,11 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 .abox span{color:var(--muted);font-size:20px}
 .s-cold{justify-content:center}
 .notes[open] p{max-height:220px;overflow:auto}
+.card.detail{margin-top:20px}
+.card.detail ul{padding-left:22px;margin:8px 0 0;list-style:disc}
+.card.detail li{font-size:19px;color:#c4cede;line-height:1.5;margin-bottom:8px}
+.card.detail li:last-child{margin-bottom:0}
+.card.detail b{color:#fff}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -114,51 +119,55 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>04 / Architecture · detailed</span><span>BLE proves nearness · HTTPS carries proofs · cloud at edges</span></div>
 </section>
 
-<section class="slide" data-screen-label="05 Enroll Once">
-<p class="eyebrow">Enroll once · online · ~2 min</p>
-<h2 class="t">One Gmail. One phone. One face.</h2>
-<div class="flow"><div class="fnode"><b>1 · Google sign-in</b><span>verified email<br/>org from domain</span></div><div class="farr">→</div><div class="fnode"><b>2 · Locked key</b><span>device key in<br/>secure chip</span></div><div class="farr">→</div><div class="fnode"><b>3 · Face ×5 angles</b><span>stays on phone<br/>never uploads</span></div><div class="farr">→</div><div class="fnode"><b>4 · One-device claim</b><span>atomic cloud claim<br/>move ≤ 1 / 30 days</span></div></div>
-<details class="notes"><summary>Speaker notes</summary><p>Student signs in, creates a chip-locked key, enrolls five face angles on-device, and the cloud atomically binds Gmail to phone. Re-enrolling the same phone is free; moving phones is limited to once per 30 days to stop account passing.</p></details>
-<div class="foot"><span>05 / Enroll once</span><span>Professors: name only · may host offline</span></div>
-</section>
-
-<section class="slide" data-screen-label="06 Professor flow">
-<p class="eyebrow">In class · professor side</p>
-<h2 class="t">Host → Start → Rounds → Stop → End → Export</h2>
-<div class="flow"><div class="fnode"><b>Host</b><span>HTTPS up · announced<br/>every 2 s · IP shown</span></div><div class="farr">→</div><div class="fnode"><b>Start</b><span>window opens<br/>BLE secret / 10 s</span></div><div class="farr">→</div><div class="fnode"><b>Rounds</b><span>R1, R2… present =<br/>every round</span></div><div class="farr">→</div><div class="fnode"><b>Stop → End</b><span>grace → saved<br/>on-device · ports close</span></div></div>
-<details class="notes"><summary>Speaker notes</summary><p>Professor opens Take Attendance, students gather in the waiting room, Start opens the window with rotating Bluetooth secrets. Extra rounds append; Retake re-runs a round fresh. Stop gives a grace period, End saves on-device, and CSV export happens later from the course page.</p></details>
-<div class="foot"><span>06 / Professor flow</span><span>Waiting room · present / waiting · manual requests</span></div>
-</section>
-
-<section class="slide" data-screen-label="07 Student flow">
-<p class="eyebrow">In class · student side</p>
-<h2 class="t">Join → Face → Auto-prove → ✓ Marked</h2>
-<div class="flow"><div class="fnode"><b>Join</b><span>live list or typed IP<br/>waiting room</span></div><div class="farr">→</div><div class="fnode"><b>Face</b><span>auto scan at Start<br/>~1 sec</span></div><div class="farr">→</div><div class="fnode"><b>Auto-prove</b><span>every fresh secret<br/>signed + sent</span></div><div class="farr">→</div><div class="fnode"><b>✓ Marked</b><span>verdicts: Late · No signal<br/>Needs review · Wrong org</span></div></div>
-<details class="notes"><summary>Speaker notes</summary><p>Students stay in the foreground, join, and the app auto-continues to face scan then keeps proving on each fresh secret until a verdict lands. Stay for the next round; a manual-request button is the fallback when radio truly can't reach.</p></details>
-<div class="foot"><span>07 / Student flow</span><span>No taps after Start · badges R1, R2…</span></div>
-</section>
-
-<section class="slide" data-screen-label="08 After class">
-<p class="eyebrow">After class · records + sync</p>
-<h2 class="t">Everything saved on-device. Cloud when back online.</h2>
-<div class="grid2"><div class="card"><div class="tag b">Professor</div><h4>Course pages</h4><ul><li>Sessions newest-first, per-round checkboxes</li><li>Partial / absent lists, edits, multi-delete</li><li>Per-session CSV + date-range matrix</li></ul></div><div class="card"><div class="tag g">Student + Web</div><h4>My Attendance</h4><ul><li>Course cards with x/y days + session detail</li><li>Offline-first outbox, union-merge sync</li><li>Web shows same records, view-only banner</li></ul></div></div>
-<details class="notes"><summary>Speaker notes</summary><p>Every round close upserts the same on-device record with autosaved drafts surviving app kills. On reconnect the SyncEngine replays idempotently with tombstone deletes. Professors are the host-only source of truth for exports.</p></details>
-<div class="foot"><span>08 / After class</span><span>Offline-first · crash-safe · idempotent replay</span></div>
-</section>
-
-<section class="slide" data-screen-label="09 Tech map">
+<section class="slide" data-screen-label="05 Tech map">
 <p class="eyebrow">Technology map · what lives where</p>
 <h2 class="t">Right tool in the right place</h2>
 <table class="tbl"><tr><th>Where</th><th>Technology</th><th>One-line job</th></tr>
 <tr><td>Whole app</td><td>Flutter + Dart</td><td>One codebase → Android, iOS, desktop, web</td></tr>
+<tr><td>App structure</td><td>Monorepo: protocol · ble · transport · storage</td><td>Pure crypto apart from radio, network, records</td></tr>
 <tr><td>Classroom</td><td>BLE + HTTPS + discovery</td><td>Nearness shouts · bulk proofs · find the class</td></tr>
 <tr><td>Trust</td><td>Ed25519 · HMAC · SHA-256 · AES-GCM</td><td>Sign · rotate secrets · fingerprint · seal keys</td></tr>
 <tr><td>Phone</td><td>StrongBox / TEE / Secure Enclave · X.509</td><td>Non-exportable key · offline certificate check</td></tr>
 <tr><td>Cloud</td><td>Firebase Auth · Firestore · App Check</td><td>Identity · records · genuine-app gate</td></tr>
-<tr><td>On-device AI</td><td>FaceNet + ML Kit · MiniFASNetV2</td><td>Face match · photo-replay liveness</td></tr></table>
+<tr><td>On-device AI</td><td>FaceNet + ML Kit · MiniFASNetV2</td><td>Face match · photo-replay liveness</td></tr>
+<tr><td>Phone glue</td><td>Permissions · camera · wakelock · sharing</td><td>Prompts, capture, keep-awake, CSV export</td></tr></table>
 <details class="notes"><summary>Speaker notes</summary><p>Radio proves nearness, Wi-Fi carries bulk proofs, crypto signs and seals, hardware holds keys, Firebase handles identity and records, and face models verify the holder — each exactly where its strength matters.</p></details>
-<div class="foot"><span>09 / Tech map</span><span>Slides 10–19 unpack each row</span></div>
+<div class="foot"><span>05 / Tech map</span><span>Slides 10–19 unpack each row</span></div>
 </section>
+
+<section class="slide" data-screen-label="06 Enroll Once">
+<p class="eyebrow">Enroll once · online · ~2 min</p>
+<h2 class="t">One Gmail. One phone. One face.</h2>
+<div class="flow"><div class="fnode"><b>1 · Google sign-in</b><span>verified email<br/>org from domain</span></div><div class="farr">→</div><div class="fnode"><b>2 · Locked key</b><span>device key in<br/>secure chip</span></div><div class="farr">→</div><div class="fnode"><b>3 · Face ×5 angles</b><span>stays on phone<br/>never uploads</span></div><div class="farr">→</div><div class="fnode"><b>4 · One-device claim</b><span>atomic cloud claim<br/>move ≤ 1 / 30 days</span></div></div>
+<details class="notes"><summary>Speaker notes</summary><p>Student signs in, creates a chip-locked key, enrolls five face angles on-device, and the cloud atomically binds Gmail to phone. Re-enrolling the same phone is free; moving phones is limited to once per 30 days to stop account passing.</p></details>
+<div class="foot"><span>06 / Enroll once</span><span>Professors: name only · may host offline</span></div>
+</section>
+
+<section class="slide" data-screen-label="07 Professor flow">
+<p class="eyebrow">In class · professor side</p>
+<h2 class="t">Host → Start → Rounds → Stop → End → Export</h2>
+<div class="flow"><div class="fnode"><b>Host</b><span>HTTPS up · announced<br/>every 2 s · IP shown</span></div><div class="farr">→</div><div class="fnode"><b>Start</b><span>window opens<br/>BLE secret / 10 s</span></div><div class="farr">→</div><div class="fnode"><b>Rounds</b><span>R1, R2… present =<br/>every round</span></div><div class="farr">→</div><div class="fnode"><b>Stop → End</b><span>grace → saved<br/>on-device · ports close</span></div></div>
+<details class="notes"><summary>Speaker notes</summary><p>Professor opens Take Attendance, students gather in the waiting room, Start opens the window with rotating Bluetooth secrets. Extra rounds append; Retake re-runs a round fresh. Stop gives a grace period, End saves on-device, and CSV export happens later from the course page.</p></details>
+<div class="foot"><span>07 / Professor flow</span><span>Waiting room · present / waiting · manual requests</span></div>
+</section>
+
+<section class="slide" data-screen-label="08 Student flow">
+<p class="eyebrow">In class · student side</p>
+<h2 class="t">Join → Face → Auto-prove → ✓ Marked</h2>
+<div class="flow"><div class="fnode"><b>Join</b><span>live list or typed IP<br/>waiting room</span></div><div class="farr">→</div><div class="fnode"><b>Face</b><span>auto scan at Start<br/>~1 sec</span></div><div class="farr">→</div><div class="fnode"><b>Auto-prove</b><span>every fresh secret<br/>signed + sent</span></div><div class="farr">→</div><div class="fnode"><b>✓ Marked</b><span>verdicts: Late · No signal<br/>Needs review · Wrong org</span></div></div>
+<details class="notes"><summary>Speaker notes</summary><p>Students stay in the foreground, join, and the app auto-continues to face scan then keeps proving on each fresh secret until a verdict lands. Stay for the next round; a manual-request button is the fallback when radio truly can't reach.</p></details>
+<div class="foot"><span>08 / Student flow</span><span>No taps after Start · badges R1, R2…</span></div>
+</section>
+
+<section class="slide" data-screen-label="09 After class">
+<p class="eyebrow">After class · records + sync</p>
+<h2 class="t">Everything saved on-device. Cloud when back online.</h2>
+<div class="grid2"><div class="card"><div class="tag b">Professor</div><h4>Course pages</h4><ul><li>Sessions newest-first, per-round checkboxes</li><li>Partial / absent lists, edits, multi-delete</li><li>Per-session CSV + date-range matrix</li></ul></div><div class="card"><div class="tag g">Student + Web</div><h4>My Attendance</h4><ul><li>Course cards with x/y days + session detail</li><li>Offline-first outbox, union-merge sync</li><li>Web shows same records, view-only banner</li></ul></div></div>
+<details class="notes"><summary>Speaker notes</summary><p>Every round close upserts the same on-device record with autosaved drafts surviving app kills. On reconnect the SyncEngine replays idempotently with tombstone deletes. Professors are the host-only source of truth for exports.</p></details>
+<div class="foot"><span>09 / After class</span><span>Offline-first · crash-safe · idempotent replay</span></div>
+</section>
+
+
 
 <section class="slide" data-screen-label="10 Flutter">
 <p class="eyebrow">10 · Flutter + Dart 🐦</p>
@@ -166,6 +175,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="tech4"><div class="card"><div class="k">What it does</div><p>Compiles one UI + logic to Android, iOS, macOS, Windows, Linux, Web.</p></div><div class="card"><div class="k">Why this one</div><p>Small team can't maintain native apps; attendance logic must be identical.</p></div><div class="card"><div class="k">Good ↔ Trade-off</div><p>Same protocol + fast UI + one test suite ↔ shims for BLE/camera, larger size.</p></div><div class="card"><div class="k">Prevents</div><p>Logic drift ("Android marks, iOS doesn't"); desktop/web fail closed, never weakly mark.</p></div></div>
 <details class="notes"><summary>Speaker notes</summary><p>Flutter and Dart compile one codebase to Android, iOS, macOS, Windows, Linux and Web, so a small team maintains one attendance protocol instead of three native apps. Pure logic lives in testable monorepo packages with 1400+ fast unit tests, and desktop and web builds fail closed — they cannot mark, instead of marking weakly. The cost is platform shims for BLE, camera and file saving, a larger binary, and quirks like Apple stripping BLE payload data leaking through.</p></details>
 <div class="foot"><span>10 / Flutter + Dart</span><span>Fail closed off-mobile</span></div>
+</section>
+
+<section class="slide" data-screen-label="10B Deep dive">
+<p class="eyebrow">10 · Flutter + Dart deep dive · from the explainer</p>
+<h2 class="t">One language, every platform</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> One language and UI toolkit compiles to Android, iOS, macOS, Windows, Linux, and Web from a single codebase.</li>
+<li><b>Why this one —</b> A small team can't maintain 3–4 native apps; attendance logic must be identical everywhere.</li>
+<li><b>Good —</b> Same protocol on every platform; fast UI; one test suite; web build falls out nearly free.</li>
+<li><b>Bad —</b> Needs shims where platforms differ (BLE, camera, file save); app size is larger than pure native; platform quirks (e.g. Apple stripping BLE payload data) still leak through.</li>
+<li><b>Prevents —</b> Logic drift — 'Android marks but iOS doesn't' class of bugs; plus fail-closed behavior off-mobile (desktop/web can't mark instead of marking weakly). Monorepo split (protocol/ble/transport/storage) keeps crypto testable with 1400+ fast tests and stops a WiFi bug breaking signature code.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>One language and UI toolkit compiles to Android, iOS, macOS, Windows, Linux, and Web from a single codebase. A small team can't maintain 3–4 native apps; attendance logic must be identical everywhere.</p></details>
+<div class="foot"><span>10B / Deep dive</span><span>Detail · same level as the explainer</span></div>
 </section>
 
 
@@ -177,6 +200,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>11 / Firebase</span><span>Serverless · org-scoped · union-merge</span></div>
 </section>
 
+<section class="slide" data-screen-label="11B Deep dive">
+<p class="eyebrow">11 · Firebase deep dive · from the explainer</p>
+<h2 class="t">Identity and cloud truth, serverless</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> 'Sign in with Google' gives a verified email + user ID; the org is derived from the email domain. Firestore is the NoSQL cloud store for users, device bindings, directory, sessions; Security Rules are server-enforced read/write gates; composite indexes make org-scoped queries fast.</li>
+<li><b>Why this one —</b> No passwords to manage, no custom user database; every student already has a Gmail. Serverless — no backend server to run/pay for (Spark free tier); offline-first with sync-on-reconnect fits classrooms with bad internet.</li>
+<li><b>Good —</b> Free, familiar, works on all platforms; offline-persisted session. Real-time sync, transactions (the one-device claim resolves races to exactly one winner), survives app kills via outbox + tombstone deletes.</li>
+<li><b>Bad —</b> Tied to Google availability at enroll/sync time; Gmail is not verified human (mitigated by one-device binding + professor review). No custom server logic on free tier — no server-side attestation re-check; rules must be redeployed carefully; queries need pre-built indexes.</li>
+<li><b>Prevents —</b> Fake typed names/IDs as identity; cross-institute joins (wrong-org gate refuses before any proof is sent); double-enrollment races; one student rewriting another professor's sessions; cross-org snooping; silent data loss (union-merge + idempotent replay).</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>'Sign in with Google' gives a verified email + user ID; the org is derived from the email domain. Firestore is the NoSQL cloud store for users, device bindings, directory, sessions; Security Rules are server-enforced read/write gates; composite indexes make org-scoped queries fast.</p></details>
+<div class="foot"><span>11B / Deep dive</span><span>Detail · same level as the explainer</span></div>
+</section>
+
 
 <section class="slide" data-screen-label="12 Force update">
 <p class="eyebrow">12 · Version floor ⏫</p>
@@ -184,6 +221,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="grid2"><div class="card"><h4>What / Why</h4><p>Cloud doc <span style="font-family:var(--font-mono)">app_config/min_version</span> declares the minimum safe build; older apps see a blocking update screen. No extra SDK.</p></div><div class="card"><h4>Trade-off / Prevents</h4><p>Disk-cached so it enforces offline — but a build that never goes online can't learn the new floor. Kills downgrade attacks and cryptic bad-signature errors.</p></div></div>
 <details class="notes"><summary>Speaker notes</summary><p>When crypto, face, or rules change, the floor retires unsafe builds so attackers can't pin an old APK to bypass new gates. The cached floor enforces across restarts even offline.</p></details>
 <div class="foot"><span>12 / Force-update floor</span><span>Blocks old-APK bypass</span></div>
+</section>
+
+<section class="slide" data-screen-label="12B Deep dive">
+<p class="eyebrow">12 · Version floor deep dive · from the explainer</p>
+<h2 class="t">Minimum safe version, enforced offline</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> A tiny world-readable cloud doc (app_config/min_version) says 'minimum safe version'. Old builds show a blocking update screen.</li>
+<li><b>Why this one —</b> Crypto/face/rules breaks must retire old builds, otherwise attackers pin an old APK to bypass new gates.</li>
+<li><b>Good —</b> No extra SDK; disk-cached so it enforces offline across restarts.</li>
+<li><b>Bad —</b> A build that never goes online after the floor publishes can't know about it.</li>
+<li><b>Prevents —</b> Downgrade attacks; cryptic bad-sig failures (replaced by clear 'update' messaging).</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>A tiny world-readable cloud doc (app_config/min_version) says 'minimum safe version'. Old builds show a blocking update screen. Crypto/face/rules breaks must retire old builds, otherwise attackers pin an old APK to bypass new gates.</p></details>
+<div class="foot"><span>12B / Deep dive</span><span>Detail · same level as the explainer</span></div>
 </section>
 
 
@@ -195,6 +246,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>13 / Integrity</span><span>Crypto still does the real work</span></div>
 </section>
 
+<section class="slide" data-screen-label="13B Deep dive">
+<p class="eyebrow">13 · Device integrity deep dive · from the explainer</p>
+<h2 class="t">Genuine app on a genuine device</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> Asks the OS/Play/Apple 'is this a genuine app on a genuine device?' (App Check + Play Integrity + App Attest/DeviceCheck) plus local checks for root, Frida/Xposed hooks, emulator, re-signed binary, screenshots via flutter_security_suite.</li>
+<li><b>Why this one —</b> Defense in depth — the crypto still does the real work, but junk devices should be refused early with a clear message.</li>
+<li><b>Good —</b> Blocks the easy fraud lab (emulators, rooted farms, repackaged APKs — repackaged builds crash at launch via cert pin).</li>
+<li><b>Bad —</b> Local checks can be hidden by Magisk/Zygisk; iOS needs a paid Apple membership for full strength; web/Windows stay unregistered by design.</li>
+<li><b>Prevents —</b> Emulator attendance farms; hooked verify()-to-true tricks; backup-restore clones (backups disabled, keys hardware-bound).</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>Asks the OS/Play/Apple 'is this a genuine app on a genuine device?' plus local checks for root, Frida/Xposed hooks, emulator, re-signed binary, screenshots via flutter_security_suite. Defense in depth — the crypto still does the real work.</p></details>
+<div class="foot"><span>13B / Deep dive</span><span>Detail · same level as the explainer</span></div>
+</section>
+
 
 <section class="slide" data-screen-label="14 BLE mesh">
 <p class="eyebrow">14 · BLE + mesh relay 📡</p>
@@ -202,6 +267,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="tech4"><div class="card"><div class="k">What it does</div><p>Professor shouts a rotating secret; front rows re-shout so back rows hear.</p></div><div class="card"><div class="k">Why this one</div><p>BLE travels ~10–30 m. Campus Wi-Fi is routed across buildings and proves nothing.</p></div><div class="card"><div class="k">Good ↔ Trade-off</div><p>One plugin, no hardware, 500-seat halls via relay ↔ Apple strips payloads; needs foreground + Bluetooth on.</p></div><div class="card"><div class="k">Prevents</div><p>Hostel / VPN proxy — forwarded screenshots are already stale; fixes back-row dead zones.</p></div></div>
 <details class="notes"><summary>Speaker notes</summary><p>Bluetooth Low Energy is the proximity sensor: the professor shouts a fresh 8-byte secret every 10 seconds and front-row phones re-shout it under TTL, jitter, dedup and split-horizon rules so back rows in 500-seat halls hear it. Campus Wi-Fi is routed across buildings so it can never prove the room — only short-range radio can. Apple stacks strip attached payloads so Apple hosts alternate challenge and hint packets, radio needs foreground plus Bluetooth on, and thresholds need per-hall tuning.</p></details>
 <div class="foot"><span>14 / BLE + mesh</span><span>New secret every 10 s</span></div>
+</section>
+
+<section class="slide" data-screen-label="14B Deep dive">
+<p class="eyebrow">14 · BLE nearness deep dive · from the explainer</p>
+<h2 class="t">Range is the sensor</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> Professor shouts a rotating secret; students listen and answer; front rows re-shout so back rows hear (controlled flood with TTL/jitter/dedup/split-horizon) via universal_ble (+ Linux BlueZ shim).</li>
+<li><b>Why this one —</b> BLE range (~10–30 m) is the actual proximity sensor. Campus WiFi is routed across buildings — reachability over WiFi proves nothing about the room.</li>
+<li><b>Good —</b> One plugin for all OSes; no extra hardware; covers 500-seat halls via relay.</li>
+<li><b>Bad —</b> Apple stacks strip attached payload data (so Apple hosts fall back to alternating challenge/hint packets); radio needs foreground + Bluetooth on; thresholds need per-hall tuning.</li>
+<li><b>Prevents —</b> Hostel/VPN proxy (you can't hear the 10-second secret from far away; a forwarded screenshot is already stale); back-row dead zones.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>Professor shouts a rotating secret; students listen and answer; front rows re-shout so back rows hear (controlled flood with TTL/jitter/dedup/split-horizon) via universal_ble (+ Linux BlueZ shim). BLE range (~10–30 m) is the actual proximity sensor.</p></details>
+<div class="foot"><span>14B / Deep dive</span><span>Detail · same level as the explainer</span></div>
 </section>
 
 
@@ -213,6 +292,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>15 / HTTPS transport</span><span>Each channel does what it's good at</span></div>
 </section>
 
+<section class="slide" data-screen-label="15B Deep dive">
+<p class="eyebrow">15 · HTTPS transport deep dive · from the explainer</p>
+<h2 class="t">Bulk proofs over the LAN, no internet</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> Professor runs a tiny per-class HTTPS server on the LAN (shelf); students POST signed proofs. UDP beacons + BLE IP-hint + typed IP help students find the class. Per-session certificate + TLS channel binding ties the TLS pipe to the signature.</li>
+<li><b>Why this one —</b> BLE has range but no bandwidth; WiFi has bandwidth but no locality. Each does what it's good at.</li>
+<li><b>Good —</b> No internet needed; standard TLS; rate limits tame herds; honest failure (unreachable goes to manual path, never fake success).</li>
+<li><b>Bad —</b> Some enterprise APs block broadcasts (falls back to BLE hint + typed IP); old unicast-sweep fallback was deleted because it kicked phones off WiFi.</li>
+<li><b>Prevents —</b> Evil-twin AP relays (channel binding); replay floods (rate limits + single-use IDs); rogue-professor harvesting (student verifies professor signature + key pin before signing anything).</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>Professor runs a tiny per-class HTTPS server on the LAN (shelf); students POST signed proofs. UDP beacons + BLE IP-hint + typed IP help students find the class. Per-session certificate + TLS channel binding ties the TLS pipe to the signature.</p></details>
+<div class="foot"><span>15B / Deep dive</span><span>Detail · same level as the explainer</span></div>
+</section>
+
 
 <section class="slide" data-screen-label="16 Signatures">
 <p class="eyebrow">16 · Ed25519 + HMAC + SHA-256 ✍️</p>
@@ -220,6 +313,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="tech4"><div class="card"><div class="k">Ed25519 · signs</div><p>Students sign proofs, professors sign challenges + receipts. 1000–2500 verifies per lecture is trivial.</p></div><div class="card"><div class="k">HMAC-SHA256 · rotates</div><p>Derives 10-second challenges and per-student tokens; 8 bytes on air; single-use + freshness wrapped.</p></div><div class="card"><div class="k">SHA-256 · binds</div><p>Fingerprints keys, binds tickets, opaque face IDs. Fingerprint only — not encryption.</p></div><div class="card"><div class="k">Prevents</div><p>Forged proofs, pre-play, replay, linkability across lectures, ticket transplant.</p></div></div>
 <details class="notes"><summary>Speaker notes</summary><p>Ed25519 signs every student proof, professor challenge and receipt with small fast signatures — thousands of verifies per lecture are trivial. HMAC-SHA256 derives the 10-second challenge, per-student response token and rotating radio alias from window secrets, so future tokens can never be pre-played and lectures stay unlinkable. SHA-256 fingerprints keys, binds face and liveness tickets into signatures, and hashes Gmail into opaque face IDs; freshness of 17 seconds plus single-use window IDs and a dedup cache kills replay.</p></details>
 <div class="foot"><span>16 / Crypto trio</span><span>Compact · deterministic · single-use</span></div>
+</section>
+
+<section class="slide" data-screen-label="16B Deep dive">
+<p class="eyebrow">16 · Crypto deep dive · from the explainer</p>
+<h2 class="t">Ed25519 + HMAC-SHA256 + SHA-256</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> Ed25519: fast public-key signatures — students sign proofs, professors sign challenges/receipts. HMAC-SHA256: derives the 10-second challenge C_j, per-student response token, rotating radio alias. SHA-256: fingerprints keys, binds face/liveness tickets, derives opaque face IDs.</li>
+<li><b>Why this one —</b> Small keys/signatures, very fast verification (~1000–2500 per lecture is trivial). One secret per window spawns unlimited unlinkable short tokens. Standard, fast, one-way fingerprint.</li>
+<li><b>Good —</b> Tiny (8 bytes on air), fast, deterministic for verifier, unpredictable for outsiders. Binds many fields into one short hash so signatures can't transplant.</li>
+<li><b>Bad —</b> Keys must be guarded (hence hardware sealing) — math can't save a leaked key. Anyone who hears the secret can compute the current token — wrapped by 17 s freshness + single-use + signatures. Hashing is fingerprint only, not encryption.</li>
+<li><b>Prevents —</b> Forged proofs and tampered receipts; pre-play (future tokens never verify); linkability (rotating alias); replay (single-use windowID+ID+j + dedup); ticket transplant; raw Gmail leaking into the face gallery.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>Ed25519 signs proofs, challenges and receipts with small fast signatures. HMAC-SHA256 derives the 10-second challenge, per-student token and rotating alias. SHA-256 fingerprints keys, binds tickets, and hashes Gmail into opaque face IDs.</p></details>
+<div class="foot"><span>16B / Deep dive</span><span>Detail · same level as the explainer</span></div>
 </section>
 
 
@@ -231,6 +338,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>17 / Hardware trust</span><span>Professor verifies offline</span></div>
 </section>
 
+<section class="slide" data-screen-label="17B Deep dive">
+<p class="eyebrow">17 · Hardware keys deep dive · from the explainer</p>
+<h2 class="t">This phone, really — verified offline</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> The attendance signing key (SKey) is sealed by a non-exportable P-256 device key (DKey) in StrongBox/TEE/Secure Enclave, wrapped with AES-GCM. Every proof carries a fresh hardware signature. Professor's phone checks the X.509 chain against pinned Google/Apple roots in pure Dart — no network.</li>
+<li><b>Why this one —</b> A file copy should be useless without the silicon. Classrooms are offline; there is no backend to ask.</li>
+<li><b>Good —</b> StrongBox gives FULL tier / TEE and Secure Enclave give STD tier; restore/clone detected triggers re-enroll; offline-verifiable; no server bill; snapshot revocation cache as review flag.</li>
+<li><b>Bad —</b> Needs modern hardware; software/fake keys are test-only and never confirm (manual path instead); no server re-check on free tier; snapshot-only revocation; first-seen keys are trust-on-first-use with a visible banner.</li>
+<li><b>Prevents —</b> Lent-phone marking (key won't unseal without a fresh face ticket); cloned-app fraud (ciphertext unwraps to nothing); tier lies (bad chain lands device-unproven on manual path, never auto-present); software keys claiming hardware tier; expired/forged chains confirming.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>The attendance signing key is sealed by a non-exportable P-256 device key in StrongBox/TEE/Secure Enclave, wrapped with AES-GCM. The professor's phone checks the X.509 chain against pinned Google/Apple roots in pure Dart — no network.</p></details>
+<div class="foot"><span>17B / Deep dive</span><span>Detail · same level as the explainer</span></div>
+</section>
+
 
 <section class="slide" data-screen-label="18 Face AI">
 <p class="eyebrow">18 · FaceNet + ML Kit · MiniFASNetV2 liveness 👁️</p>
@@ -240,6 +361,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="foot"><span>18 / Holder proof</span><span>Vectors in RAM only · wiped at close</span></div>
 </section>
 
+<section class="slide" data-screen-label="18B Deep dive">
+<p class="eyebrow">18 · Face + liveness deep dive · from the explainer</p>
+<h2 class="t">Holder proof, on-device only</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> face_verification plugin (FaceNet + ML Kit): 5-angle on-device enrollment; ~1-sec verify stamps a 5-minute ticket unlocking signing; gallery never leaves the phone. MiniFASNetV2 via tflite_flutter: passive vitality score + shuffled blink/smile walk at enroll; graded score rides the signed ticket.</li>
+<li><b>Why this one —</b> The key proves the phone, radio proves nearness — face proves the holder. A matcher alone passes a photo held at each angle, so liveness raises the spoof cost. Vendored custom models were deleted for one maintained plugin.</li>
+<li><b>Good —</b> Fully offline, bundled model, fast; version-pinned (model bump forces re-face). Tiny model (~2 MB), strict threshold with graceful near-miss (inconclusive = free rescan, not a burned attempt).</li>
+<li><b>Bad —</b> Needs good light; twins flag each other (one-tap professor resolve); operating-point numbers are the plugin's, not yet measured on Proximity captures; liveness FAR/FRR unmeasured — re-tighten only via a measured field ROC with a version bump.</li>
+<li><b>Prevents —</b> Lent/unlocked-phone proxy (no match means no signature; mismatches burn attempts into needs-review, never auto-present). Printed-photo/screen-replay fraud (must beat vitality + face + ticket + radio together). Same-face duplicates flagged in-RAM on the professor phone only, wiped at close; cloud carries only PRESENT/ABSENT/FLAGGED.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>FaceNet + ML Kit enrolls five angles on-device and verifies in about a second, stamping a 5-minute ticket that unlocks signing. MiniFASNetV2 adds a passive vitality score plus a shuffled blink-or-smile walk at enroll, graded onto the signed ticket.</p></details>
+<div class="foot"><span>18B / Deep dive</span><span>Detail · same level as the explainer</span></div>
+</section>
+
 
 <section class="slide" data-screen-label="19 Storage state">
 <p class="eyebrow">19 · Secure storage + Riverpod + SyncEngine 💾</p>
@@ -247,6 +382,20 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <div class="tech4"><div class="card"><div class="k">Vault</div><p>Hardware-backed store for keys + install ID; backups disabled; clones get separate IDs.</p></div><div class="card"><div class="k">Plumbing</div><p>Riverpod state across enroll → mark → live → records; guards centralize web / role / enrollment checks.</p></div><div class="card"><div class="k">Memory</div><p>JSON records + outbox; autosaved drafts survive kills; union-merge, tombstones, backoff on reconnect.</p></div><div class="card"><div class="k">Prevents</div><p>Backup identity theft; wrong-screen states; lost marks, double-counts, queue-vs-tally races.</p></div></div>
 <details class="notes"><summary>Speaker notes</summary><p>The seal key never sits in plaintext prefs. Fake drivers make UI tests hermetic. Un-closed sessions still leave data and the professor stays the host-only source of truth for exports.</p></details>
 <div class="foot"><span>19 / Storage + state</span><span>Offline-first · crash-safe</span></div>
+</section>
+
+<section class="slide" data-screen-label="19B Deep dive">
+<p class="eyebrow">19 · Storage + state deep dive · from the explainer</p>
+<h2 class="t">Vault, plumbing, offline-first memory</h2>
+<div class="card detail"><ul>
+<li><b>Does —</b> flutter_secure_storage: hardware-backed vault (biometric Class-3 on Android, this-device-only on iOS, backups disabled) for keys, install ID, session state. flutter_riverpod: predictable state across landing/enroll/mark/live/records. SharedPreferences JSON + SyncEngine outbox: every round close upserts the same record; drafts autosave and resume after kill; cloud sync on reconnect with union-merge, tombstone deletes, idempotent replay, backoff.</li>
+<li><b>Why this one —</b> OS keystores beat any app-level hiding. Live radio + timers + navigation is where ad-hoc state explodes. Classroom WiFi is hostile; marks must never be lost because the network blinked.</li>
+<li><b>Good —</b> Survives restarts; clones/dual-apps get separate IDs (one enrollment per install, client- and server-enforced). Guards stay centralized; fake drivers make UI tests hermetic. Un-closed sessions still leave data; crash-safe; professor is host-only source of truth.</li>
+<li><b>Bad —</b> History/outbox JSON stays in plaintext prefs (rooted-read residual — the seal key never lives there). Learning curve; ref-read-after-dispose must be guarded. JSON-in-prefs, not SQLite yet (fine at pilot scale, migration later).</li>
+<li><b>Prevents —</b> Backup-restore identity theft; casual file-copy clones; wrong-screen states (desktop enrolling, web marking); stale-mode landings; lost marks on kill/crash; double-counts on retry; queue-vs-tally races. Plus phone glue (permission_handler, camera, ML Kit pose gates, wakelock_plus, connectivity_plus, share_plus/file_picker/archive, package_info_plus, device_info_plus, google_fonts) prevents silent radio failures, sleeping-phone proof loss, and unjoinable classes.</li>
+</ul></div>
+<details class="notes"><summary>Speaker notes</summary><p>Hardware-backed vault for keys and install ID, predictable Riverpod state across all flows, and JSON records plus a SyncEngine outbox that autosaves drafts and replays idempotently on reconnect. OS keystores beat any app-level hiding.</p></details>
+<div class="foot"><span>19B / Deep dive</span><span>Detail · same level as the explainer</span></div>
 </section>
 
 
