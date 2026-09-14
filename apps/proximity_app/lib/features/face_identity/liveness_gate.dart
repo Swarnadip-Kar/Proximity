@@ -67,9 +67,9 @@
 // box with the 2.7x training-distribution margin ([kLivenessContextScale])
 // but runs only the primary 2.7-scale model (upstream ensembles a second
 // 4.0-scale model). FAR/FRR are UNMEASURED on Proximity captures (no
-// Proximity ROC yet); Tl=0.85 ([kLivenessThreshold], protocol-owned) is the
-// shipped STRICT operating point (print/replay incentive + cheap rescan
-// recovery — see verify.dart), NOT a Proximity-measured EER.
+// Proximity ROC yet); Tl=0.70 ([kLivenessThreshold], protocol-owned) is the
+// shipped field-relaxed operating point (print/replay incentive + cheap
+// rescan recovery — see verify.dart), NOT a Proximity-measured EER.
 // TODO(sec-face): measure a Proximity ROC (genuine dim/blurry stills vs
 // print/replay spoofs) via liveness_calibration_test, then pin any new
 // threshold with a [kLivenessVer] bump (re-face, key kept) + min_version

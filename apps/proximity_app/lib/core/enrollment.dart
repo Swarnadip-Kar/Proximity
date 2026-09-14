@@ -64,15 +64,17 @@ import 'security/revocation_cache.dart';
 import 'sync/device_hardware_id.dart';
 
 /// Enroll side-slot liveness bar (app-local policy, NOT a ticket break).
-/// The protocol Tl ([kLivenessThreshold] = 0.85) stays the decider for the
+/// The protocol Tl ([kLivenessThreshold] = 0.70 field-relaxed) decides the
 /// frontal centre still — the documented vitality decider, re-checked at
-/// every marking — and for all marking proofs. The four diversity slots
+/// every marking — and all marking proofs. The four diversity slots
 /// (left/right/up/down) exist for template diversity + sustained presence
 /// across the walked order; tilted captures systematically score lower
 /// (field 2026-09-13 genuine: centre 0.90, left 0.95, right 0.89, up 0.79 —
-/// foreshortened boxes pull in more background at the 2.7x crop), so gating
-/// all five at 0.85 fails ~1 genuine enrollment in 4 on vitality alone
-/// (joint 5/5 pass ≈ 0.75^5). 0.70 keeps anti-spoof margin on every measured
+/// foreshortened boxes pull in more background at the 2.7x crop), so the
+/// slots hold this app-local bar (same 0.70 value, but changing it breaks
+/// nothing on the wire: the enroll claim carries only the pipeline tag
+/// [kLivenessVer], never a score). 0.70 keeps anti-spoof margin on every
+/// measured probe (moire-replay 0.026, recapture-blur 0.243, uniform ≤0.31
 /// probe (moire-replay 0.026, recapture-blur 0.243, uniform ≤0.31 — the
 /// uniform-64 0.76 outlier cannot reach this gate without a face: the Euler
 /// pose check above aborts faceless stills first) while passing the field

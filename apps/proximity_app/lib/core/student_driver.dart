@@ -35,7 +35,7 @@ enum StudentResult { marked, late, faceFailed, noSignal, error }
 /// Holder-check verdict. Only [mismatch] consumes one of the 4 attempts: a
 /// readable session matched somebody else. [inconclusive] (no enrollment, no
 /// face, unreadable still) never consumes an attempt — the check screen
-/// offers a rescan inside its 12s session. [staleTemplate] means the
+/// offers a rescan inside the session. [staleTemplate] means the
 /// enrolled faceId predates the current verifier ([verifierVer] mismatch)
 /// and is incomparable — the holder must re-face, never match against it.
 /// [blocked] means a records-only device (desktop/web L1 gate) — guidance,
@@ -572,7 +572,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       return FaceCheckResult(FaceMatch.mismatch, res.score);
     } catch (e) {
       // Unreadable still / missing model: fail closed as inconclusive —
-      // rescan inside the 12s session, attempt kept, never auto-present.
+      // rescan inside the session, attempt kept, never auto-present.
       BleLog.log('SEC', 'face check ERROR: $e');
       return const FaceCheckResult(FaceMatch.inconclusive);
     }

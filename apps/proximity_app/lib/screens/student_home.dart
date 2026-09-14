@@ -1496,11 +1496,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // ~350ms apart) and the driver decides vitality on the MAX: one still
     // can dip on transient noise while spoofs score consistently low.
     // Match→stamp+prove; readable mismatch→burn one of the 4 attempts
-    // (whole 12s session); inconclusive (incl. the near-miss vitality
-    // band)→rescan in the 12s session burning nothing.
+    // (whole session); inconclusive (incl. the near-miss vitality
+    // band)→rescan in the session burning nothing.
     //
     // The verify runs INSIDE the open sheet ([accept]): inconclusive
-    // bursts re-capture on the SAME preview (~1s apart, 10s window — the
+    // bursts re-capture on the SAME preview (~1s apart, 7s window — the
     // holder just keeps holding still, never taps retry, never sees the
     // camera flash). The sheet pops only on a terminal verdict (pass /
     // mismatch / stale / blocked) or a spent window. Capturers without
@@ -1693,7 +1693,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           return;
         }
         // No readable verdict (attempt kept): keep re-scanning hands-free
-        // inside a 10s window (~1s apart) with a steady prompt, then fall
+        // inside a 7s window (~1s apart) with a steady prompt, then fall
         // back to the manual Scan button. Cancel/back exits via the
         // teardown guards below; an account switch mid-gap never scans as
         // the stale identity.

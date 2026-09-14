@@ -38,7 +38,7 @@
 // independent FaceNet512 deployment study (cosine-similarity 0.7 accept,
 // 2026) — the best available tuning without a Proximity ROC; do not move
 // it without one. System operating point WITH the §4 liveness gate
-// (minifasnet-v2-27 scorer at 2.7x crop, Tl=0.85 strict): UNMEASURED on
+// (minifasnet-v2-27 scorer at 2.7x crop, Tl=0.70 field-relaxed): UNMEASURED on
 // Proximity captures — no Proximity FAR/FRR ROC exists yet for the
 // combined matcher+liveness decision (spoof FAR is strictly lower than
 // face-only — a print must now also clear the vitality gate — but the FRR
