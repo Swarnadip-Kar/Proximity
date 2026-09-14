@@ -413,6 +413,10 @@ void main() {
     await t.pump(const Duration(milliseconds: 500));
     expect(find.textContaining('R1 · KQ7'), findsOneWidget);
     // Round 2 opens → auto face → auto listen → marked again, no taps.
+    // Fresh round identity (production ships a new display code per
+    // window): without it the same-round re-face guard correctly holds
+    // on the R1 code and the re-mark never fires.
+    driver.probeDisplay = 'ZP2';
     driver.windowOpenProbe = true;
     var marked2 = false;
     for (var i = 0; i < 30 && !marked2; i++) {

@@ -1678,11 +1678,19 @@ class FakeStudentDriver implements StudentDriver {
   bool windowOpenProbe;
   bool rateLimitedProbe;
   String manualStatus;
+
+  /// Window display code carried by the probe + presence sample (round
+  /// identity, exactly like production: each new window carries a fresh
+  /// code, which is what releases the same-round re-face guard for the
+  /// next round). Default '' (unknown) preserves every existing test's
+  /// hold behavior; multi-round tests set a fresh code per round.
+  String probeDisplay;
   FakeStudentDriver(
       {this.ackDetail = 'KQ7 · 10:04:12',
       this.windowOpenProbe = false,
       this.rateLimitedProbe = false,
-      this.manualStatus = 'pending'});
+      this.manualStatus = 'pending',
+      this.probeDisplay = ''});
 
   @override
   ClockDriftTracker get clockDrift => ClockDriftTracker();
@@ -1705,6 +1713,7 @@ class FakeStudentDriver implements StudentDriver {
           reachable: !rateLimitedProbe,
           windowOpen: windowOpenProbe,
           classLabel: target.classLabel,
+          display: probeDisplay,
           rateLimited: rateLimitedProbe);
 
   @override
@@ -1712,7 +1721,8 @@ class FakeStudentDriver implements StudentDriver {
           {required ClassBeacon target,
           required LinkedIdentity identity,
           String photoUrl = ''}) async =>
-      PresenceSample(sent: true, windowOpen: windowOpenProbe);
+      PresenceSample(
+          sent: true, windowOpen: windowOpenProbe, display: probeDisplay);
 
   @override
   Future<void> leaveWaiting(

@@ -175,20 +175,22 @@ class BrowseTile extends StatelessWidget {
               : browseVerifyCaption(verifyLabel)),
       subtitle2MaxLines: 2,
       status: null,
-      // Both pills share one footer line (never beside the title):
-      // verify tag first, Open just right of it, left-aligned below
-      // the email/caption lines. Both absent renders exactly as
-      // before — no extra line.
+      // Both pills share the footer below the email/caption lines (never
+      // beside the title): verify tag first, Open just right of it,
+      // left-aligned. A Wrap, not a Row — Unverified + Open together
+      // exceed the footer width on 360dp phones (measured 91px overflow),
+      // so the pair flows to two lines there instead of striping. One
+      // pill (or a wide phone) still renders the identical single line;
+      // both absent renders exactly as before — no extra line.
       footer: (tag == null && openTag == null)
           ? null
           : Align(
               alignment: Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Wrap(
+                spacing: ProxSpacing.xs,
+                runSpacing: ProxSpacing.xs,
                 children: [
                   if (tag != null) tag,
-                  if (tag != null && openTag != null)
-                    const SizedBox(width: ProxSpacing.xs),
                   if (openTag != null) openTag,
                 ],
               ),
