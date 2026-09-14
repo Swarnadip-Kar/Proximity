@@ -5,5 +5,13 @@
 # PROXIMITY_SECURITY.md verification log for the fetch commands).
 apps/proximity_app/rules-drill/node_modules/
 apps/proximity_app/rules-drill/jdk21/
+# Release signing secrets (never committed — see
+# apps/proximity_app/android/keystore.properties.template).
+**/keystore.properties
+**/*.keystore
+**/*.jks
+# Offline release-secrets backup folder (keystore + passwords — see
+# release-secrets/README.md). Never committed, never uploaded.
+release-secrets/
 # (directory-only patterns: files like android/build.gradle.kts are source
 # and stay tracked).
