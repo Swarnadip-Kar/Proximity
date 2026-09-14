@@ -1,6 +1,7 @@
 # Build + dependency outputs (never committed).
 **/.dart_tool/
 **/build/
+**/dist/
 # Rules-drill runtime (regenerable, never committed — see
 # PROXIMITY_SECURITY.md verification log for the fetch commands).
 apps/proximity_app/rules-drill/node_modules/
