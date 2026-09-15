@@ -1495,7 +1495,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         );
         BleLog.log('SEC',
             'attestation self-check ${chainCheck.ok ? 'ok' : 'FAIL ${chainCheck.reason}'} '
-            'chain=${chainCheck.chainLen} root=${chainCheck.rootPrefix.isEmpty ? 'none' : chainCheck.rootPrefix}');
+            '${chainCheck.debugLine}');
         if (!chainCheck.ok) {
           return MarkedReceipt(
               detail:

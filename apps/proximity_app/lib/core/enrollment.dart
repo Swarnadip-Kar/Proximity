@@ -101,6 +101,10 @@ class EnrollmentState {
   final double faceScore;
   final String message;
   final bool restored; // key came from this device's secure storage
+  // Debug-only attestation self-check detail (per-cert dates + flags, no
+  // key material). Set only alongside an attestation refusal message;
+  // cleared on every success/dismiss so it can never describe a stale key.
+  final String attestationDebug;
   const EnrollmentState({
     this.phase = EnrollPhase.signedOut,
     this.account,
@@ -109,6 +113,7 @@ class EnrollmentState {
     this.faceScore = 0,
     this.message = '',
     this.restored = false,
+    this.attestationDebug = '',
   });
 
   EnrollmentState copyWith({
@@ -119,6 +124,7 @@ class EnrollmentState {
     double? faceScore,
     String? message,
     bool? restored,
+    String? attestationDebug,
   }) =>
       EnrollmentState(
         phase: phase ?? this.phase,
@@ -128,6 +134,7 @@ class EnrollmentState {
         faceScore: faceScore ?? this.faceScore,
         message: message ?? this.message,
         restored: restored ?? this.restored,
+        attestationDebug: attestationDebug ?? this.attestationDebug,
       );
 }
 
@@ -180,7 +187,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     _faceId = null;
     _lastFailedSlot = slot;
     state = state.copyWith(
-        phase: EnrollPhase.error, faceScore: 0, message: message);
+        phase: EnrollPhase.error,
+        faceScore: 0,
+        message: message,
+        attestationDebug: '');
   }
 
   EnrollmentController({
@@ -793,7 +803,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // classifier (message non-empty → refusal card) renders the STALE
       // error above the Save button after a successful recapture.
       state = state.copyWith(
-          phase: EnrollPhase.faceDone, faceScore: check.score, message: '');
+          phase: EnrollPhase.faceDone,
+          faceScore: check.score,
+          message: '',
+          attestationDebug: '');
       _lastFailedSlot = null;
     } on StateError catch (e) {
       // Fail-closed (records-only device, missing model, unreadable
@@ -1070,11 +1083,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           );
           BleLog.log('CRYPTO',
               'attestation self-check ${chainCheck.ok ? 'ok' : 'FAIL ${chainCheck.reason}'} '
-              'chain=${chainCheck.chainLen} root=${chainCheck.rootPrefix.isEmpty ? 'none' : chainCheck.rootPrefix}');
+              '${chainCheck.debugLine}');
           if (!chainCheck.ok) {
             state = state.copyWith(
                 phase: EnrollPhase.error,
-                message: attestationSelfCheckCopy(chainCheck));
+                message: attestationSelfCheckCopy(chainCheck),
+                attestationDebug: chainCheck.debugLine);
             return null;
           }
         }
@@ -1185,7 +1199,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         attestedUntil: _deviceKey.attestedUntil,
         lastFaceRescanAtMillis: rescanStampMillis,
       ));
-      state = state.copyWith(phase: EnrollPhase.uploaded, message: '');
+      state = state.copyWith(
+          phase: EnrollPhase.uploaded, message: '', attestationDebug: '');
       return LinkedIdentity(name: name, gmail: email, roll: roll, org: org);
     } catch (e) {
       state = state.copyWith(
@@ -1287,7 +1302,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       } catch (_) {}
     }
     state = state.copyWith(
-        phase: EnrollPhase.keyReady, faceScore: 0, message: '');
+        phase: EnrollPhase.keyReady,
+        faceScore: 0,
+        message: '',
+        attestationDebug: '');
   }
 
   /// Retry from the last good step (error is non-destructive). Invariant:
@@ -1297,7 +1315,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     final back = _keys != null
         ? (_faceId != null ? EnrollPhase.faceDone : EnrollPhase.keyReady)
         : (state.account != null ? EnrollPhase.signedIn : EnrollPhase.signedOut);
-    state = state.copyWith(phase: back, message: '');
+    state = state.copyWith(phase: back, message: '', attestationDebug: '');
   }
 }
 

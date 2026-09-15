@@ -43,12 +43,24 @@ class AttestationSelfCheck {
 
   /// Chain length in certs (0 when none).
   final int chainLen;
+
+  /// Debug-only validity detail (per-cert dates + indexes, no key material
+  /// — see `chainValidityDebugLine`). '' when nothing was parsed. Carried
+  /// into the CRYPTO log + enroll debug card; never affects the verdict.
+  final String debugDetail;
   const AttestationSelfCheck(
       {required this.ok,
       required this.reason,
       this.flags = const [],
       this.rootPrefix = '',
-      this.chainLen = 0});
+      this.chainLen = 0,
+      this.debugDetail = ''});
+
+  /// One-line debug summary for logs + the enroll debug card (no secrets:
+  /// chain length, anchor prefix, flags, per-cert dates).
+  String get debugLine =>
+      'chain=$chainLen root=${rootPrefix.isEmpty ? 'none' : rootPrefix} flags=$flags $debugDetail'
+          .trim();
 }
 
 /// Local pre-run of the professor's chain gate. [chainHex] is the DER-hex
@@ -68,6 +80,7 @@ AttestationSelfCheck checkAttestationChain({
 }) {
   String rootPrefix = '';
   var chainLen = 0;
+  var debugDetail = '';
   try {
     final certs = <Uint8List>[];
     for (final h in chainHex) {
@@ -81,6 +94,25 @@ AttestationSelfCheck checkAttestationChain({
         rootPrefix =
             hexEncode(ProxCrypto.sha256Sync(certs.last)).substring(0, 8);
       } catch (_) {}
+      // Debug-only per-cert validity (dates + EXPIRED markers, no key
+      // material): names WHICH cert in a 5-chain is stale. Best-effort,
+      // never throws, never affects the verdict below.
+      try {
+        final nowIso =
+            DateTime.now().toUtc().toIso8601String().substring(0, 16);
+        final perCert = chainValidityDebugLine(certs);
+        // Raw leaf time strings (byte offsets included): independent
+        // cross-check proving impossible parsed dates are firmware-encoded,
+        // not misparsed. Leaf only — keeps the line short.
+        var leafTimes = '';
+        try {
+          final raw = certTimeStringsDebug(certs.first);
+          if (raw.isNotEmpty) leafTimes = ' leafTimes=[$raw]';
+        } catch (_) {}
+        debugDetail = perCert.isEmpty
+            ? 'now=${nowIso}Z$leafTimes'
+            : 'now=${nowIso}Z $perCert$leafTimes';
+      } catch (_) {}
     }
     // Skip rules mirror the server: unbound/legacy (no pkD) and the iOS
     // branch have no Android X.509 chain to pre-check.
@@ -89,14 +121,16 @@ AttestationSelfCheck checkAttestationChain({
           ok: true,
           reason: 'unbound-skip',
           rootPrefix: rootPrefix,
-          chainLen: chainLen);
+          chainLen: chainLen,
+          debugDetail: debugDetail);
     }
     if (iosBranch) {
       return AttestationSelfCheck(
           ok: true,
           reason: 'ios-branch-skip',
           rootPrefix: rootPrefix,
-          chainLen: chainLen);
+          chainLen: chainLen,
+          debugDetail: debugDetail);
     }
     final level = attestationLevelOf(attestationLevel);
     if (certs.isEmpty) {
@@ -107,14 +141,16 @@ AttestationSelfCheck checkAttestationChain({
             ok: true,
             reason: 'unbound-skip',
             rootPrefix: rootPrefix,
-            chainLen: chainLen);
+            chainLen: chainLen,
+            debugDetail: debugDetail);
       }
       return AttestationSelfCheck(
           ok: false,
           reason: 'attest-empty-chain',
           flags: const ['attest-empty-chain'],
           rootPrefix: rootPrefix,
-          chainLen: chainLen);
+          chainLen: chainLen,
+          debugDetail: debugDetail);
     }
     // X.509-shape pre-gate: synthetic/test chains (unit fixtures, fake
     // keys) are not DER — the production gate cannot parse them, and the
@@ -129,7 +165,8 @@ AttestationSelfCheck checkAttestationChain({
           ok: true,
           reason: 'non-x509-skip',
           rootPrefix: rootPrefix,
-          chainLen: chainLen);
+          chainLen: chainLen,
+          debugDetail: debugDetail);
     }
     final pin = verifyAttestationChainPin(
       chain: AttestationChain(certs),
@@ -149,7 +186,8 @@ AttestationSelfCheck checkAttestationChain({
           reason: pin.reason,
           flags: List<String>.of(pin.flags),
           rootPrefix: rootPrefix,
-          chainLen: chainLen);
+          chainLen: chainLen,
+          debugDetail: debugDetail);
     }
     // Flag-only KeyDescription boot telemetry (attendance posture,
     // fail-open): unlocked / unverified-boot / software-level ride as
@@ -164,14 +202,16 @@ AttestationSelfCheck checkAttestationChain({
         reason: 'ok',
         flags: [...pin.flags, ...bootFlags],
         rootPrefix: rootPrefix,
-        chainLen: chainLen);
+        chainLen: chainLen,
+        debugDetail: debugDetail);
   } catch (e) {
     return AttestationSelfCheck(
         ok: false,
         reason: 'attest-malformed',
         flags: const ['attest-malformed'],
         rootPrefix: rootPrefix,
-        chainLen: chainLen);
+        chainLen: chainLen,
+        debugDetail: debugDetail);
   }
 }
 

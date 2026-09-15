@@ -34,8 +34,16 @@ enum EnrollRefusal {
   generic,
 }
 
-EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {
-  // faceDone carries no message by construction (enrollFace clears it on
+/// True when [message] is an attestation-refusal copy (the only refusal
+/// class that carries [EnrollmentState.attestationDebug]). Gates the debug
+/// card so a lingering detail can never render under an unrelated error.
+bool _isAttestationMessage(String message) {
+  final l = message.toLowerCase();
+  return l.contains('attestation is stale') ||
+      l.contains('hardware proof doesn');
+}
+
+EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {  // faceDone carries no message by construction (enrollFace clears it on
   // success), but a validated capture must never render a refusal card even
   // if a stale message ever survives again — belt-and-braces with the
   // controller clear above.
@@ -128,6 +136,21 @@ class ResultRefusalSection extends StatelessWidget {
           message: st.message,
           isError: refusal != EnrollRefusal.partial,
         ),
+        // Debug-only attestation detail (per-cert dates + expired index,
+        // no key material): shown only alongside an attestation refusal so
+        // it can never describe a stale key. Field use: paste this line.
+        if (st.attestationDebug.isNotEmpty &&
+            _isAttestationMessage(st.message)) ...[
+          const SizedBox(height: ProxSpacing.sm),
+          ProxCard(
+            child: Text(
+              'Debug: ${st.attestationDebug}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
         const SizedBox(height: ProxSpacing.sm),
         _nextStep(context),
       ],
