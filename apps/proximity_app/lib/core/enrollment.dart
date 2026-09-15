@@ -577,8 +577,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       _keys = kp;
       _faceId = null;
       _restoredRoll = null;
+      // Clearing message + attestation debug is load-bearing: an earlier
+      // Save refusal (e.g. expired-cert) otherwise survives onto the fresh
+      // key, and the result screen would render the OLD error above the
+      // NEW key with Face pending.
       state = state.copyWith(
-          phase: EnrollPhase.keyReady, pkHex: pkHex, restored: false);
+          phase: EnrollPhase.keyReady,
+          pkHex: pkHex,
+          restored: false,
+          message: '',
+          attestationDebug: '');
       BleLog.log('CRYPTO',
           'DKey bound pkS=${pkHex.substring(0, 12)}… level=${attestationLevelName(_deviceKey.level)} — key ceremony complete');
     } catch (e) {

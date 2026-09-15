@@ -491,6 +491,51 @@ void main() {
       expect(firstBacks, 1);
       await _settleStepped(t);
     });
+
+    testWidgets(
+        'back from role while signed in leaves via onFirstBack (never strands on welcome)',
+        (t) async {
+      // Field bug: system back from the role step landed signed-in users
+      // on the welcome step, which has no forward path (re-sign-in is a
+      // same-email no-op) — Continue/registration/professor all unreachable
+      // behind. While signed in, role is the first step.
+      var firstBacks = 0;
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {
+              firstBacks++;
+            },
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      // Signed in, no roles yet: start lands on role.
+      expect(find.text('Register as Student'), findsOneWidget);
+      // System back: first-step back while signed in.
+      await t.binding.handlePopRoute();
+      await _settleStepped(t);
+      expect(firstBacks, 1);
+      // Still on the role actions — never stranded on welcome.
+      expect(find.text('Register as Student'), findsOneWidget);
+      expect(find.text('Sign in with Google'), findsNothing);
+      await _settleStepped(t);
+    });
   });
 
   group('progress reflects pages (same overlay, count 6)', () {

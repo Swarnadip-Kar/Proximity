@@ -24,7 +24,8 @@
 // device key → controller phase), so returning users skip cleared steps;
 // sign-in / sign-out / face-validation events auto-advance while visible.
 // Back moves one step back; back from the first step calls [onFirstBack]
-// (parent routes to Account/RoleHub — never bare mark/browse).
+// (role while signed in — welcome is sign-in only — else welcome; the
+// parent routes to Account/RoleHub, never bare mark/browse).
 // Completion calls [onComplete] (parent lands on mark/browse or the
 // in-progress window resume — never the roles hub).
 library;
@@ -206,10 +207,19 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
 
   /// Back moves one step back; back from the first step leaves to the
   /// parent (Account/RoleHub — never bare mark/browse). Single-flight
-  /// with [_goTo]: overlapping backs are dropped.
+  /// with [_goTo]: overlapping backs are dropped. The welcome step is
+  /// sign-in only: while signed in, role is the first step — stepping back
+  /// onto welcome would strand (re-sign-in is a same-email no-op and every
+  /// role action lives behind on role).
   Future<void> _back() async {
     if (_navBusy) return;
-    if (_index <= SetupStep.welcome) {
+    var firstStep = SetupStep.welcome;
+    try {
+      if (ref.read(accountProvider).valueOrNull != null) {
+        firstStep = SetupStep.role;
+      }
+    } catch (_) {}
+    if (_index <= firstStep) {
       if (!_settled) _resolveGen++;
       _navBusy = true;
       try {
