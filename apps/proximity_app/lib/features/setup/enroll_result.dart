@@ -11,12 +11,14 @@
 // (controller re-validates); a refused claim stores nothing locally.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 
 import '../../core/enrollment.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../features/face_identity/face_blocked.dart';
 import '../../mode.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import '../../widgets/prox_scaffold.dart';
@@ -43,6 +45,11 @@ class EnrollResultScreen extends ConsumerWidget {
     } else {
       EnrollLog.sync('claim refused: ${st.message}');
     }
+  }
+
+  void _openLog(BuildContext context) {
+    BleLog.log('NAV', 'enroll result → system log');
+    showLogDrawer(context);
   }
 
   @override
@@ -91,6 +98,13 @@ class EnrollResultScreen extends ConsumerWidget {
     final refusal = classifyEnrollRefusal(st);
     return ProxScreen(
       title: 'Save enrollment',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: () => _openLog(context),
+        ),
+      ],
       child: ProxStaggered(
         children: [
           Text(

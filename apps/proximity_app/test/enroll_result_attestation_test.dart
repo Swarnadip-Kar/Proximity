@@ -15,6 +15,7 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
+import 'package:proximity_app/widgets/log_drawer.dart';
 
 /// The production state shape from upload()'s self-check FAIL branch:
 /// message + debug built by the real helpers (no hand-typed copies).
@@ -88,5 +89,18 @@ void main() {
     await t.pumpAndSettle();
     expect(find.textContaining('Debug:'), findsNothing);
     expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets('save screen has a System log action opening the drawer',
+      (t) async {
+    final ctl = _controller();
+    ctl.state = const EnrollmentState(
+        phase: EnrollPhase.faceDone, faceScore: 0.9);
+    await t.pumpWidget(_app(ctl));
+    await t.pumpAndSettle();
+    expect(find.byTooltip('System log'), findsOneWidget);
+    await t.tap(find.byTooltip('System log'));
+    await t.pumpAndSettle();
+    expect(find.byType(LogDrawerContent), findsOneWidget);
   });
 }
