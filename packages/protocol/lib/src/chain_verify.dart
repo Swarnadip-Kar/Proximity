@@ -77,6 +77,13 @@ class _ParsedCert {
   /// same-key cert renewals share these bytes; see `spkiSha256OfCert`).
   final Uint8List spkiDer;
 
+  /// Validity window from the positional TBS Validity field, resolved with
+  /// the RFC 5280 century rule (see [parseX509ValidityTime]) — NEVER the
+  /// `x509` package's mapping. Null on any anomaly (fail-closed: the
+  /// opt-in validity gate treats null as expired, never as valid).
+  final DateTime? notBefore;
+  final DateTime? notAfter;
+
   /// Parsed SPKI (subject public key of THIS cert — the issuer of its child).
   final _Spki spki;
 
@@ -87,6 +94,8 @@ class _ParsedCert {
     required this.issuerDer,
     required this.subjectDer,
     required this.spkiDer,
+    required this.notBefore,
+    required this.notAfter,
     required this.spki,
   });
 }
@@ -126,10 +135,12 @@ class _Spki {
 /// Does NOT check trust (pin), revocation, or key usage — the caller
 /// ([verifyAttestationChainPin]) gates those. Validity dates are opt-in:
 /// pass [checkValidity] with [now] to fail `expired-cert` outside
-/// notBefore/notAfter (structure-only UTCTime/GeneralizedTime compare, no
-/// content interpretation). Default off: attestation chains carry
-/// far-future test validity (e.g. 2070+) and offline professor clocks skew;
-/// expiry is otherwise enforced at the [AttestationWindow] tier, not here.
+/// notBefore/notAfter. Dates come from the positional TBS Validity field
+/// with the RFC 5280 century rule ([parseX509ValidityTime]) — structure
+/// and lengths only, no content interpretation. Default off: attestation
+/// chains carry far-future test validity (e.g. 2070+) and offline professor
+/// clocks skew; expiry is otherwise enforced at the [AttestationWindow]
+/// tier, not here.
 /// After the legacy-test-root sunset (2016 root expired 2026-05-24),
 /// production callers SHOULD pass `checkValidity: true`; test fixtures
 /// covering expired roots pass [allowExpiredTestRoots] instead (never in
@@ -173,24 +184,14 @@ ChainSigResult verifyChainSignaturesLeafFirst(
   }
   // Touch the x509 package (parse each cert once) so the declared
   // dependency stays load-bearing: it cross-validates the asn1lib parse
-  // above and fails closed on any structural disagreement. Validity
-  // windows are captured here (structure-only dates, no content
-  // interpretation) for the opt-in [checkValidity] gate below.
-  final notBefore = <DateTime?>[];
-  final notAfter = <DateTime?>[];
+  // above and fails closed on any structural disagreement. Validity dates
+  // are NOT taken from it — the opt-in [checkValidity] gate below uses the
+  // positional Validity dates on [_ParsedCert] (RFC 5280 century rule, see
+  // [parseX509ValidityTime]).
   for (var i = 0; i < certsDer.length; i++) {
     try {
       final seq = ASN1Parser(certsDer[i]).nextObject() as ASN1Sequence;
-      final cert = x509.X509Certificate.fromAsn1(seq);
-      DateTime? nb;
-      DateTime? na;
-      try {
-        nb = cert.tbsCertificate.validity?.notBefore;
-        na = cert.tbsCertificate.validity?.notAfter;
-        // ignore: avoid_catches_without_on_clauses
-      } catch (_) {}
-      notBefore.add(nb);
-      notAfter.add(na);
+      x509.X509Certificate.fromAsn1(seq);
     } catch (_) {
       return ChainSigResult(
           ok: false,
@@ -200,9 +201,9 @@ ChainSigResult verifyChainSignaturesLeafFirst(
   }
   if (checkValidity && !allowExpiredTestRoots) {
     final at = (now ?? DateTime.now()).toUtc();
-    for (var i = 0; i < certsDer.length; i++) {
-      final nb = notBefore[i];
-      final na = notAfter[i];
+    for (var i = 0; i < parsed.length; i++) {
+      final nb = parsed[i].notBefore;
+      final na = parsed[i].notAfter;
       // Missing/unparseable dates fail closed only when the gate is on.
       if (nb == null || na == null) {
         return ChainSigResult(
@@ -256,6 +257,86 @@ ChainSigResult verifyChainSignaturesLeafFirst(
         flags: ['attest-bad-root']);
   }
   return const ChainSigResult(ok: true, reason: 'ok');
+}
+
+// -- Debug validity summary (never authority) -------------------------------
+///
+/// One-line per-cert validity summary for an attestation chain (dates +
+/// indexes only — no key material, no signatures). Debug/field use only:
+/// the gate above reports only `expired-cert` + `attest-cert-$i` flags, so
+/// a 5-cert EC chain failing on one stale intermediate is otherwise
+/// indistinguishable from an expired anchor. Never throws (unparseable
+/// dates render as `?`/`UNPARSEABLE`); never affects the verdict.
+String chainValidityDebugLine(List<Uint8List> certsDer, {DateTime? now}) {
+  final at = (now ?? DateTime.now()).toUtc();
+  final parts = <String>[];
+  for (var i = 0; i < certsDer.length; i++) {
+    // Same source as the gate (positional Validity, RFC 5280 rule) so the
+    // summary can never disagree with the verdict.
+    DateTime? nb;
+    DateTime? na;
+    try {
+      final parsed = _parseCert(certsDer[i]);
+      nb = parsed.notBefore;
+      na = parsed.notAfter;
+      // ignore: avoid_catches_without_on_clauses
+    } catch (_) {}
+    String fmt(DateTime? d) =>
+        d == null ? '?' : d.toUtc().toIso8601String().substring(0, 10);
+    var st = 'ok';
+    if (nb == null || na == null) {
+      st = 'UNPARSEABLE';
+    } else if (at.isBefore(nb.toUtc()) || at.isAfter(na.toUtc())) {
+      st = 'EXPIRED';
+    }
+    parts.add('cert$i:${fmt(nb)}→${fmt(na)} $st');
+  }
+  return parts.join(' ');
+}
+
+/// Raw ASCII time strings inside one cert's DER (`YYMMDDHHMMSSZ` /
+/// `YYYYMMDDHHMMSSZ`, with byte offsets). Independent cross-check of the
+/// parsed validity dates: confirms whether impossible dates (e.g. a leaf
+/// reading 2070→2048) are really encoded by the firmware or misparsed.
+/// Debug only, never authority; never throws.
+String certTimeStringsDebug(Uint8List der) {
+  final out = <String>[];
+  try {
+    for (var i = 0; i + 13 <= der.length && out.length < 8; i++) {
+      // GeneralizedTime: 14 digits + 'Z'.
+      if (i + 15 <= der.length && der[i + 14] == 0x5A) {
+        var digits = true;
+        for (var j = i; j < i + 14; j++) {
+          final c = der[j];
+          if (c < 0x30 || c > 0x39) {
+            digits = false;
+            break;
+          }
+        }
+        if (digits) {
+          out.add('${String.fromCharCodes(der.sublist(i, i + 15))}@$i');
+          i += 14;
+          continue;
+        }
+      }
+      // UTCTime: 12 digits + 'Z'.
+      if (der[i + 12] == 0x5A) {
+        var digits = true;
+        for (var j = i; j < i + 12; j++) {
+          final c = der[j];
+          if (c < 0x30 || c > 0x39) {
+            digits = false;
+            break;
+          }
+        }
+        if (digits) {
+          out.add('${String.fromCharCodes(der.sublist(i, i + 13))}@$i');
+        }
+      }
+    }
+    // ignore: avoid_catches_without_on_clauses
+  } catch (_) {}
+  return out.join(' ');
 }
 
 // -- Leaf SPKI extraction (C2: pkD bind, structure-only) -------------------
@@ -397,6 +478,23 @@ _ParsedCert _parseCert(Uint8List der) {
   final subjectObj = tbs[base + 4];
   final spkiObj = tbs[base + 5];
   if (spkiObj is! ASN1Sequence) throw const FormatException('bad SPKI');
+  // Positional Validity (issuer=base+2, validity=base+3): raw Time values
+  // resolved with the RFC 5280 century rule — never the `x509` package's
+  // mapping (see parseX509ValidityTime). Nulls on any anomaly; the
+  // opt-in validity gate fails closed on null, signatures are unaffected.
+  DateTime? nb;
+  DateTime? na;
+  try {
+    final validityObj = tbs[base + 3];
+    if (validityObj is ASN1Sequence && validityObj.elements.length == 2) {
+      nb = _parseValidityElement(validityObj.elements[0]);
+      na = _parseValidityElement(validityObj.elements[1]);
+    }
+    // ignore: avoid_catches_without_on_clauses
+  } catch (_) {
+    nb = null;
+    na = null;
+  }
   return _ParsedCert(
     tbsDer: Uint8List.fromList(tbsSeq.encodedBytes),
     sigAlgOid: sigAlgOid,
@@ -404,8 +502,81 @@ _ParsedCert _parseCert(Uint8List der) {
     issuerDer: Uint8List.fromList(issuerObj.encodedBytes),
     subjectDer: Uint8List.fromList(subjectObj.encodedBytes),
     spkiDer: Uint8List.fromList(spkiObj.encodedBytes),
+    notBefore: nb,
+    notAfter: na,
     spki: _parseSpki(spkiObj),
   );
+}
+
+/// Parses one positional TBS Validity element with the RFC 5280 century
+/// rule (see [parseX509ValidityTime]). Returns null for anything that is
+/// not a well-formed UTCTime/GeneralizedTime (fail-closed).
+DateTime? _parseValidityElement(ASN1Object o) {
+  if (o is ASN1UtcTime) {
+    return parseX509ValidityTime(String.fromCharCodes(o.contentBytes()),
+        isUtcTime: true);
+  }
+  if (o is ASN1GeneralizedTime) {
+    return parseX509ValidityTime(String.fromCharCodes(o.contentBytes()),
+        isUtcTime: false);
+  }
+  return null;
+}
+
+/// Parses one X.509 Validity time to UTC with the RFC 5280 §4.1.2.5
+/// century rule.
+///
+/// [content] is the raw ASCII of the Time value and [isUtcTime] selects
+/// the encoding: UTCTime `YYMMDDHHMMSSZ` resolves YY 00–49 → 20YY and
+/// 50–99 → 19YY; GeneralizedTime `YYYYMMDDHHMMSSZ` carries its century
+/// literally. Returns null on any shape/range anomaly (fail-closed:
+/// callers treat null as expired, never as valid).
+///
+/// WHY (field 2026-09-15, iQOO Trustonic leaf): the `x509` package maps
+/// UTCTime 70 → 2070 while RFC 5280 — and Android/BoringSSL, and Google's
+/// own reference leaf (`blueline TEE_EC_NONE`, notBefore `700101000000Z`)
+/// — read it as 1970 (epoch-anchored, always-valid convention). The old
+/// mapping phantom-failed a genuine, currently-valid leaf as
+/// `expired-cert`. Dates for the validity gate come from here, not from
+/// the `x509` package's mapping.
+DateTime? parseX509ValidityTime(String content, {required bool isUtcTime}) {
+  try {
+    final s = content.trim();
+    int year, mo, d, h, mi, sec;
+    if (isUtcTime) {
+      if (s.length != 13 || !s.endsWith('Z')) return null;
+      final yy = int.parse(s.substring(0, 2));
+      year = yy <= 49 ? 2000 + yy : 1900 + yy;
+      mo = int.parse(s.substring(2, 4));
+      d = int.parse(s.substring(4, 6));
+      h = int.parse(s.substring(6, 8));
+      mi = int.parse(s.substring(8, 10));
+      sec = int.parse(s.substring(10, 12));
+    } else {
+      if (s.length != 15 || !s.endsWith('Z')) return null;
+      year = int.parse(s.substring(0, 4));
+      mo = int.parse(s.substring(4, 6));
+      d = int.parse(s.substring(6, 8));
+      h = int.parse(s.substring(8, 10));
+      mi = int.parse(s.substring(10, 12));
+      sec = int.parse(s.substring(12, 14));
+    }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 59) {
+      return null;
+    }
+    // Calendar-real day (BoringSSL-grade): Feb 30 etc. fail closed instead
+    // of normalizing into a neighboring month via DateTime overflow.
+    const daysInMonth = <int>[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    var dim = daysInMonth[mo - 1];
+    if (mo == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) {
+      dim = 29;
+    }
+    if (d > dim) return null;
+    return DateTime.utc(year, mo, d, h, mi, sec);
+    // ignore: avoid_catches_without_on_clauses
+  } catch (_) {
+    return null;
+  }
 }
 
 _Spki _parseSpki(ASN1Sequence spki) {

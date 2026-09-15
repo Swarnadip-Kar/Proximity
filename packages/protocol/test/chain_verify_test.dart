@@ -306,4 +306,91 @@ void main() {
       expect(r.reason, 'bad-root-signature');
     });
   });
+
+  group('RFC 5280 validity century rule (field 2026-09-15)', () {
+    test('UTCTime 70 reads as 1970, not 2070 (iQOO Trustonic leaf)', () {
+      // The genuine failing leaf encoded notBefore `700101000000Z`: the
+      // x509 package mapped it to 2070 (phantom expired-cert) while RFC
+      // 5280 — and Android/BoringSSL — read 1970.
+      expect(parseX509ValidityTime('700101000000Z', isUtcTime: true),
+          DateTime.utc(1970, 1, 1));
+      expect(parseX509ValidityTime('480101000000Z', isUtcTime: true),
+          DateTime.utc(2048, 1, 1));
+    });
+
+    test('UTCTime cutoff: 00-49 go to 2000s, 50-99 to 1900s', () {
+      expect(parseX509ValidityTime('000101000000Z', isUtcTime: true),
+          DateTime.utc(2000, 1, 1));
+      expect(parseX509ValidityTime('490101000000Z', isUtcTime: true),
+          DateTime.utc(2049, 1, 1));
+      expect(parseX509ValidityTime('500101000000Z', isUtcTime: true),
+          DateTime.utc(1950, 1, 1));
+      expect(parseX509ValidityTime('991231235959Z', isUtcTime: true),
+          DateTime.utc(1999, 12, 31, 23, 59, 59));
+    });
+
+    test('GeneralizedTime carries its century literally', () {
+      expect(parseX509ValidityTime('20480101000000Z', isUtcTime: false),
+          DateTime.utc(2048, 1, 1));
+      expect(parseX509ValidityTime('20700101000000Z', isUtcTime: false),
+          DateTime.utc(2070, 1, 1));
+    });
+
+    test('malformed times fail closed as null', () {
+      expect(parseX509ValidityTime('', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('not-a-date', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('700101000000Z', isUtcTime: false), isNull);
+      expect(parseX509ValidityTime('20480101000000Z', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('701301000000Z', isUtcTime: true), isNull);
+    });
+
+    test('non-profile shapes fail closed (BoringSSL-grade strictness)', () {
+      // Leap second, impossible calendar days, seconds-less forms: all
+      // rejected — the RFC 5280 profile requires seconds + real dates.
+      expect(parseX509ValidityTime('700101000060Z', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('700230000000Z', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('230229000000Z', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('7001010000Z', isUtcTime: true), isNull);
+      expect(parseX509ValidityTime('204801010000Z', isUtcTime: false), isNull);
+      expect(parseX509ValidityTime('240229000000Z', isUtcTime: true),
+          DateTime.utc(2024, 2, 29));
+    });
+
+    test('genuine fixture leaf (UTCTime 70) debugs as 1970 ok', () {
+      // Google's own reference leaf (blueline TEE_EC_NONE) carries the same
+      // epoch-anchored convention: notBefore UTCTime `70`, notAfter
+      // GeneralizedTime 2106.
+      final leaf = _pemToDer(_chainLeafPem);
+      final line = chainValidityDebugLine([leaf],
+          now: DateTime.utc(2026, 9, 15));
+      expect(line, contains('cert0:1970-01-01→2106-02-07 ok'));
+    });
+
+    test('validity gate accepts the epoch-anchored leaf', () {
+      final leaf = _pemToDer(_chainLeafPem);
+      // checkValidity only inspects dates here (signatures need the full
+      // chain); the leaf alone must not fail as expired-cert.
+      final r = verifyChainSignaturesLeafFirst([leaf],
+          checkValidity: true, now: DateTime.utc(2026, 9, 15));
+      expect(r.reason, isNot('expired-cert'));
+    });
+
+    test('full pin gate passes with validity on (time-travelled)', () {
+      // The whole genuine chain (epoch-anchored leaf + 2018 intermediates
+      // + 2016 root) is simultaneously valid around 2025: with the old
+      // 2070 mapping this failed as expired-cert on the LEAF; with the
+      // RFC 5280 rule it passes. Pins the test-only legacy root hash.
+      final certs = _genuineChain();
+      final rootHash = ProxCrypto.sha256Sync(certs.last);
+      final r = verifyAttestationChainPin(
+        chain: AttestationChain(certs),
+        pinnedRootHashes: [rootHash],
+        expectedChallenge: Uint8List.fromList('challenge'.codeUnits),
+        level: AttestationLevel.full,
+        now: DateTime.utc(2025, 6, 1),
+        checkValidity: true,
+      );
+      expect(r.ok, isTrue, reason: '${r.reason} ${r.flags}');
+    });
+  });
 }
