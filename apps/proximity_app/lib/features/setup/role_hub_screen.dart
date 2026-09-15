@@ -33,6 +33,7 @@ import '../../widgets/prox_states.dart';
 import 'device_identity_screen.dart';
 import '../entry/entry_flow.dart';
 import 'role_sections.dart';
+import 'setup_step_scope.dart';
 
 /// Authenticated role hub. [account] comes from `accountProvider`
 /// (proposed: landing router shows this when the stream is non-null).
@@ -92,14 +93,53 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
           armProfKeyPublisher(ref);
           await ref.read(hostDriverProvider).publishCurrentProfKey();
         } catch (_) {}
+        _refreshRoles();
       });
 
-  Future<void> _registerStudent() =>
-      _run(() => entryRegisterStudent(ref, () => mounted, widget.account));
+  Future<void> _registerStudent() => _run(() async {
+        // Captured pre-flight: post-await this state may be gone (a mode
+        // flip unmounts the flow in fresh-install home).
+        final scope = SetupStepScope.of(context);
+        await entryRegisterStudent(ref, () => mounted, widget.account);
+        _refreshRoles();
+        // In-flow: step into the enrollment proper — without this the
+        // stepper sits on role after a successful registration and the tap
+        // looks dead (same for Continue as student below). Standalone hubs
+        // have no scope (no-op); fresh-install home already switched.
+        if (mounted && scope != null) {
+          try {
+            await scope.next();
+          } catch (_) {}
+        }
+      });
 
   Future<void> _continueWithRole(Map<String, String> role, String which) =>
-      _run(() => entryContinueWithRole(
-          ref, () => mounted, widget.account, role, which));
+      _run(() async {
+        final scope = SetupStepScope.of(context);
+        await entryContinueWithRole(
+            ref, () => mounted, widget.account, role, which);
+        _refreshRoles();
+        // In-flow student continue still needs enrollment (the flow only
+        // opens unenrolled): step to device. Professor continues flip the
+        // app home — the flow yields via its mode listener (shell path
+        // pops to the revealed shell; fresh-install home already
+        // switched), so no step here.
+        if (mounted && which == 'student' && scope != null) {
+          try {
+            await scope.next();
+          } catch (_) {}
+        }
+      });
+
+  /// Re-read roles after a successful hub action: the cached future would
+  /// otherwise keep showing the pre-action UI (Register buttons after a
+  /// successful registration), making every action look dead although the
+  /// backend + mode already moved.
+  void _refreshRoles() {
+    if (!mounted) return;
+    _roleFutures.remove(widget.account.email.toLowerCase());
+    setState(() {});
+  }
 
   Future<void> _signOut() => _run(() => entrySignOut(ref, () => mounted));
 

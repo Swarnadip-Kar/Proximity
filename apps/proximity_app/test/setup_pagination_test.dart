@@ -30,6 +30,7 @@ import 'package:proximity_app/features/setup/setup_progress.dart';
 import 'package:proximity_app/features/setup/setup_step_scope.dart';
 import 'package:proximity_app/features/setup/welcome_screen.dart';
 import 'package:proximity_app/features/setup/welcome_sections.dart';
+import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/screens/setup_flow_screen.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/widgets/prox_buttons.dart';
@@ -494,8 +495,7 @@ void main() {
 
     testWidgets(
         'back from role while signed in leaves via onFirstBack (never strands on welcome)',
-        (t) async {
-      // Field bug: system back from the role step landed signed-in users
+        (t) async {      // Field bug: system back from the role step landed signed-in users
       // on the welcome step, which has no forward path (re-sign-in is a
       // same-email no-op) — Continue/registration/professor all unreachable
       // behind. While signed in, role is the first step.
@@ -534,6 +534,110 @@ void main() {
       // Still on the role actions — never stranded on welcome.
       expect(find.text('Register as Student'), findsOneWidget);
       expect(find.text('Sign in with Google'), findsNothing);
+      await _settleStepped(t);
+    });
+
+    testWidgets('register as student advances role → device in-flow',
+        (t) async {
+      // Field bug: the tap succeeded backend-side but the stepper sat on
+      // role (stale hub + no advance), looking dead.
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {},
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Register as Student'), findsOneWidget);
+      await t.tap(find.text('Register as Student'));
+      for (var i = 0;
+          i < 30 && find.text('Confirm device').evaluate().isEmpty;
+          i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.text('Confirm device'), findsOneWidget);
+      await _settleStepped(t);
+    });
+
+    testWidgets('mode flip to professor yields the flow via onFirstBack',
+        (t) async {
+      // Shell-pushed flow covers the app home: when a role action flips
+      // the mode underneath, the flow must yield or the new shell stays
+      // hidden behind stale steps (tap looks dead, mode already moved).
+      var firstBacks = 0;
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Scaffold(
+            body: SetupFlowScreen(
+              onFirstBack: () async {
+                firstBacks++;
+              },
+              onComplete: () async {},
+            ),
+            floatingActionButton: Consumer(
+              builder: (context, ref, _) => TextButton(
+                key: const Key('flip-prof'),
+                onPressed: () {
+                  ref.read(appModeProvider.notifier).state = AppMode.prof;
+                },
+                child: const Text('flip'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      expect(find.text('Register as Student'), findsOneWidget);
+      await t.tap(find.byKey(const Key('flip-prof')));
+      await _settleStepped(t);
+      expect(firstBacks, 1);
+      await _settleStepped(t);
+    });
+
+    testWidgets('standalone hub shows Continue after register as student',
+        (t) async {
+      // Same staleness, no flow involved: the cached role future kept
+      // showing Register buttons after a successful registration.
+      await t.pumpWidget(_app(const RoleHubScreen(account: _acct), _base()));
+      await t.pumpAndSettle();
+      expect(find.text('Register as Student'), findsOneWidget);
+      await t.tap(find.text('Register as Student'));
+      for (var i = 0;
+          i < 30 && find.text('Continue as Student').evaluate().isEmpty;
+          i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.text('Continue as Student'), findsOneWidget);
       await _settleStepped(t);
     });
   });

@@ -48,6 +48,7 @@ import '../features/setup/role_hub_screen.dart';
 import '../features/setup/setup_progress.dart';
 import '../features/setup/setup_step_scope.dart';
 import '../features/setup/welcome_screen.dart';
+import '../mode.dart';
 
 /// Pure start-step computation (unit-tested): first incomplete step from
 /// existing state. Role means the *student* registration (prof-only
@@ -267,6 +268,23 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
       if ((next == EnrollPhase.faceDone || next == EnrollPhase.uploaded) &&
           _index < SetupStep.result) {
         _goTo(SetupStep.result);
+      }
+    });
+    ref.listen<AppMode>(appModeProvider, (prev, next) {
+      if (!mounted || !_settled) return;
+      if (prev == next) return;
+      // Role actions inside the flow flip the app home (Continue/Register
+      // as professor, or student registration from another mode): a
+      // shell-pushed flow would otherwise keep covering the new home with
+      // stale steps, making the tap look dead although the backend + mode
+      // already moved. Yield via the parent exit (shell path pops to the
+      // revealed shell). Fresh-install home already switched on the flip,
+      // unmounting this listener before it can fire — no double exit.
+      // Student registration from the shell needs no exit (mode already
+      // student): the hub steps into device itself.
+      if (next == AppMode.prof ||
+          (next == AppMode.student && prev != AppMode.unset)) {
+        unawaited(widget.onFirstBack());
       }
     });
   }
