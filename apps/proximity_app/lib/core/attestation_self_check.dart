@@ -247,9 +247,21 @@ String attestationSelfCheckCopy(AttestationSelfCheck r) {
           'missing). Re-enroll this device on a hardware-backed phone.';
     case 'device-expired':
     case 'expired-cert':
-      return 'This phone\u2019s attestation is stale (expired anchor or 90d '
-          'window + 14d grace spent) — update Android + Play Services, go '
-          'online once so it re-attests, then mark again.';
+      // Split by cause — the old shared copy blamed both, which sent users
+      // with a stale RKP leaf down the heartbeat path and users with a
+      // spent window down the OS-update path:
+      // - expired-cert: an X.509 date in the chain passed (leaf /
+      //   intermediate / anchor — the Debug line names which). A fresh key
+      //   mints a fresh 90d window but reuses the provisioned chain, so
+      //   retrying the SAME key cannot pass: update + online refresh (RKP
+      //   re-provisioning), then Generate anew.
+      // - device-expired: the 90d attestation window + 14d grace spent with
+      //   no online refresh — the chain itself is fine, one online
+      //   heartbeat fixes it.
+      if (r.reason == 'device-expired') {
+        return 'This phone\u2019s attestation window expired (90 days online-refresh + 14 days grace spent) — go online once so it re-attests, then try again.';
+      }
+      return 'This phone\u2019s hardware certificate is expired (a date in its attestation chain has passed — update Android + Play Services, stay online a few minutes so it fetches fresh certificates, then Generate a new device key and Save again. Ask your professor for manual attendance meanwhile.)';
     default:
       return 'This phone\u2019s hardware proof doesn\u2019t verify '
           '(${r.reason}). Re-enroll this device, then mark again.';

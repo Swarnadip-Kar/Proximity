@@ -86,4 +86,22 @@ void main() {
     const r = AttestationSelfCheck(ok: false, reason: 'challenge-mismatch');
     expect(attestationSelfCheckCopy(r), contains('Re-enroll'));
   });
+
+  test('expired-cert copy names certificate remedy (not the 90d window)', () {
+    // Field 2026-09-15: the old shared copy blamed the anchor-or-window
+    // for an X.509 leaf expiry. The split copy must name the certificate
+    // path (update + refresh + Generate anew).
+    const r = AttestationSelfCheck(ok: false, reason: 'expired-cert');
+    final copy = attestationSelfCheckCopy(r);
+    expect(copy, contains('certificate is expired'));
+    expect(copy, contains('Generate a new device key'));
+    expect(copy, isNot(contains('90 days')));
+  });
+
+  test('device-expired copy names the window remedy', () {
+    const r = AttestationSelfCheck(ok: false, reason: 'device-expired');
+    final copy = attestationSelfCheckCopy(r);
+    expect(copy, contains('attestation window expired'));
+    expect(copy, contains('go online once'));
+  });
 }

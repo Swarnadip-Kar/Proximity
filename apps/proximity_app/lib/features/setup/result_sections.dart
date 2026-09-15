@@ -31,19 +31,12 @@ enum EnrollRefusal {
   pipeline,
   partial,
   roll,
+  attestation,
   generic,
 }
 
-/// True when [message] is an attestation-refusal copy (the only refusal
-/// class that carries [EnrollmentState.attestationDebug]). Gates the debug
-/// card so a lingering detail can never render under an unrelated error.
-bool _isAttestationMessage(String message) {
-  final l = message.toLowerCase();
-  return l.contains('attestation is stale') ||
-      l.contains('hardware proof doesn');
-}
-
-EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {  // faceDone carries no message by construction (enrollFace clears it on
+EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {
+  // faceDone carries no message by construction (enrollFace clears it on
   // success), but a validated capture must never render a refusal card even
   // if a stale message ever survives again — belt-and-braces with the
   // controller clear above.
@@ -61,6 +54,11 @@ EnrollRefusal classifyEnrollRefusal(EnrollmentState st) {  // faceDone carries n
   }
   if (m.contains('scan your face first')) return EnrollRefusal.partial;
   if (m.contains('id number')) return EnrollRefusal.roll;
+  if (m.contains('hardware certificate is expired') ||
+      m.contains('attestation window expired') ||
+      m.contains('hardware proof doesn')) {
+    return EnrollRefusal.attestation;
+  }
   return EnrollRefusal.generic;
 }
 
@@ -137,10 +135,11 @@ class ResultRefusalSection extends StatelessWidget {
           isError: refusal != EnrollRefusal.partial,
         ),
         // Debug-only attestation detail (per-cert dates + expired index,
-        // no key material): shown only alongside an attestation refusal so
-        // it can never describe a stale key. Field use: paste this line.
+        // no key material): shown only with the attestation refusal (the
+        // only class that sets it) so a lingering detail can never render
+        // under an unrelated error. Field use: paste this line.
         if (st.attestationDebug.isNotEmpty &&
-            _isAttestationMessage(st.message)) ...[
+            refusal == EnrollRefusal.attestation) ...[
           const SizedBox(height: ProxSpacing.sm),
           ProxCard(
             child: Text(
@@ -297,6 +296,37 @@ class ResultRefusalSection extends StatelessWidget {
                   // Setup pagination split). Standalone pops back to the
                   // rescan entry — 'enroll/intro' is a dead target here,
                   // so never push; a plain pop returns to the caller.
+                  final scope = SetupStepScope.of(context);
+                  if (scope != null) {
+                    scope.goTo(SetupStep.accountKey);
+                  } else {
+                    Navigator.of(context).pop();
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      case EnrollRefusal.attestation:
+        // Retrying the SAME key cannot pass (a fresh key mints a fresh 90d
+        // window but reuses the provisioned chain): the fix is update +
+        // online refresh, then Generate anew on the account step.
+        return ProxCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Next step: update Android + Play Services, stay online a '
+                'few minutes, then Generate a new device key on the account '
+                'step and Save again. Until then, ask your professor to '
+                'mark your attendance manually.',
+              ),
+              const SizedBox(height: ProxSpacing.sm),
+              ProxSecondaryButton(
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Back to account step'),
+                expanded: true,
+                onPressed: () {
                   final scope = SetupStepScope.of(context);
                   if (scope != null) {
                     scope.goTo(SetupStep.accountKey);

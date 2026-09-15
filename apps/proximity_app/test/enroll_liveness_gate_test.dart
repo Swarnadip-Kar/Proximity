@@ -255,6 +255,25 @@ void main() {
           message: 'The right capture did not look live — recapture it.');
       expect(classifyEnrollRefusal(st), EnrollRefusal.generic);
     });
+
+    test('attestation refusals classify (certificate + window)', () {
+      const cert = EnrollmentState(
+          phase: EnrollPhase.error,
+          message:
+              'This phone’s hardware certificate is expired (a date in its '
+              'attestation chain has passed — update Android + Play Services, '
+              'stay online a few minutes so it fetches fresh certificates, '
+              'then Generate a new device key and Save again. Ask your '
+              'professor for manual attendance meanwhile.)');
+      expect(classifyEnrollRefusal(cert), EnrollRefusal.attestation);
+      const window = EnrollmentState(
+          phase: EnrollPhase.error,
+          message:
+              'This phone’s attestation window expired (90 days '
+              'online-refresh + 14 days grace spent) — go online once so it '
+              're-attests, then try again.');
+      expect(classifyEnrollRefusal(window), EnrollRefusal.attestation);
+    });
   });
 
   group('failed-slot tracking for single-slot recapture', () {
