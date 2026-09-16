@@ -69,6 +69,27 @@ Widget rosterTrustTag(bool faceFlag, {bool isDup = false}) {
       : const VerdictBadge(status: ProxStatus.marked, label: 'Verified');
 }
 
+/// Status pills for one marked row (prof live view): Late + trust tag.
+///
+/// Renders as a left-aligned footer Wrap BELOW the name/email lines (same
+/// rule as the student browse tiles) — never beside the name. Two pills
+/// beside the title squeezed long names to 2-3 chars on 360dp phones.
+/// A Wrap (not Row) so Late + Verified flow to two lines on narrow
+/// screens instead of overflowing. Pure for unit tests.
+Widget rosterStatusFooter(bool late, bool faceFlag, {bool isDup = false}) {
+  return Align(
+    alignment: Alignment.centerLeft,
+    child: Wrap(
+      spacing: ProxSpacing.xs,
+      runSpacing: ProxSpacing.xs,
+      children: [
+        if (late) const VerdictBadge(status: ProxStatus.late),
+        rosterTrustTag(faceFlag, isDup: isDup),
+      ],
+    ),
+  );
+}
+
 /// Swipe-to-remove row: professor eject with a confirm step. Renders the
 /// plain [child] when [onRemove] is null (tests/read-only surfaces).
 /// Delete affordance is a trailing red wash + icon (end-to-start swipe),
@@ -359,17 +380,9 @@ class PresentSection extends StatelessWidget {
                   subtitle:
                       '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
                   photoUrl: r.photoUrl,
-                  status: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (r.late) ...[
-                        const VerdictBadge(status: ProxStatus.late),
-                        const SizedBox(width: ProxSpacing.xs),
-                      ],
-                      rosterTrustTag(r.faceFlag,
-                          isDup: (groups[r.email] ?? const {}).isNotEmpty),
-                    ],
-                  ),
+                  status: null,
+                  footer: rosterStatusFooter(r.late, r.faceFlag,
+                      isDup: (groups[r.email] ?? const {}).isNotEmpty),
                   roundTrail: rosterTickPills(r.wins, windowNos),
                 ),
               ),
@@ -422,17 +435,9 @@ class PartialSection extends StatelessWidget {
                 subtitle:
                     '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
                 photoUrl: r.photoUrl,
-                status: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (r.late) ...[
-                      const VerdictBadge(status: ProxStatus.late),
-                      const SizedBox(width: ProxSpacing.xs),
-                    ],
-                    rosterTrustTag(r.faceFlag,
-                        isDup: (groups[r.email] ?? const {}).isNotEmpty),
-                  ],
-                ),
+                status: null,
+                footer: rosterStatusFooter(r.late, r.faceFlag,
+                    isDup: (groups[r.email] ?? const {}).isNotEmpty),
                 roundTrail: rosterTickPills(r.wins, windowNos),
               ),
             ),
@@ -667,16 +672,8 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
                   subtitle:
                       '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
                   photoUrl: r.photoUrl,
-                  status: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (r.late) ...[
-                        const VerdictBadge(status: ProxStatus.late),
-                        const SizedBox(width: ProxSpacing.xs),
-                      ],
-                      rosterTrustTag(r.faceFlag, isDup: true),
-                    ],
-                  ),
+                  status: null,
+                  footer: rosterStatusFooter(r.late, r.faceFlag, isDup: true),
                   roundTrail: rosterTickPills(r.wins, windowNos),
                 ),
               ),
