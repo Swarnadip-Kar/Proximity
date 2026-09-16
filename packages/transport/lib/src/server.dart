@@ -62,9 +62,9 @@ class RadioSighting {
 }
 
 /// Which sighting rule marked the proof (host log only — the signed ACK
-/// verdict is unchanged): `direct-rssi` (RSSI > -70 on a v2 air packet) vs
-/// `legacy-hop0-assumed` (v1 UUID or weak-signal path where hop 0 is
-/// assumed because air packets carry no TTL byte).
+/// verdict is unchanged): `direct-rssi` (RSSI > kRssiDirectDbm on a v2 air
+/// packet) vs `legacy-hop0-assumed` (v1 UUID or weak-signal path where
+/// hop 0 is assumed because air packets carry no TTL byte).
 String sightingRuleOf(RadioSighting? sight) {
   if (sight == null) return 'no-sighting';
   if (!sight.legacy && sight.rssiDbm > kRssiDirectDbm) return 'direct-rssi';
@@ -234,8 +234,10 @@ class ProxServer {
   /// host BLE scan delivers sightings seconds later — a POST that is valid
   /// in every way EXCEPT a missing sighting waits this long for the radio
   /// instead of instantly failing. Without it, marking is a coin flip
-  /// between WiFi latency and scan intervals. Tests shrink it.
-  Duration sightingGrace = const Duration(seconds: 4);
+  /// between WiFi latency and scan intervals. 6s covers the student 3x
+  /// response burst (~1s) plus one duty-cycled scan window on balanced
+  /// Android stacks; uniform on all platforms. Tests shrink it.
+  Duration sightingGrace = const Duration(seconds: 6);
 
   /// Test-only chain-gate override (HW transport tests use fake-DER chains
   /// carrying the OID + challenge bytes but no X.509 signatures — the

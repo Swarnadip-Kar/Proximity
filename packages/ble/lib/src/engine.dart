@@ -537,6 +537,18 @@ class ProxBleEngine {
   /// of the heard challenge (v1 heard → v1 UUID_S response). The v2 packet
   /// echoes the heard server address (professors ignore it; relays of
   /// challenges preserve the original).
+  ///
+  /// Burst (uniform on all platforms): the SAME response airs
+  /// [responseBurst] times (~350ms apart, ~1s total) before returning, so
+  /// a duty-cycled professor scan catches at least one airing and the
+  /// host's strongest-first lookup keeps the best RSSI. A single-shot ADV
+  /// against a balanced scan window was a coin flip — the field shape of
+  /// the `no-ble-sighting` reports. Best-effort after the first airing: a
+  /// failed re-air never fails the prove (the first ADV is already out and
+  /// the server's sighting grace still applies).
+  int responseBurst = 3;
+  Duration responseBurstGap = const Duration(milliseconds: 350);
+
   Future<void> advertiseStudentResponse(
       String studentId, Uint8List challenge, int j, Uint8List peerW) async {
     final rid = ProxCrypto.responseToken(challenge, studentId);
@@ -553,6 +565,17 @@ class ProxBleEngine {
       } catch (e) {
         BleLog.log('BLE', 'ADV response FAILED: $e');
         rethrow;
+      }
+      for (var n = 1; n < responseBurst; n++) {
+        await Future.delayed(responseBurstGap);
+        try {
+          await _advExclusive(() async {
+            await radio.stopAdvertising();
+            await radio.startLegacyUuid(uuid);
+          }, 'response v1 re-air ${n + 1}/$responseBurst j=$j');
+        } catch (_) {
+          break;
+        }
       }
       return;
     }
@@ -576,6 +599,17 @@ class ProxBleEngine {
     } catch (e) {
       BleLog.log('BLE', 'ADV response FAILED: $e');
       rethrow;
+    }
+    for (var n = 1; n < responseBurst; n++) {
+      await Future.delayed(responseBurstGap);
+      try {
+        await _advExclusive(() async {
+          await radio.stopAdvertising();
+          await radio.startAirPacket(kAirSvc, mfg, scanResponse: peerW);
+        }, 'response re-air ${n + 1}/$responseBurst j=$j');
+      } catch (_) {
+        break;
+      }
     }
   }
 

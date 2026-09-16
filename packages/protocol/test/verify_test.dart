@@ -124,8 +124,12 @@ void main() {
       expect(v(1, -75).decision, ProveDecision.confirmed);
       expect(v(2, -78).decision, ProveDecision.confirmed);
       expect(v(3, -70).decision, ProveDecision.invalid);
+      expect(v(0, -74).decision, ProveDecision.confirmed,
+          reason: 'classroom LOS at threshold passes');
       expect(v(0, -75).decision, ProveDecision.invalid,
-          reason: 'direct needs RSSI > -70');
+          reason: 'direct needs RSSI > -75');
+      expect(v(0, -85).decision, ProveDecision.invalid,
+          reason: 'through-wall still rejected');
     });
 
     test('rate limits: /prove 40/10s, /window 5/10s', () {

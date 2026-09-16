@@ -38,7 +38,16 @@ const int kSubEpochSeconds = 10;
 const Duration kFreshness = Duration(seconds: 7);
 
 /// Direct-sighting RSSI threshold (dBm). §5.3 step 6.
-const int kRssiDirectDbm = -70;
+///
+/// Calibrated for a classroom: -75 passes ~8-10m line-of-sight (desks,
+/// bodies, phones in hand) while through-wall/corridor sightings still
+/// fail (walls cost 10-20 dB, landing ≤-85). -70 proved a ~3m small-room
+/// value in the field (side-by-side passed, classroom failed). RSSI is
+/// only the casual-outsider trim — the real anti-relay work is
+/// face + device key + single-use + freshness + TLS binding, so an active
+/// relay with a high-gain antenna passes any threshold; do not chase it
+/// here. Uniform on all platforms (verify-side, format-agnostic).
+const int kRssiDirectDbm = -75;
 
 /// Relay-admission RSSI threshold (dBm). §6.2.
 const int kRssiRelayMinDbm = -80;

@@ -105,7 +105,7 @@ class ProxServer {
   /// Mirror of server.dart: professor eject (web never hosts).
   bool removeStudent(String email) => _web();
 
-  Duration sightingGrace = const Duration(seconds: 4);
+  Duration sightingGrace = const Duration(seconds: 6);
 
   /// Mirror of server.dart: C1 TOFU pin (web never hosts).
   bool pinStudentKey(String emailLower, String pkSHex,

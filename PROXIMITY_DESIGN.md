@@ -479,7 +479,7 @@ Signatures exclude the TTL byte so relays can decrement it without invalidating 
 4. Verify(PK_s presented device key, Sig_s)   // TOFU per class, no roster
 5. faceScore >= threshold (holder freshness enforced on-device by the
    SK-use gate; server faceValidAt is POST arrival — defense in depth)
-6. BLE sighting exists: direct RSSI > -70 dBm, or relayed hop <= 2 (flagged);
+6. BLE sighting exists: direct RSSI > -75 dBm (classroom LOS; was -70, a ~3m small-room value — field report 2026-09-16), or relayed hop <= 2 (flagged);
    crypto-valid but not-yet-seen waits the sighting grace, then verdicts late
 7. Mark ID present for W (late verdicts mark flagged-late — late-only rounds
    persist), update live counts, return signed ACK binding the DECISION INSTANT
@@ -763,7 +763,7 @@ mandatory during windows on all OS (keep-open banner).
 ## 9. Scale, robustness, testing
 
 - Load: 500 POSTs/30 s (~17/s) + 500 UUID advertisers + 6 rotations. Ed25519 verify total ~1000–2500 per lecture, well under 1 s on phone/laptop. Jitter 0–2 s plus server `Retry-After` spreads herd. BLE capture requires 1/6 sub-epochs seen per student, not all.
-- Collisions: 200 ms adv interval + continuous scan + GATT-read fallback on CRC fail. Field-tune TxPower and `-70 dBm` direct / `-80 dBm` relay thresholds per hall with `nRF Connect` walk-test.
+- Collisions: 200 ms adv interval + continuous scan + GATT-read fallback on CRC fail. Field-tune TxPower and `-75 dBm` direct / `-80 dBm` relay thresholds per hall with `nRF Connect` walk-test. Student response airs 3x (~350ms apart, strongest wins); Android scans LOW_LATENCY/allMatches during window+listen (other platforms ignore the block); server sighting grace 6s. Auto face-scan trigger is WiFi (`POST /waiting` + 2s `GET /window` poll), never BLE — BLE gates discovery (IP hints) and the prove sighting only.
 - Clock drift: 17 s one-sided acceptance (10 s rotation + 7 s grace) covers typical phone drift; professor is time authority (signed `serverTime` in ACK); the app banners median drift over recent verdicts instead of silently verdicting late.
 - MAC rotation: neutralized by rotating `peerW` in scan response + presented-key HMAC lookup (500 HMACs per sighting batch, trivial).
 - Crash windows (stated): a crash between the history write and the

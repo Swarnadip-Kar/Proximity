@@ -230,9 +230,24 @@ class UniversalBleRadio implements BlePlatformDelegate {
     // Unfiltered scan: v1 rotating UUIDs share no common service with v2,
     // so hardware filtering would drop one format. Parsing in [AirParser]
     // is the filter.
+    // Uniform scan intent on all platforms: Android requests LOW_LATENCY
+    // (allMatches, aggressive, max) so duty-cycled stacks do not miss the
+    // student's ~1s response burst; other platforms ignore the android
+    // block (CoreBluetooth/BlueZ manage duty-cycle themselves). No TX knob
+    // exists in universal_ble 2.2.0 peripheral options, so reliability on
+    // the advertise side comes from the Dart burst, not here.
     BleLog.log('BLE', 'scan start (unfiltered, dual-format)');
     try {
-      await UniversalBle.startScan();
+      await UniversalBle.startScan(
+        platformConfig: PlatformConfig(
+          android: AndroidOptions(
+            scanMode: AndroidScanMode.lowLatency,
+            callbackType: [AndroidScanCallbackType.allMatches],
+            matchMode: AndroidScanMatchMode.aggressive,
+            numOfMatches: AndroidScanNumOfMatches.max,
+          ),
+        ),
+      );
       BleLog.log('BLE', 'scan active');
     } catch (e) {
       BleLog.log('BLE', 'scan start FAILED: $e');

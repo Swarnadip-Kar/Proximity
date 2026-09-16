@@ -387,7 +387,8 @@ VerifyOutcome verifyProve({
       return VerifyOutcome(
           ProveDecision.invalid, 'device-unproven', allFlags);
     }
-    // BLE sighting: direct RSSI > -70, or relayed hop <= 2 (flagged).
+    // BLE sighting: direct RSSI > kRssiDirectDbm (-75, classroom LOS),
+    // or relayed hop <= 2 (flagged).
     final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
     final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
     if (!direct && !relayed) {

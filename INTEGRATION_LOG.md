@@ -3124,3 +3124,41 @@ Scope: field photo proved the iQOO still runs a pre-`0bb9216` binary (`cert0:207
 - Enroll render fixture updated to the realistic post-fix refusal (spent RKP `attest-cert-1`, leaf `unchecked-leaf`).
 
 Verify: `dart test` protocol 224/224 (incl. 4 new factory/leaf tests); app attestation 12/12; `dart analyze` clean on touched files. OPERATOR: ship a fresh APK from this tree to the iQOO and re-tap Save; expect `eng=rkf50-leafSkip-factoryExpIgnore` + `unchecked-leaf`.
+
+## Field batch 4: face trigger vs BLE sighting, roster overlap, face stall, fingerprint loop, classroom range (2026-09-16)
+
+Scope: field report (Android-to-Android) — auto face-scan fires reliably but
+signing often fails `no-ble-sighting`; Verified/Late pills cover student
+names on prof roster; face screen sticks after first fail; fingerprint
+prompts on every prove (screen before face scan). Five reviewable commits.
+
+- Trigger contract (docs only): auto face-scan is WiFi (`POST /waiting` +
+  2s `GET /window` poll → `_advanceToFace` → post-frame `_scheduleAutoScan`),
+  never BLE. BLE gates discovery (IP hints) + the prove sighting. Reliable
+  scan + failing prove = WiFi up + BLE down, not a trigger bug.
+- fix(prof-roster): Late + trust tag moved to a left-aligned footer Wrap
+  below name/email/trail (same rule as browse tiles); title line carries no
+  pills. Root cause: two pills in the title Row left ~120px for names on
+  360dp phones.
+- fix(face): `_resetFaceRetryBudget()` on every new session (join, waiting
+  entry, explicit Scan tap, needs-review retry). Root cause: tries/deadline
+  reset only on join, so a spent 7s window left later taps single-shot.
+  Capture sheet: Cancel stays enabled through in-preview retries; transient
+  failure re-arms Capture as `Try again` instead of permanent disable.
+- fix(auth): SecureDeviceStore caches enrollment + installId per process
+  (writes invalidate) + 5s failure cooldown; transport prove() memoizes
+  dSigFor per (ticket,j,hash) — one HW sign per prove call instead of up to
+  3. Root cause: both reads share the biometric-gated FSS instance and were
+  re-read per face check + per prove rotation; cancel swallowed as null fed
+  the auto-retry hammer + restore-detected mislabel.
+- fix(ble, uniform): `kRssiDirectDbm` -70 → -75 (classroom LOS ~8-10m,
+  through-wall still ≤-85; active relay out of scope — face + device key +
+  single-use + freshness + TLS binding are the real gates); student response
+  burst 3x ~350ms (strongest wins); Android scan LOW_LATENCY/allMatches
+  (other platforms ignore the block — no TX knob in universal_ble 2.2.0);
+  server `sightingGrace` 4s → 6s. All policy in shared Dart — identical on
+  every platform/fleet mix. `PROXIMITY_DESIGN.md` §§5.3/9 updated.
+
+Verify: protocol 224/224 incl. updated -75 boundary tests; transport full
+suite green; ble engine green; app roster/secure-store/face suites green;
+`flutter analyze` clean on touched files.
