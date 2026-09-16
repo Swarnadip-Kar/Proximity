@@ -32,6 +32,22 @@ Uint8List concat(List<List<int>> parts) {
   return out;
 }
 
+/// RFC4180 cell + formula-injection guard (audit LOW fix): fields
+/// containing `,` `"` CR LF are double-quoted (inner `"` doubled);
+/// fields starting with `=` `+` `-` `@` are `'`-prefixed so spreadsheet
+/// apps never evaluate stranger-controlled names/rolls/emails as
+/// formulas (quoting alone does NOT stop formula eval). Status/P/A/1/0
+/// cells are enum-safe and bypass this. Single definition shared by the
+/// LAN signed export here and `proximity_storage` (which imports it).
+String csvCell(String field) {
+  var cell = field;
+  if (cell.startsWith(RegExp(r'[=+\-@]'))) cell = "'$cell";
+  if (cell.contains(RegExp(r'[",\r\n]'))) {
+    cell = '"${cell.replaceAll('"', '""')}"';
+  }
+  return cell;
+}
+
 bool bytesEqual(List<int> a, List<int> b) {
   if (a.length != b.length) return false;
   var acc = 0;

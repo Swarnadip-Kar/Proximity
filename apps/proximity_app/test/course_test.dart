@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/face_camera.dart';
-import 'package:proximity_app/core/host_driver.dart';
-import 'package:proximity_app/core/student_driver.dart';
-import 'package:proximity_app/screens/course_detail.dart';
-import 'package:proximity_app/screens/courses.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/records/course_attendance_detail_screen.dart';
+import 'package:proximity_app/features/records/course_overview_screen.dart';
+import 'package:proximity_app/features/records/export_center_screen.dart';
+import 'package:proximity_app/features/records/my_attendance_screen.dart';
+import 'package:proximity_app/features/records/prof_courses_screen.dart';
+import 'package:proximity_app/features/records/session_detail_screen.dart';
+import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/screens/take_attendance.dart';
 import 'package:proximity_app/widgets/clock.dart';
-import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+
+import 'widget_test.dart' as helpers;
 
 Future<InMemoryDeviceStore> seeded() async {
   final s = InMemoryDeviceStore();
@@ -29,24 +31,15 @@ Future<InMemoryDeviceStore> seeded() async {
   return s;
 }
 
-ProviderScope wrap(InMemoryDeviceStore s, Widget home) => ProviderScope(
-      overrides: [
-        deviceStoreProvider.overrideWithValue(s),
-        faceCameraProvider.overrideWithValue(FakeFaceCamera()),
-        hostDriverProvider.overrideWithValue(FakeHostDriver()),
-        studentDriverProvider.overrideWithValue(FakeStudentDriver()),
-        bleEngineProvider
-            .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
-        blePermissionProvider.overrideWithValue(() async => true),
-        cameraPermissionProvider.overrideWithValue(() async => true),
-        btPowerProvider.overrideWithValue(() async => BtState.on),
-      ],
-      child: MaterialApp(home: home),
-    );
+/// Records ProviderScope shim removed (A4): pumps below use the canonical
+/// widget_test.testScope (store + explicit MaterialApp home).
 
 void main() {
   testWidgets('courses list recent-first with session counts', (t) async {
-    await t.pumpWidget(wrap(await seeded(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.text('CS201'), findsOneWidget);
     expect(find.text('CS202'), findsOneWidget);
@@ -54,10 +47,35 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
+  testWidgets('courses export-all dock', (t) async {
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
+    await t.pumpAndSettle();
+    // Floating dock like Review & export; enabled while any course has
+    // sessions. Tap not exercised — the platform share sheet has no test
+    // fake.
+    expect(find.text('Export All Data'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  test('export-all naming: per-course entries + fleet zip', () {
+    expect(exportAllEntryName('CS201'), 'attendance_CS201_all.csv');
+    expect(
+      exportAllZipName('prof@univ.edu', DateTime.utc(2026, 9, 12, 10, 30, 5)),
+      'prof@univ.edu_Attendance_record_20260912T103005Z.zip',
+    );
+  });
+
   testWidgets('courses empty state + register', (t) async {
-    await t.pumpWidget(wrap(InMemoryDeviceStore(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: InMemoryDeviceStore(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     expect(find.textContaining('No courses yet'), findsOneWidget);
+    expect(find.text('Export All Data'), findsNothing);
     await t.tap(find.text('Register new course'));
     await t.pumpAndSettle();
     await t.enterText(
@@ -67,50 +85,110 @@ void main() {
     expect(find.text('CS301'), findsOneWidget);
   });
 
+  test('records route identities match the IA (one name per screen)', () {
+    // Navigation identity (records packet): every in-tab push carries one
+    // of these names — named logs, popUntil by name/prefix, deep-link parity.
+    expect(ProfCoursesScreen.routeName, 'prof/courses');
+    expect(CourseOverviewScreen.routeName('CS201'), 'prof/courses/CS201');
+    expect(
+        ExportCenterScreen.routeName('CS201'), 'prof/courses/CS201/export');
+    expect(SessionDetailScreen.routeName('CS201', 'sess-1'),
+        'prof/courses/CS201/sessions/sess-1');
+    expect(SessionEditScreen.routeName('CS201', 'sess-1'),
+        'prof/courses/CS201/sessions/sess-1/edit');
+    expect(MyAttendanceScreen.routeName, 'records/mine');
+    expect(CourseAttendanceDetailScreen.routeName('CS201'),
+        'records/mine/CS201');
+  });
+
   test('date labels: short day/month + full weekday/date/year', () {
-    expect(shortDayDateOf('2026-09-03'), 'Thu, 3 Sep');
-    expect(shortDateOf('2026-09-03'), '3 Sep');
-    expect(fullDateOf('2026-09-03'), 'Thursday, 3 September 2026');
+    expect(shortDayDateOf('2026-09-03'), 'Thu, 03-09-2026');
+    expect(shortDateOf('2026-09-03'), '03-09-2026');
+    expect(fullDateOf('2026-09-03'), 'Thursday, 03-09-2026');
     expect(shortTimeOf('2026-09-03T12:34:56.000Z'), isNotEmpty);
     expect(shortTimeOf('2026-09-03T00:00:00.000'), isEmpty);
     expect(shortDayDateOf('garbage'), 'garbage');
   });
 
-  testWidgets('course detail: sessions + export + retake', (t) async {    await t.pumpWidget(
-        wrap(await seeded(), const CourseDetailScreen(courseName: 'CS201')));
+  testWidgets('course overview: sessions + export center (records-only)',
+      (t) async {
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
-    expect(find.text('Take attendance'), findsOneWidget);
-    expect(find.text('Export date range'), findsOneWidget);
-    // Tight title: short weekday + day/month; roomy subtitle: full date.
-    expect(find.textContaining('Thu, 3 Sep'), findsOneWidget);
+    // Records-only (§3.1a): no hosting entry lives in this tab.
+    expect(find.text('Take attendance'), findsNothing);
+    expect(find.byTooltip('Retake attendance'), findsNothing);
+    expect(find.byType(Checkbox), findsNothing);
+    expect(find.text('Review & export'), findsOneWidget);
+    // Main line: day, date and time (roomy); present (green) over
+    // absent (red) badges beside it; no tight label anywhere here.
     expect(
-        find.textContaining('Thursday, 3 September 2026'), findsOneWidget);
+        find.textContaining('Thu, 03-09-26'), findsOneWidget);
+    expect(find.textContaining('Thu, 03-09-2026'), findsNothing);
     expect(find.textContaining('2026-09-03'), findsNothing);
-    // export dialog shows simple session CSV (no W1/W2)
+    // Attendance % top-right; rounds line carries the counts
+    // (absent red · partial yellow · present green) left of nothing —
+    // rounds left, counts right.
+    expect(find.text('0%'), findsOneWidget);
+    expect(find.textContaining('2 rounds'), findsOneWidget);
+    // Compact counts: ✓ present, `N partial` word, ✗ absent.
+    expect(find.byIcon(Icons.check), findsOneWidget);
+    expect(find.textContaining('1 partial'), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.text('Total Classes: 1'), findsOneWidget);
+    // Review & export opens the export center (per-session CSV + matrix).
+    await t.tap(find.text('Review & export'));
+    await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.byType(ExportCenterScreen)))
+            ?.settings
+            .name,
+        'prof/courses/CS201/export');
+    expect(find.text('Export date range'), findsOneWidget);
     await t.tap(find.byTooltip('Export CSV'));
     await t.pumpAndSettle();
+    // export dialog shows simple session CSV (no W1/W2)
     expect(find.textContaining('A,1,a@x.in,Absent'), findsOneWidget);
     await t.tap(find.text('Close'));
-    await t.pumpAndSettle();
-    // retake pushes the live screen and auto-starts the single window
-    await t.tap(find.byTooltip('Retake attendance'));
-    await t.pumpAndSettle();
-    expect(find.textContaining('demo · Code KQ7'), findsOneWidget);
-    // stop early so no timers leak, then close
-    await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('course detail: select sessions + delete with X/Y warning',
+  testWidgets('export center: shared date-only rows + range entry',
       (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const CourseDetailScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const ExportCenterScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
-    await t.tap(find.byType(Checkbox).first);
+    // Floating range entry is back; rows reuse the shared session card
+    // with date-only titles (no avatar, no course name).
+    expect(find.text('Export date range'), findsOneWidget);
+    expect(find.textContaining('Thu, 03-09-26'), findsOneWidget);
+    expect(find.textContaining('CS201 ·'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('course overview: hold-and-tap select + delete with X/Y warning',
+      (t) async {
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
-    expect(find.textContaining('Delete selected (1)'), findsOneWidget);
-    await t.tap(find.textContaining('Delete selected (1)'));
+    // Hold-and-tap enters selection mode (no checkboxes in this tab).
+    await t.longPress(find.textContaining('Thu, 03-09-26'));
+    await t.pumpAndSettle();
+    expect(find.text('Delete 1'), findsOneWidget);
+    expect(find.text('Select all'), findsOneWidget);
+    expect(find.byTooltip('Cancel'), findsOneWidget);
+    await t.tap(find.text('Delete 1'));
     await t.pumpAndSettle();
     expect(
         find.textContaining(
@@ -122,10 +200,17 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
-  testWidgets('prof courses: delete course with X/Y warning', (t) async {
-    await t.pumpWidget(wrap(await seeded(), const ProfCoursesScreen()));
+  testWidgets('prof overview: delete course with X/Y warning', (t) async {
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const CourseOverviewScreen(courseName: 'CS201'))));
     await t.pumpAndSettle();
-    await t.tap(find.byTooltip('Delete course').first);
+    await t.scrollUntilVisible(find.text('Delete course'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete course'));
     await t.pumpAndSettle();
     expect(
         find.textContaining(
@@ -133,16 +218,25 @@ void main() {
         findsOneWidget);
     await t.tap(find.text('Delete'));
     await t.pumpAndSettle();
-    expect(find.text('CS201'), findsNothing);
+    // Popped back after deleting the whole course.
+    expect(find.text('Delete course'), findsNothing);
     expect(t.takeException(), isNull);
   });
 
   testWidgets('course rename from detail returns to updated list', (t) async {
-    await t.pumpWidget(
-        wrap(await seeded(), const ProfCoursesScreen()));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(), home: const ProfCoursesScreen())));
     await t.pumpAndSettle();
     await t.tap(find.text('CS201'));
     await t.pumpAndSettle();
+    // Navigation identity (records packet): one named route per screen.
+    expect(
+        ModalRoute.of(t.element(find.byType(CourseOverviewScreen)))
+            ?.settings
+            .name,
+        'prof/courses/CS201');
     await t.tap(find.byTooltip('Edit course'));
     await t.pumpAndSettle();
     await t.enterText(
@@ -156,8 +250,14 @@ void main() {
   });
 
   testWidgets('take screen shows optional professor name field', (t) async {
-    await t.pumpWidget(wrap(await seeded(),
-        const TakeAttendanceScreen(courseName: 'CS201')));
+    await t.pumpWidget(helpers.testScope(
+        store: await seeded(),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
+    await t.pumpAndSettle();
+    // The name field lives on the Setup sub-tab (real sub-tabs: tap swaps).
+    await t.tap(find.text('Setup'));
     await t.pumpAndSettle();
     expect(
         find.widgetWithText(

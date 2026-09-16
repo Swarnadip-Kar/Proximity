@@ -23,6 +23,15 @@ class WindowDescriptor {
   final Uint8List sigP;
   final Uint8List tlsFp;
   final String display;
+  final String org;
+  /// Mirror of client.dart: gated unicast prof Gmail, '' = unknown/legacy.
+  final String profEmail;
+
+  /// Mirror of client.dart: gated unicast prof photo, '' = unknown.
+  final String profPhoto;
+
+  /// Mirror of client.dart: gated unicast prof display name, '' = unknown.
+  final String profName;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -32,6 +41,10 @@ class WindowDescriptor {
     required this.sigP,
     required this.tlsFp,
     required this.display,
+    this.org = '',
+    this.profEmail = '',
+    this.profPhoto = '',
+    this.profName = '',
   });
 }
 
@@ -40,11 +53,14 @@ class ProveResult {
   final String reason;
   final DateTime serverTime;
   final Uint8List sigAck;
+  /// Attestation anomaly flags from the host (mirror of client.dart).
+  final List<String> flags;
   const ProveResult({
     required this.decision,
     required this.reason,
     required this.serverTime,
     required this.sigAck,
+    this.flags = const [],
   });
 
   bool verifyAck({
@@ -64,27 +80,56 @@ class ProxClient {
 
   void close() {}
 
-  Future<({bool reachable, bool windowOpen, String classLabel, int waiting, String display})>
-      probeWindow({Duration timeout = const Duration(seconds: 4)}) =>
+  Future<
+      ({
+        bool reachable,
+        bool windowOpen,
+        String classLabel,
+        int waiting,
+        String display,
+        int windowNo,
+        String org,
+        String profEmail,
+        String profPhoto,
+        String profName
+      })> probeWindow(
+          {Duration timeout = const Duration(seconds: 4),
+          void Function(Object e)? onError,
+          String org = ''}) =>
           _web();
 
-  Future<void> postWaiting(
+  /// Mirror of client.dart: presence + piggybacked window sample
+  /// (web never joins; identical signature so shared code compiles).
+  Future<
+      ({
+        int waiting,
+        bool windowOpen,
+        String display,
+        String leaveToken
+      })> postWaiting(
           {required String email,
           required String name,
-          String roll = ''}) =>
+          String roll = '',
+          String org = '',
+          String photoUrl = ''}) =>
       _web();
 
-  Future<void> postLeave({required String email}) => _web();
+  Future<void> postLeave({required String email, String leaveToken = ''}) =>
+      _web();
 
   Future<void> postManualRequest(
           {required String email,
           required String name,
-          String roll = ''}) =>
+          String roll = '',
+          String org = '',
+          String photoUrl = ''}) =>
       _web();
 
   Future<String> fetchManualStatus(String email) => _web();
 
-  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge) => _web();
+  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge,
+          {String org = ''}) =>
+      _web();
 
   Future<ProveResult> prove({
     required WindowDescriptor desc,
@@ -98,8 +143,28 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
     Random? rng,
     int maxAttempts = 3,
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
+    // LAN-only session vector (`face:{vec}` — mirror of client.dart;
+    // web never proves).
+    String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
+    List<String> attestationChain = const [],
+    String installId = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) =>
       _web();
 }

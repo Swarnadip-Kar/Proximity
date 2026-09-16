@@ -16,6 +16,68 @@ void main() {
       return (sess, wid, prof, stu);
     }
 
+    // Fresh bound request (liveness + FULL tier): the only shape that
+    // confirms. Sighting tests use it so the asserted reasons pin the
+    // radio gate, not an earlier legacy reject.
+    (Uint8List, VerifyRequest) freshSig(
+      dynamic stu,
+      Uint8List sess,
+      Uint8List wid,
+      int j,
+      Uint8List cj,
+      String id,
+      double face, {
+      int hop = 0,
+      int rssi = -55,
+    }) {
+      final now = DateTime.now().toUtc();
+      final ticket = ProxCrypto.faceTicketHash(
+        faceScore: face,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: 'face_verification/test+deadbeef',
+        livenessScore: 0.92,
+        livenessVer: 'liveness/minifasnet-v2-test+a1b2c3d4',
+      );
+      final sig = ProxCrypto.signStudentProve(
+        studentSk: stu.privateKey,
+        sessionId: sess,
+        windowId: wid,
+        j: j,
+        challenge: cj,
+        studentId: id,
+        faceScore: face,
+        faceValidAtMs: now.millisecondsSinceEpoch,
+        verifierVer: 'face_verification/test+deadbeef',
+        livenessScore: 0.92,
+        livenessVer: 'liveness/minifasnet-v2-test+a1b2c3d4',
+      );
+      return (
+        cj,
+        VerifyRequest(
+          id: id,
+          windowId: wid,
+          j: j,
+          cClaimed: cj,
+          sigS: sig,
+          faceScore: face,
+          faceValidAt: now,
+          peerW: Uint8List(8),
+          rssiDbm: rssi,
+          relayHop: hop,
+          now: now,
+          verifierVer: 'face_verification/test+deadbeef',
+          faceValidAtMs: now.millisecondsSinceEpoch,
+          faceTicketHashBytes: ticket,
+          livenessScore: 0.92,
+          livenessVer: 'liveness/minifasnet-v2-test+a1b2c3d4',
+          attestationLevel: AttestationLevel.full,
+          attestedAt: now.subtract(const Duration(days: 1)),
+          attestedUntil: now.add(const Duration(days: 89)),
+          dSigValid: true,
+        ),
+      );
+    }
+
     test('happy path: direct sighting confirms', () async {
       final (sess, wid, _, stu) = await setup();
       final sw = randBytes(32);
@@ -23,28 +85,9 @@ void main() {
       const id = '12342210';
       final cj = ProxCrypto.challengeForSubEpoch(sw, wid, j);
       const face = 0.82;
-      final sig = ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: sess,
-          windowId: wid,
-          j: j,
-          challenge: cj,
-          studentId: id,
-          faceScore: face);
-      final now = DateTime.now().toUtc();
+      final (_, req) = freshSig(stu, sess, wid, j, cj, id, face);
       final out = verifyProve(
-        req: VerifyRequest(
-            id: id,
-            windowId: wid,
-            j: j,
-            cClaimed: cj,
-            sigS: sig,
-            faceScore: face,
-            faceValidAt: now,
-            peerW: Uint8List(8),
-            rssiDbm: -55,
-            relayHop: 0,
-            now: now),
+        req: req,
         expectedCj: cj,
         sessionId: sess,
         windowIdExpected: wid,
@@ -63,29 +106,11 @@ void main() {
       const id = '1';
       final cj = ProxCrypto.challengeForSubEpoch(sw, wid, j);
       const face = 0.9;
-      final sig = ProxCrypto.signStudentProve(
-          studentSk: stu.privateKey,
-          sessionId: sess,
-          windowId: wid,
-          j: j,
-          challenge: cj,
-          studentId: id,
-          faceScore: face);
       VerifyOutcome v(int hop, int rssi) {
-        final now = DateTime.now().toUtc();
+        final (_, req) = freshSig(stu, sess, wid, j, cj, id, face,
+            hop: hop, rssi: rssi);
         return verifyProve(
-          req: VerifyRequest(
-              id: id,
-              windowId: wid,
-              j: j,
-              cClaimed: cj,
-              sigS: sig,
-              faceScore: face,
-              faceValidAt: now,
-              peerW: Uint8List(8),
-              rssiDbm: rssi,
-              relayHop: hop,
-              now: now),
+          req: req,
           expectedCj: cj,
           sessionId: sess,
           windowIdExpected: wid,
@@ -118,6 +143,39 @@ void main() {
         expect(win.allow('1.2.3.4', t0), isTrue);
       }
       expect(win.allow('1.2.3.4', t0), isFalse);
+    });
+
+    test('rate limiter memory is bounded (evict oldest, prune empties)', () {
+      final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
+      final lim = RateLimiter(maxHits: 40, window: const Duration(seconds: 10));
+      for (var i = 0; i < RateLimiter.maxKeys + 100; i++) {
+        expect(lim.allow('10.0.0.$i', t0), isTrue);
+      }
+      expect(lim.keyCount, RateLimiter.maxKeys);
+      // The earliest buckets were evicted: re-admitted as fresh.
+      expect(lim.allow('10.0.0.0', t0), isTrue);
+      expect(lim.keyCount, RateLimiter.maxKeys);
+      // Expired buckets never linger: after the window, a denied-then-
+      // expired key re-admits without growing the map.
+      final small = RateLimiter(maxHits: 1, window: const Duration(seconds: 10));
+      expect(small.allow('a', t0), isTrue);
+      expect(small.allow('a', t0.add(const Duration(seconds: 1))), isFalse);
+      expect(small.allow('a', t0.add(const Duration(seconds: 11))), isTrue);
+      expect(small.keyCount, 1);
+    });
+
+    test('signed LAN export hardens identity cells (formula/quoting)',
+        () {
+      final csv = buildAttendanceCsv(
+        classLabel: 'CS201-Room301',
+        dateIso: '2026-09-03',
+        w1: {'a@x.in': true},
+        w2: {'a@x.in': true},
+        names: {'a@x.in': '=EVIL(), Jr'},
+        rolls: {'a@x.in': '1'},
+      );
+      expect(csv, contains('"\'=EVIL(), Jr"'));
+      expect(csv, contains(',1,1,Present'));
     });
 
     test('CSV export + detached sig verifies; tamper fails', () async {

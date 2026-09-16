@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "355638335271-jip25vubc4v6jq70o3ca34hg7nn787kq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "org.iitbhilai.proximity",
+            "certificate_hash": "8286f07a6cdbfa6b64c3772e8b84c6ed06dbd67a"
+          }
+        },
+        {
           "client_id": "355638335271-dajvagngvhrgn6c7i3lfiqntbosa024v.apps.googleusercontent.com",
           "client_type": 3
         }

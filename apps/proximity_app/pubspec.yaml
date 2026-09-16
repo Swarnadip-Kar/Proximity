@@ -14,8 +14,6 @@ dependencies:
     path: ../../packages/protocol
   proximity_ble:
     path: ../../packages/ble
-  proximity_face:
-    path: ../../packages/face
   proximity_transport:
     path: ../../packages/transport
   proximity_storage:
@@ -23,29 +21,124 @@ dependencies:
   # Firebase via FlutterFire (project: proximity-attendence).
   # Auth + Firestore: sign-in on Android/iOS/macOS; Windows/Linux builds
   # run offline-only (see AuthService.available + main fail-soft).
-  firebase_core: ^3.8.0
-  firebase_auth: ^5.3.3
-  cloud_firestore: ^5.5.0
+  # Firebase-major 4.x set (migrated 2026-09-13, sec-deps): firebase_core
+  # 4.x ships the Android BOM 34 / iOS SDK 12 native bump only — the Dart
+  # surface used here (initializeApp, authStateChanges, signInWithCredential,
+  # Firestore get/set/batch/runTransaction) is unchanged, so auth.dart and
+  # firestore_sync.dart needed no code changes. firebase_auth 6.x removals
+  # (fetchSignInMethodsForEmail, User.updateEmail, Dynamic Links, legacy
+  # MicrosoftAuthProvider.credential) and firestore 6.x removals
+  # (databaseURL, Settings.persistenceEnabled, setIndexConfiguration) are
+  # all APIs this app never called (verified by grep pre-migration).
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.9.0
+  # google_sign_in stays 6.x BY DECISION (not oversight): 7.x replaces the
+  # GoogleSignIn(scopes:) + signIn()/authentication/signOut() surface that
+  # auth.dart uses with the instance/initialize/authenticate event API — a
+  # separate auth-rewrite track. 6.x has no firebase_core pin so it
+  # resolves cleanly beside core 4.x.
   google_sign_in: ^6.2.2
   path_provider: ^2.1.4
   ed25519_edwards: ^0.3.1
   camera: ^0.12.0
-  flutter_secure_storage: ^9.2.2
+  flutter_secure_storage: ^11.0.0
+  # §6 force-update gate: Firestore app_config/min_version vs running
+  # version (see lib/core/app_config/force_update.dart). Owned by 1B only —
+  # other agents request versions through 1B, never edit here directly.
+  # ^10.x: 8.x/9.x pin win32 ^5, unresolvable with fss ^11 (win32 ^6).
+  package_info_plus: ^10.2.1
   shared_preferences: ^2.3.2
   universal_ble: ^2.2.0
-  permission_handler: ^13.0.1
-  tflite_flutter: ^0.12.1
-  image: ^4.9.2
-  share_plus: ^12.0.2
+  # Pinned to 12.x, NOT 13.x: permission_handler 13 pulls
+  # permission_handler_android 14.x, which declares `compileSdk = 37` —
+  # but Google has not published `platforms;android-37` (stable repo tops
+  # out at 36, verified Sep 2026), so nothing compiles it, on CI or
+  # locally. Re-upgrade to 13.x once the API-37 platform ships. The BLE /
+  # camera / location APIs used here are unchanged since v10.
+  permission_handler: ^12.0.0
+  # Tracks 2+3: on-device face verification (FaceNet TFLite bundled in the
+  # plugin, offline; Android/iOS only — desktop/web get the fail-closed
+  # UnavailableFaceVerifier via DI). Verified on pub.dev: MIT, Flutter
+  # >=3.44 (repo runs 3.47.2). APIs used: init(),
+  # registerFromImagePath, verifyFromImagePath(Isolate),
+  # deleteFaceRecord/deleteUserFaces. Example/Quick-Demo pattern followed
+  # in features/face_identity/face_verifier.dart.
+  face_verification: ^0.3.9
+  # Direct dep (already transitive via face_verification ^0.3.9 → same
+  # native ML Kit library, no new binary/permission/size): enrollment
+  # pose-gates each captured still via headEulerAngleY/X on the still FILE
+  # (InputImage.fromFilePath — no camera image-stream, no extra battery).
+  # The plugin API is image-path gallery only and never surfaces pose, so
+  # without this the angles would be instruction-only. Offline, Android/iOS
+  # only; records builds never construct the gate (canUseFace gate + web
+  # stub via conditional export in pose_gate.dart).
+  google_mlkit_face_detection: ^0.15.1
+  # Bumped 12.x -> 13.x by 1B: 12.x pins win32 ^5, unresolvable with
+  # flutter_secure_storage ^11 (win32 ^6). ShareParams API unchanged 12->13.
+  share_plus: ^13.3.0
   wakelock_plus: ^1.5.2
+  # Phase 1 visual identity: real font pairing (pure Dart, no native
+  # runtime — safe on all build targets incl. web).
+  google_fonts: ^6.2.1
   # Web records build only (browser download for CSV exports).
   web: ^1.0.0
+  connectivity_plus: ^7.3.1
+  # Bumped 11.x -> 12.x by 1B: 11.x pins win32 ^5, unresolvable with
+  # flutter_secure_storage ^11 (win32 ^6). App uses only
+  # FilePicker.getDirectoryPath (stable v11->v12). Note: iOS floor becomes
+  # 14 (PHPicker).
+  file_picker: ^12.0.0
+  archive: ^4.2.0
+  attested_secure_keys: ^0.1.1
+  # Offline X.509 serial extraction for the CRL snapshot review path
+  # (core/security/chain_serial.dart, sec-revoke — pure-Dart ASN.1, no
+  # network). Same line as proximity_protocol (^1.6.5) so the resolve is
+  # unambiguous; direct (not transitive) because app code imports it.
+  asn1lib: ^1.6.5
+  # §5 integrity deps (owned by sec-integrity — other tracks request via 2C,
+  # never edit here directly).
+  # firebase_app_check ^0.4.7 (migrated 2026-09-13 with the Firebase 4.x set,
+  # sec-appcheck): 0.4.0 removed nothing this app calls but DEPRECATED the
+  # `androidProvider` / `appleProvider` enum params in favor of provider
+  # classes — integrity.dart now activates with
+  # `providerAndroid: AndroidPlayIntegrityProvider()` +
+  # `providerApple: AppleAppAttestWithDeviceCheckFallbackProvider()` (App
+  # Attest where the OS floor allows, DeviceCheck fallback below it; the
+  # iOS-14+/macOS-14+ Attest floor from the old DeviceCheck-default note is
+  # now covered by the fallback instead of blocking the upgrade). 0.4.x
+  # requires firebase_core ^4.14.0, which is why the two bumps ship together.
+  # No token-TTL knob exists in the 0.4.x Dart API (TTL is a console-side
+  # token setting) — the 8s fail-soft activate budget in integrity.dart is
+  # the only timing contract and is unchanged.
+  firebase_app_check: ^0.4.7
+  # flutter_security_suite PINNED to ^1.1.1. Do NOT add advanced_root_detection:
+  # equivalent coverage already here — isRooted covers RootBeer/su +
+  # jailbreak reads, isRuntimeHooked covers Frida/Xposed/instrumentation, and
+  # isTampered + isAppIntegrityValid cover re-sign/strip — so a second root
+  # plugin buys duplicate native surface (new channel, new failure modes)
+  # for no new signal. Residual hiding (Magisk/Zygisk) fools BOTH equally;
+  # the compensating gate is Play Integrity STRONG via App Check console
+  # enforcement (see integrity.dart), not another local plugin.
+  flutter_security_suite: ^1.1.1
+  # NO firebase_remote_config by decision (documented rejection): the
+  # version floor lives in Firestore `app_config/min_version` (world-readable
+  # get, Spark-free, offline-cached by the OS network layer) so force-update
+  # needs no extra SDK, no fetch/activate/TTL quota, and no silent-downgrade
+  # path — Remote Config defaults + throttled fetches would let a stale
+  # build read a stale/missing default as "no floor". Floor bumps ship with
+  # a rules deploy + min_version bump together, never silently.
+  tflite_flutter: ^0.12.1
+  device_info_plus: ^13.2.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   test: ^1.25.0
+  # e2e prove fixtures only (real P-256 dSig in TestHwBackend): same pin
+  # as protocol/transport (^4.0.0) so the resolved tree stays unified.
+  pointycastle: ^4.0.0
 
 # macOS Google Sign-In keychain regression: native GoogleSignIn 7.1+ / 8.x
 # throws "keychain error" on macOS even with correct entitlements
@@ -56,5 +149,41 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  # iOS CI (2026-09-14): flutter_security_suite 1.1.1 ships a broken SwiftPM
+  # manifest — Package.swift declares product `flutter_security_suite`
+  # (underscores) but Flutter's FlutterGeneratedPluginSwiftPackage depends on
+  # `flutter-security-suite` (dashes), so SPM resolution fails CI. Force
+  # CocoaPods until the plugin fixes its product name or is replaced. Keep
+  # ios/Podfile.lock + macos/Podfile.lock freshly resolved on every Firebase
+  # major bump (stale lock = `Firebase/Auth 11.x vs 12.x` pod-install
+  # failure) — see PROXIMITY_DEPLOYMENT.md §5.
+  config:
+    enable-swift-package-manager: false
   assets:
     - assets/models/
+    - assets/fonts/
+  # Offline-first: display/body fonts ship in the bundle (no runtime fetch
+  # — the live attendance flow must never wait on fonts.gstatic.com).
+  # Filenames follow the google_fonts local-asset convention
+  # (<Family>-<Weight>.ttf) so GoogleFonts.*TextTheme() resolves bundled.
+  fonts:
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/SpaceGrotesk-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/SpaceGrotesk-Bold.ttf
+          weight: 700
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700

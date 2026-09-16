@@ -16,6 +16,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -25,9 +27,14 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:proximity_transport/transport.dart';
 
+import '../features/entry/entry_flow.dart' show entryHostIntegrity;
+import 'auth.dart';
 import 'device_store.dart';
 import 'net_if.dart';
 import 'platformx.dart' as platformx;
+import 'security/revocation_cache.dart';
+import 'sync/cloud_api.dart';
+import 'sync/roles.dart';
 
 class HostSession {
   final String addressLine; // https://<ip>:<port> · ... (initial IP)
@@ -69,6 +76,31 @@ abstract class HostDriver {
   Future<void> addManualEntry(
       {required String email, required String name, String roll = ''});
 
+  /// Professor eject: drops [email] from the waiting list, manual queue,
+  /// live tally and dup flags (session-local; saved history is untouched
+  /// until the next upsert/snapshot). Returns true when anything was
+  /// removed. The student can rejoin/re-mark afterwards (presence is
+  /// re-volunteered per join/proof).
+  Future<bool> removeStudent(String email);
+
+  /// Publishes the hosting professor's Gmail photo URL to joining
+  /// students (gated /window unicast; '' clears). Best-effort: students
+  /// converge on the next room poll; absent photo renders as initials.
+  Future<void> setHostPhoto(String photoUrl);
+
+  /// Local same-face dup groups (email → matched peer emails, symmetric).
+  /// Session-scoped RAM (survives retakes; cleared on endHosting). The
+  /// roster renders these as "Duplicate face detected between [A] and
+  /// [B]" with a 1-tap override.
+  Map<String, Set<String>> get dupGroups;
+
+  /// 1-tap professor override: clears flags for [email] and its whole
+  /// group and exempts every pair in the group for the rest of the
+  /// session (the professor sees both faces in the room — the human
+  /// resolves what the matcher cannot). Counts them: every win dup
+  /// auto-absent dropped is re-marked.
+  Future<void> resolveDupFlag(String email);
+
   /// Replaces the live tally with persisted draft data (back/app-kill
   /// resume). Window numbering continues from the restored [windowNo].
   Future<void> restoreTally({
@@ -82,16 +114,98 @@ abstract class HostDriver {
   /// when several show up, e.g. VPN vs WiFi). Next beacons use it.
   Future<void> setAnnounceHost(String ip);
 
+  /// Re-resolves NICs and heals a stale announce IP (late WiFi DHCP).
+  /// Called on window start and by the idle poll while hosting.
+  Future<void> refreshAnnounceIps();
+
+  /// Live announce state for UI sync after a refresh.
+  String get announceIp;
+  List<String> get announceCandidates;
+
+  /// Non-blocking LAN reachability warning from the last startHosting
+  /// self-check (null = reachable). The Take screen renders it under the
+  /// address line so a firewall-blocked first start is honest, not silent.
+  String? get lanSelfCheckWarning;
+
   /// Updates the professor display name announced with the class.
   Future<void> setDisplayName(String name);
   Future<void> endHosting();
+
+  /// Current lecture public key hex (Ed25519 32B, '' when not hosting).
+  /// Published best-effort to `profDevices/{email}` for student pinning
+  /// (anti-fake-professor); never blocks hosting offline.
+  String get currentProfPkHex => '';
+
+  /// Best-effort publisher for the lecture-key pin (armed by
+  /// [armProfKeyPublisher] at prof registration + Take open, targeting
+  /// `CloudSync.uploadProfKey`; null in tests/offline hosts).
+  /// Called fire-and-forget after the server is ready — never blocks
+  /// hosting, never throws out.
+  set profKeyPublisher(
+      Future<void> Function(
+              {required String emailLower, required String pkPHex})?
+          fn) {}
+
+  /// Publishes the CURRENT in-memory lecture key pin now (best-effort,
+  /// never throws). Called at first hosting AND at prof
+  /// registration/signin: a fresh registration usually has no lecture key
+  /// yet (ephemeral per hosting — see startHosting), which logs an
+  /// explicit deferral instead of silence, so the terminal always shows
+  /// WHY no publish happened. Every outcome logs (published / skipped /
+  /// deferred) — a missing publish line always means this method never
+  /// ran, never a silent skip.
+  Future<void> publishCurrentProfKey() async {}
+
+  /// Hydrates the server's student-key pins from the professor's persistent
+  /// directory cache (email → pkS) so offline `unknown-pkS` enforcement
+  /// survives restarts. Forces overwrite: the source is the authenticated
+  /// same-org directory merged over the cache (never LAN), so a student
+  /// re-enroll that landed after the last hydrate converges instead of
+  /// refusing as stale-`unknown-pkS` for the rest of the session.
+  /// Returns pinned count.
+  Future<int> hydrateStudentPins(Map<String, String> emailToPkSHex) async =>
+      0;
+}
+
+/// Arms the lecture-key pin publisher (idempotent — re-arming replaces
+/// the closure): the driver calls it fire-and-forget with the current
+/// lecture key whenever [HostDriver.publishCurrentProfKey] runs. Armed at
+/// prof registration (role hub) AND Take open so the pin publishes at the
+/// earliest online moment in both orders (register→host, host→re-signin).
+/// Never throws (offline/cloud failures stay inside the closure).
+void armProfKeyPublisher(WidgetRef ref) {
+  try {
+    ref.read(hostDriverProvider).profKeyPublisher =
+        ({required emailLower, required pkPHex}) async {
+      try {
+        final acct = ref.read(authServiceProvider).current;
+        if (acct == null) return;
+        final role = await ref.read(deviceStoreProvider).readRole();
+        final org = roleOrg(role);
+        await ref.read(cloudSyncProvider).uploadProfKey(
+              emailLower: emailLower,
+              uid: acct.uid.isNotEmpty ? acct.uid : acct.email.toLowerCase(),
+              org: org,
+              pkPHex: pkPHex,
+            );
+      } catch (_) {}
+    };
+  } catch (_) {}
 }
 
 class WaitingRow {
   final String email;
   final String name;
   final String roll;
-  const WaitingRow({required this.email, required this.name, this.roll = ''});
+
+  /// Student's volunteered Gmail photo URL ('' = absent → initials).
+  /// Session RAM only, never persisted to records.
+  final String photoUrl;
+  const WaitingRow(
+      {required this.email,
+      required this.name,
+      this.roll = '',
+      this.photoUrl = ''});
 }
 
 class ManualRow {
@@ -99,11 +213,15 @@ class ManualRow {
   final String name;
   final String roll;
   final String status;
+
+  /// Same volunteered photo as [WaitingRow.photoUrl].
+  final String photoUrl;
   const ManualRow(
       {required this.email,
       required this.name,
       this.roll = '',
-      this.status = 'pending'});
+      this.status = 'pending',
+      this.photoUrl = ''});
 }
 
 class RealHostDriver implements HostDriver {
@@ -113,8 +231,17 @@ class RealHostDriver implements HostDriver {
   ProxServer? _server;
   ClassAnnouncer? _announcer;
   String _lastBeaconTargets = '';
+  // Local same-face dup groups (session-scoped RAM — see [dupGroups]).
+  final Map<String, Set<String>> _dupGroups = {};
+  // Wins stripped by dup auto-absent (email → removed window numbers) +
+  // display names for the override re-mark. Session-scoped RAM like the
+  // groups above (a restart rebuilds wins without dup state, so nothing
+  // is owed back). Cleared on resolve + eject.
+  final Map<String, Set<int>> _dupStashedWins = {};
+  final Map<String, String> _dupStashNames = {};
   Timer? _scanHold; // post-stop grace: scan lingers AND proofs still
   // accepted (cancelled by retake/end, which own both immediately).
+  Timer? _crlRefresh; // CRL periodic refresh (cancelled on endHosting).
 
   /// Post-stop grace: the scan lingers for last tokens AND the server
   /// keeps accepting proofs. Tests shrink it.
@@ -122,7 +249,19 @@ class RealHostDriver implements HostDriver {
 
   /// Single-flight guard: concurrent startHosting calls (double-tap,
   /// re-entry) must not interleave server/announcer/engine setup.
+  /// Also serializes against fire-and-forget endHosting from dispose:
+  /// without this the first startHosting after a quick re-entry binds
+  /// port 8443 while the previous HttpServer.close is still in flight
+  /// (EADDRINUSE on first tap, success only on the second).
   bool _hostingBusy = false;
+  Future<void> _lifecycle = Future.value();
+
+  Future<T> _serial<T>(Future<T> Function() fn) {
+    final next = _lifecycle.then((_) => fn());
+    // Keep the chain alive across failures; callers still see their error.
+    _lifecycle = next.then((_) {}, onError: (_) {});
+    return next;
+  }
   TallyStore _tally = TallyStore();
   Uint8List? _sessionId;
   ed.KeyPair? _profKeys;
@@ -130,6 +269,74 @@ class RealHostDriver implements HostDriver {
   String _classLabel = '';
   String _announceIp = '';
   List<String> _allIps = const [];
+  Future<void> Function(
+      {required String emailLower,
+      required String pkPHex})? _profKeyPublisher;
+
+  @override
+  set profKeyPublisher(
+          Future<void> Function(
+                  {required String emailLower, required String pkPHex})?
+              fn) =>
+      _profKeyPublisher = fn;
+
+  @override
+  String get currentProfPkHex => _profKeys == null
+      ? ''
+      : hexEncode(_profKeys!.publicKey.bytes.sublist(0, 32)).toLowerCase();
+
+  @override
+  Future<void> publishCurrentProfKey() async {
+    final publish = _profKeyPublisher;
+    final pk = currentProfPkHex;
+    var email = '';
+    try {
+      email = (_server?.sessionProfEmail ?? '').trim().toLowerCase();
+    } catch (_) {}
+    if (email.isEmpty) {
+      try {
+        final role = await _store.readRole();
+        email = (role?['email'] ?? '').trim().toLowerCase();
+      } catch (_) {}
+    }
+    if (publish == null) {
+      BleLog.log('SEC',
+          'prof key publish skipped (publisher not armed — arm at registration/Take open)');
+      return;
+    }
+    if (email.isEmpty) {
+      BleLog.log(
+          'SEC', 'prof key publish skipped (no prof email yet — email unknown)');
+      return;
+    }
+    if (pk.isEmpty) {
+      BleLog.log('SEC',
+          'prof key publish skipped (no lecture key yet — publishes at first hosting)');
+      return;
+    }
+    try {
+      await publish(emailLower: email, pkPHex: pk);
+      BleLog.log('SEC',
+          'prof key pin published ($email pkP=${pk.substring(0, 12)}… — students verify Sig_p against this pin)');
+    } catch (e) {
+      BleLog.log('SEC', 'prof key pin publish deferred ($e)');
+    }
+  }
+
+  @override
+  Future<int> hydrateStudentPins(
+      Map<String, String> emailToPkSHex) async {
+    final s = _server;
+    if (s == null) return 0;
+    try {
+      // Force: the directory source is authenticated + freshest-known —
+      // a stale live pin (student re-enrolled mid-class) must converge,
+      // not refuse for the rest of the session (see pinStudentKeys).
+      return s.pinStudentKeys(emailToPkSHex, force: true);
+    } catch (_) {
+      return 0;
+    }
+  }
 
   RealHostDriver({
     required DeviceStore store,
@@ -139,6 +346,10 @@ class RealHostDriver implements HostDriver {
 
   @override
   TallyStore get tally => _tally;
+
+  /// Test-only reach-in to the live loopback server (port/window for
+  /// driving stock-app student marks in integration tests).
+  ProxServer? get debugServer => _server;
 
   @override
   bool get isHosting => _server != null;
@@ -155,80 +366,249 @@ class RealHostDriver implements HostDriver {
   @override
   List<WaitingRow> get waitingRows => [
         for (final w in (_server?.waitingRows ?? const []))
-          WaitingRow(email: w.email, name: w.name, roll: w.roll),
+          WaitingRow(
+              email: w.email,
+              name: w.name,
+              roll: w.roll,
+              photoUrl: w.photoUrl),
       ];
 
   @override
   List<ManualRow> get manualRows => [
         for (final m in (_server?.manualRows ?? const []))
           ManualRow(
-              email: m.email, name: m.name, roll: m.roll, status: m.status),
+              email: m.email,
+              name: m.name,
+              roll: m.roll,
+              status: m.status,
+              photoUrl: m.photoUrl),
       ];
 
   @override
   List<ManualRow> get manualPending => [
         for (final m in (_server?.manualPending ?? const []))
           ManualRow(
-              email: m.email, name: m.name, roll: m.roll, status: m.status),
+              email: m.email,
+              name: m.name,
+              roll: m.roll,
+              status: m.status,
+              photoUrl: m.photoUrl),
       ];
+
+  @override
+  Future<bool> removeStudent(String email) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    var removed = false;
+    try {
+      if ((_server?.removeStudent(key) ?? false)) removed = true;
+    } catch (_) {}
+    // Dup-flag cleanup mirrors resolveDupFlag (no win restore on eject —
+    // an ejected row stays gone; rejoin/re-mark re-adds).
+    final peers = Set<String>.from(_dupGroups[key] ?? const {});
+    for (final p in peers) {
+      _dupGroups[p]?.remove(key);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    if (_dupGroups.remove(key) != null) removed = true;
+    _dupStashedWins.remove(key);
+    _dupStashNames.remove(key);
+    if (removed) {
+      BleLog.log('STATE', 'roster eject $key');
+    }
+    return removed;
+  }
+
+  @override
+  Future<void> setHostPhoto(String photoUrl) async {
+    try {
+      final s = _server;
+      if (s != null) s.sessionProfPhoto = photoUrl.trim();
+    } catch (_) {}
+  }
 
   /// Matches a recomputed response token against live air sightings.
   /// [expectedAirKey]/[expectedUuid] cover both formats (v2 `type:hex`,
   /// v1 `uuid:`) so mixed fleets interoperate.
   ///
-  /// Hop mapping: air packets carry NO TTL byte, so every real sighting
-  /// arrives with `ttl == kTtlOriginate` (3) — direct vs relayed is
-  /// unknowable on receipt. Map all matches to hop 0 and let the RSSI
-  /// gate do the proximity work (a far response never clears -70 dBm at
-  /// the professor's antenna; relay tolerance is by design). Mapping
-  /// `hop: s.ttl` instead rejects EVERY live prove as `no-ble-sighting`
-  /// (3 satisfies neither the `== 0` direct nor the `<= 2` relay branch)
-  /// — unit tests hid this by stubbing hop 0.
+  /// M2 hop mapping (honest): air packets carry NO TTL byte, so hop is
+  /// derived ONLY from the v3 relayed bit — v2 direct or unflagged v3 maps
+  /// hop 0 (RSSI gate does the proximity work), v3 relayed maps hop 1
+  /// (relayed branch, flagged, RSSI still gates via kRssiRelayMinDbm
+  /// upstream). Legacy v1 UUIDs map hop 0 with legacy:true (hop0-assumed
+  /// log). `ttl` is never used as hop (it is always kTtlOriginate=3 on
+  /// receipt, which satisfies neither verify branch — the old stub-masked
+  /// bug). kMaxRelayHop(2) stays the verify-side ceiling; single re-air
+  /// (hop 1) is the only relayed value this path can produce.
   static RadioSighting? matchResponse(
       ProxBleEngine engine, String expectedAirKey, String expectedUuid) {
     for (final s in engine.byRssiDesc) {
       if (s.isResponse &&
           (s.key == expectedAirKey || s.key == expectedUuid)) {
+        final hop = s.relayed ? 1 : 0;
         BleLog.log('BLE',
-            'response sighting match rssi=${s.rssiDbm} hop=${s.ttl}');
-        return RadioSighting(rssiDbm: s.rssiDbm, hop: 0);
+            'response sighting match rssi=${s.rssiDbm} hop=$hop relayed=${s.relayed}');
+        return RadioSighting(rssiDbm: s.rssiDbm, hop: hop, legacy: s.legacy);
       }
     }
     return null;
   }
 
   @override
-  Future<HostSession> startHosting({required String classLabel, int port = 8443}) async {
-    if (_hostingBusy) throw StateError('Already starting hosting.');
-    _hostingBusy = true;
-    try {
-      return await _startHostingInner(classLabel: classLabel, port: port);
-    } finally {
-      _hostingBusy = false;
+  Future<HostSession> startHosting({required String classLabel, int port = 8443}) {
+    return _serial(() async {
+      if (_hostingBusy) throw StateError('Already starting hosting.');
+      _hostingBusy = true;
+      try {
+        return await _startHostingInner(classLabel: classLabel, port: port);
+      } finally {
+        _hostingBusy = false;
+      }
+    });
+  }
+
+  /// Binds the HTTPS server with retries: a quick re-entry after back-nav
+  /// (or a lingering OS socket) leaves port 8443 busy for ~hundreds of ms.
+  /// Without this the FIRST Take open throws EADDRINUSE and only the second
+  /// navigation hosts — the student meanwhile probes a dead hint.
+  Future<void> _bindWithRetry(ProxServer server, int port) async {
+    Object? lastErr;
+    for (var attempt = 1; attempt <= 6; attempt++) {
+      try {
+        await server.start(port: port);
+        return;
+      } catch (e) {
+        lastErr = e;
+        final msg = '$e';
+        final busy = msg.contains('Address already in use') ||
+            msg.contains('EADDRINUSE') ||
+            e is SocketException;
+        BleLog.log('NET',
+            'HTTPS bind attempt $attempt/6 on $port failed ($e)${busy ? ' — retrying…' : ''}');
+        if (!busy || attempt == 6) rethrow;
+        // Force any lingering socket closed, then back off briefly.
+        try {
+          await server.stop();
+        } catch (_) {}
+        await Future.delayed(Duration(milliseconds: 150 * attempt));
+      }
     }
+    throw StateError('HTTPS bind failed: $lastErr');
+  }
+
+  /// Loopback readiness gate: the socket accepting ≠ TLS serving. Poll
+  /// 127.0.0.1/window until it answers 200 (self-signed accepted) so the
+  /// BLE IP-hint + UDP beacons below never air before the server actually
+  /// answers — students must never probe a "still starting" host.
+  Future<void> _awaitHttpsReady(int port) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    Object? lastErr;
+    while (DateTime.now().isBefore(deadline)) {
+      HttpClient? client;
+      try {
+        client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+        client.badCertificateCallback = (cert, h, p) => true;
+        final req = await client
+            .getUrl(Uri(scheme: 'https', host: '127.0.0.1', port: port, path: '/window'))
+            .timeout(const Duration(seconds: 1));
+        final resp = await req.close().timeout(const Duration(seconds: 1));
+        final body =
+            await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 1));
+        if (resp.statusCode == 200) {
+          try {
+            jsonDecode(body);
+          } catch (_) {}
+          return;
+        }
+        lastErr = StateError('HTTP ${resp.statusCode}');
+      } catch (e) {
+        lastErr = e;
+      } finally {
+        try {
+          client?.close(force: true);
+        } catch (_) {}
+      }
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+    throw StateError('HTTPS not ready on $port: $lastErr');
   }
 
   Future<HostSession> _startHostingInner(
       {required String classLabel, int port = 8443}) async {
-    await endHosting();
+    await _endHostingInner();
+    // Security §5 pre-host gate: ADVISORY only — hosting stays
+    // offline-capable by law; a tainted professor device logs its verdict
+    // hash (tainted-student proves still flag via their own dSig-bound
+    // hashes). Never throws by contract; belt-and-braces catch anyway.
+    try {
+      final hv = await entryHostIntegrity();
+      if (hv.flagForMarking.isNotEmpty) {
+        BleLog.log('SEC',
+            'host integrity flagged (${hv.flagForMarking}) → ${hv.hash} — hosting continues, student verdicts carry their own hashes');
+      }
+    } catch (_) {}
+    // CRL snapshot refresh (security §2 residual): one best-effort fetch
+    // now (Firestore-independent HTTPS, never blocks hosting — failure
+    // degrades to the `revocation-stale` review flag) plus a periodic
+    // refresh for long-lived sessions (no-op unless stale; cancelled on
+    // teardown). Hash reads prefer the secure-store backend when the
+    // device store serves one (see DeviceStore.revocationHashStore).
+    unawaited(RevocationCache.refreshBestEffort(
+        hashStore: _store.revocationHashStore));
+    _crlRefresh?.cancel();
+    _crlRefresh = RevocationCache.schedulePeriodicRefresh(
+        hashStore: _store.revocationHashStore);
     final stored = await _store.readEnrollment();
+    // Advisory revocation review for the host binding's chain (security §2
+    // residual): offline serial-vs-CRL flags, log only — hosting stays
+    // offline-capable (fail-open; missing/empty chains keep the existing
+    // stale-flag behavior).
+    if (stored != null && stored.chainDERHex.isNotEmpty) {
+      unawaited(logChainRevocationReview(stored.chainDERHex, 'host'));
+    }
+    // Sealed-only (security §2 F1): hosting NEVER derives the lecture
+    // identity from stored secrets. The lecture key is always ephemeral
+    // (never uploaded; students verify per-window Cert_p + Sig_p fresh
+    // each session). Enrollment truth lives in the HW-sealed envelope
+    // (`sealedKeyHex` + `pkDHex` + `chainDERHex`, opened only via the HW
+    // DeviceKey on the student path — never opened here).
     String manual = '';
     try {
       manual = await _store.readHostName();
     } catch (_) {}
-    if (stored == null) {
-      // No device key: ephemeral lecture identity (never uploaded).
-      final kp = ProxCrypto.generateEdKeypair();
-      _profKeys = kp;
+    // Ephemeral lecture identity, always (H10): no raw-seed branch, no
+    // sealed open on the hosting hot path (unsealing would need a
+    // biometric HW gate per Take open). Students verify the per-window
+    // Cert_p + Sig_p fresh each session, so a rotating professor key is
+    // functionally identical here.
+    final kp = ProxCrypto.generateEdKeypair();
+    _profKeys = kp;
+    try {
+      _profName = manual.isNotEmpty
+          ? manual
+          : (stored?.name ?? manual);
+    } catch (_) {
       _profName = manual;
-    } else {
-      final seed = hexDecode(stored.seedHex);
-      final sk = ed.newKeyFromSeed(seed);
-      _profKeys = ed.KeyPair(sk, ed.public(sk));
-      _profName = manual.isNotEmpty ? manual : stored.name;
     }
     _classLabel = classLabel;
     _sessionId = randBytes(kSessionIdBytes);
+    // Session org = prof org at creation (role cache stamped at sign-in;
+    // offline-skipped profs host legacy '' local-only).
+    var sessionOrg = '';
+    // Session prof email = the hosting professor's account Gmail,
+    // lowercased (enrollment record first, role-cache email as fallback;
+    // '' = unknown, key omitted). Stamped ONLY on the gated /window
+    // unicast (matching/legacy org) — NEVER on UDP beacons (which have no
+    // such field by construction) and NEVER on BLE air packets (IP:port
+    // only). Student cards render it after the gated fetch.
+    var sessionProfEmail = (stored?.email ?? '').trim().toLowerCase();
+    try {
+      final role = await _store.readRole();
+      sessionOrg = roleOrg(role);
+      if (sessionProfEmail.isEmpty) {
+        sessionProfEmail = (role?['email'] ?? '').trim().toLowerCase();
+      }
+    } catch (_) {}
     // Rosterless: no roster fetch — students verify with presented device
     // keys (TOFU per class). Whoever proves presence over radio lands in
     // the union.
@@ -238,16 +618,63 @@ class RealHostDriver implements HostDriver {
       profPk: _profKeys!.publicKey,
       sightings: ({required peerW, required expectedAirKey, required expectedUuid}) =>
           matchResponse(_engine, expectedAirKey, expectedUuid),
-      onProve: (email, decision, reason) =>
-          BleLog.log('NET', 'prove $email -> $decision ($reason)'),
+      onProve: (email, decision, reason) {
+        BleLog.log('NET', 'prove $email -> $decision ($reason)');
+        _applyDupFaceToken(email, reason);
+        _applyIntegrityFlag(email, reason);
+      },
       tally: _tally,
+      sessionOrg: sessionOrg,
+      sessionProfEmail: sessionProfEmail,
+      // Gated LAN /window name (same channel as the email — never BLE).
+      sessionProfName: _profName,
     );
-    await _server!.start(port: port);
+    await _bindWithRetry(_server!, port);
+    // Email→key pin publish (anti-fake-professor): the lecture pkP is
+    // appended best-effort to `profDevices/{email}` so students pin it
+    // online and verify Sig_p against the pin offline (TOFU). Fire-and-
+    // forget — never blocks hosting, never throws out (offline hosts
+    // simply skip; students then see first-seen unverified). Every
+    // outcome logs inside publishCurrentProfKey — including skips.
+    unawaited(publishCurrentProfKey());
+    // Hydrate student-key pins from the persistent directory cache so
+    // offline `unknown-pkS` enforcement survives restarts (in-memory TOFU
+    // alone forgot everything on reboot).
+    try {
+      final cachedPins = await _store.readStudentKeyPins();
+      if (cachedPins.isNotEmpty) {
+        final n = _server!.pinStudentKeys(cachedPins);
+        if (n > 0) {
+          BleLog.log('SEC',
+              'student key pins hydrated ($n pinned student keys into the live server — offline unknown-pkS enforcement survives restarts)');
+        }
+      }
+    } catch (_) {}
+    // Readiness BEFORE any hint/beacon: the port must answer TLS locally.
+    // On failure tear the half-started server down so the next attempt
+    // (or re-entry) binds clean — never advertise a dead host:port.
+    try {
+      await _awaitHttpsReady(_server!.port);
+    } catch (e) {
+      BleLog.log('NET', 'HTTPS readiness FAILED: $e');
+      try {
+        await _server?.stop();
+      } catch (_) {}
+      _server = null;
+      rethrow;
+    }
     _allIps = await _lanIps();
     _announceIp = _allIps.first;
     final ip = _announceIp;
-    BleLog.log('NET', 'HTTPS up on port ${_server!.port}');
-    BleLog.log('LAN', 'announcing as $ip (${_allIps.length} NICs)');
+    BleLog.log('NET',
+        'HTTPS up on ${_server!.boundAddress}:${_server!.port} (ready)');
+    BleLog.log('LAN',
+        'announcing as $ip (${_allIps.length} NICs: ${_allIps.join(", ")})');
+    BleLog.log('LAN',
+        'reachability check: open https://$ip:${_server!.port}/ in a phone browser (accept the self-signed cert once) — page loads = unicast reaches this host');
+    // First-start honesty: loopback-ready ≠ LAN-reachable (firewall /
+    // wrong NIC). Self-probe the aired IP before students do.
+    await _lanSelfCheck(ip, _server!.port);
     // Air format per platform: v2 packets (challenge+IP) where the stack
     // delivers manufacturer data intact (Android/Linux); legacy v1
     // single-UUID ticks alternating challenge and IP-hint where it doesn't
@@ -285,6 +712,7 @@ class RealHostDriver implements HostDriver {
         prof: _profName,
         windowOpen: _server?.windowOpen ?? false,
         ts: DateTime.now().toUtc(),
+        org: _server?.sessionOrg ?? '',
       );
     });
     final announcer = _announcer!;
@@ -355,7 +783,7 @@ class RealHostDriver implements HostDriver {
     }
     try {
       await _engine.startProfRotation(window);
-      BleLog.log('BLE', 'prof advertising challenges (5s rotation)');
+      BleLog.log('BLE', 'prof advertising challenges (10s rotation)');
     } catch (e) {
       BleLog.log('BLE', 'prof ADV start FAILED: $e');
       // Half-open cleanup: the window + scan above succeeded, so unwind
@@ -391,10 +819,62 @@ class RealHostDriver implements HostDriver {
     }
   }
 
+  @override
+  String get announceIp => _announceIp;
+
+  @override
+  List<String> get announceCandidates => List.of(_allIps);
+
+  /// Last LAN self-check failure (null = reachable). Surfaced in the Take
+  /// UI as a non-blocking warning: loopback-ready but own-LAN-IP Timeout
+  /// means macOS Firewall is dropping inbound (allow the app) or AP client
+  /// isolation — students will time out exactly like the student log shows.
+  String? lanSelfCheckError;
+
+  @override
+  String? get lanSelfCheckWarning => lanSelfCheckError;
+
+  /// Best-effort LAN self-check: GET our own announce IP (not loopback) to
+  /// catch OS firewall / wrong-NIC picks on FIRST start. Never throws: a
+  /// failure logs AND arms [lanSelfCheckError] for the UI — students would
+  /// see the same TimeoutException, so the prof screen must say so instead
+  /// of a clean "HTTPS up".
+  Future<void> _lanSelfCheck(String ip, int port) async {
+    lanSelfCheckError = null;
+    if (ip == 'this-device' || ip.startsWith('127.')) return;
+    HttpClient? client;
+    try {
+      client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      client.badCertificateCallback = (cert, h, p) => true;
+      final req = await client
+          .getUrl(Uri(scheme: 'https', host: ip, port: port, path: '/window'))
+          .timeout(const Duration(seconds: 2));
+      final resp = await req.close().timeout(const Duration(seconds: 2));
+      await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 2));
+      if (resp.statusCode != 200) {
+        lanSelfCheckError =
+            'Students on WiFi can\'t reach https://$ip:$port from this Mac (HTTP ${resp.statusCode}) — check Firewall / announce-IP pick, and VPN off (VPNs capture LAN traffic even to your own IP).';
+        BleLog.log('NET', 'LAN self-check $ip:$port HTTP ${resp.statusCode} — $lanSelfCheckError');
+      }
+    } catch (e) {
+      final short = e is TimeoutException
+          ? 'timed out (SYN dropped: macOS Firewall blocking inbound, or AP client isolation)'
+          : '$e';
+      lanSelfCheckError =
+          'Students on WiFi can\'t reach https://$ip:$port from this Mac itself ($short) — allow incoming connections for this app (System Settings → Network → Firewall), pick another announce IP, or turn VPN off (a VPN tunnel blocks LAN traffic even to your own IP).';
+      BleLog.log('NET', 'LAN self-check $ip:$port FAILED ($e) — $lanSelfCheckError');
+    } finally {
+      try {
+        client?.close(force: true);
+      } catch (_) {}
+    }
+  }
+
   /// Re-resolves local IPs and switches the announce host when the current
   /// one vanished or a better (non-VPN, non-cellular) candidate appeared.
   /// Never overrides an explicit professor pick of a still-present IP —
   /// only heals stale (gone) or mobile-data addresses.
+  @override
   Future<void> refreshAnnounceIps() async {
     List<LanAddress> cands;
     try {
@@ -452,7 +932,11 @@ class RealHostDriver implements HostDriver {
     // mid-round before anyone marks.
     try {
       final no = _server?.windowNo ?? 0;
-      if (no > 0) _tally.noteWindow(no);
+      if (no > 0) {
+        _tally.noteWindow(no);
+        BleLog.log(
+            'SESSION', 'round #$no recorded (open rounds: ${_tally.windowNos})');
+      }
     } catch (_) {}
     try {
       // Keep scanning: late student responses still arrive for ~seconds
@@ -500,6 +984,162 @@ class RealHostDriver implements HostDriver {
     _server?.registerWaiting(key, name, roll);
   }
 
+  /// Security §4/§2 host allowlists (mirror the protocol/transport gates —
+  /// the per-prove enforcement lives in `ProxServer`/`verifyProve`; these
+  /// pin the contract here so allowlist drift fails review/tests, never
+  /// marking). `verifierAllowlist` gates `face.verifierVer`,
+  /// `livenessAllowlist` + [livenessThreshold] gate `liveness.{score,ver}`
+  /// (`>=Tl`, fail-closed `liveness-unbound`/`unknown-liveness-verifier`/
+  /// `liveness-below-threshold` in the server). `faceValidAt` freshness
+/// (5-min window) + fresh `dSig` per 10s rotation are likewise server-gated;
+/// NONE proofs never confirm (`device-none-requires-approval` → manual
+/// path, never a mark) and tainted proofs ride `integrity-flagged` into
+/// [_applyIntegrityFlag] below (never auto-absent).
+  static const List<String> hostVerifierAllowlist = [kVerifierVerPrefix];
+  static const List<String> hostLivenessAllowlist = [kLivenessVerPrefix];
+  static const double hostLivenessThreshold = kLivenessThreshold;
+
+  /// True when the server's piped `reason` carries the §5 taint flag.
+  /// Pure (tests pin it): the flag is machine-readable, never shown; the
+  /// roster renders FLAGGED from the tally flag (see [_applyIntegrityFlag]).
+  static bool isIntegrityFlaggedReason(String reason) {
+    for (final seg in reason.split('|')) {
+      if (seg.trim() == 'integrity-flagged') return true;
+    }
+    return false;
+  }
+
+  /// Maps a tainted prove into the roster-visible FLAGGED state WITHOUT
+  /// touching presence (never auto-absent offline — the server already
+  /// marked confirmed/late; we only add the flag). Invalid proofs plant
+/// nothing ([TallyStore.setFaceFlag] no-ops without a row, same as the
+/// dup path). `device-none-requires-approval` is deliberately NOT mapped
+/// here: NONE proofs never confirm server-side, so no roster row exists
+/// to flag — approval lives on the manual path (plus the post-hoc
+/// double-pkD audit in `claim.dart`), not as a roster flag.
+  ///
+  /// TOFU note (§2): professor-side pinning is per-class first-seen (no
+  /// roster lookup — `studentDevices` denies list + cross-Gmail get, so an
+  /// online pre-fetch of other Gmails' pkD+chain is impossible under the
+  /// current rules). The chain-vs-pinned-Google-roots + challenge-match
+  /// gate runs per prove inside the server; clone pairs surface post-hoc
+  /// via `findDoublePkD` on synced bindings (TOFU→pin-check on mismatch
+  /// is manual review until a roster source exists). CRL review rides
+  /// alongside as advisory flags (`revocation-stale` when the snapshot is
+  /// stale/missing, `revocation-revoked` when a chain serial matches a
+  /// FRESH snapshot — see `core/security/revocation_cache.dart`
+  /// `reviewFlagsForChainHex` + `revocationReviewFlagsForDevice` in
+  /// `core/sync/claim.dart`; refreshed at host setup, never blocking) —
+  /// same review screen, never auto-absent offline.
+  void _applyIntegrityFlag(String email, String reason) {
+    if (!isIntegrityFlaggedReason(reason)) return;
+    final me = email.trim().toLowerCase();
+    if (me.isEmpty) return;
+    _tally.setFaceFlag(me);
+    BleLog.log('SEC', 'integrity flagged (tainted device, kept present): $me');
+  }
+
+  /// Test seam: applies the same flag parsing as the live `onProve`
+  /// callback (dup + integrity) without needing a full HTTPS prove round.
+  /// The tally must already hold the email (server marks before flagging);
+  /// unknown emails no-op, exactly like the live path.
+  void applyProveFlagsForTest(String email, String reason) {
+    _applyDupFaceToken(email, reason);
+    _applyIntegrityFlag(email, reason);
+  }
+
+  /// Parses the server's `dupface:a,b` reason token into roster flags +
+  /// groups, then enforces dup auto-absent: every unresolved member's
+  /// wins are stashed + stripped (presence dropped, red-flagged to the
+  /// professor) until the 1-tap override counts them again. The token is
+  /// machine-readable (never shown); the UI renders copy from [dupGroups].
+  /// Unknown/unmarked peers no-op (their own prove plants the flag
+  /// symmetrically when it lands). Runs on every prove, so marks taken
+  /// while unresolved never silently restore presence.
+  void _applyDupFaceToken(String email, String reason) {
+    var peers = const <String>[];
+    for (final seg in reason.split('|')) {
+      if (seg.startsWith('dupface:')) {
+        peers = seg
+            .substring('dupface:'.length)
+            .split(',')
+            .map((e) => e.trim().toLowerCase())
+            .where((e) => e.isNotEmpty && e != email.toLowerCase())
+            .toList();
+      }
+    }
+    final me = email.toLowerCase();
+    if (peers.isNotEmpty) {
+      _tally.setFaceFlag(me);
+      final mine = _dupGroups.putIfAbsent(me, () => <String>{});
+      for (final p in peers) {
+        _tally.setFaceFlag(p);
+        mine.add(p);
+        _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
+      }
+      BleLog.log(
+          'SEC', 'duplicate face flagged: $me ~ ${peers.join(', ')}');
+    }
+    // Auto-absent enforcement for every unresolved member (this prove may
+    // have just marked): strip any unstashed wins. Members whose group
+    // already resolved (or that were never grouped) are untouched.
+    final members = <String>{me, ...?_dupGroups[me]};
+    for (final p in peers) {
+      members.add(p);
+      members.addAll(_dupGroups[p] ?? const <String>{});
+    }
+    for (final m in members) {
+      if ((_dupGroups[m] ?? const <String>{}).isEmpty) continue;
+      _stripWinsForDup(m);
+    }
+  }
+
+  /// Stashes + strips [email]'s current wins (dup auto-absent). The row,
+  /// its name, and its faceFlag audit trail stay — exports read Absent,
+  /// flagged. Idempotent: already-stripped wins are not re-stashed.
+  void _stripWinsForDup(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return;
+    final wins = _tally.winsOf(key);
+    if (wins.isEmpty) return;
+    final name = _tally.nameOf(key);
+    if (name.isNotEmpty) _dupStashNames[key] = name;
+    final stash = _dupStashedWins.putIfAbsent(key, () => <int>{});
+    for (final w in wins) {
+      if (_tally.unmark(key, w)) stash.add(w);
+    }
+    BleLog.log('SEC', 'duplicate face auto-absent pending review: $key');
+  }
+
+  @override
+  Map<String, Set<String>> get dupGroups => {
+        for (final e in _dupGroups.entries) e.key: Set<String>.from(e.value),
+      };
+
+  @override
+  Future<void> resolveDupFlag(String email) async {
+    final me = email.trim().toLowerCase();
+    final peers = Set<String>.from(_dupGroups[me] ?? const {});
+    for (final p in peers) {
+      _server?.exemptFacePair(me, p);
+      _tally.clearFaceFlag(p);
+      _dupGroups[p]?.remove(me);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    _tally.clearFaceFlag(me);
+    _dupGroups.remove(me);
+    // The override counts them: restore every win auto-absent dropped
+    // (both members — the tap clears the whole group).
+    for (final m in <String>{me, ...peers}) {
+      final wins = _dupStashedWins.remove(m) ?? const <int>{};
+      final name = _dupStashNames.remove(m) ?? m;
+      for (final w in wins) {
+        _tally.mark(m, name, w);
+      }
+    }
+    BleLog.log('SEC', 'duplicate face resolved by professor: $me');
+  }
+
   @override
   Future<void> restoreTally({
     required List<Map<String, bool>> windows,
@@ -509,27 +1149,68 @@ class RealHostDriver implements HostDriver {
   }) async {
     _tally.restore(
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
+    BleLog.log('SESSION',
+        'tally restored: windows ${_tally.windowNos} (${_tally.size} records)');
   }
 
   @override
   Future<void> setDisplayName(String name) async {
     _profName = name.trim();
+    // Live-update the gated /window name mid-hosting (beacons already read
+    // _profName live via the announcer closure).
+    try {
+      final s = _server;
+      if (s != null) s.sessionProfName = _profName;
+    } catch (_) {}
     try {
       await _store.writeHostName(_profName);
     } catch (_) {}
   }
 
   @override
-  Future<void> endHosting() async {
+  Future<void> endHosting() => _serial(_endHostingInner);
+
+  /// Inner teardown: snapshot + null the live refs SYNCHRONOUSLY before
+  /// any await, so a concurrent dispose/start pair can't double-close or
+  /// rebind while the old socket is still closing. Only logs 'serve down'
+  /// when something was actually hosting (kills the misleading
+  /// radio-stop/serve-down lines on every fresh Take open).
+  Future<void> _endHostingInner() async {
     _scanHold?.cancel();
-    await _announcer?.stop();
+    _scanHold = null;
+    _crlRefresh?.cancel();
+    _crlRefresh = null;
+    final announcer = _announcer;
     _announcer = null;
+    final server = _server;
+    _server = null;
+    // Hosting-end vector wipe, EXPLICIT (vectors would die with the server
+    // object anyway — this is the audited second teardown path alongside
+    // the window-close wipe in ProxServer.closeWindow).
+    try {
+      server?.clearFaceVectors();
+    } catch (_) {}
+    _dupGroups.clear();
+    final wasHosting = announcer != null || server != null;
+    if (announcer != null) {
+      try {
+        await announcer.stop();
+      } catch (_) {}
+    }
     try {
       await _engine.stop();
     } catch (_) {}
-    _engine.clearServerIp();
-    await _server?.stop();
-    _server = null;
+    try {
+      _engine.clearServerIp();
+    } catch (_) {}
+    if (server != null) {
+      try {
+        await server.stop();
+      } catch (_) {}
+    }
+    if (wasHosting) {
+      BleLog.log('TRANSPORT', 'serve down (hosting ended)');
+    }
     _tally = TallyStore();
     _sessionId = null;
     _profKeys = null;
@@ -565,6 +1246,24 @@ class FakeHostDriver implements HostDriver {
   int _windowNo = 0;
   final List<WaitingRow> _waiting = [];
   final List<ManualRow> _manual = [];
+  final Map<String, Set<String>> _dupGroups = {};
+
+  @override
+  String get currentProfPkHex => '';
+
+  @override
+  set profKeyPublisher(
+          Future<void> Function(
+                  {required String emailLower, required String pkPHex})?
+              fn) {}
+
+  @override
+  Future<void> publishCurrentProfKey() async {}
+
+  @override
+  Future<int> hydrateStudentPins(
+          Map<String, String> emailToPkSHex) async =>
+      0;
 
   @override
   TallyStore get tally => _tally;
@@ -638,23 +1337,84 @@ class FakeHostDriver implements HostDriver {
         email: m.email,
         name: m.name,
         roll: m.roll,
-        status: approve ? 'approved' : 'rejected');
+        status: approve ? 'approved' : 'rejected',
+        photoUrl: m.photoUrl);
     if (approve) {
-      _tally.mark(key, m.name, _windowNo == 0 ? 1 : _windowNo, roll: m.roll);
+      _tally.mark(key, m.name, _windowNo == 0 ? 1 : _windowNo,
+          roll: m.roll, photoUrl: m.photoUrl);
     }
   }
 
   @override
   Future<void> addManualEntry(
-      {required String email, required String name, String roll = ''}) async {
+      {required String email,
+      required String name,
+      String roll = '',
+      String photoUrl = ''}) async {
     final key = email.trim().toLowerCase();
     if (key.isEmpty) return;
     // Immediate mark into the current (or first — windows always number
     // from 1) round: visible at once, captured by drafts, intersected
     // honestly by later rounds.
-    _tally.mark(key, name, _windowNo == 0 ? 1 : _windowNo, roll: roll);
+    _tally.mark(key, name, _windowNo == 0 ? 1 : _windowNo,
+        roll: roll, photoUrl: photoUrl);
     if (_waiting.every((w) => w.email != key)) {
-      _waiting.add(WaitingRow(email: key, name: name, roll: roll));
+      _waiting.add(
+          WaitingRow(email: key, name: name, roll: roll, photoUrl: photoUrl));
+    }
+  }
+
+  @override
+  Map<String, Set<String>> get dupGroups => {
+        for (final e in _dupGroups.entries) e.key: Set<String>.from(e.value),
+      };
+
+  @override
+  Future<void> resolveDupFlag(String email) async {
+    final me = email.trim().toLowerCase();
+    final peers = Set<String>.from(_dupGroups[me] ?? const {});
+    for (final p in peers) {
+      _tally.clearFaceFlag(p);
+      _dupGroups[p]?.remove(me);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    _tally.clearFaceFlag(me);
+    _dupGroups.remove(me);
+  }
+
+  @override
+  Future<bool> removeStudent(String email) async {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    var removed = false;
+    final w0 = _waiting.length;
+    _waiting.removeWhere((w) => w.email == key);
+    if (_waiting.length != w0) removed = true;
+    final m0 = _manual.length;
+    _manual.removeWhere((m) => m.email == key);
+    if (_manual.length != m0) removed = true;
+    if (_tally.remove(key)) removed = true;
+    final peers = Set<String>.from(_dupGroups[key] ?? const {});
+    for (final p in peers) {
+      _dupGroups[p]?.remove(key);
+      if (_dupGroups[p]?.isEmpty ?? false) _dupGroups.remove(p);
+    }
+    if (_dupGroups.remove(key) != null) removed = true;
+    return removed;
+  }
+
+  @override
+  Future<void> setHostPhoto(String photoUrl) async {}
+
+  /// Test helper: seed a dup group (mirrors the onProve token path).
+  void seedDupGroup(String email, List<String> peers) {
+    final me = email.trim().toLowerCase();
+    _tally.setFaceFlag(me);
+    final mine = _dupGroups.putIfAbsent(me, () => <String>{});
+    for (final p in peers.map((e) => e.trim().toLowerCase())) {
+      _tally.setFaceFlag(p);
+      mine.add(p);
+      _dupGroups.putIfAbsent(p, () => <String>{}).add(me);
     }
   }
 
@@ -669,13 +1429,7 @@ class FakeHostDriver implements HostDriver {
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
   }
 
-  /// Test helper: seed waiting/manual queues.
-  void seedWaiting(List<WaitingRow> rows) {
-    _waiting
-      ..clear()
-      ..addAll(rows);
-  }
-
+  /// Test helper: seed manual queue.
   void seedManual(List<ManualRow> rows) {
     _manual
       ..clear()
@@ -684,6 +1438,18 @@ class FakeHostDriver implements HostDriver {
 
   @override
   Future<void> setAnnounceHost(String ip) async {}
+
+  @override
+  Future<void> refreshAnnounceIps() async {}
+
+  @override
+  String get announceIp => 'demo';
+
+  @override
+  List<String> get announceCandidates => const ['demo'];
+
+  @override
+  String? get lanSelfCheckWarning => null;
 
   @override
   Future<void> setDisplayName(String name) async {}
@@ -695,6 +1461,7 @@ class FakeHostDriver implements HostDriver {
     _windowNo = 0;
     _waiting.clear();
     _manual.clear();
+    _dupGroups.clear();
     _tally = TallyStore();
   }
 }

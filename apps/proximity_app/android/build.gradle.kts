@@ -19,6 +19,21 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// file_picker 11.0.3 deliberately skips `apply plugin:
+// 'org.jetbrains.kotlin.android'` on AGP 9+ (its android/build.gradle
+// only applies it when isAgp9OrAbove is false), assuming the consuming
+// build provides Kotlin — flutter-plugin-loader 1.0.0 does not, so its
+// Kotlin sources silently compile to an empty jar and the app's
+// GeneratedPluginRegistrant fails with "cannot find symbol
+// FilePickerPlugin". Apply it here (version from settings.gradle.kts,
+// same as every other module); the JVM 17 forcing block below then
+// covers its KotlinCompile tasks too.
+subprojects {
+    if (name == "file_picker") {
+        apply(plugin = "org.jetbrains.kotlin.android")
+    }
+}
+
 // Force JVM 17 for plugins shipping stale toolchains (tflite_flutter).
 // Runs after all projects are evaluated so our values win.
 gradle.projectsEvaluated {

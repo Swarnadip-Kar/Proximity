@@ -17,7 +17,7 @@ ClassRecord _rec(String id, String ts, Map<String, bool> w1,
     );
 
 void main() {
-  test('mergeHistories unions by id, newer timestamp wins', () {
+  test('mergeHistoriesUnion: marks additive, newer header wins', () {
     final local = [
       _rec('s1', '2026-09-06T10:00:00.000Z', {'a@x.in': true}),
       _rec('s2', '2026-09-06T11:00:00.000Z', {'a@x.in': true}),
@@ -26,10 +26,13 @@ void main() {
       _rec('s2', '2026-09-06T12:00:00.000Z', {'a@x.in': false}),
       _rec('s3', '2026-09-06T09:00:00.000Z', {'b@x.in': true}),
     ];
-    final merged = mergeHistories(local, cloud);
+    final merged = mergeHistoriesUnion(local, cloud);
     expect(merged.map((r) => r.id), ['s2', 's1', 's3']);
-    // s2 took the newer cloud copy.
-    expect(merged.first.windows.first['a@x.in'], isFalse);
+    // s2 keeps the local TRUE mark: union ORs window maps, so a newer
+    // cloud `false` can never wipe a mark (the LWW data-loss this
+    // replaced). Header fields still come from the newer record.
+    expect(merged.first.windows.first['a@x.in'], isTrue);
+    expect(merged.first.timestampIso, '2026-09-06T12:00:00.000Z');
   });
 
   test('profPushIdentity: offline-skipped and students never push', () {
@@ -46,16 +49,28 @@ void main() {
             authEmail: 'a@x.in',
             authUid: 'u2',
             authName: 'A',
-            role: const {'role': 'student', 'email': 'a@x.in'},
+            role: const {'roles': 'student', 'email': 'a@x.in'},
             hostNameFallback: ''),
         isNull);
-    // Legacy single-role cache still works.
+    // Fresh-only: a single-key 'role' cache holds nothing (re-register).
+    expect(
+        profPushIdentity(
+            authEmail: 'P@x.in',
+            authUid: 'u1',
+            authName: 'Gmail Name',
+            role: const {
+              'role': 'prof',
+              'email': 'p@x.in',
+              'displayName': 'Prof Display'
+            },
+            hostNameFallback: 'Typed'),
+        isNull);
     final legacy = profPushIdentity(
         authEmail: 'P@x.in',
         authUid: 'u1',
         authName: 'Gmail Name',
         role: const {
-          'role': 'prof',
+          'roles': 'prof',
           'email': 'p@x.in',
           'displayName': 'Prof Display'
         },
@@ -70,7 +85,6 @@ void main() {
         authName: 'Gmail Name',
         role: const {
           'roles': 'prof,student',
-          'role': 'student',
           'lastMode': 'student',
           'email': 'p@x.in',
           'displayName': 'Prof Display'
@@ -89,9 +103,10 @@ void main() {
         isNull);
   });
 
-  test('role cache helpers: dual roles, legacy fallback, lastMode', () {
+  test('role cache helpers: dual roles, roles-only, lastMode', () {
     expect(roleSet(null), isEmpty);
-    expect(roleSet(const {'role': 'prof', 'email': 'p@x.in'}), {'prof'});
+    expect(roleSet(const {'role': 'prof', 'email': 'p@x.in'}), isEmpty);
+    expect(roleSet(const {'roles': 'prof', 'email': 'p@x.in'}), {'prof'});
     expect(roleSet(const {'roles': 'prof,student'}), {'prof', 'student'});
     expect(roleHas(const {'roles': 'prof', 'email': 'p@x.in'}, 'prof',
         email: 'P@X.IN'), isTrue);
@@ -99,11 +114,11 @@ void main() {
         isFalse);
     expect(roleLastMode(const {'roles': 'prof,student', 'lastMode': 'student'}),
         'student');
-    expect(roleLastMode(const {'role': 'prof'}), 'prof');
+    expect(roleLastMode(const {'roles': 'prof'}), 'prof');
     var m = mergeRoleCache(null,
         email: 'P@X.in', uid: 'u1', addRole: 'student', lastMode: 'student');
     expect(m['roles'], 'student');
-    expect(m['role'], 'student'); // legacy mirror
+    expect(m.containsKey('role'), isFalse); // no single-role mirror
     expect(m['email'], 'p@x.in');
     m = mergeRoleCache(m,
         email: 'p@x.in', uid: 'u1', displayName: 'Prof', addRole: 'prof');
@@ -111,7 +126,7 @@ void main() {
     expect(m['lastMode'], 'student'); // untouched when not passed
     m = mergeRoleCache(m, email: 'p@x.in', uid: 'u1', lastMode: 'prof');
     expect(m['lastMode'], 'prof');
-    expect(m['role'], 'prof');
+    expect(m.containsKey('role'), isFalse);
   });
 
   test('session doc round-trips through Firestore mapping', () {
@@ -134,7 +149,11 @@ void main() {
   test('FakeCloudSync: setRole unions roles, keeps lastMode', () async {
     final fake = FakeCloudSync();
     await fake.setRole(RoleDoc(
-        uid: 'u1', email: 'p@x.in', name: 'P', role: 'prof', lastMode: 'prof'));
+        uid: 'u1',
+        email: 'p@x.in',
+        name: 'P',
+        roles: const ['prof'],
+        lastMode: 'prof'));
     await fake.setRole(RoleDoc(
         uid: 'u1',
         email: 'p@x.in',
@@ -171,7 +190,6 @@ void main() {
     // First bind.
     expect(
         evaluateStudentClaim(
-            localPkHex: 'aa',
             localInstallId: 'i1',
             binding: null,
             installEmail: null,
@@ -180,7 +198,6 @@ void main() {
         StudentClaim.firstBind);
     // Same install enrolled as another Gmail: hard refuse.
     final conflict = evaluateStudentClaim(
-        localPkHex: 'aa',
         localInstallId: 'i1',
         binding: null,
         installEmail: 'other@x.in',
@@ -192,7 +209,6 @@ void main() {
     // device (a copied public key must not bypass the cooldown).
     expect(
         evaluateStudentClaim(
-                localPkHex: 'AA',
                 localInstallId: 'iX',
                 binding: dev('aa', 'i1', movedAgoDays: 0),
                 installEmail: email,
@@ -201,7 +217,6 @@ void main() {
         StudentClaim.cooldownBlocked);
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i1',
                 binding: dev('aa', 'i1', movedAgoDays: 0),
                 installEmail: email,
@@ -210,7 +225,6 @@ void main() {
         StudentClaim.sameDevice);
     // Different device, moved today: cooldown with a retry date.
     final blocked = evaluateStudentClaim(
-        localPkHex: 'zz',
         localInstallId: 'i2',
         binding: dev('aa', 'i1', movedAgoDays: 1),
         installEmail: null,
@@ -219,20 +233,20 @@ void main() {
     expect(blocked.retryAfter, isNotNull);
     expect(studentClaimMessage(blocked, dev('aa', 'i1', movedAgoDays: 1)),
         contains('professor'));
-    // Different device, moved 8 days ago: allowed.
+    // Different device, moved 31 days ago: allowed.
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i2',
-                binding: dev('aa', 'i1', movedAgoDays: 8),
+                binding: dev('aa', 'i1', movedAgoDays: 31),
                 installEmail: null,
                 email: email)
             .claim,
         StudentClaim.allowedMove);
-    // Legacy doc without timestamps: one migration move.
+    // Zero-stamp doc (hand-built — fresh clients always stamp): the
+    // cooldown reads 1970, so one move lands, then the write stamps now
+    // (rules agree: 0 is 30d+ past). Never a silent re-bind loop.
     expect(
         evaluateStudentClaim(
-                localPkHex: 'zz',
                 localInstallId: 'i2',
                 binding: dev('aa', 'i1'),
                 installEmail: null,
@@ -241,7 +255,7 @@ void main() {
         StudentClaim.allowedMove);
   });
 
-  test('FakeCloudSync claim: one Gmail one device, weekly move', () async {
+  test('FakeCloudSync claim: one Gmail one device, monthly move', () async {
     final fake = FakeCloudSync();
     const email = 's@x.in';
     // Phone A enrolls first.
@@ -289,10 +303,10 @@ void main() {
         await fake.touchStudentDevice(
             emailLower: email, pkHex: 'cc', installId: 'iB'),
         isFalse);
-    // Weekly move still works after a stale binding (genuine loss path):
-    // seed a second Gmail bound 8 days ago, then move it.
+    // Monthly move still works after a stale binding (genuine loss path):
+    // seed a second Gmail bound 31 days ago, then move it.
     const day = 24 * 60 * 60 * 1000;
-    final stale = DateTime.now().toUtc().millisecondsSinceEpoch - 8 * day;
+    final stale = DateTime.now().toUtc().millisecondsSinceEpoch - 31 * day;
     await fake.writeStudentDevice(StudentDeviceDoc(
         email: 'old@x.in',
         uid: 'u3',
@@ -360,7 +374,7 @@ void main() {
   test('FakeCloudSync: push/pull/rename/delete + offline refusal', () async {
     final fake = FakeCloudSync();
     await fake.setRole(RoleDoc(
-        uid: 'u1', email: 'p@x.in', name: 'Prof', role: 'prof'));
+        uid: 'u1', email: 'p@x.in', name: 'Prof', roles: const ['prof']));
     expect(await fake.fetchRole('u1'), isNotNull);
     final r = _rec('s1', '2026-09-06T10:00:00.000Z', {'a@x.in': true});
     await fake.pushSession(
@@ -412,7 +426,7 @@ void main() {
     expect(renamed.courseId, 'CS202');
     expect(renamed.timestampIso.compareTo(pushed.timestampIso) > 0, isTrue);
     expect(renamed.startIso, pushed.startIso);
-    final merged = mergeHistories([pushed], [renamed]);
+    final merged = mergeHistoriesUnion([pushed], [renamed]);
     expect(merged.single.courseId, 'CS202');
     final student = (await fake.pullStudentSessions('a@x.in')).single;
     expect(student.courseId, 'CS202');

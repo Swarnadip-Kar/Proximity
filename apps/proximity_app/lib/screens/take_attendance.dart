@@ -10,12 +10,25 @@
 // record in on-device history, so data survives even when the professor
 // forgets to end: later rounds rewrite the same record. Export is a
 // separate feature on the course page (per-session + date-range matrix).
+//
+// Layout contract: this screen owns hosting/window/draft orchestration
+// and composes the live feature sections behind an explicit sub-nav;
+// sub-tab content swaps completely via an IndexedStack — each sub-tab shows ONLY its
+// view, no shared scroll, no intersection, inactive views stay mounted so
+// their state survives switches (mid-approve inbox selection, roster
+// search, direct-add fields). Roster = waiting + dup + marked
+// (`LiveRosterBody`, same composer as the dedicated roster screen);
+// inbox = manual requests only; add = direct manual entry only
+// (the single home — no AppBar sheet extra); setup = name/IP/discovery
+// only. Behavior is unchanged from the pre-split screen; only the
+// rendering moved.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+import 'package:proximity_transport/transport.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/auth.dart';
@@ -23,12 +36,148 @@ import '../core/ble_radio.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/host_driver.dart';
+import '../core/sync_hook.dart';
+import '../design/tokens.dart';
+import '../features/live/direct_add.dart';
+import '../features/live/draft_recovery.dart';
+import '../features/live/live_refresh.dart';
+import '../features/live/live_roster.dart';
+import '../features/live/live_session.dart';
+import '../features/live/live_setup.dart';
+import '../features/live/manual_inbox.dart';
 import '../main.dart';
 import '../mode.dart';
-import '../widgets/animated.dart';
-import '../widgets/ble_log_view.dart';
-import '../widgets/clock.dart';
-import '../widgets/manual_add.dart';
+import '../widgets/host_preview_card.dart';
+import '../widgets/log_drawer.dart';
+import '../widgets/partial_list.dart';
+import '../widgets/student_card.dart' show courseInitials;
+
+// Recovery policy lives in the draft-recovery section; re-exported here
+// so existing imports (and tests) keep resolving it from this screen.
+export '../features/live/draft_recovery.dart'
+    show recoverPromptThreshold, shouldPromptRecover;
+
+/// Lightweight segmented sub-nav (§7.1) under the slim status strip:
+/// segment SWAPS the content below via the host's IndexedStack — each
+/// sub-tab shows ONLY its view (no shared scroll, no intersection);
+/// inactive views stay mounted so their state survives switches.
+///
+/// Order: Roster · Waiting · Inbox · Add · Setup. Five equal-width cells
+/// that always fit the screen width (never scroll, never flow out):
+/// symmetric `xs` padding on every cell, labels ellipsize instead of
+/// pushing siblings. Waiting + Inbox carry count badges with reserved
+/// width (maintainSize reserves space so 0→N never shifts siblings).
+class LiveSubNav extends StatelessWidget {
+  final int selected;
+  final int waitingCount;
+  final int inboxCount;
+  final ValueChanged<int> onSelect;
+
+  const LiveSubNav({
+    super.key,
+    required this.selected,
+    this.waitingCount = 0,
+    required this.inboxCount,
+    required this.onSelect,
+  });
+
+  /// Inline live counter: `Waiting (3)` / `Inbox (2)` in the same label
+  /// style — no pill container, so all five cells keep even symmetric
+  /// padding and always fit. The label half stays an exact `Text(label)`
+  /// (tap finders keep working); the count rides a sibling Text.
+  Widget _cell(
+    BuildContext context,
+    ProximityColors c, {
+    required int index,
+    required String label,
+    int badgeCount = 0,
+    bool showBadge = false,
+  }) {
+    final active = selected == index;
+    final fg = active ? c.accentBrand : c.contentSecondary;
+    final labelStyle = ProxType.label(color: fg).copyWith(
+      fontWeight: FontWeight.w600,
+    );
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onSelect(index),
+        child: AnimatedContainer(
+          duration: ProxDurations.micro,
+          curve: ProxCurves.standard,
+          constraints:
+              const BoxConstraints(minHeight: ProxSpacing.minTap),
+          padding: const EdgeInsets.symmetric(
+            horizontal: ProxSpacing.xs,
+            vertical: ProxSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: active
+                ? c.accentBrand.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(ProxRadii.pill),
+          ),
+          alignment: Alignment.center,
+          // Scale-down, never truncate: the full word always shows —
+          // it shrinks a hair on 360dp instead of clipping to "W...".
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  style: labelStyle,
+                  maxLines: 1,
+                  softWrap: false,
+                  textAlign: TextAlign.center,
+                ),
+                if (showBadge && badgeCount > 0)
+                  Text(
+                    ' ($badgeCount)',
+                    style: labelStyle,
+                    maxLines: 1,
+                    softWrap: false,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Container(
+      key: const ValueKey('live-subnav'),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.divider),
+        borderRadius: BorderRadius.circular(ProxRadii.pill),
+      ),
+      padding: const EdgeInsets.all(ProxSpacing.xs),
+      child: Row(
+        children: [
+          _cell(context, c, index: 0, label: 'Roster'),
+          _cell(context, c,
+              index: 1,
+              label: 'Waiting',
+              badgeCount: waitingCount,
+              showBadge: true),
+          _cell(context, c,
+              index: 2,
+              label: 'Inbox',
+              badgeCount: inboxCount,
+              showBadge: true),
+          _cell(context, c, index: 3, label: 'Add'),
+          _cell(context, c, index: 4, label: 'Setup'),
+        ],
+      ),
+    );
+  }
+}
 
 class TakeAttendanceScreen extends ConsumerStatefulWidget {
   final String courseName;
@@ -41,20 +190,6 @@ class TakeAttendanceScreen extends ConsumerStatefulWidget {
       _TakeAttendanceScreenState();
 }
 
-/// Session-recovery policy: the "Recover old session?" prompt appears ONLY
-/// when the autosaved draft is older than 2.5h (a genuinely old visit —
-/// yesterday's class, a forgotten session). A recent draft (quick back-nav,
-/// crash, app kill mid-lecture) is auto-archived to history as marked
-/// attendance and the professor starts fresh — no prompt, no lost data.
-const recoverPromptThreshold = Duration(minutes: 150);
-
-/// Pure policy for tests: true = prompt, false = auto-archive + fresh.
-@visibleForTesting
-bool shouldPromptRecover(DateTime? savedAt, DateTime now) {
-  if (savedAt == null) return false;
-  return now.toUtc().difference(savedAt.toUtc()) > recoverPromptThreshold;
-}
-
 class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   final TallyStore _fallbackTally = TallyStore();
   bool hosting = false;
@@ -63,11 +198,20 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   // Elapsed open time: the window stays open until Stop (no countdown —
   // slow provers are never stranded by a clock).
   Duration elapsed = Duration.zero;
+  // Frozen elapsed at the last stop: resume re-opens the same round from
+  // this value (start = now - banked) instead of zero. Null = no banked
+  // value, so fresh rounds (_windowNo+1) still start at zero. Set in the
+  // _closeWindow path, consumed on resume in _startInner, cleared on
+  // fresh starts and discards.
+  Duration? _bankedElapsed;
   Timer? _t;
   Timer? _idlePoll;
-  String search = '';
   String? serverLine;
   String? serverError;
+
+  /// Per-course opt-in: publish my Gmail photo to joining students.
+  /// Off by default (persisted per course in the device store).
+  bool _sharePhoto = false;
   HostSession? _session;
   String _ip = '';
   bool _resumed = false;
@@ -79,11 +223,53 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   // WHEN the class was, not when the last round pushed).
   String? _recordId;
   String? _recordStartIso;
+  String? _recordOrg;
   String _lastSavedSig = '';
+
+  /// Org the host actually announces (role-cache stamp, '' = unstamped).
+  /// Same source as the beacon `org` students see on the waiting card —
+  /// the Setup preview passes this through so it can never drift.
+  String _announcedOrg = '';
+
+  /// Prof org for new sessions (role cache stamped at sign-in; '' when
+  /// offline-skipped). Cached per visit so later rounds keep the creation
+  /// org immutable.
+  Future<String> _profOrgForSession() async {
+    String acctOrg = '';
+    try {
+      acctOrg = ref.read(authServiceProvider).current?.org ?? '';
+    } catch (_) {}
+    try {
+      final role = await ref.read(deviceStoreProvider).readRole();
+      return resolveMyOrg(acctOrg, role);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Loads the announced org from the SAME source the beacon airs
+  /// (`roleOrg` over the role cache — see host_driver `_startHostingInner`).
+  /// Read-only: no transport/beacon change, preview display only.
+  Future<void> _loadAnnouncedOrg() async {
+    try {
+      final role = await ref.read(deviceStoreProvider).readRole();
+      final org = roleOrg(role);
+      if (mounted && org != _announcedOrg) {
+        setState(() => _announcedOrg = org);
+      }
+    } catch (_) {}
+  }
+
   final _nameCtrl = TextEditingController();
-  final Set<String> _manualSelected = {};
-  // Toggleable terminal log (BLE RX → sighting match → tally → ACK).
-  bool _showLog = false;
+
+  /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster,
+  /// 1 waiting, 2 inbox, 3 add, 4 setup). IndexedStack keeps every tab
+  /// mounted so mid-lecture state (roster search, waiting list, inbox
+  /// selection, add fields) survives switches.
+  int _section = 0;
+  // Retained (unused by composition): dispose() still disposes it, and the
+  // dispose body is orchestration-frozen — so the field stays.
+  final _scrollCtrl = ScrollController();
 
   TallyStore get tally {
     try {
@@ -101,11 +287,19 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     }
   }
 
+  /// Class-strength ceiling for the roster absent count: union of
+  /// everyone ever seen in this course's history. Loaded once up front
+  /// (absent starts at class strength, not zero); the roster maxes it
+  /// with the live tally size so newcomers never shrink it.
+  int _historyUnion = 0;
+
   @override
   void initState() {
     super.initState();
     _host();
     _loadName();
+    _loadAnnouncedOrg();
+    _loadUnion();
     // Bluetooth off is otherwise a log-only failure: prompt once, up
     // front, with a tappable Turn-on (rounds need the radio).
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -113,16 +307,58 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     });
   }
 
-  /// Prefills the professor display name (linked identity, else last saved).
+  /// Loads the history union for the roster absent ceiling (same
+  /// course filter as the overview roster count).
+  Future<void> _loadUnion() async {
+    try {
+      final history = await ref.read(deviceStoreProvider).readHistory();
+      final mine = history
+          .where((r) =>
+              r.courseId == widget.courseName ||
+              (r.courseId.isEmpty && r.classLabel == widget.courseName))
+          .toList();
+      if (!mounted) return;
+      setState(() => _historyUnion = courseRoster(mine).length);
+    } catch (_) {}
+  }
+
+  /// Prefills the professor display name: linked identity wins, last
+  /// saved name otherwise, Gmail display name as the final default — so
+  /// students see a name (never a bare email) even when the professor
+  /// never typed one. Publishes the filled value via `setDisplayName` so
+  /// the announcement carries it even when `_host` already ran (late
+  /// Gmail): the announcer reads the driver name live, and the student
+  /// cannot invent it — host-side publish only, no transport change.
   Future<void> _loadName() async {
     var name = ref.read(linkedIdentityProvider)?.name ?? '';
     try {
-      final saved =
-          await ref.read(deviceStoreProvider).readHostName();
+      final saved = await ref.read(deviceStoreProvider).readHostName();
       if (saved.isNotEmpty) name = saved;
     } catch (_) {}
+    if (name.isEmpty) {
+      try {
+        name = ref.read(authServiceProvider).current?.displayName.trim() ?? '';
+      } catch (_) {}
+    }
+    if (name.isEmpty) {
+      name = ref.read(accountProvider).valueOrNull?.displayName.trim() ?? '';
+    }
+    if (name.isEmpty) {
+      // Late Gmail: the account stream may not have emitted when initState
+      // ran. Await the first value (bounded) so an empty field still
+      // converges to the known Gmail name instead of airing blank.
+      try {
+        final acct = await ref
+            .read(accountProvider.future)
+            .timeout(const Duration(seconds: 5));
+        name = acct?.displayName.trim() ?? '';
+      } catch (_) {}
+    }
     if (mounted && _nameCtrl.text.isEmpty && name.isNotEmpty) {
       setState(() => _nameCtrl.text = name);
+      try {
+        unawaited(ref.read(hostDriverProvider).setDisplayName(name));
+      } catch (_) {}
     }
   }
 
@@ -142,6 +378,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       setState(() => serverError =
           'Bluetooth permission is required to announce this class over radio. Enable it in Settings — students can still join by IP until then.');
     }
+    // Anti-fake-professor pin publish: the lecture key is appended to
+    // `profDevices/{email}` (owner-only write) so students verify the
+    // email→key binding offline. Armed here (auth + role + cloud live
+    // together; also armed at prof registration) — the driver calls it
+    // fire-and-forget, never blocking.
+    armProfKeyPublisher(ref);
     HostSession session;
     try {
       session = await ref
@@ -152,32 +394,110 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       setState(() => serverError = '$e');
       return;
     }
+    // Anti-fake-student pin prefetch: persist the same-org directory
+    // email→pkS map locally whenever online, then hydrate the live server
+    // so offline `unknown-pkS` enforcement survives restarts. Best-effort.
+    unawaited(_prefetchStudentPins());
     if (!mounted) return;
+    String? warn;
+    try {
+      warn = ref.read(hostDriverProvider).lanSelfCheckWarning;
+    } catch (_) {}
     final permWarn = permOk
         ? null
         : 'Bluetooth permission is required to announce this class over radio. Enable it in Settings — students can still join by IP until then.';
     setState(() {
       hosting = true;
-      serverError = permWarn;
+      // Firewall-blocked first start stays honest in the UI (non-blocking):
+      // hosting is up on loopback, but students will time out on the LAN IP.
+      serverError = permWarn ?? warn;
       _session = session;
       _ip = session.hostIp;
       serverLine = session.addressLine;
     });
+    // Announce the setup name field as-is (the announcer reads it live,
+    // so a Gmail-defaulted field the professor never typed still airs a
+    // name — students see it instead of a bare email). Idempotent: the
+    // same value rewrites the same pref.
+    try {
+      final field = _nameCtrl.text.trim();
+      if (field.isEmpty) {
+        var gmail = '';
+        try {
+          gmail =
+              ref.read(authServiceProvider).current?.displayName.trim() ?? '';
+        } catch (_) {}
+        gmail = gmail.isNotEmpty
+            ? gmail
+            : (ref.read(accountProvider).valueOrNull?.displayName.trim() ??
+                '');
+        if (gmail.isNotEmpty && mounted) {
+          setState(() => _nameCtrl.text = gmail);
+        }
+      }
+      final announced = _nameCtrl.text.trim();
+      if (announced.isNotEmpty) {
+        unawaited(
+            ref.read(hostDriverProvider).setDisplayName(announced));
+      }
+    } catch (_) {}
+    // Publish the host Gmail photo to joining students ONLY when the
+    // professor opted in for this course (off by default). Students
+    // converge on the next room poll; initials fallback when absent or
+    // off. Best-effort, never blocks hosting.
+    try {
+      final share = await ref
+          .read(deviceStoreProvider)
+          .readShowProfPhoto(widget.courseName);
+      if (!mounted) return;
+      setState(() => _sharePhoto = share);
+      final photo = share
+          ? (ref.read(accountProvider).valueOrNull?.photoUrl?.trim() ?? '')
+          : '';
+      unawaited(ref.read(hostDriverProvider).setHostPhoto(photo));
+    } catch (_) {}
+    // Discovery assumptions, never silent: logged on every hosting start
+    // (LAN tag) so a dead enterprise AP reads as explained, not empty.
+    for (final line in discoveryAssumptionLines()) {
+      BleLog.log(ProxLogTags.lan, line);
+    }
+    BleLog.log(ProxLogTags.lan, 'ladder ${formatLadderLine(-1)}');
     await _restoreDraft();
     if (!mounted) return;
     _idlePoll?.cancel();
-    _idlePoll = Timer.periodic(const Duration(seconds: 2), (_) {
+    _idlePoll = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (!mounted || !hosting || live) return;
       _maybeAutosave();
-      // Rebuild only when the waiting set actually changed — an
+      // Heal late WiFi DHCP while idling: hosting opened on mobile data or
+      // before DHCP completed airs a stale/unreachable IP on FIRST start.
+      // refreshAnnounceIps never overrides an explicit professor pick.
+      try {
+        final driver = ref.read(hostDriverProvider);
+        await driver.refreshAnnounceIps();
+        final cur = driver.announceIp;
+        if (mounted && cur.isNotEmpty && cur != _ip) {
+          final session = _session;
+          setState(() {
+            _ip = cur;
+            if (session != null) serverLine = session.lineFor(cur);
+          });
+        }
+      } catch (_) {}
+      // Rebuild only when something actually changed — an
       // unconditional setState here rebuilt the whole list every 2s
-      // (scroll jank on big classes).
-      if (_logWaitingDelta()) setState(() {});
+      // (scroll jank on big classes). The manual delta refreshes the
+      // `Inbox (N)` badge + inbox prop while idle (inbox rows
+      // self-refresh in the section — see
+      // `features/live/manual_inbox.dart`).
+      final waitingChanged = _logWaitingDelta();
+      final manualChanged = _logManualDelta();
+      if (waitingChanged || manualChanged) setState(() {});
     });
     if (widget.autoStart) _startNext();
   }
 
   Set<String> _prevWaiting = {};
+  Set<String> _prevManual = {};
 
   /// Logs waiting-room joins/leaves (student entered or backed out) so the
   /// count changes are visible in the system log, not just the list.
@@ -185,9 +505,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   bool _logWaitingDelta() {
     Set<String> cur = {};
     try {
-      cur = {
-        for (final w in ref.read(hostDriverProvider).waitingRows) w.email
-      };
+      cur = {for (final w in ref.read(hostDriverProvider).waitingRows) w.email};
     } catch (_) {
       return false;
     }
@@ -195,12 +513,34 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     final left = _prevWaiting.difference(cur);
     _prevWaiting = cur;
     for (final e in joined) {
-      BleLog.log('LAN', 'waiting +$e (${cur.length} waiting)');
+      BleLog.log(ProxLogTags.lan, 'waiting +$e (${cur.length} waiting)');
     }
     for (final e in left) {
-      BleLog.log('LAN', 'waiting -$e left (${cur.length} waiting)');
+      BleLog.log(ProxLogTags.lan, 'waiting -$e left (${cur.length} waiting)');
     }
     return joined.isNotEmpty || left.isNotEmpty;
+  }
+
+  /// Manual-arrival delta (inbox live-update fix, rebuild trigger only):
+  /// the idle poll previously watched the waiting set alone, so manual
+  /// arrivals while idle never refreshed the `Inbox (N)` badge or the
+  /// inbox prop until the next decision/navigation. Compares the LOCAL
+  /// pending email set (no network, no proof load) and stays silent —
+  /// arrivals render, decided rows still clear via the existing decide
+  /// paths. Orchestration untouched.
+  bool _logManualDelta() {
+    Set<String> cur = {};
+    try {
+      cur = {
+        for (final m in ref.read(hostDriverProvider).manualPending) m.email
+      };
+    } catch (_) {
+      return false;
+    }
+    final changed =
+        cur.length != _prevManual.length || !cur.containsAll(_prevManual);
+    _prevManual = cur;
+    return changed;
   }
 
   /// Autosaved-draft resume (back navigation or full app kill). Policy:
@@ -215,7 +555,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _restoreDraft() async {
     Map<String, dynamic>? draft;
     try {
-      draft = await ref.read(deviceStoreProvider).readSession(widget.courseName);
+      draft =
+          await ref.read(deviceStoreProvider).readSession(widget.courseName);
     } catch (_) {
       return;
     }
@@ -227,22 +568,25 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (windowNo <= 0 && windows.isEmpty && names.isEmpty) return;
     final savedAt = DateTime.tryParse(d['savedAt'] as String? ?? '');
     if (shouldPromptRecover(savedAt, DateTime.now())) {
-      final recover = await _askRecover(savedAt);
+      final recover = await showRecoverOldDialog(context, savedAt);
       if (!mounted) return;
       if (recover == true) {
+        BleLog.log(
+            ProxLogTags.nav, 'old draft recovered (continue same visit)');
         await _applyDraft(d);
       } else {
         // Save & start fresh (or dismissed): archive first, then clear.
+        BleLog.log(ProxLogTags.nav, 'old draft archived, starting fresh visit');
         await _archiveDraftAsHistory(d);
         try {
-          await ref
-              .read(deviceStoreProvider)
-              .clearSession(widget.courseName);
+          await ref.read(deviceStoreProvider).clearSession(widget.courseName);
         } catch (_) {}
       }
       return;
     }
     // Recent: snapshot to history, then resume the same visit live.
+    BleLog.log(ProxLogTags.nav,
+        'recent draft auto-archived + resumed live, no prompt');
     await _archiveDraftAsHistory(d);
     await _applyDraft(d);
   }
@@ -272,39 +616,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               id: d['recordId'] as String?,
             ),
           );
+      BleLog.log(
+          ProxLogTags.sync, 'draft archived to history (${tally.size} marked)');
     } catch (_) {}
-  }
-
-  /// Old-session prompt. Returns true = Recover, false = save & fresh.
-  Future<bool?> _askRecover(DateTime? savedAt) {
-    final age = savedAt == null
-        ? 'a while ago'
-        : _ageLine(DateTime.now().toUtc().difference(savedAt.toUtc()));
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Recover old session?'),
-        content: Text(
-            'An autosaved session from $age is still here. Recover it to continue, or save it to history and start fresh.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Save & start fresh'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Recover'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _ageLine(Duration age) {
-    if (age.inHours >= 24) return '${age.inDays}d ago';
-    if (age.inHours >= 1) return '${age.inHours}h ago';
-    return '${age.inMinutes}m ago';
   }
 
   /// Continues an autosaved draft in the fresh host: the tally and window
@@ -330,8 +644,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _draftDateIso = d['dateIso'] as String?;
       _recordId = d['recordId'] as String?;
       _recordStartIso = d['recordStartIso'] as String?;
+      _recordOrg = d['recordOrg'] as String?;
       _resumed = true;
       _lastSavedSig = '';
+      // Restored drafts resume idle: no frozen stop to continue from.
+      _bankedElapsed = null;
+      elapsed = Duration.zero;
     });
     _maybeAutosave();
   }
@@ -340,7 +658,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (v is! Map) return {};
     return {
       for (final e in v.entries)
-        if (e.key is String && e.value is String) e.key as String: e.value as String
+        if (e.key is String && e.value is String)
+          e.key as String: e.value as String
     };
   }
 
@@ -362,7 +681,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   List<int> _intList(Object? v, int n) {
     if (v is List && v.length == n) {
       final out = [
-        for (final e in v) (e as num?)?.toInt() ?? 0,
+        for (final e in v)
+          e is num ? e.toInt() : int.tryParse('$e') ?? 0,
       ];
       if (out.every((e) => e > 0)) return out;
     }
@@ -372,17 +692,45 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   String _draftSig() =>
       '$_windowNo|${tally.windowsAsMaps}|${tally.size}|${tally.confirmedCount}';
 
-  Map<String, dynamic> _draftJson() => {
-        'windowNo': _windowNo,
-        'dateIso': _draftDateIso ?? dateIsoOf(DateTime.now()),
-        'recordId': _recordId,
-        'recordStartIso': _recordStartIso,
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-        'names': tally.nameMap(),
-        'rolls': tally.rollMap(),
-        'windows': tally.windowsAsMaps,
-        'windowNos': tally.windowNos,
-      };
+  Map<String, dynamic> _draftJson() {
+    // Crash-safe R1: the live-open round is never noted in-memory (so the
+    // intersection never collapses mid-round), but the draft must still
+    // carry it — a kill mid-R1 with no marks yet would otherwise restore
+    // with windowNos=[] and R1 would vanish from the trail (R2..R6 show,
+    // R1 missing). Union the live _windowNo here (plus an empty window map
+    // when the live round has no marks yet, so lengths stay aligned for
+    // restore); the in-memory live intersection is untouched (draft only
+    // matters on restore, when the window is closed and the round honestly
+    // happened).
+    final wn = tally.windowNos.toList();
+    var maps = tally.windowsAsMaps;
+    if (_windowNo > 0 && !wn.contains(_windowNo)) {
+      wn.add(_windowNo);
+      final sortedIdx = wn.toList()..sort();
+      final pos = sortedIdx.indexOf(_windowNo);
+      final grown = List<Map<String, bool>>.from(maps);
+      // Pad with empty maps if the live round sorts beyond current maps
+      // (dense case: append; sparse: insert at sorted position).
+      while (grown.length < pos) {
+        grown.add(const <String, bool>{});
+      }
+      grown.insert(pos.clamp(0, grown.length), const <String, bool>{});
+      wn.sort();
+      maps = grown;
+    }
+    return {
+      'windowNo': _windowNo,
+      'dateIso': _draftDateIso ?? dateIsoOf(DateTime.now()),
+      'recordId': _recordId,
+      'recordStartIso': _recordStartIso,
+      'recordOrg': _recordOrg,
+      'savedAt': DateTime.now().toUtc().toIso8601String(),
+      'names': tally.nameMap(),
+      'rolls': tally.rollMap(),
+      'windows': maps,
+      'windowNos': wn,
+    };
+  }
 
   /// Writes the draft when marks are absent entirely it clears any stale
   /// draft instead, so untouched courses never show a resume banner.
@@ -413,6 +761,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   Future<void> _discardDraft() async {
+    BleLog.log(
+        ProxLogTags.state, 'draft discarded by professor (tally cleared)');
     try {
       await ref.read(deviceStoreProvider).clearSession(widget.courseName);
     } catch (_) {}
@@ -425,7 +775,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _resumed = false;
       _draftDateIso = null;
       _lastSavedSig = '';
-      _manualSelected.clear();
+      _bankedElapsed = null;
+      elapsed = Duration.zero;
     });
   }
 
@@ -434,37 +785,17 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Future<void> _pickIp() async {
     final session = _session;
     if (session == null || session.allIps.length < 2) return;
-    final picked = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Announce on'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final ip in session.allIps)
-                ListTile(
-                  title: Text(ip),
-                  trailing:
-                      ip == _ip ? const Icon(Icons.check) : null,
-                  onTap: () => Navigator.of(ctx).pop(ip),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
+    final picked = await showAnnounceIpDialog(
+      context,
+      allIps: session.allIps,
+      currentIp: _ip,
     );
     if (picked == null || picked == _ip) return;
     try {
       await ref.read(hostDriverProvider).setAnnounceHost(picked);
     } catch (_) {}
     if (!mounted) return;
+    BleLog.log(ProxLogTags.state, 'announce IP switched to $picked');
     setState(() {
       _ip = picked;
       serverLine = session.lineFor(picked);
@@ -476,26 +807,101 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     _t?.cancel();
     _idlePoll?.cancel();
     _nameCtrl.dispose();
+    _scrollCtrl.dispose();
     _setWake(false);
     // Best-effort only: dispose cannot await, so the durable save is the
-    // autosave + _leave path above. _saveDraft/endHosting here are
-    // fire-and-forget teardowns (ports close, last draft attempted).
-    // Persist first so back navigation never loses marks; then full teardown
-    // closes HTTPS + UDP sockets so no port stays open (req 7).
-    _saveDraft();
+    // autosave + _leave path above.
+    // Non-clobbering teardown: _leave/_endAttendance save first and then
+    // endHosting clears the live tally, so an unconditional write here
+    // would persist an EMPTY visit over the good draft (back-nav would
+    // then "resume" zero marks). Only top-up when live marks exist that
+    // the autosave may not have flushed yet (abnormal teardown without
+    // back-nav); the awaited _leave save + per-round snapshots own the
+    // normal path. (Ports still close unconditionally below — req 7.)
+    if (tally.size > 0) _saveDraft();
     try {
       ref.read(hostDriverProvider).endHosting();
     } catch (_) {}
     super.dispose();
   }
 
-  Future<void> _leave() async {
-    await _saveDraft();
+  /// Back-interrupt guards (§3.5 back-intercept): [_leaving] single-flights
+  /// the awaited teardown (a second back-press mid-await is ignored);
+  /// [_bypass] marks our own programmatic pops so the PopScope handler can
+  /// never re-enter teardown for them. Both are load-bearing: without them
+  /// a double-back would run teardown twice (double save + double
+  /// endHosting).
+  bool _leaving = false;
+  bool _bypass = false;
+
+  /// Shared back-path teardown: freeze autosave timers FIRST (endHosting
+  /// clears the live tally below, and a 1s/2s timer tick landing between
+  /// the clear and unmount would persist an EMPTY visit over the good
+  /// draft — back-nav would then "resume" zero marks). Timers die here
+  /// (and again in dispose), never after the pop.
+  ///
+  /// Throws stay caught exactly as today (ports close best-effort). The
+  /// End-attendance path passes `save: false`: it already snapshotted +
+  /// cleared the draft above, so saving again here would resurrect it.
+  Future<void> _teardown({bool save = true}) async {
+    _t?.cancel();
+    _idlePoll?.cancel();
+    if (save) {
+      BleLog.log(
+          ProxLogTags.nav, 'leaving take screen (draft saved, hosting down)');
+      await _saveDraft();
+    }
     try {
       await ref.read(hostDriverProvider).endHosting();
     } catch (_) {}
-    if (mounted) Navigator.of(context).pop();
   }
+
+  /// Anti-fake-student pin prefetch (shared by hosting start + every
+  /// window start): persists the same-org directory email→pkS map locally
+  /// whenever online, then hydrates the live server. Re-running per window
+  /// converges mid-class enrollments and student re-keys (a pin cached at
+  /// hosting start would otherwise refuse a freshly re-enrolled key as
+  /// `unknown-pkS` for the whole session). Best-effort, never throws.
+  Future<void> _prefetchStudentPins() async {
+    try {
+      final cloud = ref.read(cloudSyncProvider);
+      if (!await cloud.isOnline()) return;
+      final store = ref.read(deviceStoreProvider);
+      final role = await store.readRole();
+      final org = roleOrg(role);
+      if (org.isEmpty) return;
+      final pins = await cloud.fetchStudentKeyPins(org: org, limit: 200);
+      if (pins.isEmpty) return;
+      final prev = await store.readStudentKeyPins();
+      await store.writeStudentKeyPins({...prev, ...pins});
+      try {
+        await ref.read(hostDriverProvider).hydrateStudentPins(pins);
+      } catch (_) {}
+      BleLog.log('SEC',
+          'student key pins prefetched (${pins.length} directory keys cached for this org — re-enrolled keys converge on the next window)');
+    } catch (_) {}
+  }
+
+  /// Single-flight leave: the bar BackButton, the PopScope intercept, and
+  /// (its tail) End-attendance all funnel through here. Teardown throws
+  /// stay caught so the pop still proceeds (same as `_leave` today).
+  Future<void> _leave() async {
+    if (_leaving) return;
+    _leaving = true;
+    try {
+      await _teardown();
+    } catch (_) {}
+    if (mounted) {
+      _bypass = true;
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// PopScope intercept: system/shell back arriving via maybePop (the path
+  /// that consults the veto) runs the SAME awaited teardown as the bar
+  /// BackButton, then pops. Programmatic pops complete directly (notified
+  /// with didPop:true), so [_bypass] only ever short-circuits re-entry.
+  Future<void> _interceptBack() => _leave();
 
   void _startNext() => _start(_windowNo + 1);
 
@@ -531,10 +937,23 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (!mounted) return;
     // Keep the screen awake for the live window on all OS.
     _setWake(true);
+    BleLog.log(ProxLogTags.state,
+        'window #$windowNo live (code ${session.displayCode})');
+    // Fresh pins per window (see _prefetchStudentPins): a student who
+    // enrolled or re-keyed mid-class must not prove against a stale pin
+    // for the rest of the session.
+    unawaited(_prefetchStudentPins());
+    // Resume continues from the frozen elapsed at stop (start = now -
+    // banked); fresh rounds (windowNo+1, no banked value) start at zero.
+    // The comparison runs before _windowNo advances, so same-number
+    // re-opens resume while next-number opens start fresh.
+    final isResume = windowNo == _windowNo && _bankedElapsed != null;
+    final startElapsed = isResume ? _bankedElapsed! : Duration.zero;
+    _bankedElapsed = null;
     setState(() {
       live = true;
       _windowNo = windowNo;
-      elapsed = Duration.zero;
+      elapsed = startElapsed;
       serverError = null;
       _session = session;
       _ip = session.hostIp;
@@ -560,7 +979,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// an un-closed session leaves data behind.
   Future<void> _closeWindow() async {
     _t?.cancel();
+    // Freeze the elapsed for a later resume (start = now - banked).
+    _bankedElapsed = elapsed;
     if (!mounted) return;
+    BleLog.log(ProxLogTags.state, 'window #$_windowNo stopped (grace running)');
     setState(() => live = false);
     _setWake(false);
     try {
@@ -573,12 +995,84 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   Future<void> _stopEarly() => _closeWindow();
 
-  /// Open-window elapsed clock (mm:ss, unbounded — Stop ends it).
-  String _elapsedLabel() {
-    final s = elapsed.inSeconds;
-    final mm = (s ~/ 60).toString().padLeft(2, '0');
-    final ss = (s % 60).toString().padLeft(2, '0');
-    return '$mm:$ss';
+  /// Discards the stopped round [n] = [_windowNo] after an explicit
+  /// warning popup (marks for that round are lost; people stay — names,
+  /// waiting and manual entries are visit data, not round data). Resume
+  /// re-opens the same round instead (marks merge). After the drop,
+  /// [_windowNo] rewinds to the newest surviving round, so a discarded
+  /// final round returns the dock to Start.
+  Future<void> _discardRound() async {
+    final n = _windowNo;
+    if (n <= 0 || live || _leaving || !mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Discard round $n?'),
+        content: Text(
+            'This drops every mark taken in round $n. People stay on the roster — only the round goes away. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    tally.discardWindow(n);
+    BleLog.log(ProxLogTags.state, 'discarded round $n');
+    if (tally.windowCount == 0) {
+      // Full reset: the visit never started — no history record, no
+      // draft, dock back to Start. The stopped round already upserted a
+      // record at Stop time, so delete this visit's record outright
+      // (tombstoned like any local delete, so peers converge too).
+      final store = ref.read(deviceStoreProvider);
+      try {
+        await store.clearSession(widget.courseName);
+      } catch (_) {}
+      try {
+        tally.clear();
+      } catch (_) {}
+      final rid = _recordId;
+      if (rid != null && rid.isNotEmpty) {
+        try {
+          await syncEngine.deleteSessionsLocal(store, [rid],
+              courseOf: (_) => widget.courseName);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _windowNo = 0;
+        _resumed = false;
+        _recordId = null;
+        _recordStartIso = null;
+        _recordOrg = null;
+        _draftDateIso = null;
+        _lastSavedSig = '';
+        _bankedElapsed = null;
+        elapsed = Duration.zero;
+      });
+      bumpLiveHistoryTick();
+      return;
+    }
+    // Rewind to the newest SURVIVING round (max, not count): sparse
+    // numbering (e.g. [1,2,5] after discarding 3-4) must never renumber,
+    // or the next Take-another collides with an existing round and R1
+    // can vanish from the trail. Empty (no rounds) is handled above.
+    final nos = tally.windowNos;
+    _windowNo = nos.isEmpty ? 0 : nos.last;
+    // No round to resume from anymore: drop the frozen elapsed so the
+    // next fresh Start begins at zero.
+    _bankedElapsed = null;
+    elapsed = Duration.zero;
+    await _saveDraft();
+    await _saveSnapshot();
+    if (mounted) setState(() {});
+    bumpLiveHistoryTick();
   }
 
   /// Best-effort wakelock: fire-and-forget so a hung platform channel can
@@ -608,8 +1102,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         return true;
       }
       if (!mounted) return false;
-      setState(() => serverError =
-          'Bluetooth is off — turn it on to start the window.');
+      setState(() =>
+          serverError = 'Bluetooth is off — turn it on to start the window.');
       return false;
     }
     return true;
@@ -618,6 +1112,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// Ends attendance (no export — that lives on the course page): final
   /// snapshot, draft cleared, hosting down, back to the course.
   Future<void> _endAttendance() async {
+    if (_leaving) return;
+    _leaving = true;
+    BleLog.log(
+        ProxLogTags.nav, 'end attendance (final snapshot, hosting down)');
+    // Freeze autosave first (same teardown race as _leave: the draft is
+    // cleared and the tally dropped below, so a timer tick landing before
+    // unmount would resurrect a stale empty draft behind the course page).
+    _t?.cancel();
+    _idlePoll?.cancel();
     try {
       await _saveSnapshot();
       try {
@@ -626,9 +1129,22 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _lastSavedSig = '';
       _recordId = null;
       _recordStartIso = null;
-      await ref.read(hostDriverProvider).endHosting();
-      if (mounted) Navigator.of(context).pop();
+      _recordOrg = null;
+      _bankedElapsed = null;
+      // Shared tail: awaited endHosting via _teardown (save:false — the
+      // draft was cleared above and must not be rewritten). A teardown
+      // throw stays caught and the pop still proceeds (uniform with
+      // _leave; previously an endHosting throw surfaced serverError and
+      // kept the screen mounted).
+      await _teardown(save: false);
+      if (mounted) {
+        _bypass = true;
+        Navigator.of(context).pop();
+      }
     } catch (e) {
+      // Stay retryable: release the single-flight so End/back still work
+      // (today a failed End leaves the screen usable).
+      _leaving = false;
       if (!mounted) return;
       setState(() => serverError = '$e');
     }
@@ -638,8 +1154,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// this visit's stable record id: every round rewrites the SAME record,
   /// so un-closed sessions still leave data and later rounds update it.
   /// Skipped while nothing is marked (no empty records in history).
-  /// When a signed-in professor is online, the same record pushes to the
-  /// cloud (fire-and-forget — local data never waits on it).
+  /// The SyncEngine post-live-save hook durably queues + best-effort
+  /// pushes (professors, online) — local data never waits on it.
   Future<void> _saveSnapshot([String? dateIso]) async {
     if (tally.size == 0) return;
     ClassRecord? record;
@@ -651,6 +1167,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       // rounds (and resumed drafts) keep it — timestampIso still moves
       // with every push for merge ordering.
       _recordStartIso ??= now.toUtc().toIso8601String();
+      // Session org = prof org at creation, immutable afterwards: reuse
+      // the first snapshot's org for later rounds of this visit.
+      _recordOrg ??= await _profOrgForSession();
       record = tally.toClassRecord(
         courseId: widget.courseName,
         classLabel: widget.courseName,
@@ -658,83 +1177,60 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         timestampIso: now.toUtc().toIso8601String(),
         startIso: _recordStartIso,
         id: _recordId,
+        org: _recordOrg ?? '',
       );
-      await ref.read(deviceStoreProvider).upsertHistory(record);
     } catch (_) {
       // History is best-effort; live tally + draft autosave are unaffected.
       return;
     }
     final rec = record;
-    unawaited(_pushSnapshot(rec));
-  }
-
-  /// Best-effort cloud push for one snapshot (professors only, online only).
-  Future<void> _pushSnapshot(ClassRecord record) async {
+    final prof = await readSyncProf(ref);
+    if (!mounted) return;
     try {
+      final store = ref.read(deviceStoreProvider);
       final cloud = ref.read(cloudSyncProvider);
-      if (!cloud.available) return;
-      final acct = ref.read(authServiceProvider).current;
-      Map<String, String>? role;
-      try {
-        role = await ref.read(deviceStoreProvider).readRole();
-      } catch (_) {}
-      String hostName = '';
-      try {
-        hostName = await ref.read(deviceStoreProvider).readHostName();
-      } catch (_) {}
-      final id = profPushIdentity(
-          authEmail: acct?.email,
-          authUid: acct?.uid,
-          authName: acct?.displayName,
-          role: role,
-          hostNameFallback: hostName);
-      if (id == null) return; // offline-skipped prof or student: local only
-      await cloud
-          .pushSession(
-              profUid: id.uid,
-              profEmail: id.email,
-              profName: id.name,
-              record: record)
-          .timeout(const Duration(seconds: 10));
+      BleLog.log(ProxLogTags.sync,
+          'snapshot upserted ${rec.id} (${tally.confirmedCount} present)');
+      await syncEngine.noteLocalSave(
+          store: store, cloud: cloud, prof: prof, record: rec);
     } catch (_) {}
   }
 
   Future<void> _approveOne(String email) async {
     try {
       await _driver?.decideManual(email, true);
+      BleLog.log(ProxLogTags.state, 'manual approved $email');
     } catch (e) {
       if (mounted) setState(() => serverError = '$e');
     }
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) {
-      setState(() => _manualSelected.remove(email.toLowerCase()));
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _rejectOne(String email) async {
     try {
       await _driver?.decideManual(email, false);
+      BleLog.log(ProxLogTags.state, 'manual rejected $email');
     } catch (e) {
       if (mounted) setState(() => serverError = '$e');
     }
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) {
-      setState(() => _manualSelected.remove(email.toLowerCase()));
-    }
+    if (mounted) setState(() {});
   }
 
-  Future<void> _decideSelected(bool approve) async {
-    final emails = _manualSelected.toList();
+  Future<void> _decideSelected(List<String> emails, bool approve) async {
     for (final e in emails) {
       try {
         await _driver?.decideManual(e, approve);
       } catch (_) {}
     }
+    BleLog.log(ProxLogTags.state,
+        'manual bulk ${approve ? 'approved' : 'rejected'} (${emails.length})');
     await _saveDraft();
     await _saveSnapshot();
-    if (mounted) setState(() => _manualSelected.clear());
+    if (mounted) setState(() {});
   }
 
   /// Shared manual-add submit (see ManualAddForm): the form guarantees an
@@ -752,377 +1248,474 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     await _saveSnapshot();
   }
 
+  // in the Add section (`DirectAddSection` below, `direct-` keys). The
+  // former AppBar `Add student` sheet (`sheet-` keys, same module form)
+  // duplicated it, so it is removed — no second entry point, no second
+  // form instance. [_addDirectEntry] below stays (it is the Add section's
+  // submit path: driver + draft + snapshot).
+
+  /// Segmented sub-nav tap: swap to the tapped sub-tab. State-preserving
+  /// by construction (IndexedStack keeps inactive views mounted — this is
+  /// the fix for the reverted grouping probe, where unmounting broke the
+  /// mid-approve inbox flow).
+  void _selectSection(int i) {
+    setState(() => _section = i);
+  }
+
+  /// 1-tap duplicate-face override: the driver clears the whole group,
+  /// exempts the pair for the session, and re-marks every win dup
+  /// auto-absent dropped (both members count again).
+  Future<void> _resolveDup(String email) async {
+    try {
+      await _driver?.resolveDupFlag(email);
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  /// Per-course photo opt-in toggle: persists immediately, then
+  /// publishes (or clears) the host Gmail photo for joining students.
+  Future<void> _setSharePhoto(bool share) async {
+    try {
+      await ref
+          .read(deviceStoreProvider)
+          .writeShowProfPhoto(widget.courseName, share);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _sharePhoto = share);
+    try {
+      final photo = share
+          ? (ref.read(accountProvider).valueOrNull?.photoUrl?.trim() ?? '')
+          : '';
+      unawaited(ref.read(hostDriverProvider).setHostPhoto(photo));
+    } catch (_) {}
+  }
+
+  /// Professor eject from the roster (swipe → confirm): drops the student
+  /// from waiting + manual queue + tally + dup flags, then refreshes. The
+  /// next history upsert/snapshot no longer contains them; rejoin/re-mark
+  /// re-adds. Returns true when anything was removed (drives the
+  /// Dismissible animation).
+  Future<bool> _removeStudent(String email) async {
+    var removed = false;
+    try {
+      removed = await _driver?.removeStudent(email) ?? false;
+    } catch (_) {
+      removed = false;
+    }
+    if (!mounted) return removed;
+    setState(() {});
+    bumpLiveHistoryTick();
+    if (removed) {
+      // Tapping anywhere on the bar (OK action) dismisses it at once —
+      // a passive bar that ignores taps reads as a stuck popup.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Removed — they can rejoin anytime.'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'OK',
+            onPressed: () =>
+                ScaffoldMessenger.of(context).hideCurrentSnackBar(),
+          ),
+        ),
+      );
+    }
+    return removed;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final linked = ref.watch(linkedIdentityProvider);
     final present = tally.confirmedCount;
     final waiting = _driver?.waitingCount ?? 0;
-    final denom = waiting > 0 ? waiting : (present > 0 ? present : 0);
-    final windowsTaken = tally.windowCount;
-    final windowNos = tally.windowNos;
-    // Intersection + partials: a student who marked R1 but missed R2 must
-    // stay visible with per-round ticks (R1 ✓ · R2 ✗) instead of vanishing
-    // from the list while the header still reads an intersection count.
-    final confirmedRows =
-        search.isEmpty ? tally.confirmed : tally.search(search).where((r) {
-          if (windowNos.isEmpty) return r.wins.isNotEmpty;
-          for (final w in windowNos) {
-            if (!r.wins.contains(w)) return false;
-          }
-          return true;
-        }).toList();
-    final partialRows = search.isEmpty
-        ? tally.presentAny
-            .where((r) {
-              if (windowNos.isEmpty) return false;
-              var all = true;
-              for (final w in windowNos) {
-                if (!r.wins.contains(w)) {
-                  all = false;
-                  break;
-                }
-              }
-              return !all;
-            })
-            .toList()
-        : const [];
-    String ticksFor(Set<int> wins) {
-      if (windowNos.isEmpty) return wins.isEmpty ? 'no rounds yet' : 'R1 ✓';
-      return [
-        for (final w in windowNos) 'R$w ${wins.contains(w) ? '✓' : '✗'}',
-      ].join(' · ');
-    }
+    // Live round number (max, not count): sparse numbering after a discard
+    // ([1,2,5]) must still read Class 5, and a live-open round with no
+    // marks yet (not yet noted) must already count. Count would show 3
+    // and hide R1-style gaps.
+    final wn = tally.windowNos;
+    final windowsTaken =
+        [_windowNo, if (wn.isNotEmpty) wn.last].reduce((a, b) => a > b ? a : b);
     final waitingRows = _driver?.waitingRows ?? const [];
     final manualPending = _driver?.manualPending ?? const [];
+    // AppBar avatar (gated Gmail photo iff the per-course opt-in is on,
+    // else the CS-style course disc — the same [courseInitials] helper as
+    // the Live list + Courses pickers, so CSL1010 reads CS everywhere).
+    final appBarPhotoUrl = liveHeaderPhotoUrl(
+      sharePhoto: _sharePhoto,
+      accountPhotoUrl: ref.watch(accountProvider).valueOrNull?.photoUrl,
+    );
+    // Back-intercept (§3.5, navigation-shell rebuild): the shell still owns
+    // tab back — in-tab back pops this tab's stack only, and this screen
+    // never leaves the shell or touches mode. The route carries its own
+    // PopScope (canPop:false) so back arriving via maybePop runs the SAME
+    // awaited teardown as the bar BackButton ([_leave]: timers → save →
+    // endHosting) before popping, instead of racing it through dispose.
+    // Single-flight ([_leaving]) + programmatic-pop ([_bypass]) guards are
+    // load-bearing against double-back mid-await. dispose() below stays
+    // the backstop (timers + non-clobbering top-up + unconditional port
+    // close), unchanged.
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _leave();
+        if (didPop || _bypass) return;
+        _interceptBack();
       },
       child: AdaptiveScaffold(
         title: widget.courseName,
-        body: ListView(
-          padding: const EdgeInsets.all(16),
+        // Avatar just left of the course name (28dp, same photo/initials
+        // contract as before — placement only, no new plumbing).
+        titleWidget: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const ClockHeader(),
-            if (!hosting && serverError == null) ...[
-              const SizedBox(height: 8),
-              const Text('Starting host…'),
-            ],
-            if (hosting && !live) ...[
-              const SizedBox(height: 8),
-              const Text(
-                  'Advertising on WiFi + Bluetooth — students can see this class now and join the waiting area. Tap Start when the class has joined. If students on institute WiFi can\u2019t see it, switch this phone to hotspot and rejoin it from their side.'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Your name (optional, shown to students)',
-                ),
-                onChanged: (v) {
-                  try {
-                    ref.read(hostDriverProvider).setDisplayName(v);
-                  } catch (_) {}
-                },
+            _TakeBarAvatar(
+              photoUrl: appBarPhotoUrl,
+              courseName: widget.courseName,
+            ),
+            const SizedBox(width: ProxSpacing.sm),
+            Flexible(
+              child: Text(
+                widget.courseName,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
-            ],
-            if (serverLine != null) ...[
-              const SizedBox(height: 4),
-              Text(serverLine!, style: Theme.of(context).textTheme.bodyMedium),
-            ],
-            if (_session != null && _session!.allIps.length > 1) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: live ? null : _pickIp,
-                  child: Text('Announcing on $_ip · change'),
-                ),
-              ),
-            ],
-            if (serverError != null) ...[
-              const SizedBox(height: 4),
-              Text(serverError!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ],
-            if (_resumed) ...[
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.history),
-                  title: const Text('Resumed autosaved session'),
-                  subtitle: Text(
-                      '$present present · $windowsTaken window${windowsTaken == 1 ? '' : 's'} so far — retake the round, take again, or end attendance.'),
-                  trailing: TextButton(
-                    onPressed: _discardDraft,
-                    child: const Text('Discard'),
+            ),
+          ],
+        ),
+        leading: adaptiveBackButton(onPressed: () {
+          // Composition wrapper (body untouched): leaving the Live tab
+          // bumps the history-refresh tick so the Courses tab re-reads on
+          // re-show (its IndexedStack-kept state never re-reads alone).
+          // Adaptive (Cupertino chevron on iOS/macOS — a Material
+          // BackButton inside a Cupertino bar renders "?" there).
+          _leave().whenComplete(bumpLiveHistoryTick);
+        }),
+        // Zero-intersection: no AppBar add entry — manual entry lives
+        // ONLY in the Add section below (single home). System log stays.
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.terminal_outlined),
+            tooltip: 'System log',
+            // Overlay drawer (§4.5): the radio UI keeps listening beneath
+            // it. `Expand` inside pushes the full-screen debug/log.
+            onPressed: () => showLogDrawer(context),
+          ),
+        ],
+        body: Stack(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Slim top status only: dot + LIVE/IDLE + timer + counts.
+                // Everything else from the old card (avatar, meta lines,
+                // buttons) is gone — avatar lives in the AppBar above,
+                // actions dock below.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      ProxSpacing.screenMargin, 12, ProxSpacing.screenMargin, 0),
+                  child: LiveStatusStrip(
+                    live: live,
+                    elapsed: elapsed,
+                    present: present,
+                    waiting: waiting,
                   ),
                 ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _elapsedLabel(),
-                      style: Theme.of(context).textTheme.headlineMedium,
+                if (_resumed)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin, 8, ProxSpacing.screenMargin, 0),
+                    child: DraftResumedBanner(
+                      present: present,
+                      windowsTaken: windowsTaken,
+                      onDiscard: _discardDraft,
                     ),
-                    const SizedBox(height: 2),
-                    const Text('LIVE', style: TextStyle(letterSpacing: 3)),
-                  ],
+                  ),
+                // Wider bar: md (12) side insets instead of the screen
+                // margin (20) — the width is there, so the five cells
+                // breathe instead of squeezing.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      ProxSpacing.md, 8, ProxSpacing.md, 0),
+                  child: LiveSubNav(
+                    selected: _section,
+                    waitingCount: waitingRows.length,
+                    inboxCount: manualPending.length,
+                    onSelect: _selectSection,
+                  ),
                 ),
-                const SizedBox(width: 16),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  // this IndexedStack — each sub-tab shows ONLY its view, no
+                  // shared scroll, no intersection. Inactive views stay mounted
+                  // (state-preserving switch): roster search, waiting list,
+                  // mid-approve inbox selection, and direct-add fields survive
+                  // tab switches — the reverted grouping probe failed exactly
+                  // because unmounting broke the inbox approve flow. Order is
+                  // Roster · Waiting · Inbox · Add · Setup. Each tab scrolls
+                  // independently. Bottom padding reserves room for the
+                  // floating controls docked below (content never slides
+                  // under the buttons).
+                  child: IndexedStack(
+                    index: _section,
                     children: [
-                      PresentTicker(present: present, total: denom),
-                      Text(
-                        windowsTaken <= 1
-                            ? 'Window 1 · $present present / $denom waiting'
-                            : 'Windows 1–$_windowNo ($windowsTaken taken) · intersection $present / $denom waiting',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      if (linked != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                              'Host: ${linked.name}${linked.roll.isNotEmpty ? ' · ${linked.roll}' : ''}',
-                              style: Theme.of(context).textTheme.bodySmall),
+                      // 0 — Roster only: dup flags + marked (search + present
+                      // + partial). Same `LiveRosterBody` composer with
+                      // waiting excluded (it lives on its own tab). Top
+                      // inset is xs — the search sits tight under the bar.
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.xs,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: LiveRosterBody(
+                          waitingRows: const [],
+                          groups: _driver?.dupGroups ?? const {},
+                          names: tally.nameMap(),
+                          onResolve: _resolveDup,
+                          tally: tally,
+                          onRemoveStudent: _removeStudent,
+                          includeWaiting: false,
+                          rosterTotal: _historyUnion,
                         ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          if (live) ...[
-                            FilledButton(
-                              onPressed: _stopEarly,
-                              child: const Text('Stop'),
+                      ),
+                      // 1 — Waiting only: parked joiners for the next window.
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: WaitingListSection(
+                          waitingRows: waitingRows,
+                          onRemove: _removeStudent,
+                        ),
+                      ),
+                      // 2 — Inbox only: pending manual requests. Wrappers bump
+                      // the history-refresh tick (decisions upsert history).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: ManualInboxSection(
+                          pending: manualPending,
+                          onApproveOne: (email) => _approveOne(email)
+                              .whenComplete(bumpLiveHistoryTick),
+                          onRejectOne: (email) => _rejectOne(email)
+                              .whenComplete(bumpLiveHistoryTick),
+                          onDecide: (emails, approve) =>
+                              _decideSelected(emails, approve)
+                                  .whenComplete(bumpLiveHistoryTick),
+                        ),
+                      ),
+                      // 3 — Add only: direct manual entry (the single home —
+                      // no AppBar sheet extra). The wrapper preserves the
+                      // submit's error propagation (`whenComplete` rethrows)
+                      // and bumps the tick (adds upsert history).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: DirectAddSection(
+                          course: widget.courseName,
+                          sessionId: _recordId ?? '',
+                          onAdd: ({
+                            required String name,
+                            required String roll,
+                            required String email,
+                          }) =>
+                              _addDirectEntry(
+                                      name: name, roll: roll, email: email)
+                                  .whenComplete(bumpLiveHistoryTick),
+                          // Present = every round taken (intersection):
+                          // re-adding one shows "Already marked present.";
+                          // partials still go through.
+                          isPresent: (email) => tally.confirmed
+                              .any((r) => r.email == email.toLowerCase()),
+                        ),
+                      ),
+                      // 4 — Setup only: name/IP/discovery before Start, plus
+                      // a live student-view preview (same shared card).
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                            ProxSpacing.screenMargin,
+                            ProxSpacing.sm,
+                            ProxSpacing.screenMargin,
+                            220),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            LiveSetupSection(
+                              hosting: hosting,
+                              live: live,
+                              nameCtrl: _nameCtrl,
+                              onNameChanged: (v) {
+                                try {
+                                  ref
+                                      .read(hostDriverProvider)
+                                      .setDisplayName(v);
+                                } catch (_) {}
+                                // Live preview follows typing.
+                                if (mounted) setState(() {});
+                              },
+                              serverLine: serverLine,
+                              allIps: _session?.allIps ?? const [],
+                              currentIp: _ip,
+                              onPickIp: _pickIp,
+                              serverError: serverError,
+                              showProfPhoto: _sharePhoto,
+                              onShowProfPhotoChanged: _setSharePhoto,
                             ),
-                          ] else ...[
-                            if (_windowNo == 0)
-                              FilledButton(
-                                onPressed:
-                                    (!hosting) ? null : () => _startNext(),
-                                child: const Text('Start'),
-                              )
-                            else ...[
-                              // Retake resumes the stopped round: same round
-                              // number, fresh secrets, marks merge into it
-                              // (no new intersection hurdle). Take another
-                              // round opens a new round instead.
-                              FilledButton(
-                                onPressed: (!hosting)
-                                    ? null
-                                    : () => _start(_windowNo),
-                                child:
-                                    Text('Retake round $_windowNo'),
-                              ),
-                              FilledButton(
-                                onPressed:
-                                    (!hosting) ? null : () => _startNext(),
-                                child: const Text('Take another round'),
-                              ),
-                              OutlinedButton(
-                                onPressed:
-                                    (!hosting) ? null : _endAttendance,
-                                child: const Text('End attendance'),
+                            // Student-view preview from the first setup paint
+                            // (pre-hosting included): the toggle + name field
+                            // above drive it live, so the professor sees the
+                            // student view before going live.
+                            if (!live) ...[
+                              const SizedBox(height: ProxSpacing.md),
+                              _StudentViewPreview(
+                                displayName: _nameCtrl.text,
+                                showPhoto: _sharePhoto,
+                                org: _announcedOrg,
                               ),
                             ],
-                            if (_windowNo == 0)
-                              OutlinedButton(
-                                onPressed:
-                                    (!hosting) ? null : _endAttendance,
-                                child: const Text('End attendance'),
-                              ),
                           ],
-                        ],
+                        ),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            // Toggleable terminal: BLE RX → sighting match → tally → ACK.
-            // Same log stream as the student side; helps debug radio live.
-            BleLogView(
-              visible: _showLog,
-              onToggle: () => setState(() => _showLog = !_showLog),
-            ),
-            const SizedBox(height: 16),
-            Text('Waiting area ($waiting)',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            if (waitingRows.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text('No students in the waiting area yet.'),
-              )
-            else
-              for (final w in waitingRows)
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.hourglass_top, size: 20),
-                  title: Text(w.name.isNotEmpty ? w.name : w.email),
-                  subtitle: Text(
-                      [if (w.roll.isNotEmpty) w.roll, w.email].join(' · ')),
+            // Floating controls docked just above the shell nav bar:
+            // fresh → full-width Start; live → full-width Stop;
+            // post-round → 2x2 grid (Discard + End / Resume +
+            // Take another). Same enablement as the old cluster.
+            Positioned(
+              left: ProxSpacing.lg,
+              right: ProxSpacing.lg,
+              bottom: ProxSpacing.sm,
+              child: SafeArea(
+                top: false,
+                child: LiveFloatingControls(
+                  live: live,
+                  hosting: hosting,
+                  windowNo: _windowNo,
+                  elapsed: elapsed,
+                  present: present,
+                  waiting: waiting,
+                  onStart: _startNext,
+                  onResume: () => _start(_windowNo),
+                  onDiscard: _discardRound,
+                  onTakeAnother: _startNext,
+                  // Composition wrappers (bodies untouched): stopping a round
+                  // and ending attendance both upsert class history — bump the
+                  // history-refresh tick so the Courses tab re-reads on
+                  // re-show instead of serving its stale snapshot.
+                  onStop: () =>
+                      _stopEarly().whenComplete(bumpLiveHistoryTick),
+                  onEnd: () =>
+                      _endAttendance().whenComplete(bumpLiveHistoryTick),
                 ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Text('Manual requests (${manualPending.length})',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                if (manualPending.isNotEmpty)
-                  TextButton(
-                    onPressed: () => setState(() {
-                      if (_manualSelected.length == manualPending.length) {
-                        _manualSelected.clear();
-                      } else {
-                        _manualSelected
-                          ..clear()
-                          ..addAll(
-                              manualPending.map((m) => m.email.toLowerCase()));
-                      }
-                    }),
-                    child: Text(_manualSelected.length ==
-                            manualPending.length
-                        ? 'Clear all'
-                        : 'Select all'),
-                  ),
-              ],
-            ),
-            if (manualPending.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text('No manual requests.'),
-              )
-            else ...[
-              for (final m in manualPending)
-                CheckboxListTile(
-                  dense: true,
-                  value: _manualSelected.contains(m.email.toLowerCase()),
-                  onChanged: (v) => setState(() {
-                    if (v == true) {
-                      _manualSelected.add(m.email.toLowerCase());
-                    } else {
-                      _manualSelected.remove(m.email.toLowerCase());
-                    }
-                  }),
-                  title: Text(m.name.isNotEmpty ? m.name : m.email),
-                  subtitle: Text(
-                      [if (m.roll.isNotEmpty) m.roll, m.email].join(' · ')),
-                  secondary: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.check, color: Colors.green),
-                        tooltip: 'Approve',
-                        onPressed: () => _approveOne(m.email),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.red),
-                        tooltip: 'Reject',
-                        onPressed: () => _rejectOne(m.email),
-                      ),
-                    ],
-                  ),
-                ),
-              Row(
-                children: [
-                  FilledButton(
-                    onPressed: _manualSelected.isEmpty
-                        ? null
-                        : () => _decideSelected(true),
-                    child: const Text('Approve selected'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: _manualSelected.isEmpty
-                        ? null
-                        : () => _decideSelected(false),
-                    child: const Text('Reject'),
-                  ),
-                ],
               ),
-            ],
-            const SizedBox(height: 8),
-            const Text('Direct manual entry',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ManualAddForm(
-              fieldPrefix: 'direct',
-              course: widget.courseName,
-              sessionId: _recordId ?? '',
-              onAdd: _addDirectEntry,
-              // Present = every round taken (intersection): re-adding one
-              // shows "Already marked present."; partials still go through.
-              isPresent: (email) => tally.confirmed
-                  .any((r) => r.email == email.toLowerCase()),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              key: const ValueKey('prof-search'),
-              decoration: const InputDecoration(
-                  labelText: 'Search by name, ID, or email',
-                  prefixIcon: Icon(Icons.search)),
-              onChanged: (v) => setState(() => search = v),
-            ),
-            const SizedBox(height: 8),
-            Text(
-                'Present — all rounds ($present) · ${windowsTaken <= 1 ? '1 round' : '$windowsTaken rounds'}',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            if (confirmedRows.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                    'Nobody present in every round yet — partials stay listed below.'),
-              )
-            else
-              for (var i = 0; i < confirmedRows.length; i++)
-                AnimatedContainer(
-                  duration: Duration(milliseconds: 200 + i * 40),
-                  curve: Curves.easeOut,
-                  child: ListTile(
-                    leading:
-                        const Icon(Icons.check_circle, color: Colors.green),
-                    title: Text(confirmedRows[i].name),
-                    subtitle: Text([
-                      ticksFor(confirmedRows[i].wins),
-                      if (confirmedRows[i].roll.isNotEmpty)
-                        confirmedRows[i].roll,
-                      confirmedRows[i].email,
-                      if (confirmedRows[i].late) 'late',
-                    ].join(' · ')),
-                  ),
-                ),
-            if (partialRows.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('Partial — some rounds (${partialRows.length})',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-              for (final r in partialRows)
-                ListTile(
-                  dense: true,
-                  leading:
-                      const Icon(Icons.timelapse, color: Colors.orange),
-                  title: Text(r.name),
-                  subtitle: Text([
-                    ticksFor(r.wins),
-                    if (r.roll.isNotEmpty) r.roll,
-                    r.email,
-                    if (r.late) 'late',
-                  ].join(' · ')),
-                ),
-            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// AppBar avatar just left of the course name (28dp): gated Gmail photo
+/// iff the per-course opt-in supplied a URL, else the course disc via
+/// [courseInitials] — the same helper as the Live list + Courses pickers,
+/// so CSL1010 reads CS in all three places. Static (no timers/animation)
+/// so the 1s elapsed tick stays the only motion on this screen.
+class _TakeBarAvatar extends StatelessWidget {
+  final String photoUrl;
+  final String courseName;
+
+  const _TakeBarAvatar({required this.photoUrl, required this.courseName});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    Widget initials() => Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.accentBrand.withValues(alpha: 0.12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            courseInitials(courseName),
+            style: ProxType.label(color: c.accentBrand).copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+            overflow: TextOverflow.clip,
+            maxLines: 1,
+          ),
+        );
+    final photo = photoUrl.trim();
+    if (photo.isEmpty) return initials();
+    return ClipOval(
+      child: Image.network(
+        photo,
+        width: 28,
+        height: 28,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => initials(),
+        frameBuilder: (context, child, frame, _) {
+          if (frame == null) return initials();
+          return child;
+        },
+      ),
+    );
+  }
+}
+
+/// "This is what students will see": the SAME shared [HostPreviewCard]
+// the waiting room renders — display name as typed (Gmail name by
+// default), Gmail email + announced org, Gmail photo iff the photo toggle
+// is on (letter initial otherwise). Updates live with name/toggle/org.
+// [org] is the announced org the beacon airs (role-cache stamp) — passed
+// in so the preview mapping is provably identical to the waiting card
+// (same widget + same inputs: displayName/email/org/photo).
+class _StudentViewPreview extends ConsumerWidget {
+  final String displayName;
+  final bool showPhoto;
+  final String org;
+
+  const _StudentViewPreview({
+    required this.displayName,
+    required this.showPhoto,
+    this.org = '',
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = ProximityColors.of(context);
+    final acct = ref.watch(accountProvider).valueOrNull;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'This is what students will see',
+          style: ProxType.label(color: c.contentSecondary),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+        const SizedBox(height: ProxSpacing.xs),
+        HostPreviewCard(
+          displayName: displayName,
+          email: acct?.email ?? '',
+          org: org,
+          photoUrl: showPhoto ? (acct?.photoUrl ?? '') : '',
+        ),
+      ],
     );
   }
 }

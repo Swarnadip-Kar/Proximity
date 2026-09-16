@@ -10,19 +10,57 @@ void main() {
       email: 'a@x.in',
       name: 'A',
       roll: '1',
-      seedHex: 'ab' * 32,
       pkHex: 'cd' * 32,
-      templateCsv: '1.0,0.0',
+      sealedKeyHex: 'deadbeef',
+      faceId: 'face-1',
       enrolledAt: DateTime.utc(2026, 1, 1),
-      modelVer: 'edgeface-xs-g06-tflite-alignfix1',
+      verifierVer: 'face_verification/0.3.9+b45ab893',
+      org: 'x.in',
+      pkDHex: 'ee' * 32,
+      attestationLevel: 'FULL',
+      attestedAt: DateTime.utc(2026, 1, 1),
+      attestedUntil: DateTime.utc(2026, 4, 1),
     );
     await store.writeEnrollment(e);
     final back = (await store.readEnrollment())!;
     expect(back.email, 'a@x.in');
-    expect(back.template, [1.0, 0.0]);
-    expect(back.modelVer, 'edgeface-xs-g06-tflite-alignfix1');
+    expect(back.faceId, 'face-1');
+    expect(back.verifierVer, 'face_verification/0.3.9+b45ab893');
+    expect(back.isFaceStale('face_verification/0.3.9+b45ab893'), isFalse);
+    expect(back.isFaceStale('face_verification/0.4.0+deadbeef'), isTrue);
+    expect(back.pkDHex, 'ee' * 32);
     await store.clearEnrollment();
     expect(await store.readEnrollment(), isNull);
+  });
+
+  test('unknown pre-plugin keys ignored; missing face is stale', () async {
+    // Fresh-only: pre-plugin `templateCsv`/`modelVer`/`seedHex` keys are
+    // ignored on parse; missing faceId forces re-face, key kept.
+    final legacy = StoredEnrollment.fromJson({
+      'email': 'a@x.in',
+      'name': 'A',
+      'roll': '1',
+      'pkHex': 'cd' * 32,
+      'templateCsv': '1.0,0.0',
+      'enrolledAt': '2026-01-01T00:00:00.000Z',
+      'modelVer': 'edgeface-xs-g06-tflite-alignfix1',
+    });
+    expect(legacy.faceId, isEmpty);
+    expect(
+        legacy.isFaceStale('face_verification/0.3.9+b45ab893'), isTrue);
+    expect(legacy.pkHex, 'cd' * 32); // key survives
+    // Fresh docs never write the old keys.
+    final fresh = StoredEnrollment(
+      email: 'a@x.in',
+      name: 'A',
+      roll: '1',
+      pkHex: 'cd' * 32,
+      faceId: 'f',
+      enrolledAt: DateTime.utc(2026, 1, 1),
+      verifierVer: 'v',
+    ).toJson();
+    expect(fresh.containsKey('templateCsv'), isFalse);
+    expect(fresh.containsKey('seedHex'), isFalse);
   });
 
   test('history roundtrip + CSV export', () async {    final store = InMemoryDeviceStore();

@@ -14,5 +14,19 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- Edge-to-edge shell chrome: transparent system bars so the
+             Flutter UI (extendBody + dynamic insets) flows behind them
+             from the first frame — no opaque-bar launch flash. No
+             windowOptOutEdgeToEdgeEnforcement (that flag opts OUT;
+             targetSdk 36 enforces edge-to-edge on API 35+ and Flutter
+             opts API ≤34 in at runtime). -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- No translucent scrim on 3-button nav (API 29+) / status (API 35+):
+             Dart sets contrastEnforced:false at runtime; these cover cold start
+             before the first Flutter frame. Ignored on older APIs. -->
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
     </style>
 </resources>

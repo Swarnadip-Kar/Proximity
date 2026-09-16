@@ -11,20 +11,27 @@
 // exports are Name,ID Number,Email,Status (Present/Absent).
 library proximity_storage;
 
+import 'package:proximity_protocol/protocol.dart' show csvCell;
+
+export 'package:proximity_protocol/protocol.dart' show csvCell;
+
 class AttendanceRecord {
   final String email;
   final String name;
   String roll;
+
+  /// Student's volunteered Gmail photo URL ('' = absent → initials).
+  /// Session RAM only, never persisted to records; latest non-empty wins,
+  /// empty never clobbers (same rule as name/roll).
+  String photoUrl;
   final Set<int> wins = {}; // window numbers (1-based) marked present
   bool faceFlag = false;
   bool late = false;
   AttendanceRecord(
-      {required this.email, required this.name, this.roll = ''});
-
-  bool get w1 => wins.contains(1);
-  bool get w2 => wins.contains(2);
-  set w1(bool v) => v ? wins.add(1) : wins.remove(1);
-  set w2(bool v) => v ? wins.add(2) : wins.remove(2);
+      {required this.email,
+      required this.name,
+      this.roll = '',
+      this.photoUrl = ''});
 
   bool presentIn(int windowNo) => wins.contains(windowNo);
 
@@ -49,7 +56,7 @@ class AttendanceRecord {
   }
 }
 
-/// Professor tally: live counts + present/pending/face-flag/late lists + search.
+/// Professor tally: live counts + present/face-flag/late lists + search.
 /// Supports N windows; Present = intersection of all windows taken.
 class TallyStore {
   final Map<String, AttendanceRecord> _rows = {}; // email -> record
@@ -65,29 +72,56 @@ class TallyStore {
     if (windowNo > 0) _openedWindows.add(windowNo);
   }
 
-  void ensure(String email, String name, [String roll = '']) {
+  /// Drops round [windowNo]: un-opens it and strips it from every row's
+  /// wins. Rows stay (names/rolls/photos are visit data, not round
+  /// data), so waiting/manual people survive with empty wins; presence
+  /// recomputes from the remaining windows. No-op for unknown rounds.
+  void discardWindow(int windowNo) {
+    _openedWindows.remove(windowNo);
+    for (final r in _rows.values) {
+      r.wins.remove(windowNo);
+    }
+  }
+
+  void ensure(String email, String name,
+      [String roll = '', String photoUrl = '']) {
     final key = email.toLowerCase();
     final existing = _rows[key];
     if (existing == null) {
-      _rows[key] =
-          AttendanceRecord(email: key, name: name, roll: roll);
+      _rows[key] = AttendanceRecord(
+          email: key, name: name, roll: roll, photoUrl: photoUrl);
       return;
     }
     // Manual entries may correct the display name / ID number: keep the
     // latest non-empty values (marks, flags and wins are preserved).
     if (name.isNotEmpty && name != existing.name) {
-      _rows[key] = AttendanceRecord(email: key, name: name, roll: roll.isNotEmpty ? roll : existing.roll)
+      _rows[key] = AttendanceRecord(
+          email: key,
+          name: name,
+          roll: roll.isNotEmpty ? roll : existing.roll,
+          photoUrl:
+              photoUrl.isNotEmpty ? photoUrl : existing.photoUrl)
         ..wins.addAll(existing.wins)
         ..faceFlag = existing.faceFlag
         ..late = existing.late;
-    } else if (roll.isNotEmpty) {
-      existing.roll = roll;
+    } else {
+      if (roll.isNotEmpty) {
+        existing.roll = roll;
+      }
+      // Volunteered photo converges like the name: latest non-empty wins,
+      // empty never clobbers a known photo.
+      if (photoUrl.isNotEmpty) {
+        existing.photoUrl = photoUrl;
+      }
     }
   }
 
   void mark(String email, String name, int windowNo,
-      {bool faceFlag = false, bool late = false, String roll = ''}) {
-    ensure(email, name, roll);
+      {bool faceFlag = false,
+      bool late = false,
+      String roll = '',
+      String photoUrl = ''}) {
+    ensure(email, name, roll, photoUrl);
     final r = _rows[email.toLowerCase()]!;
     r.wins.add(windowNo);
     if (faceFlag) r.faceFlag = true;
@@ -97,6 +131,24 @@ class TallyStore {
   /// Already marked present in [windowNo] (duplicate-POST idempotency).
   bool isMarked(String email, int windowNo) =>
       _rows[email.toLowerCase()]?.presentIn(windowNo) ?? false;
+
+  /// Marked window numbers for [email] (copy — dup auto-absent support).
+  Set<int> winsOf(String email) =>
+      Set<int>.of(_rows[email.toLowerCase()]?.wins ?? const <int>{});
+
+  /// Display name for [email] (dup restore re-marks with it; '' unknown).
+  String nameOf(String email) => _rows[email.toLowerCase()]?.name ?? '';
+
+  /// Drops one mark, keeping the row (name/roll/flags/photo). Dup
+  /// auto-absent support: the professor-phone strips wins while the pair
+  /// is unresolved and re-marks them on override — the row itself (and
+  /// its faceFlag audit trail) never leaves, so exports read Absent, not
+  /// vanished. Returns true when a mark was removed.
+  bool unmark(String email, int windowNo) {
+    final r = _rows[email.toLowerCase()];
+    if (r == null) return false;
+    return r.wins.remove(windowNo);
+  }
 
   /// Sorted distinct window numbers taken so far: every OPENED round
   /// plus every marked one. Empty maps still persist (the round happened,
@@ -129,10 +181,32 @@ class TallyStore {
   List<AttendanceRecord> get confirmed => _confirmedRows;
   List<AttendanceRecord> get presentAny =>
       _rows.values.where((r) => r.wins.isNotEmpty).toList();
-  List<AttendanceRecord> get pending =>
-      _rows.values.where((r) => r.wins.isEmpty && !r.faceFlag).toList();
   List<AttendanceRecord> get lateList =>
       _rows.values.where((r) => r.late).toList();
+
+  /// Local same-face dup flag (professor-phone, session-scoped): sets the
+  /// roster-visible flagged state. The flag itself never touches presence —
+  /// the host driver drops + restores wins around it (dup auto-absent by
+  /// default, 1-tap override counts them). The tally itself is in-memory P0.
+  void setFaceFlag(String email) {
+    final r = _rows[email.toLowerCase()];
+    if (r != null) r.faceFlag = true;
+  }
+
+  void clearFaceFlag(String email) {
+    final r = _rows[email.toLowerCase()];
+    if (r != null) r.faceFlag = false;
+  }
+
+  /// Emails currently flagged, sorted (deterministic for records/exports).
+  List<String> get flaggedEmails {
+    final out = [
+      for (final e in _rows.entries)
+        if (e.value.faceFlag) e.key,
+    ];
+    out.sort();
+    return out;
+  }
 
   List<AttendanceRecord> search(String query) {
     final q = query.toLowerCase();
@@ -171,6 +245,17 @@ class TallyStore {
       );
 
   int get size => _rows.length;
+
+  /// Professor eject: drops one email's record (marks, flags, wins).
+  /// Opened windows are kept (the rounds happened). Returns true when a
+  /// record existed. Session-local: the next history upsert/snapshot
+  /// simply no longer contains them; re-marking re-adds.
+  bool remove(String email) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty) return false;
+    return _rows.remove(key) != null;
+  }
+
   void clear() {
     _rows.clear();
     _openedWindows.clear();
@@ -215,7 +300,8 @@ class TallyStore {
           required String dateIso,
           String? timestampIso,
           String? startIso,
-          String? id}) =>
+          String? id,
+          String org = ''}) =>
       ClassRecord(
         id: id ?? '',
         courseId: courseId,
@@ -226,6 +312,8 @@ class TallyStore {
         windows: windowsAsMaps.isEmpty ? [const <String, bool>{}] : windowsAsMaps,
         names: nameMap(),
         rolls: rollMap(),
+        org: org,
+        faceFlags: flaggedEmails,
       );
 }
 
@@ -262,7 +350,7 @@ String buildSimpleCsv({
         ? 'Absent'
         : (pass ? 'Present' : 'Absent');
     sb.writeln(
-        '${names[email] ?? ''},${rolls[email] ?? ''},$email,$status');
+        '${csvCell(names[email] ?? '')},${csvCell(rolls[email] ?? '')},${csvCell(email)},$status');
   }
   return sb.toString();
 }
@@ -304,6 +392,11 @@ class ClassRecord {
   final List<Map<String, bool>> windows; // ordered window maps
   final Map<String, String> names; // email -> name
   final Map<String, String> rolls; // email -> ID number
+  final String org; // Google-account domain of the prof org, '' = legacy
+  /// Session duplicate-face flags (emails marked DUPLICATE_FLAGGED on the
+  /// professor phone during the live session). Statuses only — no vectors,
+  /// no biometrics, ever (see protocol face_print.dart).
+  final List<String> faceFlags;
   ClassRecord({
     String id = '',
     this.courseId = '',
@@ -316,6 +409,8 @@ class ClassRecord {
     List<Map<String, bool>>? windows,
     Map<String, String>? names,
     Map<String, String>? rolls,
+    this.org = '',
+    List<String>? faceFlags,
   })  : id = id.isEmpty ? _genId(courseId, classLabel, dateIso) : id,
         timestampIso = timestampIso.isEmpty
             ? '${dateIso}T00:00:00.000Z'
@@ -327,7 +422,8 @@ class ClassRecord {
             : startIso,
         windows = normalizeWindows(windows, w1, w2),
         names = Map<String, String>.from(names ?? const {}),
-        rolls = Map<String, String>.from(rolls ?? const {});
+        rolls = Map<String, String>.from(rolls ?? const {}),
+        faceFlags = [...?faceFlags]..sort();
 
   /// Legacy accessors (first two windows).
   Map<String, bool> get w1 => windows.isNotEmpty ? windows.first : const {};
@@ -383,6 +479,8 @@ class ClassRecord {
         'w2': w2,
         'names': names,
         'rolls': rolls,
+        'org': org,
+        'faceFlags': faceFlags,
       };
 
   factory ClassRecord.fromJson(Map<String, dynamic> j) {
@@ -401,8 +499,8 @@ class ClassRecord {
     return ClassRecord(
       id: j['id'] as String? ?? '',
       courseId: j['courseId'] as String? ?? '',
-      classLabel: j['classLabel'] as String,
-      dateIso: j['dateIso'] as String,
+      classLabel: j['classLabel'] as String? ?? '',
+      dateIso: j['dateIso'] as String? ?? '',
       timestampIso: j['timestampIso'] as String? ?? '',
       startIso: j['startIso'] as String? ?? '',
       w1: wins == null
@@ -418,10 +516,22 @@ class ClassRecord {
                   (k, v) => MapEntry(k as String, (v as bool?) ?? false))))
           : null,
       windows: wins,
-      names: Map<String, String>.from(
-          (j['names'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
-      rolls: Map<String, String>.from(
-          (j['rolls'] as Map? ?? {}).map((k, v) => MapEntry(k as String, v as String))),
+      names: j['names'] is Map
+          ? {
+              for (final e in (j['names'] as Map).entries)
+                '${e.key}': '${e.value ?? ''}',
+            }
+          : const {},
+      rolls: j['rolls'] is Map
+          ? {
+              for (final e in (j['rolls'] as Map).entries)
+                '${e.key}': '${e.value ?? ''}',
+            }
+          : const {},
+      org: j['org'] as String? ?? '',
+      faceFlags: [
+        for (final e in (j['faceFlags'] as List? ?? const [])) '$e',
+      ],
     );
   }
 }
@@ -436,7 +546,7 @@ class Course {
   Map<String, dynamic> toJson() => {'name': name, 'createdAt': createdAt};
 
   factory Course.fromJson(Map<String, dynamic> j) =>
-      Course(name: j['name'] as String, createdAt: j['createdAt'] as String? ?? '');
+      Course(name: j['name'] as String? ?? '', createdAt: j['createdAt'] as String? ?? '');
 }
 
 /// Date-range matrix export for a course (req 6).
@@ -480,7 +590,8 @@ String buildDateRangeMatrix(List<ClassRecord> sessions) {
     final cells = [
       for (final s in sorted) s.isPresent(e) ? 'P' : 'A',
     ];
-    sb.writeln('${names[e] ?? ''},${rolls[e] ?? ''},$e,${cells.join(',')}');
+    sb.writeln(
+        '${csvCell(names[e] ?? '')},${csvCell(rolls[e] ?? '')},${csvCell(e)},${cells.join(',')}');
   }
   return sb.toString();
 }

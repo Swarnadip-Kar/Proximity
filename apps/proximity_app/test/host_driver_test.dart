@@ -174,6 +174,27 @@ void main() {
     expect(driver.isHosting, isFalse);
   });
 
+  test('sealed-only enrollment hosts via ephemeral identity',
+      () async {
+    // Security §2 regression: sealed-only docs host via the ephemeral
+    // lecture identity — hosting never reads stored secrets.
+    final store = InMemoryDeviceStore();
+    await store.writeEnrollment(StoredEnrollment(
+      email: 'prof@x.in',
+      name: 'Prof',
+      roll: '',
+      pkHex: List.filled(32, 'aa').join(),
+      sealedKeyHex: 'PXK1${List.filled(32, 'bb').join()}',
+      faceId: 'face-prof',
+      enrolledAt: DateTime.utc(2026, 9, 1),
+    ));
+    final driver = makeDriver(store: store);
+    await driver.startHosting(classLabel: 'CS101', port: 0);
+    expect(driver.isHosting, isTrue);
+    await driver.endHosting();
+    expect(driver.isHosting, isFalse);
+  });
+
   test('fake manual approve/reject + select-all semantics', () async {
     final driver = FakeHostDriver();
     await driver.startHosting(classLabel: 'CS101');

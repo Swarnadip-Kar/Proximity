@@ -1,11 +1,34 @@
-// LAN class discovery: professors announce live classes over local WiFi;
-// students listen and render a LIVE list. Pure Dart (dart:io UDP).
+// LAN class discovery: ORG-GATED (see below) professors host live classes
+// over local WiFi; matching-org students list them. Pure Dart (dart:io UDP).
+//
+// Gated model (steady-state, join-anytime):
+//   - Professors advertise CONTINUOUSLY while hosting: 2s UDP beacons
+//     (presence only: class/host/port/display/prof/org/windowOpen/ts —
+//     NEVER the prof email; ClassAnnouncement has no such field by
+//     construction) + BLE IP-hint rotation (host:port only, never email).
+//     One-time announce is NOT sufficient: late joiners depend on the next
+//     beacon/hint arriving within seconds.
+//   - Students solicit CHEAPLY and REPEATABLY: every beacon/hint (and every
+//     15s session refresh) triggers one unicast HTTPS GET /window?org=
+//     carrying the student's org claim FIRST. The professor org-checks it
+//     and responds ONLY on match (or legacy '' either side) — with the
+//     class identity + prof email (gated unicast only). Foreign org gets
+//     silence (403, no class, no email): the class never appears on that
+//     phone. Solicitation is one short TLS GET per host per refresh — no
+//     sweep, no broadcast storm.
+//   - Typed-IP manual join stays as the fallback (same gated GET; matching
+//     or legacy lists, mismatched gets silence). /waiting + /prove
+//     org-rejects stay as defense-in-depth behind this primary gate.
 //
 // Announce payload (JSON, ≤512B, broadcast every 2s while hosting):
-//   {v:1, class, host, port, display, prof, windowOpen, ts}
+//   {v:1, class, host, port, display, prof, org, windowOpen, ts}
 // Students dedup by host:port and expire entries unheard for 6s.
 // BLE RSSI sorting arrives with the radio slice; LAN entries sort by
 // first-seen (stable) until then. Manual IP join stays as fallback.
+//
+// Privacy: the professor's Gmail travels ONLY in the gated /window
+// unicast response (matching/legacy org). It is NEVER in broadcast UDP
+// beacons and NEVER in BLE air packets (IP:port only — asserted by tests).
 library;
 
 import 'dart:async';
@@ -13,11 +36,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:proximity_protocol/protocol.dart';
+
 import 'client.dart';
 
 const kDiscoveryPort = 54545;
 const kDiscoveryInterval = Duration(seconds: 2);
-const kDiscoveryExpiry = Duration(seconds: 6);
+// Beacon rotation is 10s (kSubEpochSeconds): expiry covers a missed
+// rotation + margin so listings never flap idle between ticks.
+const kDiscoveryExpiry = Duration(seconds: 12);
 const kDiscoveryMagic = 'PROX1';
 
 /// Known-session persistence (TCP-acked BLE-IP discoveries): once a hinted
@@ -58,33 +85,33 @@ bool hintEntryAlive({
 /// suppresses broadcasts entirely (verified live: every broadcast
 /// variant 0/5), use the BLE IP-hint path or manual IP join instead.
 String? directedBroadcastGuess(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return null;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return null;
-  final first = nums[0]!;
+  // Shared dotted-quad parse (M2 protocol helper); address policy below
+  // stays local to discovery.
+  final octets = parseIpv4(addr);
+  if (octets == null) return null;
+  final first = octets[0];
   final private = first == 10 ||
-      (first == 172 && nums[1]! >= 16 && nums[1]! <= 31) ||
-      (first == 192 && nums[1] == 168);
+      (first == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (first == 192 && octets[1] == 168);
   if (!private) return null;
-  return '${parts[0]}.${parts[1]}.${parts[2]}.255';
+  return '${octets[0]}.${octets[1]}.${octets[2]}.255';
 }
 
 /// /16 directed-broadcast guess (x.y.255.255) for the same address.
 /// Covers /16..​/18 campuses where the /24 guess is a plain (unassigned)
 /// unicast address no host answers. Harmless when wrong.
 String? directedBroadcastGuess16(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return null;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return null;
-  final first = nums[0]!;
+  // Shared dotted-quad parse (M2 protocol helper); address policy below
+  // stays local to discovery.
+  final octets = parseIpv4(addr);
+  if (octets == null) return null;
+  final first = octets[0];
   final private = first == 10 ||
-      (first == 172 && nums[1]! >= 16 && nums[1]! <= 31) ||
-      (first == 192 && nums[1] == 168);
+      (first == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (first == 192 && octets[1] == 168);
   if (!private) return null;
   if (addr.startsWith('127.') || addr.startsWith('169.254.')) return null;
-  return '${parts[0]}.${parts[1]}.255.255';
+  return '${octets[0]}.${octets[1]}.255.255';
 }
 
 /// All beacon targets: limited broadcast plus directed guesses per
@@ -152,11 +179,10 @@ bool _isCellularIface(String name) {
 }
 
 bool _isPrivateV4(String addr) {
-  final parts = addr.split('.');
-  if (parts.length != 4) return false;
-  final nums = parts.map(int.tryParse).toList();
-  if (nums.any((n) => n == null || n < 0 || n > 255)) return false;
-  final a = nums[0]!, b = nums[1]!;
+  // Shared dotted-quad parse (M2 protocol helper); policy unchanged.
+  final octets = parseIpv4(addr);
+  if (octets == null) return false;
+  final a = octets[0], b = octets[1];
   return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
 }
 
@@ -217,6 +243,7 @@ class ClassAnnouncement {
   final String prof;
   final bool windowOpen;
   final DateTime ts;
+  final String org; // prof org domain, '' = legacy beacon
   const ClassAnnouncement({
     required this.classLabel,
     required this.host,
@@ -225,6 +252,7 @@ class ClassAnnouncement {
     required this.prof,
     required this.windowOpen,
     required this.ts,
+    this.org = '',
   });
 
   String get key => '$host:$port';
@@ -238,6 +266,7 @@ class ClassAnnouncement {
         'prof': prof,
         'windowOpen': windowOpen,
         'ts': ts.toUtc().toIso8601String(),
+        'org': org,
       };
 
   static ClassAnnouncement? fromJson(Map<String, dynamic> j) {
@@ -251,6 +280,7 @@ class ClassAnnouncement {
         prof: j['prof'] as String? ?? '',
         windowOpen: j['windowOpen'] as bool? ?? false,
         ts: DateTime.parse(j['ts'] as String),
+        org: j['org'] as String? ?? '',
       );
     } catch (_) {
       return null;
@@ -269,6 +299,80 @@ ClassAnnouncement? decodeAnnouncement(Uint8List raw) {
     return null;
   }
 }
+
+/// [discoveryAssumptionLines] on hosting start + browse entry (LAN tag)
+/// and renders [formatLadderLine] as a one-line UI status, so a dead
+/// enterprise AP reads as an explained state, not an empty list.
+///
+/// | path | standing | note |
+/// | UDP broadcast | advisory-only | cheap 2s beacons; expected DEAD on
+/// enterprise APs (measured 0/5 incl. the true /18 broadcast) — never
+/// required, never retried harder. |
+/// | HTTPS unicast prof↔student | HARD REQUIREMENT | the only path that
+/// marks. Blocked => honest `Professor unreachable` + manual-IP + abort. |
+/// | BLE hint + unicast probe + typed IP | relied-upon | one probe per
+/// hinted host, no sweep (254 rapid probes kicked phones off enterprise
+/// WiFi); the hint is unverified, join gates (radio + Sig_p + face)
+/// unchanged. |
+/// | internet in live flow | never probed | live marking is LAN-only;
+/// cloud sync runs before/after class (SyncEngine). |
+/// | BLE off | tappable Turn-on | else honest noSignal — never silent. |
+class DiscoveryAssumption {
+  final String path;
+  final String standing;
+  final String note;
+  const DiscoveryAssumption(this.path, this.standing, this.note);
+}
+
+const discoveryAssumptions = <DiscoveryAssumption>[
+  DiscoveryAssumption('UDP broadcast', 'advisory-only',
+      'Cheap 2s beacons; expected DEAD on enterprise APs — never required.'),
+  DiscoveryAssumption('HTTPS unicast prof<->student', 'HARD REQUIREMENT',
+      'The only path that marks; blocked = honest Professor unreachable + manual-IP + abort.'),
+  DiscoveryAssumption('BLE hint + unicast probe + typed IP', 'relied-upon',
+      'One probe per hinted host, no sweep; hint unverified, join gates unchanged.'),
+  DiscoveryAssumption(
+      'internet in live flow', 'never probed', 'Live marking is LAN-only.'),
+  DiscoveryAssumption('BLE off', 'tappable Turn-on',
+      'Else honest noSignal — never a silent empty list.'),
+];
+
+/// Log-ready rendering of the table (one line per row; the app logs these
+/// with the LAN tag on hosting start + browse entry).
+List<String> discoveryAssumptionLines() => [
+      for (final a in discoveryAssumptions)
+        'assume ${a.path}: ${a.standing} — ${a.note}',
+    ];
+
+/// Degradation ladder, best first. Shown as a one-line UI status
+/// ([formatLadderLine]) and mirrored in the BleLog so the terminal and the
+/// screen always agree on which rung the session is on.
+const degradationLadder = <String>[
+  'BLE hint + probe',
+  'typed IP + BLE',
+  'LAN manual IP',
+  'offline direct manual-add',
+];
+
+/// Picks the ladder rung: unicast failure strands marking at offline
+/// manual-add; BLE-off drops to LAN manual (Turn-on prompt offered);
+/// no hint heard means typed-IP+BLE; hint + probe is the top rung.
+int ladderStepFor(
+    {required bool bleOn,
+    required bool hintHeard,
+    required bool unicastOk}) {
+  if (!unicastOk) return 3;
+  if (!bleOn) return 2;
+  if (!hintHeard) return 1;
+  return 0;
+}
+
+/// One-line ladder status with the active rung bracketed, e.g.
+/// `BLE hint + probe → [typed IP + BLE] → LAN manual IP → …`.
+String formatLadderLine(int active) => [
+      for (var i = 0; i < degradationLadder.length; i++)
+        i == active ? '[${degradationLadder[i]}]' : degradationLadder[i],
+    ].join(' → ');
 
 /// Broadcasts this host's class while it is live.
 /// Targets default to [broadcastTargets] (limited + directed guesses);
@@ -353,19 +457,24 @@ class ClassListener {
   void Function(ClassAnnouncement a, bool isNew)? onBeacon;
 
   Future<void> start({int port = kDiscoveryPort}) async {
-    // reusePort is unsupported on some platforms (Android throws
-    // "reusePort not supported"): without the fallback the UDP listener
-    // silently never starts and beacon discovery is dead.
+    // reusePort is unsupported on Android (native E/Dart log
+    // "reusePort not supported" even when caught): skip the attempt there
+    // instead of try/catch-spamming logcat. Other platforms keep the
+    // reusePort attempt with fallback so beacon discovery never dies.
     if (_sock == null) {
-      try {
-        _sock = await RawDatagramSocket.bind(
-            InternetAddress.anyIPv4, port,
-            reuseAddress: true, reusePort: true);
-      } catch (_) {
-        _sock = await RawDatagramSocket.bind(
-            InternetAddress.anyIPv4, port,
-            reuseAddress: true);
+      final wantReusePort = !Platform.isAndroid;
+      if (wantReusePort) {
+        try {
+          _sock = await RawDatagramSocket.bind(
+              InternetAddress.anyIPv4, port,
+              reuseAddress: true, reusePort: true);
+        } catch (_) {
+          _sock = null;
+        }
       }
+      _sock ??= await RawDatagramSocket.bind(
+          InternetAddress.anyIPv4, port,
+          reuseAddress: true);
     }
     _sub ??= _sock!.listen((e) {
       if (e == RawSocketEvent.read) {
@@ -408,26 +517,36 @@ class ClassListener {
 }
 
 /// Probes one host's HTTPS /window (self-signed host cert accepted).
-/// Returns an announcement when a Proximity host answers, else null.
-/// Single-host unicast only: used for BLE IP-hint probes (one cheap GET
-/// per hinted host:port). There is deliberately no subnet sweep — 254
-/// rapid probes have kicked phones off enterprise WiFi; discovery is
-/// passive (UDP beacons + BLE hints) plus typed IP.
+/// Returns an announcement when a Proximity host answers AND the org gate
+/// passes, else null (silence). [org] is the student's org claim (gated
+/// discovery): matching or legacy org lists; mismatched org gets silence
+/// (never the class, never the email) — the class never appears on that
+/// phone. Single-host unicast only: used for BLE IP-hint probes (one cheap
+/// GET per hinted host:port) and beacon-triggered gated fetches. There is
+/// deliberately no subnet sweep — 254 rapid probes have kicked phones off
+/// enterprise WiFi; discovery is solicited-unicast (beacons/hints trigger
+/// one gated GET each) plus typed IP.
 /// [onMiss] receives the failure reason (surfaced to the system log;
 /// connection-refused on empty hosts is normal and stays quiet unless
-/// [verboseMisses] is set).
+/// [verboseMisses] is set; org-mismatch silence is also reported here so
+/// the log never shows a silent empty list as a mystery).
 Future<ClassAnnouncement?> probeHost(
   String host,
   int port, {
   Duration timeout = const Duration(milliseconds: 900),
   void Function(String reason)? onMiss,
   bool verboseMisses = false,
+  String org = '',
 }) async {
   final client = ProxClient(host: host, port: port);
+  String? err;
   try {
-    final r = await client.probeWindow(timeout: timeout).timeout(timeout * 2);
+    final r = await client
+        .probeWindow(
+            timeout: timeout, onError: (e) => err = '$e', org: org)
+        .timeout(timeout + const Duration(seconds: 2));
     if (!r.reachable) {
-      if (verboseMisses) onMiss?.call('$host unreachable');
+      onMiss?.call(err == null ? '$host unreachable' : '$host: $err');
       return null;
     }
     return ClassAnnouncement(
@@ -435,9 +554,12 @@ Future<ClassAnnouncement?> probeHost(
       host: host,
       port: port,
       display: '',
-      prof: '',
+      // Gated LAN unicast name (same channel as the email backfill) —
+      // never BLE, which stays IP:port hints only.
+      prof: r.profName,
       windowOpen: r.windowOpen,
       ts: DateTime.now().toUtc(),
+      org: r.org,
     );
   } catch (e) {
     onMiss?.call('$host: $e');

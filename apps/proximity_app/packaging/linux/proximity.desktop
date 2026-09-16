@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Proximity
+Comment=Campus attendance over BLE proximity proofs + WiFi transport
+Exec=/opt/proximity/proximity_app
+Type=Application
+Categories=Education;Utility;
+StartupWMClass=proximity_app

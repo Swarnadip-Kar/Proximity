@@ -35,6 +35,26 @@ void main() {
       expect(t.presentCount, 1);
     });
 
+    test('discardWindow drops the round, keeps people, recomputes', () {
+      final t = TallyStore();
+      t.noteWindow(1);
+      t.noteWindow(2);
+      t.mark('a@x.in', 'A', 1);
+      t.mark('a@x.in', 'A', 2);
+      t.mark('b@x.in', 'B', 1);
+      t.ensure('w@x.in', 'W');
+      t.discardWindow(2);
+      expect(t.windowNos, [1]);
+      // a and b both confirmed via round 1 now; w (waiting/manual,
+      // never marked) survives with empty wins.
+      expect(t.presentCount, 2);
+      expect(t.nameMap(), contains('w@x.in'));
+      expect(t.presentAny.map((r) => r.email), containsAll(['a@x.in', 'b@x.in']));
+      // Unknown rounds are a no-op.
+      t.discardWindow(9);
+      expect(t.windowNos, [1]);
+    });
+
     test('restore preserves sparse window numbers (never renumbers)', () {
       final t = TallyStore();
       t.restore(
@@ -130,6 +150,121 @@ void main() {
         startIso: '2026-09-06T09:00:00.000Z',
       );
       expect(rec.startIso, '2026-09-06T09:00:00.000Z');
+    });
+  });
+
+  group('duplicate-face flags (session-scoped, presence-neutral)', () {
+    test('set/clear roundtrip; presence untouched; sorted emails', () {
+      final t = TallyStore();
+      t.mark('b@x.in', 'B', 1);
+      t.mark('a@x.in', 'A', 1);
+      expect(t.flaggedEmails, isEmpty);
+      t.setFaceFlag('b@x.in');
+      t.setFaceFlag('A@X.IN'); // case-insensitive
+      expect(t.flaggedEmails, ['a@x.in', 'b@x.in']);
+      // Flagged entries stay marked (never auto-absent).
+      expect(t.presentCount, 2);
+      t.clearFaceFlag('a@x.in');
+      expect(t.flaggedEmails, ['b@x.in']);
+      // Unknown email: no-op, never throws.
+      t.setFaceFlag('ghost@x.in');
+      t.clearFaceFlag('ghost@x.in');
+      expect(t.flaggedEmails, ['b@x.in']);
+    });
+
+    test('unmark drops wins, keeps the row + flags (dup auto-absent)', () {
+      final t = TallyStore();
+      t.noteWindow(1);
+      t.noteWindow(2);
+      t.mark('a@x.in', 'A', 1);
+      t.mark('a@x.in', 'A', 2);
+      t.setFaceFlag('a@x.in');
+      expect(t.winsOf('a@x.in'), {1, 2});
+      expect(t.nameOf('a@x.in'), 'A');
+      expect(t.unmark('a@x.in', 1), isTrue);
+      expect(t.unmark('a@x.in', 1), isFalse);
+      expect(t.winsOf('a@x.in'), {2});
+      expect(t.unmark('A@X.IN', 2), isTrue); // case-insensitive
+      expect(t.winsOf('a@x.in'), isEmpty);
+      // Round itself survives (opened, not win-derived); the row stays
+      // (absent, flagged) instead of vanishing; unknown emails no-op.
+      expect(t.windowNos, [1, 2]);
+      expect(t.presentAny.map((r) => r.email), isNot(contains('a@x.in')));
+      expect(t.size, 1);
+      expect(t.flaggedEmails, ['a@x.in']);
+      expect(t.unmark('ghost@x.in', 1), isFalse);
+      expect(t.winsOf('ghost@x.in'), isEmpty);
+      expect(t.nameOf('ghost@x.in'), '');
+    });
+
+    test('toClassRecord carries flags; json roundtrips; legacy omits', () {
+      final t = TallyStore();
+      t.mark('a@x.in', 'A', 1);
+      t.mark('b@x.in', 'B', 1);
+      t.setFaceFlag('b@x.in');
+      final rec = t.toClassRecord(
+          courseId: 'c', classLabel: 'c', dateIso: '2026-09-06');
+      expect(rec.faceFlags, ['b@x.in']);
+      final rt = ClassRecord.fromJson(rec.toJson());
+      expect(rt.faceFlags, ['b@x.in']);
+      // Legacy JSON without the key reads as unflagged.
+      final m = rec.toJson()..remove('faceFlags');
+      expect(ClassRecord.fromJson(m).faceFlags, isEmpty);
+    });
+  });
+
+  group('csvCell quoting + formula-injection guard', () {
+    test('plain fields pass through', () {
+      expect(csvCell('Asha'), 'Asha');
+      expect(csvCell('10000001'), '10000001');
+      expect(csvCell('a@x.in'), 'a@x.in'); // @ mid-string: untouched
+    });
+
+    test('leading = + - @ are tick-prefixed', () {
+      expect(csvCell('=CMD(1)'), "'=CMD(1)");
+      expect(csvCell('+1+2'), "'+1+2");
+      expect(csvCell('-2+3'), "'-2+3");
+      expect(csvCell('@evil'), "'@evil");
+    });
+
+    test('comma/quote/CRLF trigger RFC4180 quoting', () {
+      expect(csvCell('Doe, Jane'), '"Doe, Jane"');
+      expect(csvCell('Say "hi"'), '"Say ""hi"""');
+      expect(csvCell('a\nb'), '"a\nb"');
+    });
+
+    test('formula prefix composes with quoting', () {
+      expect(csvCell('=1,2'), '"\'=1,2"');
+    });
+
+    test('buildSimpleCsv hardens identity cells, keeps Status enum', () {
+      final csv = buildSimpleCsv(
+        names: {'a@x.in': '=EVIL(), Jr', 'b@x.in': 'B'},
+        rolls: {'a@x.in': '1', 'b@x.in': '2'},
+        windows: [
+          {'a@x.in': true, 'b@x.in': false}
+        ],
+      );
+      expect(csv, contains('"\'=EVIL(), Jr"'));
+      expect(csv, contains('B,2,b@x.in,Absent'));
+      expect(csv, contains(',Present'));
+    });
+
+    test('buildDateRangeMatrix hardens identity cells', () {
+      final s = ClassRecord(
+        id: 's1',
+        courseId: 'CS201',
+        classLabel: 'CS201',
+        dateIso: '2026-09-06',
+        timestampIso: '2026-09-06T10:00:00.000Z',
+        windows: [
+          {'a@x.in': true}
+        ],
+        names: {'a@x.in': '@x, y'},
+        rolls: {'a@x.in': '1'},
+      );
+      final m = buildDateRangeMatrix([s]);
+      expect(m, contains('"\'@x, y"'));
     });
   });
 }

@@ -1,11 +1,30 @@
-# Proximity CI: Android APK + Windows + Linux desktop builds.
-# Firebase config files are tracked in-repo (public identifiers, standard
-# FlutterFire practice), so no secrets are needed. Release signing
-# (keystore / App Store / MSIX) is intentionally out — debug/dev builds only.
+# Proximity CI (minutes + storage optimized, 2026-09-16).
+#
+# WHY THIS SHAPE — read before adding jobs back:
+# - Repo is PRIVATE, so minutes are billed with multipliers:
+#   ubuntu-latest = 1x, windows-2022 = 2x, macos-latest = 10x.
+#   One full-matrix green run cost ~170 billed minutes
+#   (macos ~12min x10 = 120 alone). Free quota is 2000 min/month.
+# - Every green run uploaded ~1GB (macos .app ~400MB, android ~200MB,
+#   windows ~160MB, linux ~130MB, web ~100MB) with 90-day retention.
+#   That reached 11.6GB vs the 500MB free storage quota.
+#
+# POLICY:
+# - Build LOCALLY what you can: Android + macOS + iOS (this Mac has the
+#   SDK + Xcode). See PROXIMITY_DEPLOYMENT.md §5b–§5c for the exact commands.
+# - CI builds ONLY what you cannot: Windows + Linux, in --release so the
+#   artifacts are actually shippable (`gh run download <RUN_ID> --dir dist/ci`).
+# - Cheap ubuntu gates (analyze-test + web compile gate) stay on every
+#   push/PR. No artifact upload for web — the build itself is the gate.
+# - Short retention (7 days) + max compression on the two release uploads.
+# - concurrency cancels superseded runs (rapid pushes no longer queue
+#   full matrices).
 name: build
 
 on:
   push:
+    branches: [First-Release, main, master]
+    tags: ['v*']
     paths:
       - 'apps/**'
       - 'packages/**'
@@ -16,6 +35,14 @@ on:
       - 'packages/**'
   workflow_dispatch:
 
+# One run per branch: a new push cancels the still-queued/running one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: apps/proximity_app
@@ -23,6 +50,7 @@ defaults:
 jobs:
   analyze-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -31,36 +59,48 @@ jobs:
           cache: true
       - run: flutter analyze
       - run: flutter test
+      - name: design-token guard (no raw hex / checkbox drift)
+        run: |
+          echo "--- Color(0x outside lib/design ---"
+          if grep -rn "Color(0x" lib/screens lib/features lib/widgets --include="*.dart" | grep -v "Colors.transparent" | grep -v "Colors.white" | grep -v "face_capture.dart" | grep -v "marked_wash.dart"; then
+            echo "Raw hex outside lib/design — move onto ProximityColors/ProxIdentity."
+            exit 1
+          fi
+          echo "--- Checkbox outside session_edit (per-round exception only) ---"
+          if grep -rn "Checkbox" lib/screens lib/features lib/widgets --include="*.dart" | grep -v "session_edit_screen.dart" | grep -v "selection semantics"; then
+            echo "Checkbox outside session_edit — use hold-and-tap SelectionScope."
+            exit 1
+          fi
       - name: protocol + transport + ble unit tests
         run: |
           for p in protocol transport ble; do
             (cd ../../packages/$p && (flutter test 2>/dev/null || dart test))
           done
 
-  android:
-    runs-on: ubuntu-latest
-    needs: analyze-test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter pub get
-      - run: flutter build apk --debug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: proximity-android-apk
-          path: apps/proximity_app/build/app/outputs/flutter-apk/app-debug.apk
+  # Local-only platforms (DO NOT re-add to CI without reading the header):
+  # - Android: `flutter build apk --release [--dart-define=PROX_PILOT_SIDELOAD=true]`
+  #   (any OS with the SDK; the APK IS the installer).
+  # - macOS: `flutter build macos --release && packaging/macos/make_dmg.sh`
+  #   (needs this Mac; CI's unsigned .app was 400MB+ and cost 10x minutes).
+  # - iOS: `flutter build ios --release --no-codesign` compile gate, or archive
+  #   in Xcode when the paid Apple membership lands (needs this Mac; the old
+  #   CI job uploaded NOTHING yet billed macos 10x per minute).
+  # Keep `flutter.config.enable-swift-package-manager: false` in pubspec.yaml
+  # (flutter_security_suite 1.1.1 breaks SPM; CocoaPods only) and keep
+  # ios/Podfile.lock + macos/Podfile.lock tracked (re-resolve with
+  # `pod update` on every Firebase major bump). See PROXIMITY_DEPLOYMENT.md §5a.
 
   windows:
-    runs-on: windows-latest
+    # Pinned to windows-2022, not windows-latest: the win25-vs2026 image
+    # ships VS2026 whose BUNDLED CMake is 4.x, and flutter resolves cmake
+    # via the VS install — not PATH, so no PATH-level CMake 3.x pin can
+    # redirect it (verified: PATH cmake 3.31.6, build still used 4.x).
+    # CMake 4 removed `cmake_minimum_required` < 3.5 compat, which the
+    # Firebase C++ SDK bundled with firebase_core still declares.
+    # windows-2022 (VS2022, CMake 3.x) configures it fine.
+    runs-on: windows-2022
     needs: analyze-test
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -69,15 +109,19 @@ jobs:
           cache: true
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --debug
+      - run: flutter build windows --release
       - uses: actions/upload-artifact@v4
         with:
-          name: proximity-windows
-          path: apps/proximity_app/build/windows/x64/runner/Debug/
+          name: proximity-windows-release
+          path: apps/proximity_app/build/windows/x64/runner/Release/
+          retention-days: 7
+          compression-level: 9
+          if-no-files-found: error
 
   linux:
     runs-on: ubuntu-latest
     needs: analyze-test
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux desktop + Bluetooth deps
@@ -91,8 +135,31 @@ jobs:
           cache: true
       - run: flutter config --enable-linux-desktop
       - run: flutter pub get
-      - run: flutter build linux --debug
+      - run: flutter build linux --release
       - uses: actions/upload-artifact@v4
         with:
-          name: proximity-linux
-          path: apps/proximity_app/build/linux/x64/debug/bundle/
+          name: proximity-linux-release
+          path: apps/proximity_app/build/linux/x64/release/bundle/
+          retention-days: 7
+          compression-level: 9
+          if-no-files-found: error
+
+  web:
+    runs-on: ubuntu-latest
+    needs: analyze-test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Records-only compile gate: the ONLY job that compiles the
+      # dart.library.html conditional-export variants (transport stubs,
+      # BlueZ stub, net_if/file_saver web, face_verifier + pose_gate stubs).
+      # `flutter analyze` resolves the native variants, so without this job
+      # stub drift ships silently. Deliberately NO artifact upload — the
+      # build itself is the gate (the old 100MB web artifact was pure
+      # storage burn; download a release build instead if ever needed).
+      - run: flutter build web --release

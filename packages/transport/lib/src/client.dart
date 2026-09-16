@@ -27,6 +27,20 @@ class WindowDescriptor {
   final Uint8List sigP;
   final Uint8List tlsFp;
   final String display;
+  final String org; // prof org domain, '' = legacy host
+  /// Hosting professor's Gmail, lowercased, '' = unknown/legacy.
+  /// Gated unicast ONLY (GET /window with a matching or legacy org —
+  /// never UDP beacons, never BLE air packets, never Sig_p/Sig_s).
+  final String profEmail;
+
+  /// Hosting professor's Gmail profile photo URL (same gated channel as
+  /// [profEmail]; '' = unknown). Rendered with initials fallback.
+  final String profPhoto;
+
+  /// Hosting professor's display name (same gated LAN channel as
+  /// [profEmail]; '' = unknown). Never BLE — air packets stay IP:port
+  /// hints only.
+  final String profName;
   const WindowDescriptor({
     required this.classLabel,
     required this.sessionId,
@@ -36,6 +50,10 @@ class WindowDescriptor {
     required this.sigP,
     required this.tlsFp,
     required this.display,
+    this.org = '',
+    this.profEmail = '',
+    this.profPhoto = '',
+    this.profName = '',
   });
 }
 
@@ -44,11 +62,15 @@ class ProveResult {
   final String reason;
   final DateTime serverTime;
   final Uint8List sigAck;
+  /// Attestation anomaly flags from the host (empty on legacy path).
+  /// Advisory: the signed ACK verdict is authoritative.
+  final List<String> flags;
   const ProveResult({
     required this.decision,
     required this.reason,
     required this.serverTime,
     required this.sigAck,
+    this.flags = const [],
   });
 
   bool verifyAck({
@@ -93,22 +115,63 @@ class ProxClient {
 
   /// Lightweight LAN probe for the waiting room: reachable + windowOpen,
   /// without needing a radio challenge. Accepts the self-signed host cert.
-  Future<({bool reachable, bool windowOpen, String classLabel, int waiting, String display})>
-      probeWindow({Duration timeout = const Duration(seconds: 4)}) async {
+  /// [org] is the student's org claim (gated discovery): matching or
+  /// legacy org returns the descriptor WITH profEmail; mismatched org
+  /// returns unreachable (gated silence — never the class, never email).
+  Future<
+      ({
+        bool reachable,
+        bool windowOpen,
+        String classLabel,
+        int waiting,
+        String display,
+        int windowNo,
+        String org,
+        String profEmail,
+        String profPhoto,
+        String profName
+      })> probeWindow(
+      {Duration timeout = const Duration(seconds: 4),
+      void Function(Object e)? onError,
+      String org = ''}) async {
     try {
       _http.badCertificateCallback = (cert, h, p) => true;
-      final req =
-          await _http.getUrl(_uri('/window')).timeout(timeout);
+      final uri = org.trim().isEmpty
+          ? _uri('/window')
+          : _uri('/window', {'org': org.trim().toLowerCase()});
+      final req = await _http.getUrl(uri).timeout(timeout);
       final resp = await req.close().timeout(timeout);
       final body =
           await resp.transform(utf8.decoder).join().timeout(timeout);
-      if (resp.statusCode != 200) {
+      if (resp.statusCode == 403) {
+        // Gated silence: org-mismatch — never the class, never the email.
+        onError?.call(StateError('org-mismatch (gated silence)'));
         return (
           reachable: false,
           windowOpen: false,
           classLabel: '',
           waiting: 0,
-          display: ''
+          display: '',
+          windowNo: 0,
+          org: '',
+          profEmail: '',
+          profPhoto: '',
+          profName: ''
+        );
+      }
+      if (resp.statusCode != 200) {
+        onError?.call(StateError('HTTP ${resp.statusCode}'));
+        return (
+          reachable: false,
+          windowOpen: false,
+          classLabel: '',
+          waiting: 0,
+          display: '',
+          windowNo: 0,
+          org: '',
+          profEmail: '',
+          profPhoto: '',
+          profName: ''
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
@@ -118,50 +181,102 @@ class ProxClient {
         classLabel: (m['class'] as String?) ?? '',
         waiting: (m['waiting'] as num?)?.toInt() ?? 0,
         display: (m['display'] as String?) ?? '',
+        windowNo: (m['windowNo'] as num?)?.toInt() ?? 0,
+        org: (m['org'] as String?) ?? '',
+        profEmail: ((m['profEmail'] as String?) ?? '').trim().toLowerCase(),
+        profPhoto: ((m['profPhoto'] as String?) ?? '').trim(),
+        profName: ((m['profName'] as String?) ?? '').trim(),
       );
-    } catch (_) {
+    } catch (e) {
+      onError?.call(e);
       return (
         reachable: false,
         windowOpen: false,
         classLabel: '',
         waiting: 0,
-        display: ''
+        display: '',
+        windowNo: 0,
+        org: '',
+        profEmail: '',
+        profPhoto: '',
+        profName: ''
       );
     }
   }
 
-  Future<void> _postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _postJson(
+      String path, Map<String, dynamic> body) async {
     _http.badCertificateCallback = (cert, h, p) => true;
     final req =
         await _http.postUrl(_uri(path)).timeout(const Duration(seconds: 8));
     req.headers.contentType = ContentType.json;
     req.write(jsonEncode(body));
     final resp = await req.close().timeout(const Duration(seconds: 6));
-    await resp.transform(utf8.decoder).join();
+    final text = await resp.transform(utf8.decoder).join();
     if (resp.statusCode >= 400) {
       throw StateError('$path failed: ${resp.statusCode}');
     }
+    try {
+      final m = jsonDecode(text);
+      if (m is Map<String, dynamic>) return m;
+    } catch (_) {}
+    return const {};
   }
 
-  Future<void> postWaiting(
+  /// Presence heartbeat + piggybacked window sample (SYNC-owned): the
+  /// professor's POST /waiting reply carries the live window flag +
+  /// display code on the same round trip, so waiting-room entry fast-paths
+  /// without a second (rate-capped) GET /window. Tolerant-parsed
+  /// (absent keys = closed) so older hosts degrade to the probe path.
+  Future<({int waiting, bool windowOpen, String display, String leaveToken})>
+      postWaiting(
           {required String email,
           required String name,
-          String roll = ''}) =>
-      _postJson('/waiting', {'email': email, 'name': name, 'roll': roll});
+          String roll = '',
+          String org = '',
+          String photoUrl = ''}) async {
+    final m = await _postJson('/waiting', {
+      'email': email,
+      'name': name,
+      'roll': roll,
+      'org': org,
+      if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
+    });
+    return (
+      waiting: (m['waiting'] as num?)?.toInt() ?? 0,
+      windowOpen: (m['windowOpen'] as bool?) ?? false,
+      display: (m['display'] as String?) ?? '',
+      leaveToken: (m['leaveToken'] as String? ?? '').trim(),
+    );
+  }
 
   /// Explicit waiting-room leave (best-effort: never throws; the prof UI
   /// also converges because heartbeats stop with the room timers).
-  Future<void> postLeave({required String email}) async {
+  /// [leaveToken] is the credential from the matching [postWaiting] reply
+  /// ('' = legacy caller — the server 403s, and the floor forces update).
+  Future<void> postLeave(
+      {required String email, String leaveToken = ''}) async {
     try {
-      await _postJson('/leave', {'email': email});
+      await _postJson('/leave', {
+        'email': email,
+        if (leaveToken.trim().isNotEmpty) 'leaveToken': leaveToken.trim(),
+      });
     } catch (_) {}
   }
 
   Future<void> postManualRequest(
           {required String email,
           required String name,
-          String roll = ''}) =>
-      _postJson('/manual-request', {'email': email, 'name': name, 'roll': roll});
+          String roll = '',
+          String org = '',
+          String photoUrl = ''}) =>
+      _postJson('/manual-request', {
+        'email': email,
+        'name': name,
+        'roll': roll,
+        'org': org,
+        if (photoUrl.trim().isNotEmpty) 'photo': photoUrl.trim(),
+      });
 
   Future<String> fetchManualStatus(String email) async {
     try {
@@ -180,15 +295,17 @@ class ProxClient {
     }
   }
 
-  Future<(int, Map<String, dynamic>)> _get(String path) async {
+  Future<(int, Map<String, dynamic>)> _get(String path,
+      [Map<String, String>? query]) async {
     // TOFU: the self-signed host cert is accepted here AND on POST, but
     // content is signature-verified below (Sig_p over the radio challenge)
     // and channel-bound at POST (sigBind over the live cert fingerprint,
     // checked server-side). A MITM serves a cert whose fingerprint fails
     // both gates, so no pin state is kept across calls.
     _http.badCertificateCallback = (cert, h, p) => true;
-    final req =
-        await _http.getUrl(_uri(path)).timeout(const Duration(seconds: 8));
+    final req = await _http
+        .getUrl(_uri(path, query))
+        .timeout(const Duration(seconds: 8));
     final resp = await req.close().timeout(const Duration(seconds: 8));
     final body = await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     return (resp.statusCode, jsonDecode(body) as Map<String, dynamic>);
@@ -196,14 +313,26 @@ class ProxClient {
 
   /// Fetches + verifies the window descriptor (Sig_p over the live C_j…
   /// verified against the C_j the caller heard over BLE radio). The fetch
-  /// can land just after the 5s rotation tick, when the live challenge is
+  /// can land just after the 10s rotation tick, when the live challenge is
   /// already C_{j} but the radio copy is C_{j-1}: the server ships the
   /// previous signature too, and either token verifies (both stay fresh
   /// for a full rotation + drift). Only a token matching NEITHER is a
   /// genuine mismatch — stale air, or a fake professor.
-  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge) async {
-    final (status, body) = await _get('/window');
+  ///
+  /// [org] is the student's org claim (gated discovery): a mismatched org
+  /// throws `org-mismatch:<classOrg>` (never the email, never window
+  /// material) so the caller returns a structured wrong-org receipt
+  /// without sending any proof. Matching or legacy org returns the
+  /// descriptor WITH profEmail (gated unicast only).
+  Future<WindowDescriptor> fetchWindow(Uint8List radioChallenge,
+      {String org = ''}) async {
+    final query =
+        org.trim().isEmpty ? null : {'org': org.trim().toLowerCase()};
+    final (status, body) = await _get('/window', query);
     if (status == 429) throw StateError('window rate-limited, retry later');
+    if (status == 403 && body['reason'] == 'org-mismatch') {
+      throw StateError('org-mismatch:${body['org'] ?? ''}');
+    }
     if (status != 200) {
       throw StateError(
           'window fetch HTTP $status (${body['error'] ?? body['windowOpen'] ?? 'no body'})');
@@ -233,6 +362,8 @@ class ProxClient {
     final sigP = Uint8List.fromList(hexDecode(body['sigP'] as String));
     // The descriptor never carries C_j (radio-only). The caller proves it
     // heard the live challenge by verifying Sig_p against its radio copy.
+    // `org` + `profEmail` + `profName` ride alongside (join-gate display
+    // only — never in Sig_p/Sig_s; gated LAN unicast only, never BLE).
     WindowDescriptor descFor(int jj, Uint8List sig) => WindowDescriptor(
           classLabel: body['class'] as String,
           sessionId: sessionId,
@@ -242,6 +373,11 @@ class ProxClient {
           sigP: sig,
           tlsFp: Uint8List.fromList(hexDecode(body['tlsFp'] as String)),
           display: body['display'] as String,
+          org: body['org'] as String? ?? '',
+          profEmail:
+              ((body['profEmail'] as String?) ?? '').trim().toLowerCase(),
+          profPhoto: ((body['profPhoto'] as String?) ?? '').trim(),
+          profName: ((body['profName'] as String?) ?? '').trim(),
         );
     bool verifies(int jj, Uint8List sig) => ProxCrypto.verifyProfChallenge(
           profPk: profPk,
@@ -269,6 +405,25 @@ class ProxClient {
   /// and a same-j retry would only age the token (and burn single-use on
   /// a retake). Each attempt carries its own budget so a hung POST can
   /// never outlive the driver's dead-air cap.
+  ///
+  /// Tracks 2+3 (all optional, legacy-compatible): [faceValidAtMs] +
+  /// [verifierVer] emit the `face:{score,faceValidAt,verifierVer}` ticket
+  /// (Sig_s binds them — no images/embeddings leave the device); [pkD] +
+  /// [dSigFor] emit the device binding (`pkD` hex + `dSig` over
+  /// deviceProvePreimage with the ticket hash). [dSigFor] receives the
+  /// ticket, the sub-epoch, and the §5 [integrityHash] — the closure MUST
+  /// sign the canonical preimage WITH that hash (server recomputes the
+  /// identical bytes; mismatch fails closed). [faceVecB64] attaches the
+  /// LAN-only session vector (`face:{vec}` — RAM-only on the professor
+  /// phone, never the cloud); empty means no dup participation.
+  /// Security §2: [attestationChain] (DER-hex, leaf-first, from the stored
+  /// enrollment) + [installId] (challenge binding) ride on HW-bound proofs;
+  /// the professor pins + recomputes offline.
+  /// Security §5: [integrityHash] (8-hex verdict hash) is bound into the
+  /// SIGNED dSig preimage (via [dSigFor]'s ticket) and carried in the body
+  /// so the professor recomputes the identical preimage — pre-binding
+  /// clients omit it and fail closed on HW tiers (never a silent
+  /// downgrade). [integrityFlag] stays advisory alongside.
   Future<ProveResult> prove({
     required WindowDescriptor desc,
     required String studentId,
@@ -281,8 +436,26 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
     Random? rng,
     int maxAttempts = 3,
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
+    String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
+    List<String> attestationChain = const [],
+    String installId = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
@@ -302,6 +475,22 @@ class ProxClient {
           pkS: pkS,
           sigSFor: sigSFor,
           sigBindFor: sigBindFor,
+          org: org,
+          faceValidAtMs: faceValidAtMs,
+          verifierVer: verifierVer,
+          pkD: pkD,
+          dSigFor: dSigFor,
+          attestationLevel: attestationLevel,
+          attestedUntilMs: attestedUntilMs,
+          faceVecB64: faceVecB64,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
+          integrityFlag: integrityFlag,
+          integrityHash: integrityHash,
+          attestationChain: attestationChain,
+          installId: installId,
+          appAttestRaw: appAttestRaw,
+          appAttestCredKey: appAttestCredKey,
         ).timeout(const Duration(seconds: 14));
       } catch (e) {
         lastErr = e;
@@ -322,11 +511,50 @@ class ProxClient {
     required Uint8List pkS,
     required Uint8List Function(Uint8List challenge, int j) sigSFor,
     required Uint8List Function(Uint8List tlsFp, int j) sigBindFor,
+    String org = '',
+    int? faceValidAtMs,
+    String verifierVer = '',
+    Uint8List? pkD,
+    Future<Uint8List> Function(
+            Uint8List faceTicketHashBytes, int j, String integrityHash)?
+        dSigFor,
+    String attestationLevel = 'NONE',
+    int attestedUntilMs = 0,
+    String faceVecB64 = '',
+    double livenessScore = 0.0,
+    String livenessVer = '',
+    String integrityFlag = '',
+    String integrityHash = '',
+    List<String> attestationChain = const [],
+    String installId = '',
+    String appAttestRaw = '',
+    String appAttestCredKey = '',
   }) async {
     // Channel binding signs the fingerprint from the verified descriptor
     // fetch (Sig_p already proved the server owns windowId): the POST
     // pin-check below + the server's tlsFp comparison both gate on it.
     final tlsFp = desc.tlsFp;
+    // Bound ticket (Tracks 2+3 + security §4 liveness): stamp + tag +
+    // device binding + liveness. Legacy callers leave verifierVer/
+    // livenessVer empty → legacy body, legacy server path.
+    final bound = verifierVer.isNotEmpty ||
+        livenessVer.isNotEmpty ||
+        livenessScore != 0.0;
+    final stampMs = faceValidAtMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+    final ticket = bound
+        ? ProxCrypto.faceTicketHash(
+            faceScore: faceScore,
+            faceValidAtMs: stampMs,
+            verifierVer: verifierVer,
+            livenessScore: livenessScore,
+            livenessVer: livenessVer)
+        : null;
+    // Security §5: the closure signs with the SAME hash the body carries
+    // (server recomputes the identical bound preimage — claim/sign
+    // mismatch fails dSig verify, never a silent downgrade).
+    final dSig = (bound && dSigFor != null && ticket != null)
+        ? await dSigFor(ticket, j, integrityHash)
+        : null;
     final body = jsonEncode(buildProveBody(
       id: studentId,
       windowId: desc.windowId,
@@ -340,6 +568,22 @@ class ProxClient {
       tlsFp: tlsFp,
       sigBind: sigBindFor(tlsFp, j),
       pkS: pkS,
+      org: org,
+      faceValidAtMs: bound ? stampMs : null,
+      verifierVer: verifierVer,
+      pkD: pkD,
+      dSig: dSig,
+      attestationLevel: attestationLevel,
+      attestedUntilMs: attestedUntilMs,
+      faceVecB64: faceVecB64,
+      livenessScore: livenessScore,
+      livenessVer: livenessVer,
+      integrityFlag: integrityFlag,
+      integrityHash: integrityHash,
+      attestationChain: attestationChain,
+      installId: installId,
+      appAttestRaw: appAttestRaw,
+      appAttestCredKey: appAttestCredKey,
     ));
     _http.badCertificateCallback = (cert, h, p) {
       final fp =
@@ -359,6 +603,21 @@ class ProxClient {
         await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 10));
     if (resp.statusCode == 429) throw StateError('rate-limited, retry later');
     final m = jsonDecode(text) as Map<String, dynamic>;
+    // Tolerant verdict parse: the window-closed early verdict carries no
+    // signable context (there is no live window to bind), so its sigAck
+    // is zeros by contract — the driver maps `window-closed` to
+    // prove-the-next-rotation BEFORE any ACK check, never BAD-sig. Every
+    // other verdict carries a real Sig_p ACK (the server signs all early
+    // invalids); a missing/unparseable stamp or sig there degrades to
+    // now+zeros and fails the ACK check honestly instead of throwing a
+    // parse error that the retry loop would mislabel.
+    final stamp = DateTime.tryParse(m['serverTime'] as String? ?? '');
+    Uint8List ackSig;
+    try {
+      ackSig = Uint8List.fromList(hexDecode(m['sigAck'] as String));
+    } catch (_) {
+      ackSig = Uint8List(64);
+    }
     return ProveResult(
       decision: switch (m['decision']) {
         'confirmed' => ProveDecision.confirmed,
@@ -366,8 +625,11 @@ class ProxClient {
         _ => ProveDecision.invalid,
       },
       reason: m['reason'] as String? ?? '',
-      serverTime: DateTime.parse(m['serverTime'] as String),
-      sigAck: Uint8List.fromList(hexDecode(m['sigAck'] as String)),
+      serverTime: (stamp ?? DateTime.now()).toUtc(),
+      sigAck: ackSig,
+      flags: [
+        for (final f in (m['flags'] as List? ?? const [])) '$f',
+      ],
     );
   }
 }

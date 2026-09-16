@@ -5,7 +5,7 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Proximity uses the camera once to enroll your face on this device, and briefly during each attendance window to confirm the holder. Face data never leaves your phone.</string>
+	<string>Proximity uses the camera once to enroll your face on this device, and briefly during each attendance window to confirm the holder. Face data never leaves your phone, except a compact face vector (numbers only, no photo) sent to the professor's phone over classroom WiFi during marking to catch duplicate faces — held in memory for that session only, never the cloud.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Proximity uses Bluetooth to prove you are inside the classroom during attendance windows. The app only scans and advertises while a window is open and the app is in the foreground.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
@@ -14,6 +14,22 @@
 	<string>Proximity needs location permission to scan for nearby Bluetooth classroom beacons on iOS. Your location is never recorded or uploaded.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Proximity discovers live classes and exchanges signed attendance proofs with the professor over the classroom WiFi or hotspot.</string>
+	<!-- §3 hardened storage: Face ID / Touch ID backs the Keychain
+	     biometryCurrentSet access-control flag (see IOSOptions in
+	     lib/core/security/secure_store_options.dart). -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Proximity uses Face ID to unlock your on-device attendance key. Face data never leaves your phone.</string>
+	<!-- Keychain posture (no plist key exists for these — enforced at runtime
+	     via IOSOptions: synchronizable=false, accessibility
+	     first_unlock_this_device_only, i.e. thisDeviceOnly: items never sync
+	     via iCloud and never migrate to a new device via backup/restore). -->
+	<!-- Release distribution (audit 2026-09-12 H4): the app uses only
+	     exempt standard encryption (TLS, Keychain, platform biometrics —
+	     no proprietary crypto), so App Store Connect export compliance is
+	     pre-answered. A missing key stalls TestFlight/App Store processing
+	     behind a compliance questionnaire. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -77,8 +93,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

@@ -1,0 +1,91 @@
+// SetupFlow step scope: lets step content drive the stepper instead of
+// pushing standalone routes when hosted inside SetupFlowScreen.
+//
+// Back contract (canonical — the ONE place this is documented; see
+// enroll_flow.dart for the route-side pointer):
+//   Scope PRESENT (inside SetupFlowScreen): Back/Cancel/Continue/Re-scan/
+//   Done drive the stepper via scope.back/next/goTo/complete and NEVER
+//   push or pop. First-step back routes to SetupFlowScreen.onFirstBack,
+//   Done exits via onComplete. Overlapping navs are single-flight in the
+//   orchestrator (second _goTo/_back while one animates is dropped, so
+//   double system-back cannot double-fire onFirstBack).
+//   Scope ABSENT (standalone enroll/capture, enroll/result, deep-links,
+//   previews, widget tests): legacy Navigator push/pop preserved —
+//   openCapture/openResult push (single-flight per route, so a validated
+//   double-tap never stacks two results), Cancel/Back pop once, Done pops
+//   until past every `enroll/…` route. Every branch that consults the scope
+//   falls back this way, so standalone behavior is unchanged.
+library;
+
+import 'package:flutter/widgets.dart';
+
+/// Canonical SetupFlow page indices (single source of truth shared by the
+/// orchestrator and the step-local back targets).
+///
+/// Pagination (2026-09-10 `## Setup pagination`, revised by
+/// `## About-page removal` the same day): the flow is six one-purpose
+/// pages — Confirm device (device facts) → Account & key (inputs +
+/// Continue). Welcome, Capture, and Result stay one page each.
+/// Capture/Result indices are 4/5; order semantics and start-index
+abstract final class SetupStep {
+  /// Sign in (welcome).
+  static const welcome = 0;
+
+  /// Pick role (roles hub).
+  static const role = 1;
+
+  /// Confirm device (which account, which device, move status).
+  static const device = 2;
+
+  /// Account & key (ID entry + device key + Continue to face scan).
+  static const accountKey = 3;
+
+  /// Capture face (5-angle session).
+  static const capture = 4;
+
+  /// Done (save + claim outcome).
+  static const result = 5;
+
+  static const count = 6;
+}
+
+/// Stepper controls for the enclosing SetupFlowScreen.
+class SetupStepScope extends InheritedWidget {
+  /// Currently visible step index.
+  final int index;
+
+  /// Total step count ([SetupStep.count]).
+  final int count;
+
+  /// Advance one step (no-op past the last step).
+  final Future<void> Function() next;
+
+  /// Go back one step (no-op on the first step — the orchestrator routes
+  /// first-step back to [SetupFlowScreen.onFirstBack]).
+  final Future<void> Function() back;
+
+  /// Jump to an explicit step ([SetupStep] index, clamped).
+  final Future<void> Function(int step) goTo;
+
+  /// Finish the flow (lands on mark/browse, never the roles hub).
+  final Future<void> Function() complete;
+
+  const SetupStepScope({
+    super.key,
+    required this.index,
+    required this.count,
+    required this.next,
+    required this.back,
+    required this.goTo,
+    required this.complete,
+    required super.child,
+  });
+
+  /// Null outside SetupFlowScreen (standalone routes/tests).
+  static SetupStepScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<SetupStepScope>();
+
+  @override
+  bool updateShouldNotify(SetupStepScope old) =>
+      old.index != index || old.count != count;
+}

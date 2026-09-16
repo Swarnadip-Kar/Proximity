@@ -14,7 +14,6 @@ import 'package:proximity_protocol/protocol.dart';
 const kBluezService = 'org.bluez';
 const kBluezAdvMgrIface = 'org.bluez.LEAdvertisingManager1';
 const kBluezAdvIface = 'org.bluez.LEAdvertisement1';
-const kBluezDeviceIface = 'org.bluez.Device1';
 const kAdvertPathPrefix = '/org/proximity/advert';
 
 /// Pure advertisement property map (unit-tested without a bus).
@@ -89,7 +88,7 @@ class BluezAdvertiser {
     throw StateError('No BlueZ adapter with LEAdvertisingManager1 found.');
   }
 
-  /// Advertise one air packet (5s rotation: call again to republish;
+  /// Advertise one air packet (10s rotation: call again to republish;
   /// previous registration is released first).
   Future<void> advertise(String airServiceUuid,
       {required Uint8List airMfg}) async {

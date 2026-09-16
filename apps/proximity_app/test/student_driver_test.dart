@@ -1,16 +1,19 @@
-import 'dart:typed_data';
-
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/core/edgeface.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/core/student_driver.dart';
+import 'package:proximity_app/features/face_identity/device_key.dart';
+import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_ble/ble.dart';
-import 'package:proximity_face/face.dart';
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_transport/transport.dart';
+
+import 'test_device.dart';
 
 const _email = 's@x.in';
 const _beacon = ClassBeacon(
@@ -21,59 +24,112 @@ const _beacon = ClassBeacon(
   displayCode: 'X',
 );
 
-Future<InMemoryDeviceStore> enrolledStore({String modelVer = kFacePipelineVer}) async {
+/// Sealed-only helper (security §2): stores a DKey-sealed envelope, never
+/// a raw seed. The envelope is sealed with a throwaway [FakeDeviceKey]
+/// (key-independent PXK1 in tests) so any driver-held [FakeDeviceKey]
+/// unseals it — mirroring HW production where the same silicon seals +
+/// unseals. Pass [sealedKeyHex] explicitly only for clone tests.
+Future<InMemoryDeviceStore> enrolledStore({
+  String verifierVer = kFaceVerifierVer,
+  String faceId = 'face-test-id',
+  String? seedBytesHex,
+  String? sealedKeyHex,
+  String attestationLevel = 'NONE',
+  DateTime? attestedUntil,
+  String pkDHex = '',
+}) async {
   final s = InMemoryDeviceStore();
+  final seedBytes = hexDecode(seedBytesHex ?? ('ab' * 32));
+  final sealed = sealedKeyHex ??
+      hexEncode(await FakeDeviceKey().seal(Uint8List.fromList(seedBytes)));
   await s.writeEnrollment(StoredEnrollment(
     email: _email,
     name: 'S',
     roll: '1',
-    seedHex: 'ab' * 32,
     pkHex: 'cd' * 32,
-    templateCsv: '1.0,0.0,0.0,0.0',
+    sealedKeyHex: sealed,
+    faceId: faceId,
     enrolledAt: DateTime.now().toUtc(),
-    modelVer: modelVer,
+    verifierVer: verifierVer,
+    attestationLevel: attestationLevel,
+    attestedUntil: attestedUntil ?? DateTime.utc(2026, 12, 31),
+    pkDHex: pkDHex,
   ));
   return s;
 }
 
-MockFaceEmbedder mockEmbedder() => MockFaceEmbedder(
-      enrolled: const [1, 0, 0, 0],
-      probe: const [1, 0, 0, 0],
+FakeFaceVerifier mockVerifier({bool match = true, double score = 0.85}) =>
+    FakeFaceVerifier(match: match, score: score);
+
+/// Counting fake integrity probe (§5 resolution tests): records how often
+/// the driver consulted the gate instead of reusing a cache.
+class _CountingProbe implements IntegrityProbe {
+  final IntegritySignals signals;
+  int calls = 0;
+  _CountingProbe(this.signals);
+  @override
+  Future<IntegritySignals> check() async {
+    calls++;
+    return signals;
+  }
+}
+
+RealStudentDriver testDriver(
+        {required InMemoryDeviceStore store,
+        FakeFaceVerifier? verifier,
+        FakeDeviceKey? deviceKey,
+        LivenessGate? livenessGate,
+        required ProxBleEngine engine}) =>
+    RealStudentDriver(
+      store: store,
+      verifier: verifier ?? mockVerifier(),
+      deviceKey: deviceKey ?? FakeDeviceKey(),
+      engine: engine,
+      livenessGate: livenessGate ?? FakeLivenessGate(),
     );
 
 void main() {
   test('checkFace passes with enrolled template', () async {
     final d = RealStudentDriver(
       store: await enrolledStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
-    final res = await d.checkFace(Uint8List.fromList([9]));
+    final res = await d.checkFace('still.jpg');
     expect(res.match, FaceMatch.pass);
-    expect(res.score, 1.0);
+    expect(res.score, 0.85);
+    // The pass carries the Sig_s ticket (stamp + pipeline tag).
+    expect(res.faceValidAtMs, greaterThan(0));
+    expect(res.verifierVer, kFaceVerifierVer);
   });
 
   test('checkFace without enrollment is inconclusive (keeps attempt)',
       () async {
     final d = RealStudentDriver(
       store: InMemoryDeviceStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
-    final res = await d.checkFace(Uint8List.fromList([9]));
+    final res = await d.checkFace('still.jpg');
     expect(res.match, FaceMatch.inconclusive);
   });
 
   test('checkFace with stale pipeline template never matches (re-enroll)',
       () async {
     final d = RealStudentDriver(
-      store: await enrolledStore(modelVer: 'edgeface-xs-g06-tflite-1'),
-      embedder: mockEmbedder(),
+      store: await enrolledStore(verifierVer: 'edgeface-xs-g06-tflite-1'),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
     );
     // Even a perfect probe scores nothing: incomparable embeddings must
     // not produce a pass OR burn a mismatch attempt.
-    final res = await d.checkFace(Uint8List.fromList([9]));
+    final res = await d.checkFace('still.jpg');
     expect(res.match, FaceMatch.staleTemplate);
     expect(res.score, 0);
   });
@@ -94,7 +150,8 @@ void main() {
     await server.start(port: 0);
     final d = RealStudentDriver(
       store: InMemoryDeviceStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: ProxBleEngine(radio: FakeBleRadio()),
     );
     try {
@@ -133,7 +190,8 @@ void main() {
     final engine = ProxBleEngine(radio: FakeBleRadio());
     final d = RealStudentDriver(
       store: await enrolledStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: engine,
     );
     // Token heard over radio; no server answers at :9 (refused = wrong
@@ -167,7 +225,8 @@ void main() {
     final engine = ProxBleEngine(radio: FakeBleRadio());
     final d = RealStudentDriver(
       store: await enrolledStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: engine,
     )
       ..silenceCap = const Duration(seconds: 3)
@@ -193,7 +252,8 @@ void main() {
     final engine = ProxBleEngine(radio: FakeBleRadio());
     final d = RealStudentDriver(
       store: await enrolledStore(),
-      embedder: mockEmbedder(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
       engine: engine,
     )..silenceCap = const Duration(seconds: 2);
     // Nothing ever arrives over radio; the :9 probe is unreachable, so
@@ -214,20 +274,11 @@ void main() {
       timeout: const Timeout(Duration(minutes: 2)), () async {
     // Silence alone never ends a listen while the round is open: the
     // probe says open, waiting continues, and the next rotation marks.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: hexEncode(seed),
-      pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
-      enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 72);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -237,7 +288,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -253,9 +306,13 @@ void main() {
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       )..silenceCap = const Duration(seconds: 2);
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       // First rotation arrives after one silence probe says "still open".
       Future.delayed(const Duration(seconds: 3), () {
         final w = server.window!;
@@ -280,7 +337,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: statuses.add,
       );
       expect(res.result, StudentResult.marked);
@@ -299,20 +363,11 @@ void main() {
     // stale relay of the previous round's token is still on air. The
     // student hears the stale token first — proving waits for the fresh
     // rotation instead of failing.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: hexEncode(seed),
-      pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
-      enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 73);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     WindowParams freshWindow() => WindowParams(
           sessionId: randBytes(16),
           windowId: randBytes(6),
@@ -329,7 +384,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           const RadioSighting(rssiDbm: -55, hop: 0),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(freshWindow(), 1);
@@ -339,9 +396,13 @@ void main() {
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       // Stale token first, then the live rotation — both over radio
       // (no hearChallenge seam: the driver listens to the engine).
       void inject(Uint8List tok) => engine.handleSighting(BleSighting(
@@ -364,7 +425,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -389,11 +457,11 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
+      faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
+      verifierVer: kFaceVerifierVer,
     ));
     final server = ProxServer(
       classLabel: 't',
@@ -411,7 +479,8 @@ void main() {
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
         engine: engine,
       )..silenceCap = const Duration(seconds: 8);
       // Eight stray tokens: each fetch fails "window closed" — none may
@@ -464,11 +533,11 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
+      faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
+      verifierVer: kFaceVerifierVer,
     ));
     final server = ProxServer(
       classLabel: 't',
@@ -495,7 +564,8 @@ void main() {
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
         engine: engine,
       )..silenceCap = const Duration(seconds: 2);
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -543,11 +613,11 @@ void main() {
       email: _email,
       name: 'S',
       roll: '1',
-      seedHex: hexEncode(seed),
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
       pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
+      faceId: 'face-test-id',
       enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
+      verifierVer: kFaceVerifierVer,
     ));
     final server = ProxServer(
       classLabel: 't',
@@ -565,7 +635,8 @@ void main() {
       final engine = ProxBleEngine(radio: FakeBleRadio());
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
         engine: engine,
       )..silenceCap = const Duration(seconds: 2);
       // One stray token over radio, then nothing: fetch fails closed,
@@ -604,20 +675,11 @@ void main() {
     // radio hears the student's response as a DEFAULT-ttl (3) sighting —
     // exactly like live air — and the real host mapping must still
     // accept it (hop 0, RSSI-gated), or every live prove fails invalid.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: hexEncode(seed),
-      pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
-      enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 71);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final engine = ProxBleEngine(radio: FakeBleRadio());
     final server = ProxServer(
       classLabel: 't',
@@ -630,7 +692,9 @@ void main() {
               required expectedAirKey,
               required expectedUuid}) =>
           RealHostDriver.matchResponse(engine, expectedAirKey, expectedUuid),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -668,9 +732,13 @@ void main() {
       });
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       final res = await d.listenAndProve(
         target: ClassBeacon(
           classLabel: 't',
@@ -681,7 +749,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -696,20 +771,11 @@ void main() {
     // The professor's radio misses the first answer (no-ble-sighting):
     // the student re-announces + re-proves on the next live token
     // instead of failing.
+    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
-    final stuPk = ed.public(ed.newKeyFromSeed(seed));
-    final store = InMemoryDeviceStore();
-    await store.writeEnrollment(StoredEnrollment(
-      email: _email,
-      name: 'S',
-      roll: '1',
-      seedHex: hexEncode(seed),
-      pkHex: hexEncode(stuPk.bytes),
-      templateCsv: '1.0,0.0,0.0,0.0',
-      enrolledAt: DateTime.now().toUtc(),
-      modelVer: kFacePipelineVer,
-    ));
+    final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 74);
+    final store = await hwEnrolledStore(email: _email, hw: hw);
     final engine = ProxBleEngine(radio: FakeBleRadio());
     // First answer unheard, re-announced answers heard.
     var lookups = 0;
@@ -725,7 +791,9 @@ void main() {
               ? null
               : RealHostDriver.matchResponse(
                   engine, expectedAirKey, expectedUuid),
-    );
+      pinnedRoots: hw.pins,
+      // ignore: cascade_invocations
+    )..testChainGate = testChainGate;
     await server.start(port: 0);
     try {
       server.openWindow(
@@ -767,13 +835,22 @@ void main() {
 
       Future.delayed(const Duration(milliseconds: 300), injectCurrent);
       // Next rotation (j advanced): new token, answer heard this time.
-      Future.delayed(const Duration(seconds: 6),
+      // Rotations are 10s (kSubEpochSeconds — was 5s when this test was
+      // written): the re-announce must land PAST the boundary, or the
+      // retry keeps waiting for a token different from the tried one
+      // (same-token echoes never resolve) and the test stalls to its
+      // timeout. ~12s keeps the whole test (~15s) far under the 2min cap.
+      Future.delayed(const Duration(seconds: 12),
           () => injectCurrent(withResponse: true));
       final d = RealStudentDriver(
         store: store,
-        embedder: mockEmbedder(),
+        verifier: mockVerifier(),
+        deviceKey: hw.deviceKey,
         engine: engine,
+        livenessGate: FakeLivenessGate(),
       );
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
       final res = await d.listenAndProve(
         target: ClassBeacon(
           classLabel: 't',
@@ -784,7 +861,14 @@ void main() {
         ),
         identity:
             const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
-        faceScore: 0.9,
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        livenessScore: check.livenessScore,
+        livenessVer: check.livenessVer,
+        // Clean verdict wire form (explicit → no native probe in tests).
+        integrityFlag: '',
+        integrityHash: '00000000',
         onStatus: (_) {},
       );
       expect(res.result, StudentResult.marked);
@@ -792,6 +876,451 @@ void main() {
     } finally {
       await server.stop();
     }
+  });
+
+test('bound e2e: FULL attestation without a chain fails device-unproven',
+      timeout: const Timeout(Duration(minutes: 2)), () async {
+    // Security §2 chain gate: a FULL claim with no attestationChain fails
+    // closed as device-unproven (never a tier, never silent presence).
+    // The positive FULL+chain path is covered by transport hw_prove_test
+    // (pinned throwaway roots + crafted chain); NONE still takes the
+    // fallback-flag path below.
+    final prof = ProxCrypto.generateEdKeypair();
+    final seed = randBytes(32);
+    final stuPk = ed.public(ed.newKeyFromSeed(seed));
+    final pkDHex = hexEncode(Uint8List.fromList(List.filled(32, 7)));
+    final store = await enrolledStore(
+      sealedKeyHex: hexEncode(await FakeDeviceKey().seal(seed)),
+      attestationLevel: 'FULL',
+      attestedUntil: DateTime.now().toUtc().add(const Duration(days: 80)),
+      pkDHex: pkDHex,
+    );
+    // pkHex in the store is display-only; the proof presents the live key.
+    final server = ProxServer(
+      classLabel: 't',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: (
+              {required peerW,
+              required expectedAirKey,
+              required expectedUuid}) =>
+          const RadioSighting(rssiDbm: -55, hop: 0),
+    );
+    await server.start(port: 0);
+    try {
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 't',
+        ),
+        1,
+      );
+      final engine = ProxBleEngine(radio: FakeBleRadio());
+      final d = testDriver(store: store, engine: engine);
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
+      Future.delayed(const Duration(milliseconds: 300), () {
+        final w = server.window!;
+        engine.handleSighting(BleSighting(
+          type: kAirTypeChallenge,
+          token8: w.challengeFor(w.jForTime(DateTime.now().toUtc())),
+          ipHost: '127.0.0.1',
+          ipPort: server.port,
+          rssiDbm: -60,
+          at: DateTime.now().toUtc(),
+        ));
+      });
+      final res = await d.listenAndProve(
+        target: ClassBeacon(
+          classLabel: 't',
+          host: '127.0.0.1',
+          port: server.port,
+          rssiDbm: 0,
+          displayCode: 'X',
+        ),
+        identity:
+            const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        onStatus: (_) {},
+      );
+      expect(res.result, StudentResult.error);
+      expect(server.tally.presentCount, 0);
+      expect(stuPk.bytes.length, 32); // live key presented, not the stub
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('bound e2e with NONE attestation never marks (manual path)',
+      timeout: const Timeout(Duration(minutes: 2)), () async {
+    // Fresh-only: a bound proof claiming no hardware tier never confirms —
+    // `device-none-requires-approval` routes it to the manual path instead
+    // of marking. Same ticket/Sig_s/sighting checks run; only the tier is
+    // missing, so the verdict is terminal-error, never a silent mark.
+    final prof = ProxCrypto.generateEdKeypair();
+    final seed = randBytes(32);
+    final store = await enrolledStore(seedBytesHex: hexEncode(seed));
+    final server = ProxServer(
+      classLabel: 't',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: (
+              {required peerW,
+              required expectedAirKey,
+              required expectedUuid}) =>
+          const RadioSighting(rssiDbm: -55, hop: 0),
+    );
+    await server.start(port: 0);
+    try {
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 't',
+        ),
+        1,
+      );
+      final engine = ProxBleEngine(radio: FakeBleRadio());
+      final d = testDriver(store: store, engine: engine);
+      final check = await d.checkFace('still.jpg');
+      expect(check.match, FaceMatch.pass);
+      Future.delayed(const Duration(milliseconds: 300), () {
+        final w = server.window!;
+        engine.handleSighting(BleSighting(
+          type: kAirTypeChallenge,
+          token8: w.challengeFor(w.jForTime(DateTime.now().toUtc())),
+          ipHost: '127.0.0.1',
+          ipPort: server.port,
+          rssiDbm: -60,
+          at: DateTime.now().toUtc(),
+        ));
+      });
+      final res = await d.listenAndProve(
+        target: ClassBeacon(
+          classLabel: 't',
+          host: '127.0.0.1',
+          port: server.port,
+          rssiDbm: 0,
+          displayCode: 'X',
+        ),
+        identity:
+            const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+        faceScore: check.score,
+        faceValidAtMs: check.faceValidAtMs,
+        verifierVer: check.verifierVer,
+        onStatus: (_) {},
+      );
+      expect(res.result, StudentResult.error);
+      expect(res.detail, contains('device-none-requires-approval'));
+      expect(res.attestationFlags,
+          isNot(contains('device-none-fallback')));
+      expect(server.tally.presentCount, 0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('clone simulation: sealed key on a new install fails to unwrap',
+      timeout: const Timeout(Duration(minutes: 2)), () async {
+    // Backup-restore clone: ciphertext copied to an install whose DKey
+    // cannot open it → 'restore detected — re-enroll', nothing signed.
+    final deviceKey = FakeDeviceKey();
+    final seed = randBytes(32);
+    final sealed = await deviceKey.seal(seed);
+    final store = InMemoryDeviceStore();
+    await store.writeEnrollment(StoredEnrollment(
+      email: _email,
+      name: 'S',
+      roll: '1',
+      pkHex: 'cd' * 32,
+      sealedKeyHex: hexEncode(sealed),
+      faceId: 'face-test-id',
+      enrolledAt: DateTime.now().toUtc(),
+      verifierVer: kFaceVerifierVer,
+    ));
+    deviceKey.dropKey(); // the clone's fresh key cannot open the envelope
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 't',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: (
+              {required peerW,
+              required expectedAirKey,
+              required expectedUuid}) =>
+          const RadioSighting(rssiDbm: -55, hop: 0),
+    );
+    await server.start(port: 0);
+    try {
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 't',
+        ),
+        1,
+      );
+      final engine = ProxBleEngine(radio: FakeBleRadio());
+      final d = RealStudentDriver(
+        store: store,
+        verifier: mockVerifier(),
+        deviceKey: deviceKey,
+        engine: engine,
+        livenessGate: FakeLivenessGate(),
+      );
+      // checkFace still passes (faceId matches) — the clone fails at SIGN
+      // time, when the sealed SKey refuses to unwrap.
+      expect((await d.checkFace('still.jpg')).match, FaceMatch.pass);
+      Future.delayed(const Duration(milliseconds: 300), () {
+        final w = server.window!;
+        engine.handleSighting(BleSighting(
+          type: kAirTypeChallenge,
+          token8: w.challengeFor(w.jForTime(DateTime.now().toUtc())),
+          ipHost: '127.0.0.1',
+          ipPort: server.port,
+          rssiDbm: -60,
+          at: DateTime.now().toUtc(),
+        ));
+      });
+      final res = await d.listenAndProve(
+        target: ClassBeacon(
+          classLabel: 't',
+          host: '127.0.0.1',
+          port: server.port,
+          rssiDbm: 0,
+          displayCode: 'X',
+        ),
+        identity:
+            const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+        faceScore: 0.85,
+        faceValidAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+        verifierVer: kFaceVerifierVer,
+        onStatus: (_) {},
+      );
+      expect(res.result, StudentResult.error);
+      expect(res.detail, contains('restore detected — re-enroll'));
+      expect(server.tally.presentCount, 0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('hook simulation: mismatched verify never passes, burns nothing',
+      () async {
+    // An injected/hooked verifier that cannot match the enrolled faceId
+    // yields mismatch (readable, somebody else) — never a pass, and the
+    // test asserts the attempt accounting stays with the caller: no pass,
+    // no ticket, nothing to sign.
+    final d = RealStudentDriver(
+      store: await enrolledStore(),
+      verifier: mockVerifier(match: false),
+      deviceKey: FakeDeviceKey(),
+      engine: ProxBleEngine(radio: FakeBleRadio()),
+      livenessGate: FakeLivenessGate(),
+    );
+    final res = await d.checkFace('attacker-still.jpg');
+    expect(res.match, FaceMatch.mismatch);
+    expect(res.faceValidAtMs, 0);
+    expect(res.verifierVer, isEmpty);
+  });
+
+  test('records-only listenAndProve refuses before any radio (L1)',
+      () async {
+    // Desktop/web builds never listen-and-prove: guidance receipt, no
+    // radio, nothing signed. (RealStudentDriver gates on canUseFace;
+    // this host is desktop in flutter_test only when pinned — instead
+    // assert the Fake-level contract: FakeStudentDriver ignores L1 by
+    // design for UI tests, so pin the REAL driver behind an override.)
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final d = RealStudentDriver(
+      store: await enrolledStore(),
+      verifier: mockVerifier(),
+      deviceKey: FakeDeviceKey(),
+      engine: ProxBleEngine(radio: FakeBleRadio()),
+    );
+    final res = await d.listenAndProve(
+      target: _beacon,
+      identity: const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+      faceScore: 0.85,
+      onStatus: (_) {},
+    );
+    debugDefaultTargetPlatformOverride = null;
+    expect(res.result, StudentResult.error);
+    expect(res.detail, contains('mobile app'));
+  });
+
+  group('§5 integrity verdict in prove', () {
+    test('default listen consults the pre-prove gate (never blocks)',
+        () async {
+      // No explicit verdict: the driver probes fresh via
+      // entryMarkingIntegrity (never the cached startup verdict). A
+      // tainted verdict must NOT refuse — it rides to the professor.
+      final probe = _CountingProbe(const IntegritySignals(hooked: true));
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      try {
+        final d = RealStudentDriver(
+          store: await enrolledStore(),
+          verifier: mockVerifier(),
+          deviceKey: FakeDeviceKey(),
+          engine: ProxBleEngine(radio: FakeBleRadio()),
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        // No server answers (dead air + refused probe): the listen ends
+        // noSignal — the assertion is that the gate was consulted first.
+        final res = await d.listenAndProve(
+          target: _beacon,
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: 1.0,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.noSignal);
+        expect(probe.calls, 1);
+        final wantHash = IntegrityGate.verdictHashOf(
+            rooted: false,
+            hooked: true,
+            tampered: false,
+            emulator: false,
+            debug: false);
+        expect(
+            BleLog.history.any((e) =>
+                e.tag == 'SEC' &&
+                e.msg.contains('prove integrity $wantHash') &&
+                e.msg.contains('integrity-flagged')),
+            isTrue);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    test('explicit verdict wins without probing', () async {
+      final probe = _CountingProbe(const IntegritySignals());
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      try {
+        final d = RealStudentDriver(
+          store: await enrolledStore(),
+          verifier: mockVerifier(),
+          deviceKey: FakeDeviceKey(),
+          engine: ProxBleEngine(radio: FakeBleRadio()),
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        final res = await d.listenAndProve(
+          target: _beacon,
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: 1.0,
+          onStatus: (_) {},
+          integrityFlag: 'custom-flag',
+          integrityHash: 'deadbeef',
+        );
+        expect(res.result, StudentResult.noSignal);
+        expect(probe.calls, 0);
+        expect(
+            BleLog.history.any((e) =>
+                e.tag == 'SEC' &&
+                e.msg.contains('prove integrity deadbeef (custom-flag)')),
+            isTrue);
+      } finally {
+        IntegrityGate.probe = prev;
+      }
+    });
+
+    test('tainted verdict rides to the professor as flagged (never absent)',
+        () async {
+      // Fresh FULL prove against a real local server: the hooked verdict's
+      // flag must arrive in the receipt flags while the verdict still
+      // confirms (marking never blocks offline).
+      final prof = ProxCrypto.generateEdKeypair();
+      final probe = _CountingProbe(const IntegritySignals(hooked: true));
+      final prev = IntegrityGate.probe;
+      IntegrityGate.probe = probe;
+      final seed = randBytes(32);
+      final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 75);
+      final hwStore = await hwEnrolledStore(email: _email, hw: hw);
+      final server = ProxServer(
+        classLabel: 't',
+        profSk: prof.privateKey,
+        profPk: prof.publicKey,
+        sightings: (
+                {required peerW,
+                required expectedAirKey,
+                required expectedUuid}) =>
+            const RadioSighting(rssiDbm: -55, hop: 0),
+        pinnedRoots: hw.pins,
+        // ignore: cascade_invocations
+      )..testChainGate = testChainGate;
+      await server.start(port: 0);
+      try {
+        server.openWindow(
+          WindowParams(
+            sessionId: randBytes(16),
+            windowId: randBytes(6),
+            secret: randBytes(32),
+            t0: DateTime.now().toUtc(),
+            classLabel: 't',
+          ),
+          1,
+        );
+        final engine = ProxBleEngine(radio: FakeBleRadio());
+        final d = RealStudentDriver(
+          store: hwStore,
+          verifier: mockVerifier(),
+          deviceKey: hw.deviceKey,
+          engine: engine,
+          livenessGate: FakeLivenessGate(),
+        )..silenceCap = const Duration(seconds: 2);
+        final check = await d.checkFace('still.jpg');
+        expect(check.match, FaceMatch.pass);
+        Future.delayed(const Duration(seconds: 3), () {
+          final w = server.window!;
+          final cj = w.challengeFor(w.jForTime(DateTime.now().toUtc()));
+          engine.handleSighting(BleSighting(
+            type: kAirTypeChallenge,
+            token8: cj,
+            ipHost: '127.0.0.1',
+            ipPort: server.port,
+            rssiDbm: -60,
+            at: DateTime.now().toUtc(),
+          ));
+        });
+        // No explicit integrity args → the hooked probe verdict rides in
+        // the dSig while the proof still confirms (flagged, never absent).
+        final res = await d.listenAndProve(
+          target: ClassBeacon(
+            classLabel: 't',
+            host: '127.0.0.1',
+            port: server.port,
+            rssiDbm: 0,
+            displayCode: 'X',
+          ),
+          identity:
+              const LinkedIdentity(name: 'S', gmail: _email, roll: '1'),
+          faceScore: check.score,
+          faceValidAtMs: check.faceValidAtMs,
+          verifierVer: check.verifierVer,
+          livenessScore: check.livenessScore,
+          livenessVer: check.livenessVer,
+          onStatus: (_) {},
+        );
+        expect(res.result, StudentResult.marked);
+        expect(res.attestationFlags, contains('integrity-flagged'));
+        expect(server.tally.presentCount, 1);
+      } finally {
+        await server.stop();
+        IntegrityGate.probe = prev;
+      }
+    });
   });
 
   test('engine nextChallenge resolves injected sightings', () async {

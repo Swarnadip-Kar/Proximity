@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proximity_app/screens/student_course.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/records/course_attendance_detail_screen.dart';
 import 'package:proximity_app/widgets/course_attendance.dart';
 import 'package:proximity_app/widgets/partial_list.dart';
 import 'package:proximity_storage/storage.dart';
@@ -54,12 +55,32 @@ void main() {
       rec('s2', '2026-09-05', {_email: true}, {_email: false}),
     ];
     await t.pumpWidget(ProviderScope(child: MaterialApp(
-        home: StudentCourseScreen(
+        // App theme: rebuilt screens read the ProximityColors extension.
+        theme: proxLightTheme(),
+        home: CourseAttendanceDetailScreen(
             course: 'CS201', sessions: sessions, email: _email))));
     await t.pumpAndSettle();
-    expect(find.text('1/2 days attended · 1 partial'), findsOneWidget);
-    expect(find.textContaining('2026-09-04'), findsOneWidget);
+    expect(find.text('1/2 days attended'), findsOneWidget);
+    expect(find.text('Attendance percentage : 50%'), findsOneWidget);
+    expect(find.textContaining('04-09-2026'), findsOneWidget);
     expect(find.textContaining('Partial 1/2'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('course detail header falls back to letters without a photo',
+      (t) async {
+    final sessions = [
+      rec('s1', '2026-09-04', {_email: true}),
+    ];
+    await t.pumpWidget(ProviderScope(child: MaterialApp(
+        theme: proxLightTheme(),
+        home: CourseAttendanceDetailScreen(
+            course: 'CS201', sessions: sessions, email: _email))));
+    await t.pumpAndSettle();
+    // No cached photo seen → course-letter disc in the ring center, no
+    // network image attempted.
+    expect(find.text('CS'), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
     expect(t.takeException(), isNull);
   });
 

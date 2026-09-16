@@ -7,12 +7,12 @@ void main() {
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       final p = WindowParams.generate('CS201-Room301', t0: t0);
       expect(p.jForTime(t0), 0);
-      expect(p.jForTime(t0.add(const Duration(seconds: 4, milliseconds: 999))), 0);
-      expect(p.jForTime(t0.add(const Duration(seconds: 5))), 1);
-      expect(p.jForTime(t0.add(const Duration(seconds: 29))), 5);
-      // No 30s expiry: the window closes only when the professor stops it.
-      expect(p.jForTime(t0.add(const Duration(seconds: 30))), 6);
-      expect(p.jForTime(t0.add(const Duration(seconds: 122))), 24);
+      expect(p.jForTime(t0.add(const Duration(seconds: 9, milliseconds: 999))), 0);
+      expect(p.jForTime(t0.add(const Duration(seconds: 10))), 1);
+      expect(p.jForTime(t0.add(const Duration(seconds: 59))), 5);
+      // No expiry: the window closes only when the professor stops it.
+      expect(p.jForTime(t0.add(const Duration(seconds: 60))), 6);
+      expect(p.jForTime(t0.add(const Duration(seconds: 244))), 24);
       expect(p.jForTime(t0.subtract(const Duration(seconds: 1))), -1);
     });
 
@@ -31,13 +31,14 @@ void main() {
       final p = WindowParams.generate('CS201', t0: t0);
       // inside sub-epoch 0
       expect(p.isFresh(0, t0.add(const Duration(seconds: 2))), isTrue);
-      // 6s drift into next epoch still within extended acceptance
+      // drift into next epoch still within extended acceptance (10s + 7s)
       expect(p.isFresh(0, t0.add(const Duration(seconds: 8))), isTrue);
+      expect(p.isFresh(0, t0.add(const Duration(seconds: 16))), isTrue);
       // far future stale
       expect(p.isFresh(0, t0.add(const Duration(seconds: 60))), isFalse);
       // late sub-epochs verify the same way (window still open)
-      expect(p.isFresh(24, t0.add(const Duration(seconds: 122))), isTrue);
-      expect(p.isFresh(24, t0.add(const Duration(seconds: 180))), isFalse);
+      expect(p.isFresh(24, t0.add(const Duration(seconds: 242))), isTrue);
+      expect(p.isFresh(24, t0.add(const Duration(seconds: 300))), isFalse);
       // negative j never valid
       expect(p.isFresh(-1, t0), isFalse);
     });
@@ -47,15 +48,15 @@ void main() {
       // even 1s early. (The old abs() window accepted j+1 up to 7s early.)
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       final p = WindowParams.generate('CS201', t0: t0);
-      expect(p.isFresh(1, t0.add(const Duration(seconds: 4))), isFalse);
-      expect(p.isFresh(1, t0.add(const Duration(seconds: 4999, milliseconds: 999))),
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 9))), isFalse);
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 9999, milliseconds: 999))),
           isFalse);
-      expect(p.isFresh(1, t0.add(const Duration(seconds: 5))), isTrue);
-      // Exact-rotation boundary: [0, 5s + 7s).
+      expect(p.isFresh(1, t0.add(const Duration(seconds: 10))), isTrue);
+      // Exact-rotation boundary: [0, 10s + 7s).
       expect(p.isFresh(0, t0), isTrue);
-      expect(p.isFresh(0, t0.add(const Duration(seconds: 11, milliseconds: 999))),
+      expect(p.isFresh(0, t0.add(const Duration(seconds: 16, milliseconds: 999))),
           isTrue);
-      expect(p.isFresh(0, t0.add(const Duration(seconds: 12))), isFalse);
+      expect(p.isFresh(0, t0.add(const Duration(seconds: 17))), isFalse);
     });
 
     test('(ID,j) single-use: replay rejected', () {

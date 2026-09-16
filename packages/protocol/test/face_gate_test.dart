@@ -1,37 +1,53 @@
+// Face-gate policy tests rewritten for Tracks 2+3 (new adapter).
+//
+// The on-device match runs in the `face_verification` plugin (FaceNet
+// scale); this pins the POLICY side only: threshold VALUE 0.70 (plugin
+// default, FAR ~0.01%/FRR <2% — the old 0.60/0.80 EdgeFace numbers are
+// retired and must not be reused), freshness window, retry counts, and the
+// passive-only contract (no blink/turn-head prompts — production passes
+// livenessPass:true; nothing gates on an active prompt).
 import 'package:proximity_protocol/protocol.dart';
 import 'package:test/test.dart';
 
-List<double> emb(List<double> v) => v;
-
 void main() {
-  group('face-threshold logic (mocked embeddings)', () {
-    test('cosine 1.0 self, 0.0 orthogonal, -1 opposite', () {
-      expect(cosineSimilarity([1, 0], [1, 0]), closeTo(1.0, 1e-9));
-      expect(cosineSimilarity([1, 0], [0, 1]), closeTo(0.0, 1e-9));
-      expect(cosineSimilarity([1, 0], [-1, 0]), closeTo(-1.0, 1e-9));
+  group('face-gate policy on plugin score scale (no embeddings here)', () {
+    test('threshold is the plugin default 0.70, not the old EdgeFace 0.60', () {
+      expect(kFaceThreshold, 0.70);
+      expect(FaceGate().threshold, 0.70);
     });
 
-    test('threshold 0.60: pass above, retry below', () {
+    test('threshold 0.70: pass at/above, retry below', () {
       final g = FaceGate();
       final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      expect(g.evaluate(score: 0.82, livenessPass: true, now: now),
+      expect(g.evaluate(score: 0.70, livenessPass: true, now: now),
           FaceDecision.pass);
       expect(g.isFresh(now), isTrue);
       final g2 = FaceGate();
-      expect(g2.evaluate(score: 0.59, livenessPass: true, now: now),
+      // 0.69 fails on the new scale — and 0.60 (the OLD EdgeFace bar) is
+      // firmly a retry now, never a pass.
+      expect(g2.evaluate(score: 0.69, livenessPass: true, now: now),
           FaceDecision.retry);
       expect(g2.isFresh(now), isFalse);
+      final g3 = FaceGate();
+      expect(g3.evaluate(score: 0.60, livenessPass: true, now: now),
+          FaceDecision.retry);
     });
 
-    test('liveness fail never passes even with high score', () {
+    test('passive-only: no prompt gates the verdict (liveness always true)', () {
+      // Production never shows blink/turn-head prompts; the adapter passes
+      // livenessPass:true unconditionally. A high score still passes and a
+      // low score still retries — the prompt plays no role.
       final g = FaceGate();
       final now = DateTime.utc(2026, 9, 3, 10, 0, 0);
-      expect(g.evaluate(score: 0.95, livenessPass: false, now: now),
+      expect(g.evaluate(score: 0.95, livenessPass: true, now: now),
+          FaceDecision.pass);
+      final g2 = FaceGate();
+      expect(g2.evaluate(score: 0.10, livenessPass: true, now: now),
           FaceDecision.retry);
-      expect(g.isFresh(now), isFalse);
     });
 
-    test('2 retries then needs-review', () {
+    test('2 retries then needs-review (counts unchanged)', () {
+      expect(kFaceMaxRetries, 2);
       final g = FaceGate();
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       expect(g.evaluate(score: 0.1, livenessPass: true, now: t0),
@@ -44,6 +60,7 @@ void main() {
     });
 
     test('SK gate: faceValid < 5min; signing throws when stale', () {
+      expect(kFaceValidWindow, const Duration(minutes: 5));
       final g = FaceGate();
       final t0 = DateTime.utc(2026, 9, 3, 10, 0, 0);
       expect(g.canSign, isFalse);
@@ -65,13 +82,15 @@ void main() {
       expect(g.consecFails, 0);
     });
 
-    test('mocked embedding match vs wrong-face no-sign', () {
-      // enrollment template vs live probe
-      final enrolled = emb([0.6, 0.8, 0.0, 0.2]);
-      final holder = emb([0.61, 0.79, 0.01, 0.19]); // same person
-      final stranger = emb([-0.7, 0.1, 0.7, -0.1]); // lent phone
-      expect(cosineSimilarity(enrolled, holder), greaterThanOrEqualTo(0.60));
-      expect(cosineSimilarity(enrolled, stranger), lessThan(0.60));
+    test('marking session budget: 4 sessions then manual path (constant)', () {
+      // The per-session burn counting lives in the app (one dead 12s
+      // session = one attempt); the protocol pins the budget constant.
+      expect(kFaceMaxSessions, 4);
+      expect(kFaceRescanInterval, const Duration(seconds: 12));
+    });
+
+    test('verifier allowlist prefix pins the plugin namespace', () {
+      expect(kVerifierVerPrefix, 'face_verification/');
     });
   });
 }

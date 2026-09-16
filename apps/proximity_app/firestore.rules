@@ -1,39 +1,62 @@
 rules_version = '2';
 // Proximity — Campus Attendance System (project: proximity-attendence).
 //
-// Identity is the Google account itself.
+// Identity is the Google account itself. Track 1 org = the lowercased
+// Google-account domain (gmail.com is a normal org; subdomains exact-match).
+// Every doc below stamps `org`; cross-org reads/writes are denied.
+// Full-fresh (no legacy): docs without org (missing key or '') deny
+// everywhere — every client stamps org on create and preserves it on
+// update, so an org-less doc is hand-built, never a migration artifact.
+//
 //   users/{uid}: {email, name, roles[prof|student], displayName, lastMode,
-//     updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
+//     org, updatedAt} — one doc per Firebase uid; the SAME Gmail can hold BOTH
 //     roles (professor on many devices, student on exactly one). lastMode
 //     is the last-used mode (landing + relaunch default). Gets (not lists)
 //     so a missing doc reads as not-found, never denied.
 //   studentDevices/{lowercased-email}: {email, uid, pkHex, installId, name,
-//     roll, modelVer, platform, createdAt/lastMoveAt/lastSeenAt/
-//     updatedAtMillis, moveCount} — one enrolled student device per Gmail.
+//     roll, modelVer, platform, org, createdAt/lastMoveAt/lastSeenAt/
+//     updatedAtMillis, moveCount, pkDHex, attestationLevel,
+//     attestedAt/attestedUntilMillis} — one enrolled student device per
+//     Gmail. There is no server side to this binding: attestation level +
+//     window are self-asserted by the enrolling client and checked for
+//     consistency (not cryptographic proof) by offline verifiers — see
+//     the trust-model note in PROXIMITY_DESIGN.md.
 //     Same-install re-keys are always allowed; a move to a different
-//     install needs the 7-day cooldown (a bare pkHex match from another
+//     install needs the 30-day cooldown (a bare pkHex match from another
 //     install is a move, not the same device)
-//     (request.time - lastMoveAtMillis > 7d) unless the doc predates
-//     timestamps (one migration move). Clients claim via a transaction so
-//     racing devices resolve to exactly one winner. Face photos/templates
-//     are NEVER written here — only the device public key + install id.
-//   deviceInstalls/{installId}: {email, pkHex, updatedAtMillis} — one
+//     (request.time - lastMoveAtMillis > 30d) unless the doc predates
+//     timestamps (one migration move) or the STORED lastSeen proves the
+//     old phone lost (request.time - lastSeenAtMillis > 60d — server clock
+//     only; a move-time "I've been offline" is worthless, and the stored
+//     value is trustworthy because every write stamping it must land within
+//     1h of request.time or the write is refused) or the write presents the
+//     STORED hardware id (isSamePhoneReclaim — same-phone reinstall skips
+//     the cooldown; Gmail auth + fresh face + fresh HW key still required).
+//     Clients claim via a
+//     transaction so racing devices resolve to exactly one winner. Face photos/templates
+//     are NEVER written here — only the device public key + install id +
+//     attestation material. NO face-derived data reaches ANY collection:
+//     duplicate detection runs in memory on the professor's phone during
+//     the live local session (vectors ride the LAN prove body, RAM-only).
+//   deviceInstalls/{installId}: {email, pkHex, org, updatedAtMillis} — one
 //     student Gmail per app install. The installId lives in secure storage,
 //     so app clones / dual-app copies / work profiles get their own: the
 //     same phone can never hold two student enrollments. Deletes are never
 //     needed (a wipe generates a fresh installId).
-//   studentDirectory/{emailLower}: {email, name, roll, nameLower,
+//   studentDirectory/{emailLower}: {email, name, roll, nameLower, org,
 //     updatedAtMillis} — minimal professor-searchable directory, maintained
 //     by the claim transaction. Professors (role-gated) prefix-search it to
 //     add students to records; students read only their own doc. NOTE: the
 //     prof gate is advisory until professor roles are institute-verified —
-//     any self-registered prof can list it (emails/names/rolls only).
+//     any self-registered prof can list it (emails/names/rolls only), but
+//     ONLY within their own org (list is per-doc org-gated; cross-org rows
+//     deny as a whole, so clients always filter where('org', == myOrg)).
 //   classSessions/{sessionId}: {courseId, courseName, classLabel, profUid,
-//     profEmail, profName, dateIso, timestampIso, startIso, windows, names,
+//     profEmail, profName, org, dateIso, timestampIso, startIso, windows, names,
 //     rolls, studentEmails[], updatedAt} — professors own their sessions; a student
-//     reads only sessions listing their Gmail (array-contains). Queries use
-//     a single where clause and sort client-side, so no composite index is
-//     needed.
+//     reads only same-org sessions listing their Gmail (array-contains). Queries
+//     filter where('org', == myOrg) plus the single owner/membership filter
+//     and sort client-side (composite indexes in firestore.indexes.json).
 service cloud.firestore {
   match /databases/{db}/documents {
     function signedIn() {
@@ -51,6 +74,14 @@ service cloud.firestore {
     function tokenEmailLower() {
       return tokenEmail().lower();
     }
+    // Track 1 org: the caller's Google-account domain. gmail.com is a
+    // normal org; subdomains exact-match server-side exactly as orgOf does
+    // client-side (no stripping, no blocklist).
+    function tokenOrg() {
+      let parts = tokenEmailLower().split('@');
+      let domain = parts.size() > 1 ? parts[1] : '';
+      return domain == 'googlemail.com' ? 'gmail.com' : domain;
+    }
     function validRoles(rs) {
       return rs is list && rs.size() >= 1 && rs.size() <= 2 &&
         rs.hasOnly(['prof', 'student']);
@@ -64,49 +95,216 @@ service cloud.firestore {
         'prof' in get(/databases/$(db)/documents/users/$(request.auth.uid))
           .data.get('roles', []);
     }
+    // Six-month purge gate (owner-lazy, no backend): the STORED stamp is
+    // past 180d by the SERVER clock (request.time — client clocks decide
+    // nothing). Callers must hasAll-guard the key first: reading a missing
+    // key errors instead of yielding false. Zero/undated stamps deny
+    // (fail-closed — a live enrollment can never be taken by this gate).
+    function purgeStale(stamp) {
+      return stamp is int && stamp > 0 &&
+        request.time.toMillis() - stamp > 180 * 24 * 60 * 60 * 1000;
+    }
 
+    // M6: users roles already closed (hasOnly prof/student, size 1..2) +
+    // string caps so profile writes cannot blow quota.
     match /users/{uid} {
       allow get: if ownUid(uid);
       allow list: if false;
       allow create: if ownUid(uid)
         && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.size() <= 256
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
         && validRoles(request.resource.data.roles)
+        && (!('displayName' in request.resource.data) ||
+            !(request.resource.data.displayName is string) ||
+            request.resource.data.displayName.size() <= 128)
         && (!('lastMode' in request.resource.data) ||
             validLastMode(request.resource.data.lastMode));
       allow update: if ownUid(uid)
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
-        && validRoles(request.resource.data.roles)
-        && (!('lastMode' in request.resource.data) ||
-            validLastMode(request.resource.data.lastMode));
-      allow delete: if false;
+        && request.resource.data.email.size() <= 256
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
+        && resource.data.org == tokenOrg()
+         && validRoles(request.resource.data.roles)
+         && (!('displayName' in request.resource.data) ||
+            !(request.resource.data.displayName is string) ||
+            request.resource.data.displayName.size() <= 128)
+         && (!('lastMode' in request.resource.data) ||
+             validLastMode(request.resource.data.lastMode));
+      // Owner-lazy six-month purge: the owner deletes their OWN users doc
+      // past 180d stale (server-time-gated, undated docs deny). Nobody —
+      // not even a (self-asserted) professor — deletes anyone else's.
+      allow delete: if ownUid(uid)
+        && resource.data.keys().hasAll(['updatedAtMillis'])
+        && purgeStale(resource.data.updatedAtMillis);
     }
 
-    // studentDevices helpers. Field-missing guards come first: reading a
-    // missing key errors (it does NOT yield false), so the legacy check
-    // must short-circuit before any timestamp comparison. The install is
-    // the device identity: a bare pkHex match from a different install is
-    // a move (backup/clone restore), not the same device — copying a
-    // public key must not bypass the cooldown. Legacy docs without an
-    // installId still honor a pk match (migration).
-    function isLegacyDevice() {
-      return !(resource.data.keys().hasAll(['lastMoveAtMillis'])) ||
-        resource.data.lastMoveAtMillis == 0;
-    }
+    // studentDevices helpers. Full-fresh: every doc carries
+    // lastMoveAtMillis + installId (create requires both), so a missing
+    // key errors (it does NOT yield false) and the write denies —
+    // fail-closed, never a migration bypass. The install is the device
+    // identity: a bare pkHex match from a different install is a move
+    // (backup/clone restore), not the same device — copying a public key
+    // must not bypass the cooldown.
     function isSameDevice() {
-      return (request.resource.data.keys().hasAll(['installId']) &&
+      return request.resource.data.keys().hasAll(['installId']) &&
          resource.data.keys().hasAll(['installId']) &&
          request.resource.data.installId != '' &&
-         request.resource.data.installId == resource.data.installId) ||
-        (request.resource.data.pkHex == resource.data.pkHex &&
-         (!(resource.data.keys().hasAll(['installId'])) ||
-          resource.data.installId == ''));
+         request.resource.data.installId == resource.data.installId;
     }
     function moveCooldownElapsed() {
       return request.time.toMillis() - resource.data.lastMoveAtMillis >
-        7 * 24 * 60 * 60 * 1000;
+        30 * 24 * 60 * 60 * 1000;
+    }
+    // Lost-phone exemption (server clock ONLY): the STORED lastSeen is
+    // older than 60d, so the old phone is probably lost. Reads
+    // resource.data (the stored value), never request.resource.data — a
+    // move-time "I've been offline" assertion is worthless — and the
+    // stored value is trustworthy only because incomingStampsFresh()
+    // below forced every write stamping it to prove fresh against
+    // request.time. Local-clock games change nothing.
+    function isLostPhone() {
+      return resource.data.keys().hasAll(['lastSeenAtMillis']) &&
+        resource.data.lastSeenAtMillis is int &&
+        resource.data.lastSeenAtMillis > 0 &&
+        request.time.toMillis() - resource.data.lastSeenAtMillis >
+          60 * 24 * 60 * 60 * 1000;
+    }
+    // Same-phone reclaim (server-enforced match — a bare client assertion
+    // moves nothing): a true uninstall wipes the installId, so a same-phone
+    // reinstall always looks like a device move. When the STORED binding
+    // carries a non-empty deviceId (Android ANDROID_ID / iOS
+    // identifierForVendor, stamped at claim) and the incoming write
+    // presents the SAME id, the 30-day cooldown is bypassed. '' on either
+    // side disables it. This bypasses ONLY the cooldown — every other gate
+    // (owner-only email, org, fresh stamps, security fields) still applies,
+    // so the reclaim still proves Gmail ownership + a fresh face + a fresh
+    // HW-bound key through the normal claim path.
+    function isSamePhoneReclaim() {
+      return resource.data.keys().hasAll(['deviceId']) &&
+        request.resource.data.keys().hasAll(['deviceId']) &&
+        resource.data.deviceId is string &&
+        resource.data.deviceId != '' &&
+        request.resource.data.deviceId == resource.data.deviceId;
+    }
+    // Trust anchor for the stored lastSeen: any binding write carrying
+    // lastSeen/updated stamps must place them within 1h of the server
+    // clock, or the write is refused outright. Forging a 60d-stale
+    // lastSeen (to unlock the exemption early) is therefore impossible;
+    // a genuinely stale stored value proves 60d of real silence. (TLS
+    // already fails closed on grossly wrong clocks before any write.)
+    function incomingStampsFresh() {
+      return request.resource.data.keys()
+          .hasAll(['lastSeenAtMillis', 'updatedAtMillis']) &&
+        request.resource.data.lastSeenAtMillis is int &&
+        request.resource.data.updatedAtMillis is int &&
+        request.time.toMillis() - request.resource.data.lastSeenAtMillis <
+          60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.lastSeenAtMillis >
+          -60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.updatedAtMillis <
+          60 * 60 * 1000 &&
+        request.time.toMillis() - request.resource.data.updatedAtMillis >
+          -60 * 60 * 1000;
+    }
+    // Adjacent hardening on the same chain: lastMoveAt is preserved by
+    // same-device writes and freshly stamped by moves — rewinding it to
+    // 0/ancient (a cooldown bypass via a hand-built write) is denied.
+    // Full-fresh: the key is always present (create requires it), so a
+    // missing key denies.
+    function storedMoveKeptOrFresh() {
+      return resource.data.keys().hasAll(['lastMoveAtMillis']) &&
+        (request.resource.data.lastMoveAtMillis ==
+          resource.data.lastMoveAtMillis ||
+        (request.resource.data.lastMoveAtMillis is int &&
+         request.time.toMillis() - request.resource.data.lastMoveAtMillis <
+           60 * 60 * 1000 &&
+         request.time.toMillis() - request.resource.data.lastMoveAtMillis >
+           -60 * 60 * 1000));
     }
 
+    // Security §7 additive fields (Spark-free type locks: absent =
+    // unstamped, present must be correctly typed). attestationChain
+    // is X.509 DER hex only (never IMEI/serial — enforced by clients
+    // sending certs; rules lock the container type, offline verifiers
+    // check the content vs pinned roots). integrityFlag is closed to the
+    // two known values; new flags ship with a rules deploy + min_version
+    // bump together, never silently. pkDHex/attestationLevel/window are
+    // likewise type-locked when present (a mistyped level/window would
+    // otherwise throw the readers' `as String?`/`as num?` casts or poison
+    // the offline tier gate — fail the write, never the read path).
+    //
+    // WHY rules stop at type locks (no pkD-uniqueness, no chain-pin here):
+    // rules cannot query across docs (no "is this pkDHex already bound to
+    // another Gmail?"), cannot SHA-256 a root DER or byte-search a leaf for
+    // the Key Attestation OID / challenge (no crypto, no loops over cert
+    // bytes, no cross-doc joins on Spark), and cannot pin or rotate trust
+    // anchors. So pkD-clone detection lives OFFLINE post-hoc via
+    // claim.dart findDoublePkD (groups bindings by pkDHex for professor
+    // review) + protocol evaluateDeviceProof (tiers the dSig-gated proof),
+    // and chain-vs-pinned-roots + challenge containment lives in protocol
+    // verifyAttestationChainPin on the professor phone (offline, no quota).
+    // Rules keep the write surface narrow; crypto keeps the verdict.
+    // H3 install shape (mirrors claim.dart isValidInstallId: 8..128 chars
+    // of [A-Za-z0-9:_-]). The deviceInstalls DOC ID is the installId, so
+    // create/update gate on `id`; studentDevices gates its installId field.
+    // Spark limitation (documented): rules cannot join across docs, so a
+    // cloned installId claiming another Gmail is NOT stopped here — the
+    // claim transaction (email-equality) + post-hoc findDoublePkD audit
+    // own that; rules only stop malformed/empty installs.
+    function validInstallId(s) {
+      return s is string && s.size() >= 8 && s.size() <= 128 &&
+        s.matches('^[A-Za-z0-9:_-]+$');
+    }
+    // M6 bounds (Spark-free): closed sets + size/hex caps on every
+    // security field so one write cannot blow quota or poison offline
+    // readers. Per-element chain checks are size-only here (no loops over
+    // cert bytes on Spark) — content (OID/challenge/pin) is professor-side
+    // verifyAttestationChainPin; clones are post-hoc findDoublePkD.
+    function validSecurityFields() {
+      return (!('attestationChain' in request.resource.data) ||
+          (request.resource.data.attestationChain is list &&
+            request.resource.data.attestationChain.size() <= 8)) &&
+        (!('deviceId' in request.resource.data) ||
+          (request.resource.data.deviceId is string &&
+            request.resource.data.deviceId.size() <= 128)) &&
+        (!('livenessVer' in request.resource.data) ||
+          (request.resource.data.livenessVer is string &&
+           request.resource.data.livenessVer.size() <= 128)) &&
+        (!('integrityFlag' in request.resource.data) ||
+          request.resource.data.integrityFlag == '' ||
+          request.resource.data.integrityFlag == 'integrity-flagged') &&
+        (!('pkDHex' in request.resource.data) ||
+          (request.resource.data.pkDHex is string &&
+           request.resource.data.pkDHex.size() <= 256 &&
+           (request.resource.data.pkDHex == '' ||
+            request.resource.data.pkDHex.matches('^[0-9a-fA-F]+$')))) &&
+        (!('attestationLevel' in request.resource.data) ||
+          (request.resource.data.attestationLevel is string &&
+           (request.resource.data.attestationLevel == 'FULL' ||
+            request.resource.data.attestationLevel == 'STD' ||
+            request.resource.data.attestationLevel == 'NONE'))) &&
+        (!('attestedAtMillis' in request.resource.data) ||
+          request.resource.data.attestedAtMillis is int) &&
+        (!('attestedUntilMillis' in request.resource.data) ||
+          request.resource.data.attestedUntilMillis is int) &&
+        // iOS App Attest artifacts ('' on Android): CBOR raw hex (object or
+        // assertion, ≤8KB hex) + credential-key hex ('' or 128 hex chars).
+        // Content (nonce/signature/pin) is professor-side app_attest.dart.
+        (!('appAttestRawHex' in request.resource.data) ||
+          (request.resource.data.appAttestRawHex is string &&
+           request.resource.data.appAttestRawHex.size() <= 8192 &&
+           (request.resource.data.appAttestRawHex == '' ||
+            request.resource.data.appAttestRawHex.matches('^[0-9a-fA-F]+$')))) &&
+        (!('appAttestCredKeyHex' in request.resource.data) ||
+          (request.resource.data.appAttestCredKeyHex is string &&
+           (request.resource.data.appAttestCredKeyHex == '' ||
+            (request.resource.data.appAttestCredKeyHex.size() == 128 &&
+             request.resource.data.appAttestCredKeyHex.matches('^[0-9a-fA-F]+$')))));
+    }
     match /studentDevices/{id} {
       // Doc id IS the lowercased Gmail (client writes it so): the owner can
       // always get their own binding — including the first check when no
@@ -115,76 +313,217 @@ service cloud.firestore {
       allow list: if false;
       allow create: if signedIn()
         && id == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && incomingStampsFresh()
+        && validInstallId(request.resource.data.installId)
+        && validSecurityFields();
       // Same-device re-key/heartbeat always allowed; a move to a different
-      // device needs the 7-day cooldown (server-enforced: clients cannot
-      // bypass it, even with a hand-built write). Pre-timestamp docs move
-      // once freely (migration), stamping lastMoveAtMillis as they go.
+      // device needs the 30-day cooldown (server-enforced: clients cannot
+      // bypass it, even with a hand-built write) UNLESS the stored lastSeen
+      // proves the old phone lost (isLostPhone, 60d, server clock) or the
+      // write presents the stored hardware id (isSamePhoneReclaim:
+      // same-phone reinstall — Gmail auth + fresh face + fresh HW key
+      // still required by the gates below). A
+      // forged-stale lastSeen at move time still waits: the exemption reads
+      // the stored value, and the fresh-stamp gate below refused the forgery
+      // at write time.
+      // Org stamps once and never blanks.
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
         && request.resource.data.email.lower() == tokenEmailLower()
-        && (isLegacyDevice() || isSameDevice() || moveCooldownElapsed());
-      // No delete, for anyone: professor registration is self-asserted this
-      // phase, so any reset permission (even prof-gated) would let a student
-      // register as prof and self-reset around the cooldown. Genuine loss
-      // waits out the week; manual attendance covers the gap.
-      allow delete: if false;
+        && request.resource.data.org == tokenOrg()
+        && resource.data.org == tokenOrg()
+        && (isSameDevice() || moveCooldownElapsed() ||
+            isLostPhone() || isSamePhoneReclaim())
+        && incomingStampsFresh()
+        && storedMoveKeptOrFresh()
+        && validSecurityFields();
+      // Owner-lazy six-month purge (no backend): the owner deletes their own
+      // binding past 180d-stale lastSeen (server-time-gated, undated docs
+      // deny). This REPLACES the old never-delete posture for exactly this
+      // scope — owner-or-nobody still holds (a self-asserted professor can
+      // delete nothing but their own), and classSessions are untouched by
+      // every purge path (professors' past records stay).
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.keys().hasAll(['lastSeenAtMillis'])
+        && purgeStale(resource.data.lastSeenAtMillis);
     }
 
     match /deviceInstalls/{id} {
       // Ids are unguessable 128-bit install UUIDs; the email-equality
       // checks below bind every write to the signing-in Gmail.
-      allow get: if signedIn();
+      // A missing doc must read as not-found, never denied: the claim
+      // transaction tx.get()s this doc for fresh installs (first bind),
+      // where no doc exists yet. `resource == null` covers that read;
+      // existing docs stay org-scoped.
+      allow get: if signedIn() && (resource == null ||
+        resource.data.org == tokenOrg());
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && validInstallId(id)
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg();
       allow update: if signedIn()
+        && validInstallId(id)
         && resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && resource.data.org == tokenOrg();
+      // No delete, ever: install ids are unguessable UUIDs and unlistable,
+      // so stale rows linger by design (harmless — the install→email mapping
+      // keeps enforcing one-Gmail-per-install after a binding purge).
       allow delete: if false;
     }
 
+    // Student device-key pin for offline email→key verification
+    // (anti-fake-student): the claim transaction stamps the enrollment
+    // SKey public bytes here so professors pin it online (same-org list)
+    // and enforce `unknown-pkS` offline from a persistent cache. '' =
+    // legacy row (no-pin TOFU, never a mismatch). Content (pin match) is
+    // professor-side; rules lock the shape only.
+    function validDirectoryPkS() {
+      return (!('pkS' in request.resource.data) ||
+        (request.resource.data.pkS is string &&
+         (request.resource.data.pkS == '' ||
+          (request.resource.data.pkS.size() == 64 &&
+           request.resource.data.pkS.matches('^[0-9a-fA-F]+$')))));
+    }
     match /studentDirectory/{id} {
       // Professors prefix-search enrolled students to add them to records
-      // (single-field range queries; client merges email/roll/name hits, so
-      // no composite index is needed). Owner reads their own row. The prof
-      // gate is advisory until professor roles are institute-verified.
+      // (org-scoped prefix queries; client merges email/roll/name hits).
+      // Owner reads their own row. The prof gate is advisory until
+      // professor roles are institute-verified. Cross-org rows are
+      // invisible: prof reads require org match.
       allow get: if signedIn() &&
-        (id == tokenEmailLower() || callerIsProf());
-      allow list: if callerIsProf();
+        ((id == tokenEmailLower()) ||
+         (callerIsProf() && resource.data.org == tokenOrg()));
+      // H1: list is per-doc org-gated — the query MUST constrain
+      // where('org', == tokenOrg) or it denies as a whole when it would
+      // match other-org rows. Spark-free: no request.query filter
+      // introspection; enforcement is per-doc org equality here +
+      // client-side where('org') in firestore_sync._prefixQuery (org
+      // required — empty org throws before any query).
+      allow list: if callerIsProf() &&
+        resource.data.org == tokenOrg();
       allow create: if signedIn()
         && id == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && validDirectoryPkS();
       allow update: if signedIn()
         && id == tokenEmailLower()
         && resource.data.email.lower() == tokenEmailLower()
-        && request.resource.data.email.lower() == tokenEmailLower();
-      allow delete: if false;
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && resource.data.org == tokenOrg()
+        && validDirectoryPkS();
+      // Owner-lazy six-month purge (no backend): the owner deletes their
+      // own directory row past 180d stale (server-time-gated, undated docs
+      // deny). Professors can READ rows (advisory gate) but delete none.
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.keys().hasAll(['updatedAtMillis'])
+        && purgeStale(resource.data.updatedAtMillis);
     }
 
     match /classSessions/{id} {
-      // Per-document read gate. The two client queries each mirror one arm
-      // with a single filter (professors: where profUid == uid; students:
-      // where studentEmails arrayContains email) and sort client-side, so
-      // no composite index is needed and each query provably stays within
-      // readable docs.
-      allow read: if signedIn() && (
-        resource.data.profUid == request.auth.uid ||
-        tokenEmailLower() in resource.data.studentEmails
-      );
+      // Org-scoped read: same-org owner OR same-org member.
+      // Cross-org direct-ID fetches deny (T3); org-less docs deny.
+      allow read: if signedIn() &&
+        resource.data.org == tokenOrg() && (
+          resource.data.profUid == request.auth.uid ||
+          tokenEmailLower() in resource.data.studentEmails
+        );
+      // H4 bounds: roster fan-out capped (600) + per-string caps so one
+      // write cannot blow quota. Phishing vector (documented): gmail.com
+      // is a normal org — any Gmail can host a same-org session named like
+      // a real class; students must join via the professor's live BLE/TLS
+      // identity (Sig_p + pin), never by class name alone.
       allow create: if signedIn()
         && request.resource.data.profUid == request.auth.uid
         && request.resource.data.profEmail.lower() == tokenEmailLower()
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
         && request.resource.data.courseId is string
+        && request.resource.data.courseId.size() <= 128
         && request.resource.data.studentEmails is list
+        && request.resource.data.studentEmails.size() <= 600
         && request.resource.data.names is map
         && request.resource.data.rolls is map;
+      // Session org immutable on update: the stamp survives every merge.
       allow update: if signedIn()
         && resource.data.profUid == request.auth.uid
-        && request.resource.data.profUid == request.auth.uid;
+        && request.resource.data.profUid == request.auth.uid
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org == resource.data.org;
       allow delete: if signedIn()
-        && resource.data.profUid == request.auth.uid;
+        && resource.data.profUid == request.auth.uid
+        && resource.data.org == tokenOrg();
+    }
+
+    // Professor lecture-key pins (anti-fake-professor, anybody-can-host):
+    // profDevices/{lowercased-email}: {email, uid, org, keys[{pkP, createdAtMillis}],
+    // updatedAtMillis} — one doc per Gmail holding up to 8 recent lecture
+    // public keys (Ed25519, 32B hex). Owner-only writes (id + email + uid all
+    // bound to the signing-in Gmail, so an attacker hosting as self cannot
+    // overwrite a victim's pin); same-org signed-in reads for students
+    // (exact get by email, never list — no bulk dump). Lecture keys are
+    // ephemeral per hosting today, so the list is capped and append-only;
+    // students pin on first online fetch and verify Sig_p against the pin
+    // offline (mismatch = fake, unknown = first-seen TOFU with banner).
+    function validProfKeys() {
+      return request.resource.data.keys().hasAll(['pubKeys']) &&
+        request.resource.data.pubKeys is list &&
+        request.resource.data.pubKeys.size() <= 8;
+    }
+    function validProfDoc() {
+      return request.resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.size() <= 256
+        && request.resource.data.org == tokenOrg()
+        && request.resource.data.org.size() <= 64
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.uid.size() <= 128
+        && request.resource.data.updatedAtMillis is int
+        && request.resource.data.updatedAtMillis > 0
+        && validProfKeys();
+    }
+    match /profDevices/{id} {
+      // Exact get by email for pin fetch; missing doc reads as not-found
+      // (first hosting has no pin yet). Same-org only — cross-org pins deny.
+      allow get: if signedIn() && (resource == null ||
+        resource.data.org == tokenOrg());
+      allow list: if false;
+      allow create: if signedIn()
+        && id == tokenEmailLower()
+        && validProfDoc();
+      allow update: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && request.resource.data.email.lower() == tokenEmailLower()
+        && resource.data.org == tokenOrg()
+        && request.resource.data.org == tokenOrg()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validProfDoc();
+      // Owner may delete their own pin (re-key rotation cleanup).
+      allow delete: if signedIn()
+        && id == tokenEmailLower()
+        && resource.data.email.lower() == tokenEmailLower()
+        && resource.data.uid == request.auth.uid;
+    }
+
+    // §6 force-update floor + §5 integrity posture (2C, append-only):
+    // world-readable version floor so stale builds self-block at online
+    // gates without sign-in; nothing else opens (list/write deny).
+    // App Check enforcement is a console toggle (no rules syntax on Spark).
+    match /app_config/{id} {
+      allow get: if true;
+      allow list, write: if false;
     }
   }
 }

@@ -76,7 +76,7 @@ void main() {
     );
     await engine.startProfRotation(window);
     final first = unpackAir(radio.advertisingMfg!)!;
-    await Future.delayed(const Duration(seconds: 6));
+    await Future.delayed(const Duration(seconds: 11));
     final second = unpackAir(radio.advertisingMfg!)!;
     expect(first.host, '10.50.19.107');
     expect(first.port, 8443);
@@ -128,7 +128,7 @@ void main() {
     await engine.startIdleHintRotation(); // must NOT throw
     expect(radio.advertisingLegacyUuid, isNull); // first tick died
     expect(radio.advertiseCalls, 1);
-    await Future.delayed(const Duration(seconds: 6)); // one retry tick
+    await Future.delayed(const Duration(seconds: 11)); // one retry tick
     // The retry tick REALLY re-advertises (not the old nested-guard fake
     // success, which skipped the radio call and only logged): a second
     // radio call lands the hint bytes on air.
@@ -330,11 +330,11 @@ void main() {
       t0: DateTime.now().toUtc(),
       classLabel: 'C',
     );
-    // j=0 advertises the challenge; the next 5s tick (j=1, odd) carries
+    // j=0 advertises the challenge; the next 10s tick (j=1, odd) carries
     // the IP-hint UUID with the server address.
     await engine.startProfRotation(window);
     expect(UuidCodec.isChallengeUuid(radio.advertisingLegacyUuid!), isTrue);
-    await Future.delayed(const Duration(milliseconds: 5500));
+    await Future.delayed(const Duration(milliseconds: 10500));
     final ipUuid = radio.advertisingLegacyUuid!;
     expect(UuidCodec.isIpHintUuid(ipUuid), isTrue);
     final ip = UuidCodec.unpackIpHint(ipUuid)!;
@@ -460,6 +460,141 @@ void main() {
         challengeSighting([6, 6, 6, 6, 6, 6, 6, 6], ttl: 0));
     await Future.delayed(const Duration(milliseconds: 400));
     expect(radio.advertisingMfg, isNull);
+    await engine.stop();
+  });
+
+  test('busy-skipped relay retries on next hearing (no starvation)', () async {
+    // Observed live: under relay load the ADV guard is busy and a relay
+    // re-advertise is skipped — if that skip burned the token, every back
+    // row behind this phone would lose that rotation. The guard
+    // ([tokenRelayGuard]) releases the key on busy-skip, so the ~1s
+    // repeat hearing relays instead of dup-skipping. This test pins the
+    // guard with token A, busy-skips token B, then proves B relays on
+    // re-hearing (without the release, the last expect fails: B dup-skips
+    // and never airs).
+    final radio = _GateRadio()..gate = Completer<void>();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    // Occupy the guard: token A relay blocks at the gate past jitter.
+    engine.handleSighting(
+        challengeSighting([7, 7, 7, 7, 7, 7, 7, 7], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 400));
+    // Token B arrives while the guard is held: reserves, then busy-skips.
+    engine.handleSighting(
+        challengeSighting([8, 8, 8, 8, 8, 8, 8, 8], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 500));
+    // Release: A airs for real.
+    radio.gate!.complete();
+    await Future.delayed(const Duration(milliseconds: 400));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([7, 7, 7, 7, 7, 7, 7, 7]))));
+    // Repeat hearing of B relays now — the release made room for it.
+    engine.handleSighting(
+        challengeSighting([8, 8, 8, 8, 8, 8, 8, 8], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 600));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([8, 8, 8, 8, 8, 8, 8, 8]))));
+    await engine.stop();
+  });
+
+  test('per-second relay cap drops with a counted log (token kept)', () async {
+    // ~4 re-airs per rolling second per device: the 5th distinct token in
+    // the same second drops as relay-cap (counted in relayDrops + the log
+    // line) WITHOUT burning its token-guard key, so the ~1s repeat hearing
+    // relays once the window slides.
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    for (var i = 1; i <= 5; i++) {
+      engine.handleSighting(
+          challengeSighting([i, i, i, i, i, i, i, i], legacy: true));
+    }
+    await Future.delayed(const Duration(milliseconds: 700));
+    expect(engine.relayDrops, 1);
+    // The capped token was never guarded: once the 1s window slides, the
+    // ~1s repeat hearing relays it.
+    await Future.delayed(const Duration(milliseconds: 600));
+    engine.handleSighting(
+        challengeSighting([5, 5, 5, 5, 5, 5, 5, 5], legacy: true));
+    await Future.delayed(const Duration(milliseconds: 700));
+    expect(
+        radio.advertisingLegacyUuid,
+        UuidCodec.normalize(
+            UuidCodec.packChallenge(Uint8List.fromList([5, 5, 5, 5, 5, 5, 5, 5]))));
+    await engine.stop();
+  });
+
+  test('v3 relay preserves version and sets the relayed flag', () async {
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    final heard = BleSighting(
+      version: kAirVerV3,
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([9, 9, 9, 9, 9, 9, 9, 9]),
+      ipHost: '10.50.19.107',
+      ipPort: 8443,
+      denseHint: true,
+      rssiDbm: -60,
+      at: DateTime.now().toUtc(),
+    );
+    engine.handleSighting(heard);
+    await Future.delayed(const Duration(milliseconds: 600));
+    final pdu = unpackAir(radio.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.relayed, isTrue); // set on re-air
+    expect(pdu.denseHint, isTrue); // preserved
+    expect(pdu.token8, [9, 9, 9, 9, 9, 9, 9, 9]); // token bytes untouched
+    await engine.stop();
+  });
+
+  test('originate stays v2 unless v3 is opted in', () async {
+    WindowParams windowFor() => WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'C',
+        );
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio);
+    engine.setServerIp('10.50.19.107', 8443);
+    await engine.startProfRotation(windowFor());
+    expect(unpackAir(radio.advertisingMfg!)!.version, kAirVer);
+    await engine.stop();
+    final radio3 = FakeBleRadio();
+    final engine3 = ProxBleEngine(radio: radio3)
+      ..v3Tx = true
+      ..denseHintTx = true;
+    engine3.setServerIp('10.50.19.107', 8443);
+    await engine3.startProfRotation(windowFor());
+    final pdu = unpackAir(radio3.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.relayed, isFalse); // originate never marks relayed
+    expect(pdu.denseHint, isTrue);
+    await engine3.stop();
+  });
+
+  test('responses are never relayed (no response-flood)', () async {
+    // Even with the mesh armed, a heard student response is dispatch-only:
+    // responses travel direct-ADV (or directed GATT), never broadcast
+    // flood — a relayed response would let one phone's mark echo
+    // hall-wide and burn other students' single-use slots.
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    engine.handleSighting(BleSighting(
+      type: kAirTypeResponse,
+      token8: Uint8List.fromList([2, 2, 2, 2, 2, 2, 2, 2]),
+      ipHost: '10.50.19.107',
+      ipPort: 8443,
+      rssiDbm: -60,
+      at: DateTime.now().toUtc(),
+    ));
+    await Future.delayed(const Duration(milliseconds: 500));
+    expect(radio.advertisingMfg, isNull);
+    expect(radio.advertisingLegacyUuid, isNull);
+    expect(engine.relayDrops, 0);
     await engine.stop();
   });
 

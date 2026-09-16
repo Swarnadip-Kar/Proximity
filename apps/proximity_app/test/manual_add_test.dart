@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
-import 'package:proximity_app/widgets/manual_add.dart';
+import 'package:proximity_app/design/app_theme.dart';
+import 'package:proximity_app/features/manual_attendance/manual_attendance.dart';
 import 'package:proximity_storage/storage.dart';
 
 Future<FakeCloudSync> seededCloud() async {
@@ -108,6 +109,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(store),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -144,6 +148,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(store),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -176,6 +183,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(store),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -217,6 +227,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(store),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -259,6 +272,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -296,6 +312,9 @@ void main() {
         deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
       ],
       child: MaterialApp(
+        // App theme: the module form reads the ProximityColors extension
+        // (Live rebuild; same harness as the shared-components tests).
+        theme: proxLightTheme(),
         home: Scaffold(
           body: ManualAddForm(
             fieldPrefix: 't',
@@ -333,7 +352,8 @@ class _ThrowingCloud extends FakeCloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     throw StateError(
         'Cloud directory search refused by security rules (permission-denied) — deploy them.');
   }
@@ -348,13 +368,15 @@ class _RecordingCloud extends FakeCloudSync {
       {String emailPrefix = '',
       String rollPrefix = '',
       String namePrefix = '',
-      int limit = 10}) async {
+      int limit = 10,
+      String org = ''}) async {
     calls++;
     lastNamePrefix = namePrefix;
     return super.searchStudents(
         emailPrefix: emailPrefix,
         rollPrefix: rollPrefix,
         namePrefix: namePrefix,
-        limit: limit);
+        limit: limit,
+        org: org);
   }
 }

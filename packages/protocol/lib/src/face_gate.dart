@@ -1,9 +1,30 @@
-// Face gate: threshold + freshness + retry policy. §4 (logic only; embeddings mocked in tests).
+// Face gate: threshold + freshness + retry policy. §4 (logic only; the
+// on-device match itself runs in the `face_verification` plugin — see
+// features/face_identity/face_verifier.dart in the app).
 //
 // Purpose: key proves phone, BLE proves location, face proves holder.
 // Gating: SK use requires faceValid < 5min. Each 30s window demands fresh check.
 // Failure: 2 instant retries, then needs-review (professor logged manual override).
-// Threshold: cosine 0.60 starting point (FAR ~0.01% / FRR <2% pilot-tuned).
+// Threshold: 0.70 on the plugin (FaceNet) score scale — plugin default,
+// UNCALIBRATED on Proximity captures (uncalibrated, field ROC required per
+// liveness_calibration_test procedure before quoting any FAR/FRR — no
+// invented numbers). The old 0.60/0.80 EdgeFace-XS cosine numbers MUST NOT
+// be reused (deleted pipeline, incomparable space).
+// Score note: the plugin returns identity only (matched id or null), never
+// a distance — a match carries the decision threshold as its score (honest
+// boundary value, host re-checks score>=T); distance unavailable by plugin
+// contract, so the score is kept as the boundary with this note.
+// Crop-path note: the liveness scorer runs on the face-box crop with a
+// legacy centre-square fallback (same scorer + same Tl, never a pass by
+// itself) — callers MUST debugPrint which path scored per still (box vs
+// fallback) so field review can tell them apart.
+// Size-gate note (unified): still readability gates (empty path, missing /
+// zero-byte file, tiny frame, non-image magic, <8px decode) live in the
+// callers (face_verifier_plugin + liveness native) and fail closed BEFORE
+// scoring — this gate never sees an unreadable still.
+// Passive only: no blink/turn-head prompts — production callers pass
+// livenessPass:true; the parameter stays so historical call sites compile,
+// but nothing gates on an active prompt anymore.
 library;
 
 import 'dart:math';
