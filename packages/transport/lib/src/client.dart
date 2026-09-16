@@ -457,6 +457,18 @@ class ProxClient {
     String appAttestRaw = '',
     String appAttestCredKey = '',
   }) async {
+    // HW-sign memo: dSigFor hits secure hardware (biometric grant) — the
+    // preimage inputs are constant per prove() call, so sign once and reuse
+    // across transport retries instead of prompting up to maxAttempts times
+    // for identical bytes. Keyed on the exact inputs (a legacy caller with
+    // a null stamp gets a fresh stamp per attempt and re-signs, as before).
+    final dSigCache = <String, Future<Uint8List>>{};
+    final dSigInner = dSigFor;
+    Future<Uint8List> Function(Uint8List, int, String)? memoDsigFor;
+    if (dSigInner != null) {
+      memoDsigFor = (t, jj, h) => dSigCache.putIfAbsent(
+          '${hexEncode(t)}|$jj|$h', () => dSigInner(t, jj, h));
+    }
     Object? lastErr;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0) {
@@ -479,7 +491,7 @@ class ProxClient {
           faceValidAtMs: faceValidAtMs,
           verifierVer: verifierVer,
           pkD: pkD,
-          dSigFor: dSigFor,
+          dSigFor: memoDsigFor,
           attestationLevel: attestationLevel,
           attestedUntilMs: attestedUntilMs,
           faceVecB64: faceVecB64,

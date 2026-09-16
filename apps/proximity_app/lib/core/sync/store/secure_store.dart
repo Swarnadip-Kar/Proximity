@@ -58,17 +58,46 @@ class SecureDeviceStore implements DeviceStore {
   /// Single SharedPreferences acquisition point (was 34 inline copies).
   Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
 
+  // Process-local cache for the two biometric-gated reads (enrollment doc
+  // + installId share the gated FSS instance). Root cause of the
+  // fingerprint-on-every-prove: checkFaceAny reads enrollment, listen
+  // reads it again, and every _prove rotation reads installId + signs —
+  // each secure read re-prompts (Android enforceBiometrics, iOS
+  // biometryCurrentSet). The HW 4h grant + face check already gate use,
+  // so one prompt per process per value is enough; writes invalidate.
+  StoredEnrollment? _enrollmentCache;
+  bool _enrollmentLoaded = false;
+  String? _installIdCache;
+  bool _installIdLoaded = false;
+  // Last secure-read failure (biometric cancel/lockout/dead keychain):
+  // reads inside the cooldown return the cached value without touching
+  // the store, so a cancel + 600ms auto-retry cannot hammer the prompt.
+  DateTime? _lastSecureFailAt;
+  static const _secureFailCooldown = Duration(seconds: 5);
+
+  bool _inSecureCooldown(DateTime now) =>
+      _lastSecureFailAt != null &&
+      now.difference(_lastSecureFailAt!) < _secureFailCooldown;
+
   @override
   Future<StoredEnrollment?> readEnrollment() async {
+    if (_enrollmentLoaded) return _enrollmentCache;
+    final now = DateTime.now().toUtc();
+    if (_inSecureCooldown(now)) return _enrollmentCache;
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
     // a missing enrollment just means "enroll".
     String? raw;
     try {
       raw = await _secure.read(key: _kEnroll);
     } catch (_) {
+      _lastSecureFailAt = now;
+      return _enrollmentCache;
+    }
+    if (raw == null) {
+      _enrollmentCache = null;
+      _enrollmentLoaded = true;
       return null;
     }
-    if (raw == null) return null;
     late final Map<String, dynamic> doc;
     late final StoredEnrollment parsed;
     try {
@@ -79,15 +108,24 @@ class SecureDeviceStore implements DeviceStore {
     }
     // Fresh-only (security §2 F1): no raw-seed migration — the doc is
     // sealed-only by construction. Unknown keys are ignored by fromJson.
+    _enrollmentCache = parsed;
+    _enrollmentLoaded = true;
     return parsed;
   }
 
   @override
-  Future<void> writeEnrollment(StoredEnrollment e) =>
-      _secure.write(key: _kEnroll, value: jsonEncode(e.toJson()));
+  Future<void> writeEnrollment(StoredEnrollment e) async {
+    await _secure.write(key: _kEnroll, value: jsonEncode(e.toJson()));
+    _enrollmentCache = e;
+    _enrollmentLoaded = true;
+  }
 
   @override
-  Future<void> clearEnrollment() => _secure.delete(key: _kEnroll);
+  Future<void> clearEnrollment() async {
+    await _secure.delete(key: _kEnroll);
+    _enrollmentCache = null;
+    _enrollmentLoaded = true;
+  }
 
   @override
   Future<List<ClassRecord>> readHistory() async {
@@ -446,16 +484,26 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<String?> readInstallId() async {
+    if (_installIdLoaded) return _installIdCache;
+    final now = DateTime.now().toUtc();
+    if (_inSecureCooldown(now)) return _installIdCache;
     try {
-      return await _secure.read(key: _kInstall);
+      final v = await _secure.read(key: _kInstall);
+      _installIdCache = v;
+      _installIdLoaded = true;
+      return v;
     } catch (_) {
-      return null;
+      _lastSecureFailAt = now;
+      return _installIdCache;
     }
   }
 
   @override
-  Future<void> writeInstallId(String id) =>
-      _secure.write(key: _kInstall, value: id);
+  Future<void> writeInstallId(String id) async {
+    await _secure.write(key: _kInstall, value: id);
+    _installIdCache = id;
+    _installIdLoaded = true;
+  }
 
   @override
   Future<Set<String>> readHiddenSessions() async {
