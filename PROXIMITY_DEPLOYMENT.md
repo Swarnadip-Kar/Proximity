@@ -167,10 +167,14 @@ behavior stays faithful — only the DATA is throwaway.
 
 ## 5. Release builds (per-platform, CI-gated)
 
-CI (`.github/workflows/build.yml`) runs every platform as an **independent
-job** gated only on `analyze-test`. A red platform never blocks the others:
-each green job uploads its own artifact, and a release ships whatever is
-green. Check status with:
+CI (`.github/workflows/build.yml`) builds ONLY what this Mac cannot:
+`windows` + `linux` in `--release`, gated on `analyze-test`. Android +
+macOS + iOS build locally (§5b–§5c) — they were removed from CI because
+the repo is private (macOS bills 10x, Windows 2x) and the macOS .app
+artifact alone (~400MB/run) blew the 500MB free storage quota. Each CI
+run now costs ~10 billed minutes instead of ~170. A red platform never
+blocks the other: each green job uploads its own artifact (7-day
+retention), and a release ships whatever is green. Check status with:
 
 ```bash
 gh run list --limit 3 --branch First-Release
@@ -248,9 +252,9 @@ freeze at the last CocoaPods-published SDK.
    packaging/linux/make_tarball.sh    # → dist/Proximity-<version>-Linux-x64.tar.gz (no-install fallback)
    ```
 
-   Windows/Linux cannot be built on macOS — take them from CI instead:
-   `gh run download <RUN_ID> --dir dist/ci` (jobs `proximity-windows`,
-   `proximity-linux`).
+    Windows/Linux cannot be built on macOS — take them from CI instead:
+    `gh run download <RUN_ID> --dir dist/ci` (artifacts
+    `proximity-windows-release`, `proximity-linux-release`).
 4. Publish the GitHub release (tag = version):
 
    ```bash
