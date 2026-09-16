@@ -2,6 +2,7 @@
 **/.dart_tool/
 **/build/
 **/dist/
+**/.kotlin/
 # Rules-drill runtime (regenerable, never committed — see
 # PROXIMITY_SECURITY.md verification log for the fetch commands).
 apps/proximity_app/rules-drill/node_modules/
