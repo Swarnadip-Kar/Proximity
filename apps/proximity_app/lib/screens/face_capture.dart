@@ -325,6 +325,10 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
     if (_busy || ctl == null || _done) return;
     setState(() {
       _busy = true;
+      // A transient takePicture error set _failed and disabled this very
+      // button — a new capture must re-arm it, or the sheet strands on
+      // `Capture failed` with no way forward except Cancel.
+      _failed = false;
       _status = 'Capturing… hold still';
     });
     // In-preview retry loop: every burst reuses the SAME controller (the
@@ -433,8 +437,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
       appBar: AppBar(
         title: const Text('Face check'),
         actions: [
+          // Cancel stays live through the in-preview auto-retry loop:
+          // every await in _captureAll re-checks the dispose latch, so a
+          // mid-retry pop never double-pops or verifies afterwards. A
+          // disabled Cancel during the 7s window read as a stuck screen.
           TextButton(
-            onPressed: _busy ? null : () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
           ),
         ],
@@ -507,10 +515,15 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   icon: const Icon(Icons.face),
-                  label: Text(widget.captures > 1
-                      ? 'Capture ${widget.captures} stills'
-                      : 'Capture still'),
-                  onPressed: (_busy || ctl == null || _denied || _failed)
+                  // _failed no longer disables: it labels the retry (a
+                  // failed capture re-arms inside _captureAll). Only a
+                  // denied permission or a missing controller blocks.
+                  label: Text(_failed
+                      ? 'Try again'
+                      : widget.captures > 1
+                          ? 'Capture ${widget.captures} stills'
+                          : 'Capture still'),
+                  onPressed: (_busy || ctl == null || _denied)
                       ? null
                       : _captureAll,
                 ),

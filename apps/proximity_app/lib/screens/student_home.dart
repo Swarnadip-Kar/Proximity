@@ -254,6 +254,21 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // Samsung-style auto-start guard: the scan fires once per faceCheck
   // entry (post-frame); the manual button stays as fallback/retry.
   bool _autoFaceFired = false;
+
+  /// Fresh hands-free budget for one face-check session (7s window, ~1s
+  /// between bursts, try-count backstop). Call on every NEW session
+  /// (join, waiting entry, needs-review retry, explicit Scan tap) — never
+  /// on the in-session auto-retry re-pushes (they spend the budget).
+  /// Root cause of the stuck-after-first-fail: only joins reset
+  /// [_autoFaceTries], so a spent window left every later Scan single-shot
+  /// (instant park on the manual notice, no auto-retry) until rejoin.
+  void _resetFaceRetryBudget() {
+    _autoFaceTries = 0;
+    _autoFaceDeadline = null;
+    _modalExhausted = false;
+    _modalResult = null;
+    faceNotice = '';
+  }
   // Single-flight for still-capture auto-fire + manual taps: concurrent
   // _scanFace calls never overlap captures (double-push would stack two
   // camera sheets). Second caller no-ops; Scan stays as fallback after
@@ -1238,9 +1253,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       phase = StudentPhase.faceCheck;
       _faceAttempts = 0;
       _faceMismatchLiveness = false;
-      _autoFaceTries = 0;
-      _autoFaceDeadline = null;
-      faceNotice = '';
+      _resetFaceRetryBudget();
       if (profName != null) _roomProf = profName.trim();
       if (org != null) _roomOrg = org.trim();
     });
@@ -1336,11 +1349,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
       _faceMismatchLiveness = false;
-      _autoFaceTries = 0;
-      _autoFaceDeadline = null;
+      _resetFaceRetryBudget();
       _waitingCacheVerdict = null;
       _waitingCacheEmail = '';
-      faceNotice = '';
     });
     // First back press from here returns to the class list (entry held
     // once per join; round rewaits re-enter safely via the null guard).
@@ -2531,7 +2542,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               onScan: () {
                 final t = _waitingTarget ?? target;
                 final l = linked;
-                if (t != null && l != null) _scanFace(t, l);
+                // Explicit tap = new session: fresh budget first, or a
+                // spent window keeps every later tap single-shot (stuck).
+                if (t != null && l != null) {
+                  setState(_resetFaceRetryBudget);
+                  _scanFace(t, l);
+                }
               },
               // Failed check never dead-ends: manual request is one tap
               // away (button appears only with a failure notice).
@@ -2567,7 +2583,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
               onRetryFace: () {
                 final t = _waitingTarget ?? target;
                 final l = linked;
-                setState(() => phase = StudentPhase.faceCheck);
+                // Needs-review retry = new session: fresh budget, or the
+                // second check inherits the spent window (stuck).
+                setState(() {
+                  phase = StudentPhase.faceCheck;
+                  _resetFaceRetryBudget();
+                });
                 if (t != null && l != null) {
                   _scheduleAutoScan(t, l);
                 }
