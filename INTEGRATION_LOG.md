@@ -3113,3 +3113,14 @@ Scope: iQOO field failure (`expired-cert chain=5 root=6d9db4ce`) root-caused liv
 - Refusal copy split: shared `expired-cert`/`device-expired` copy blamed both causes — now certificate remedy (update + online RKP refresh + Generate anew) vs window remedy (one online heartbeat), plus a dedicated `EnrollRefusal.attestation` next-step card (Back to account step) instead of the dead-end generic Try again.
 
 Verify: `dart test` protocol 219/219 (incl. 7 new century/gate tests); app suites — setup/entry/account/attestation/enrollment 133+ green incl. new back-nav/role-action/rendering tests; `flutter analyze` clean on every touched file. Residual: RKP pool refresh still needs the charging-idle job (field intermediate expires 2026-09-19); refusal copy kept fail-closed throughout.
+
+## Reference-verifier parity: leaf-skip + factory-expired ignore (2026-09-16)
+
+Scope: field photo proved the iQOO still runs a pre-`0bb9216` binary (`cert0:2070…EXPIRED` is only producible by the old `x509`-package parser; `now=` is tap-time clock, never build date) — plus the gate still diverged from Google's `android/keyattestation` reference in two validity rules.
+
+- Leaf never gates (`chain_verify.dart`): `verifyChainSignaturesLeafFirst` skips leaf-first index 0 under `checkValidity` (reference: final-cert dates are device-set/tamperable/clock-skew); debug renders `unchecked-leaf`. Trustonic epoch leaves can never refuse alone.
+- Factory-expired ignored (same file): `_chainIsFactoryProvisioned` copies `provisioningMethod` (child-of-root subject carries serialNumber OID 2.5.4.5 → factory); expired forgiven, not-yet-valid still fails, RKP intermediates fully enforced. Debug renders `expired-ignored-factory`; revocation stays advisory (`RevocationCache`).
+- Build fingerprint (app, `attestation_self_check.dart`): `AttestationSelfCheck.debugLine` gains `eng=rkf50-leafSkip-factoryExpIgnore` so the next field photo proves its binary.
+- Enroll render fixture updated to the realistic post-fix refusal (spent RKP `attest-cert-1`, leaf `unchecked-leaf`).
+
+Verify: `dart test` protocol 224/224 (incl. 4 new factory/leaf tests); app attestation 12/12; `dart analyze` clean on touched files. OPERATOR: ship a fresh APK from this tree to the iQOO and re-tap Save; expect `eng=rkf50-leafSkip-factoryExpIgnore` + `unchecked-leaf`.

@@ -141,6 +141,30 @@ class _Spki {
 /// chains carry far-future test validity (e.g. 2070+) and offline professor
 /// clocks skew; expiry is otherwise enforced at the [AttestationWindow]
 /// tier, not here.
+///
+/// LEAF IS NEVER VALIDITY-CHECKED (copied from Google's reference
+/// `android/keyattestation`
+/// `KeyAttestationCertPathValidator.verifyValidity`: "Do not check the
+/// validity of the final certificate in the path. The validity period of
+/// the final cert is set on the device so could both be subject to
+/// tampering and could be impacted by clock skew"). In leaf-first order
+/// that is index 0. This is what makes Trustonic epoch-anchored leaves
+/// (1970→2048, and the 2070 misparse before the RFC 5280 fix) unable to
+/// block enrollment by themselves — only the issuer chain (RKP
+/// intermediates/server, factory intermediates, root) is date-gated.
+///
+/// FACTORY-EXPIRED IS IGNORED (same reference, `verifyValidity` catch
+/// `CertificateExpiredException`: "Ignore validity on factory-provisioned
+/// certificate chains because it is not possible to safely rotate the
+/// keys"). Detection copies `KeyAttestationCertPath.provisioningMethod`:
+/// the child-of-root cert (leaf-first index n-2) carries a `serialNumber`
+/// RDN (OID 2.5.4.5) when factory-provisioned; RKP chains carry
+/// `CN=Droid CA2, O=Google LLC` there instead. Only *expired* is ignored
+/// — not-yet-valid still fails even on factory chains (reference throws
+/// `NOT_YET_VALID` unconditionally). Revocation stays the separate
+/// advisory side-channel (`RevocationCache`, never a gate) per the docs
+/// guidance to keep trusting `SERIALNUMBER=f92009e853b6b045` factory
+/// chains unless the CRL says revoked.
 /// After the legacy-test-root sunset (2016 root expired 2026-05-24),
 /// production callers SHOULD pass `checkValidity: true`; test fixtures
 /// covering expired roots pass [allowExpiredTestRoots] instead (never in
@@ -201,7 +225,12 @@ ChainSigResult verifyChainSignaturesLeafFirst(
   }
   if (checkValidity && !allowExpiredTestRoots) {
     final at = (now ?? DateTime.now()).toUtc();
+    // Reference copy: factory chains ignore *expired* (rotation impossible).
+    final factory = _chainIsFactoryProvisioned(parsed);
     for (var i = 0; i < parsed.length; i++) {
+      // Reference-verifier copy (see header): the leaf (index 0
+      // leaf-first) carries device-set dates — never authority.
+      if (i == 0) continue;
       final nb = parsed[i].notBefore;
       final na = parsed[i].notAfter;
       // Missing/unparseable dates fail closed only when the gate is on.
@@ -211,7 +240,16 @@ ChainSigResult verifyChainSignaturesLeafFirst(
             reason: 'expired-cert',
             flags: ['attest-expired', 'attest-cert-$i']);
       }
-      if (at.isBefore(nb.toUtc()) || at.isAfter(na.toUtc())) {
+      // Not-yet-valid always fails (reference throws NOT_YET_VALID even on
+      // factory chains); expired is ignored on factory chains only.
+      if (at.isBefore(nb.toUtc())) {
+        return ChainSigResult(
+            ok: false,
+            reason: 'expired-cert',
+            flags: ['attest-expired', 'attest-cert-$i']);
+      }
+      if (at.isAfter(na.toUtc())) {
+        if (factory) continue;
         return ChainSigResult(
             ok: false,
             reason: 'expired-cert',
@@ -269,10 +307,23 @@ ChainSigResult verifyChainSignaturesLeafFirst(
 /// dates render as `?`/`UNPARSEABLE`); never affects the verdict.
 String chainValidityDebugLine(List<Uint8List> certsDer, {DateTime? now}) {
   final at = (now ?? DateTime.now()).toUtc();
+  // Factory status mirrors the gate so the summary can never disagree with
+  // the verdict (expired factory certs render `expired-ignored-factory`,
+  // not `EXPIRED`).
+  var factory = false;
+  try {
+    factory = _chainIsFactoryProvisioned(
+        [for (final d in certsDer) _parseCert(d)]);
+    // ignore: avoid_catches_without_on_clauses
+  } catch (_) {
+    factory = false;
+  }
   final parts = <String>[];
   for (var i = 0; i < certsDer.length; i++) {
     // Same source as the gate (positional Validity, RFC 5280 rule) so the
-    // summary can never disagree with the verdict.
+    // summary can never disagree with the verdict. Index 0 (leaf) is
+    // date-unchecked by the gate (reference verifier: device-set dates) —
+    // rendered `unchecked-leaf` so a stale leaf never reads as a refusal.
     DateTime? nb;
     DateTime? na;
     try {
@@ -283,11 +334,21 @@ String chainValidityDebugLine(List<Uint8List> certsDer, {DateTime? now}) {
     } catch (_) {}
     String fmt(DateTime? d) =>
         d == null ? '?' : d.toUtc().toIso8601String().substring(0, 10);
+    if (i == 0) {
+      var leafSt = 'unchecked-leaf';
+      if (nb == null || na == null) {
+        leafSt = 'UNPARSEABLE-unchecked-leaf';
+      }
+      parts.add('cert$i:${fmt(nb)}→${fmt(na)} $leafSt');
+      continue;
+    }
     var st = 'ok';
     if (nb == null || na == null) {
       st = 'UNPARSEABLE';
-    } else if (at.isBefore(nb.toUtc()) || at.isAfter(na.toUtc())) {
+    } else if (at.isBefore(nb.toUtc())) {
       st = 'EXPIRED';
+    } else if (at.isAfter(na.toUtc())) {
+      st = factory ? 'expired-ignored-factory' : 'EXPIRED';
     }
     parts.add('cert$i:${fmt(nb)}→${fmt(na)} $st');
   }
@@ -628,6 +689,32 @@ _Spki _parseSpki(ASN1Sequence spki) {
     return _Spki.ec(curveOid, x, y);
   }
   throw _UnsupportedKey();
+}
+
+/// Factory-provisioning detector (copies
+/// `KeyAttestationCertPath.provisioningMethod`: factory when the
+/// child-of-root cert's subject carries a `serialNumber` RDN, OID 2.5.4.5).
+/// Leaf-first [parsed] order: the child of the root is index n-2. Byte
+/// search over the subject DER only (OID TLV `06 03 55 04 05`) — the Name
+/// field carries no other OIDs that could collide, and a miss fails closed
+/// toward enforcement (non-factory), never toward trust.
+bool _chainIsFactoryProvisioned(List<_ParsedCert> parsed) {
+  try {
+    if (parsed.length < 2) return false;
+    final subject = parsed[parsed.length - 2].subjectDer;
+    for (var i = 0; i + 5 <= subject.length; i++) {
+      if (subject[i] == 0x06 &&
+          subject[i + 1] == 0x03 &&
+          subject[i + 2] == 0x55 &&
+          subject[i + 3] == 0x04 &&
+          subject[i + 4] == 0x05) {
+        return true;
+      }
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
 }
 
 bool _derEqual(Uint8List a, Uint8List b) {

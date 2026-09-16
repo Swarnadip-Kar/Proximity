@@ -22,6 +22,18 @@ import 'dart:typed_data';
 
 import 'package:proximity_protocol/protocol.dart';
 
+/// Validity-engine fingerprint, bumped on every change to the date logic
+/// so a field screenshot proves WHICH binary produced it (`now=` is the
+/// tap-time device clock, never the build date):
+/// - `rkf50` — RFC 5280 UTCTime century rule (70→1970, commit 0bb9216);
+/// - `rkf50-leafSkip` — plus the android/keyattestation copy: leaf dates
+///   never gate, rendered `unchecked-leaf`;
+/// - `rkf50-leafSkip-factoryExpIgnore` — plus factory-expired ignore
+///   (child-of-root subject carries serialNumber OID 2.5.4.5 → expired
+///   ignored, not-yet-valid still fails; rendered
+///   `expired-ignored-factory`).
+const kAttestationEngine = 'rkf50-leafSkip-factoryExpIgnore';
+
 /// Outcome of [checkAttestationChain]. Pure data, no logging here —
 /// callers log the one line (root prefix + length ride every call so the
 /// field can compare anchors across phones).
@@ -57,9 +69,11 @@ class AttestationSelfCheck {
       this.debugDetail = ''});
 
   /// One-line debug summary for logs + the enroll debug card (no secrets:
-  /// chain length, anchor prefix, flags, per-cert dates).
+  /// chain length, anchor prefix, engine fingerprint, flags, per-cert
+  /// dates). The `eng=` token is the build fingerprint — compare it
+  /// across phones before comparing dates.
   String get debugLine =>
-      'chain=$chainLen root=${rootPrefix.isEmpty ? 'none' : rootPrefix} flags=$flags $debugDetail'
+      'chain=$chainLen root=${rootPrefix.isEmpty ? 'none' : rootPrefix} eng=$kAttestationEngine flags=$flags $debugDetail'
           .trim();
 }
 

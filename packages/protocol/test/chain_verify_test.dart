@@ -356,14 +356,16 @@ void main() {
           DateTime.utc(2024, 2, 29));
     });
 
-    test('genuine fixture leaf (UTCTime 70) debugs as 1970 ok', () {
+    test('genuine fixture leaf (UTCTime 70) debugs as 1970 unchecked', () {
       // Google's own reference leaf (blueline TEE_EC_NONE) carries the same
       // epoch-anchored convention: notBefore UTCTime `70`, notAfter
-      // GeneralizedTime 2106.
+      // GeneralizedTime 2106. The gate never date-checks the leaf
+      // (android/keyattestation reference: device-set dates), so the debug
+      // line renders it unchecked-leaf instead of ok/EXPIRED.
       final leaf = _pemToDer(_chainLeafPem);
       final line = chainValidityDebugLine([leaf],
           now: DateTime.utc(2026, 9, 15));
-      expect(line, contains('cert0:1970-01-01→2106-02-07 ok'));
+      expect(line, contains('cert0:1970-01-01→2106-02-07 unchecked-leaf'));
     });
 
     test('validity gate accepts the epoch-anchored leaf', () {
@@ -373,6 +375,64 @@ void main() {
       final r = verifyChainSignaturesLeafFirst([leaf],
           checkValidity: true, now: DateTime.utc(2026, 9, 15));
       expect(r.reason, isNot('expired-cert'));
+    });
+
+    test('leaf dates never block, even before notBefore (reference copy)', () {
+      // android/keyattestation KeyAttestationCertPathValidator: the final
+      // cert in the path (our leaf-first index 0) is device-set and
+      // clock-skew-prone, so validity is skipped. A lone leaf at a `now`
+      // before its notBefore must fail as bad-root-signature (not
+      // self-signed), never as expired-cert.
+      final leaf = _pemToDer(_chainLeafPem);
+      final r = verifyChainSignaturesLeafFirst([leaf],
+          checkValidity: true, now: DateTime.utc(1969, 6, 1));
+      expect(r.ok, isFalse);
+      expect(r.reason, isNot('expired-cert'));
+    });
+
+    test('factory expired root is ignored (reference copy)', () {
+      // android/keyattestation KeyAttestationCertPathValidator: expired is
+      // ignored on factory-provisioned chains (rotation impossible); the
+      // genuine fixture chain is factory (child-of-root subject carries a
+      // serialNumber RDN) with a 2016 root that expired 2026-05-24. At
+      // 2026-09-15 the validity gate must pass anyway.
+      final certs = _genuineChain();
+      final r = verifyChainSignaturesLeafFirst(certs,
+          checkValidity: true, now: DateTime.utc(2026, 9, 15));
+      expect(r.ok, isTrue, reason: r.reason);
+    });
+
+    test('factory debug renders expired-ignored-factory, not EXPIRED', () {
+      final certs = _genuineChain();
+      final line = chainValidityDebugLine(certs,
+          now: DateTime.utc(2026, 9, 15));
+      expect(line, contains('expired-ignored-factory'));
+      expect(line, isNot(contains('EXPIRED')));
+    });
+
+    test('not-yet-valid still fails on factory chains', () {
+      // Reference throws NOT_YET_VALID unconditionally — only *expired* is
+      // forgiven. At 2017 the fixture intermediates (notBefore 2018) are
+      // not yet valid.
+      final certs = _genuineChain();
+      final r = verifyChainSignaturesLeafFirst(certs,
+          checkValidity: true, now: DateTime.utc(2017, 1, 1));
+      expect(r.ok, isFalse);
+      expect(r.reason, 'expired-cert');
+    });
+
+    test('non-factory expired intermediate still fails', () {
+      // [leaf, inter1]: the child-of-root slot (index n-2 = 0) is the leaf
+      // subject ("Android Keystore Key", no serialNumber RDN) → not
+      // factory. At 2029 inter1 (→2028) is expired and must fail closed.
+      // (Validity runs before signature checks, so the mismatched pair
+      // still exercises the date gate.)
+      final leaf = _pemToDer(_chainLeafPem);
+      final inter1 = _pemToDer(_chainInter1Pem);
+      final r = verifyChainSignaturesLeafFirst([leaf, inter1],
+          checkValidity: true, now: DateTime.utc(2029, 1, 1));
+      expect(r.ok, isFalse);
+      expect(r.reason, 'expired-cert');
     });
 
     test('full pin gate passes with validity on (time-travelled)', () {

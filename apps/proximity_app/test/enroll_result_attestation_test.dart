@@ -20,15 +20,18 @@ import 'package:proximity_app/widgets/log_drawer.dart';
 /// The production state shape from upload()'s self-check FAIL branch:
 /// message + debug built by the real helpers (no hand-typed copies).
 EnrollmentState _attestationFailure(EnrollmentController ctl) {
+  // Post leaf-skip shape (android/keyattestation reference: leaf dates are
+  // never authority, rendered unchecked-leaf): the realistic remaining
+  // refusal is a spent RKP intermediate (cert1), not the Trustonic leaf.
   const check = AttestationSelfCheck(
     ok: false,
     reason: 'expired-cert',
-    flags: ['attest-expired', 'attest-cert-0'],
+    flags: ['attest-expired', 'attest-cert-1'],
     rootPrefix: '6d9db4ce',
     chainLen: 5,
     debugDetail:
-        'now=2026-09-15T13:42Z cert0:1970-01-01→2048-01-01 EXPIRED '
-        'cert1:2026-09-07→2026-09-19 ok cert2:2026-08-31→2026-11-09 ok '
+        'now=2026-09-20T09:33Z cert0:1970-01-01→2048-01-01 unchecked-leaf '
+        'cert1:2026-09-07→2026-09-19 EXPIRED cert2:2026-08-31→2026-11-09 ok '
         'cert3:2026-02-09→2029-02-08 ok cert4:2025-07-17→2035-07-15 ok',
   );
   return EnrollmentState(
@@ -73,7 +76,7 @@ void main() {
         findsOneWidget);
     expect(find.textContaining('Debug: chain=5 root=6d9db4ce'),
         findsOneWidget);
-    expect(find.textContaining('attest-cert-0'), findsOneWidget);
+    expect(find.textContaining('attest-cert-1'), findsOneWidget);
     expect(find.text('Back to account step'), findsOneWidget);
   });
 
