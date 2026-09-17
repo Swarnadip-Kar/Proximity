@@ -34,7 +34,6 @@ import '../../widgets/clock.dart';
 import '../../widgets/csv_preview.dart';
 import '../../widgets/details_expander.dart';
 import '../../widgets/fallback_button.dart' show showProxSheet;
-import '../../widgets/prox_fields.dart';
 import '../../widgets/log_drawer.dart';
 import '../../widgets/partial_list.dart';
 import '../../widgets/prox_buttons.dart';
@@ -157,9 +156,9 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ProxTextField(
+          TextField(
             controller: _renameCtrl,
-            labelText: 'Course name',
+            decoration: const InputDecoration(labelText: 'Course name'),
             autofocus: true,
             onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
           ),

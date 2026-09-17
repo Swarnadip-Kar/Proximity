@@ -957,7 +957,7 @@ abstract final class ProxIcons {
 // ---------------------------------------------------------------------------
 
 /// Glassmorphism surface spec — blur sigma, tint color, tint opacity, border.
-/// Used by `ProxGlassPane` for bottom sheets, overlays, and the system log.
+/// Used for frosted surfaces (bottom sheets, overlays, system log).
 @immutable
 class ProxGlassSpec {
   final double blurSigma;

@@ -26,8 +26,8 @@ library;
 import 'package:flutter/material.dart';
 
 import '../../core/sync/store/record_helpers.dart';
+import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
-import '../../widgets/animated.dart';
 import '../../widgets/clock.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_cards.dart';
@@ -142,7 +142,16 @@ class LiveStatusStrip extends StatelessWidget {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerRight,
-              child: PresentTicker(present: present, total: denom),
+              child: ProxSwitcher(
+                child: Text(
+                    '$present/$denom present',
+                    key: ValueKey<int>(present),
+                    style: proxTabular(context,
+                        Theme.of(context).textTheme.headlineSmall),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    softWrap: false),
+              ),
             ),
           ),
         ),

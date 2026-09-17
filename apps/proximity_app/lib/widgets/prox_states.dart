@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -366,27 +367,8 @@ class _ProxEmptyStateState extends State<ProxEmptyState> {
     );
   }
 
-  static double _cos(double x) => x.isNaN
-      ? 0
-      : x >= 0
-          ? _cosImpl(x)
-          : _cosImpl(-x);
-  static double _sin(double x) => x.isNaN ? 0 : _cosImpl(x - 1.5708);
-  static double _cosImpl(double x) {
-    // Inline cos to keep the file self-contained (no dart:math import).
-    return _dartMathCos(x);
-  }
-
-  static double _dartMathCos(double x) {
-    // Use a direct calculation rather than importing math to avoid
-    // potential conflicts. This is called at 50ms intervals for 3 dots.
-    final v = x % 6.283185307;
-    // Taylor series approximation, good enough for visual orbits.
-    final x2 = v * v;
-    final x4 = x2 * x2;
-    final x6 = x4 * x2;
-    return 1 - x2 / 2 + x4 / 24 - x6 / 720;
-  }
+  static double _cos(double x) => x.isNaN ? 0 : math.cos(x);
+  static double _sin(double x) => x.isNaN ? 0 : math.sin(x);
 }
 
 /// Full-page error state: error icon disc + headline + message + optional

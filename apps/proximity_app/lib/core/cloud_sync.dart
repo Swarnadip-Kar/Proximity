@@ -37,4 +37,13 @@
 // barrel — same public class/method names, so callers don't change.
 library;
 
-export 'sync/sync.dart';
+export 'sync/claim.dart';
+export 'sync/cloud_api.dart';
+export 'sync/directory.dart';
+export 'sync/engine.dart';
+export 'sync/fake_sync.dart';
+export 'sync/firestore_sync.dart';
+export 'sync/org.dart';
+export 'sync/queue.dart';
+export 'sync/roles.dart';
+export 'sync/sessions.dart';

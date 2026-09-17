@@ -50,7 +50,6 @@ import '../screens/student_home.dart';
 import '../widgets/clock.dart';
 import '../widgets/prox_buttons.dart';
 import '../widgets/prox_cards.dart';
-import '../widgets/prox_glass.dart';
 import '../widgets/student_card.dart' show ProxAvatar;
 import '../widgets/web_banner.dart';
 import 'take_attendance.dart';

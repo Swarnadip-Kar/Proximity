@@ -9,7 +9,6 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/mark/browse_banner.dart';
 import 'package:proximity_app/widgets/prox_buttons.dart';
-import 'package:proximity_app/widgets/prox_fields.dart';
 import 'package:proximity_app/widgets/prox_states.dart';
 import 'package:proximity_app/widgets/student_card.dart';
 import 'package:proximity_app/widgets/verdict_badge.dart';
@@ -38,7 +37,7 @@ Widget _gallery() {
         label: Text('Danger'),
         onPressed: null,
       ),
-      ProxTextField(controller: nameCtrl, labelText: 'Course name'),
+      TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Course name')),
       const ProxAvatar(name: 'Ada Lovelace'),
       const VerdictBadge(status: ProxStatus.marked),
       const VerdictBadge(status: ProxStatus.late),
