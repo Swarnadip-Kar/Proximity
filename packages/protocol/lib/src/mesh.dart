@@ -22,7 +22,7 @@ import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 
 import 'bytes.dart';
 import 'constants.dart';
-import 'crypto/primitives.dart';
+import 'crypto.dart';
 
 /// LRU seen-set with 5-min expiry. Key: sender+ts+type+digest.
 ///

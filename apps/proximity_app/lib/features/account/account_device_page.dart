@@ -49,7 +49,7 @@ class AccountDevicePage extends ConsumerWidget {
             // card with the professor Device page.
             const DeviceVerificationCard(),
             const SizedBox(height: ProxSpacing.xl),
-            const DeviceRulesCompact(),
+            _DeviceDaysWhy(),
             const SizedBox(height: ProxSpacing.xl),
           ],
         ],
@@ -87,4 +87,24 @@ class AccountProfDevicePage extends ConsumerWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Days + why (Device page): thin wrapper over the shared [DeviceRulesCompact]
+// source (see `device_rules.dart` — same days, same whys, same
+// `device-days-line` / `device-why-*` keys; copy owned once there).
+//
+// [kStudentLostPhoneStale] (never invented) with the plain-language fraud
+// reason. Exact per-account dates live where the gate data is already
+// available (enrollment sub-page shared block + the verdict rows above
+// via `studentClaimMessage` verbatim).
+// ---------------------------------------------------------------------------
+
+/// Days + why note, inline in the Device page (thin wrapper over the shared
+/// [DeviceRulesCompact] — same keys, same copy).
+class _DeviceDaysWhy extends StatelessWidget {
+  const _DeviceDaysWhy();
+
+  @override
+  Widget build(BuildContext context) => const DeviceRulesCompact();
 }

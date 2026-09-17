@@ -59,7 +59,7 @@ class AccountEnrollmentPage extends ConsumerWidget {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                return DeviceRules(gate: snap.data);
+                return _EnrollmentDeviceRules(gate: snap.data);
               },
             ),
             const SizedBox(height: ProxSpacing.xl),
@@ -68,4 +68,23 @@ class AccountEnrollmentPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Device/binding rules (enrollment sub-page): thin wrapper over the shared
+// [DeviceRules] source (see `device_rules.dart` — one definition for the
+// 30/60-day copy, same strings, same keys). Dates derive from the
+// already-available gate ([StudentGate.verdict.retryAfter] + binding
+// lastSeen) via [displayDateOf] (DD-MM-YYYY, display only); refusal copy is
+// [studentClaimMessage] verbatim.
+// ---------------------------------------------------------------------------
+
+/// Device/binding rules, inline in the Enrollment page (thin wrapper over
+/// the shared [DeviceRules] — same keys, same copy).
+class _EnrollmentDeviceRules extends StatelessWidget {
+  final StudentGate? gate;
+  const _EnrollmentDeviceRules({this.gate});
+
+  @override
+  Widget build(BuildContext context) => DeviceRules(gate: gate);
 }

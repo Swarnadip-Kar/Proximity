@@ -78,6 +78,9 @@ dependencies:
   # flutter_secure_storage ^11 (win32 ^6). ShareParams API unchanged 12->13.
   share_plus: ^13.3.0
   wakelock_plus: ^1.5.2
+  # Phase 1 visual identity: real font pairing (pure Dart, no native
+  # runtime — safe on all build targets incl. web).
+  google_fonts: ^6.2.1
   # Web records build only (browser download for CSV exports).
   web: ^1.0.0
   connectivity_plus: ^7.3.1

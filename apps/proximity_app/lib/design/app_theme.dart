@@ -1,6 +1,6 @@
 // Proximity app theme — visual identity in one place.
 //
-// Font pairing (bundled families, no fetch — safe on every build target):
+// Font pairing (google_fonts, pure Dart — safe on every build target):
 //   display → "Space Grotesk" (headings, hero numbers, verdict titles)
 //   body    → "Inter" (everything else: labels, captions, lists)
 // Shape: 16dp spec cards (14dp legacy inputs only), 12dp buttons, 999 pills.
@@ -14,6 +14,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'tokens.dart';
 
@@ -44,20 +45,20 @@ ThemeData proxDarkTheme() {
 }
 
 ThemeData _build(ColorScheme scheme, Brightness brightness) {
-  // Offline-first: fonts are bundled (pubspec `fonts:`) and resolved by
-  // family name — no runtime fetch, the live flow never waits on the
-  // network. (Formerly via google_fonts with fetching off, which did
-  // exactly this family swap; TextTheme.apply is the same one-liner.)
-  // Font pairing on a SCHEME-DERIVED base: building from a default light
-  // text theme would bake near-black text into every style — which renders
-  // invisible on dark surfaces (caught on Android dark mode). Deriving
-  // from the scheme keeps font families while preserving
-  // brightness-correct colors.
+  // Offline-first: fonts are bundled (pubspec `fonts:`) and runtime
+  // fetching is OFF — the live flow must never wait on fonts.gstatic.com.
+  // google_fonts then resolves the pubspec families above, same API.
+  GoogleFonts.config.allowRuntimeFetching = false;
+  // Font pairing on a SCHEME-DERIVED base: GoogleFonts.textTheme() with no
+  // argument falls back to the *light* text theme, baking near-black text
+  // into every style — which renders invisible on dark surfaces (caught on
+  // Android dark mode). Deriving from the scheme keeps font families while
+  // preserving brightness-correct colors.
   final base =
       ThemeData(colorScheme: scheme, brightness: brightness, useMaterial3: true)
           .textTheme;
-  final display = base.apply(fontFamily: 'SpaceGrotesk');
-  final body = base.apply(fontFamily: 'Inter');
+  final display = GoogleFonts.spaceGroteskTextTheme(base);
+  final body = GoogleFonts.interTextTheme(base);
   final text = body.copyWith(
     displayLarge: display.displayLarge?.copyWith(fontWeight: FontWeight.w700),
     displayMedium: display.displayMedium?.copyWith(fontWeight: FontWeight.w700),
