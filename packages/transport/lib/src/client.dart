@@ -395,6 +395,23 @@ class ProxClient {
       final sigPrev = Uint8List.fromList(hexDecode(sigPrevHex));
       if (verifies(jPrev, sigPrev)) return descFor(jPrev, sigPrev);
     }
+    // Relay-delay fallback (500-seat hall): the radio token is two ticks
+    // behind — relay propagation + scan restart + ADV bus contention can
+    // push the heard challenge 20s behind the professor's live rotation.
+    final jPrev2 = body['j_prev2'] as int?;
+    final sigPrev2Hex = body['sigP_prev2'] as String?;
+    if (jPrev2 != null && sigPrev2Hex != null && jPrev2 >= 0) {
+      final sigPrev2 = Uint8List.fromList(hexDecode(sigPrev2Hex));
+      if (verifies(jPrev2, sigPrev2)) return descFor(jPrev2, sigPrev2);
+    }
+    // 3-hop mesh relay fallback (auditorium back rows): the radio token is
+    // three ticks behind (30s) due to multiple intermediate relay hops.
+    final jPrev3 = body['j_prev3'] as int?;
+    final sigPrev3Hex = body['sigP_prev3'] as String?;
+    if (jPrev3 != null && sigPrev3Hex != null && jPrev3 >= 0) {
+      final sigPrev3 = Uint8List.fromList(hexDecode(sigPrev3Hex));
+      if (verifies(jPrev3, sigPrev3)) return descFor(jPrev3, sigPrev3);
+    }
     throw StateError('prof signature mismatch (stale token or fake professor?)');
   }
 

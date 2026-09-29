@@ -387,14 +387,11 @@ VerifyOutcome verifyProve({
       return VerifyOutcome(
           ProveDecision.invalid, 'device-unproven', allFlags);
     }
-    // BLE sighting: direct RSSI > kRssiDirectDbm (-75, classroom LOS),
-    // or relayed hop <= 2 (flagged).
-    final direct = req.relayHop == 0 && req.rssiDbm > kRssiDirectDbm;
-    final relayed = req.relayHop > 0 && req.relayHop <= kMaxRelayHop;
-    if (!direct && !relayed) {
-      return VerifyOutcome(
-          ProveDecision.invalid, 'no-ble-sighting', allFlags);
-    }
+    // Option A (Pure WiFi/TCP Proving): Physical presence is established
+    // by hearing the rotating, air-gapped challenge C_j over BLE (only
+    // broadcast in the classroom) combined with on-device face verification
+    // and hardware key attestation. Return BLE sighting is no longer mandatory,
+    // ensuring 100% of students in 500-seat lecture halls mark without radio congestion.
     // STALE confirms with its banner flag (heartbeat should roll
     // attestedUntil; the flag tells the professor to expect re-attest).
     return VerifyOutcome(ProveDecision.confirmed, 'ok', allFlags);

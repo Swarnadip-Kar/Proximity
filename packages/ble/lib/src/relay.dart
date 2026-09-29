@@ -77,12 +77,16 @@ extension ProxBleRelay on ProxBleEngine {
                 host: s.ipHost,
                 port: s.ipPort,
                 relayed: true,
-                denseHint: s.denseHint)!
+                denseHint: s.denseHint)
             : packAir(
                 type: s.type,
                 token8: s.token8,
                 host: s.ipHost,
-                port: s.ipPort)!;
+                port: s.ipPort);
+        if (mfg == null) {
+          tokenRelayGuard.remove(key);
+          return;
+        }
         aired = await _advGuard(
             () => radio.startAirPacket(kAirSvc, mfg), 'relay ${s.label}');
       }

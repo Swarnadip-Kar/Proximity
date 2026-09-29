@@ -468,22 +468,23 @@ ver(1) | type(1) | TTL(1) | ts(4) | flags(1) | sender8 | payload | Ed25519-64
 
 Signatures exclude the TTL byte so relays can decrement it without invalidating the signature. Payload length is fixed and tiny (no fragmentation needed in the common case; 469-byte fragment path retained for GATT fallback).
 
-### 5.3 Verification (professor, per POST + per BLE sighting)
+### 5.3 Verification (professor, per POST — Option A Pure WiFi/TCP Proving)
 
 ```
 1. window open? 0 <= now - t_j < 17 s (10 s rotation + 7 s drift, one-sided:
    future sub-epochs never verify — no pre-play), (windowID, ID, j) unseen
    -> else late/invalid
-2. C_j == expected for (windowID, j)          // proves live radio hear
-3. UUID_S == BaseS64 || HMAC(C_j, ID)[0:8]    // proves radio response heard
-4. Verify(PK_s presented device key, Sig_s)   // TOFU per class, no roster
-5. faceScore >= threshold (holder freshness enforced on-device by the
+2. C_j == expected for (windowID, j)          // proves live BLE radio presence in hall
+3. Verify(PK_s presented device key, Sig_s)   // TOFU per class, no roster
+4. faceScore >= threshold (holder freshness enforced on-device by the
    SK-use gate; server faceValidAt is POST arrival — defense in depth)
-6. BLE sighting exists: direct RSSI > -75 dBm (classroom LOS; was -70, a ~3m small-room value — field report 2026-09-16), or relayed hop <= 2 (flagged);
-   crypto-valid but not-yet-seen waits the sighting grace, then verdicts late
-7. Mark ID present for W (late verdicts mark flagged-late — late-only rounds
-   persist), update live counts, return signed ACK binding the DECISION INSTANT
+5. Hardware device key signature (dSig) & attestation valid (P-256 StrongBox/TEE/SE)
+6. Mark ID present for W (late verdicts mark flagged-late — late-only rounds
+   persist), update live counts, return signed ACK binding the DECISION INSTANT in < 2ms
 ```
+
+> [!NOTE]
+> **Option A Architecture:** In 500-seat halls, phone transmitters in rear rows physically cannot reach the podium via BLE. Requiring reverse BLE return sightings caused `no-ble-sighting` outages and radio congestion. Because $C_j$ rotates every 10s and is emitted *exclusively* over BLE radio in that room (never to cloud/WiFi), possessing $C_j$ + live face match + hardware attestation mathematically proves physical presence. Students only listen; return BLE sightings are no longer mandatory.
 
 Rotation tolerance: `/window` ships `sigP_prev` alongside `sigP`, so a fetch
 landing just after the 10 s tick still verifies the heard token (either `j`

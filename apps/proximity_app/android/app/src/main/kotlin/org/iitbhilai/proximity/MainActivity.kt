@@ -144,6 +144,24 @@ class MainActivity : FlutterFragmentActivity() {
         } ?: emptyArray()
     }
 
+    override fun configureFlutterEngine(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        io.flutter.plugin.common.MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "org.iitbhilai.proximity/hardware_id"
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "getAndroidId") {
+                val id = android.provider.Settings.Secure.getString(
+                    contentResolver,
+                    android.provider.Settings.Secure.ANDROID_ID
+                )
+                result.success(id ?: "")
+            } else {
+                result.notImplemented()
+            }
+        }
+    }
+
     private fun ByteArray.toHex(): String {
         val chars = CharArray(size * 2)
         val hex = "0123456789ABCDEF"

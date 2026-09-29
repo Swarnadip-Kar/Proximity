@@ -515,12 +515,16 @@ class ProxBleEngine {
             token8: cj,
             host: _serverHost,
             port: _serverPort,
-            denseHint: denseHintTx)!
+            denseHint: denseHintTx)
         : packAir(
             type: kAirTypeChallenge,
             token8: cj,
             host: _serverHost,
-            port: _serverPort)!;
+            port: _serverPort);
+    if (mfg == null) {
+      BleLog.log('BLE', 'ADV challenge j=$j SKIPPED (packAir failed)');
+      return;
+    }
     _ownAdvertising = _airKey(kAirTypeChallenge, cj);
     try {
       await radio.stopAdvertising();
@@ -587,7 +591,11 @@ class ProxBleEngine {
         type: kAirTypeResponse,
         token8: rid,
         host: _heardHost,
-        port: _heardPort)!;
+        port: _heardPort);
+    if (mfg == null) {
+      BleLog.log('BLE', 'ADV response SKIPPED (packAir failed)');
+      return;
+    }
     _ownAdvertising = _airKey(kAirTypeResponse, rid);
     try {
       await _advExclusive(() async {

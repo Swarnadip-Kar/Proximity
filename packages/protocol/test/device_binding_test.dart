@@ -669,7 +669,8 @@ void main() {
             singleUseOk: true,
           );
       expect(v(hop: 0, rssi: -55).decision, ProveDecision.confirmed);
-      expect(v(hop: 99, rssi: -127).reason, 'no-ble-sighting');
+      // Option A: hearing rotating C_j proves presence; absent return BLE sighting confirms.
+      expect(v(hop: 99, rssi: -127).decision, ProveDecision.confirmed);
     });
   });
 

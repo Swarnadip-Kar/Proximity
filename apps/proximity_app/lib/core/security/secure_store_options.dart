@@ -68,11 +68,32 @@ class SecureStoreOptions {
     migrateWithBackup: true,
   );
 
+  /// Android fallback for devices WITHOUT Class-3 strong biometrics
+  /// (PIN/pattern/password-only phones). Honest tier: the enrollment
+  /// stamps [AttestationLevel.standard] instead of `.full`, and the
+  /// professor sees a banner. Never silent — a credential-only device
+  /// cannot claim biometric-tier security.
+  static const aOptsFallback = AndroidOptions.biometric(
+    enforceBiometrics: true,
+    biometricType: AndroidBiometricType.biometricOrDeviceCredential,
+    biometricPromptTitle: 'Authenticate to access Proximity',
+    storageNamespace: 'prox_enroll',
+    migrateWithBackup: true,
+  );
+
   /// iOS: Keychain, this-device-only, current-biometric-set bound, no sync.
   static const iOpts = IOSOptions(
     synchronizable: false,
     accessibility: KeychainAccessibility.first_unlock_this_device,
     accessControlFlags: [AccessControlFlag.biometryCurrentSet],
+  );
+
+  /// iOS fallback for devices WITHOUT Face ID / Touch ID (passcode-only
+  /// iPods, misconfigured phones). No biometryCurrentSet → uses passcode.
+  static const iOptsFallback = IOSOptions(
+    synchronizable: false,
+    accessibility: KeychainAccessibility.first_unlock_this_device,
+    // No biometric flag → iOS falls back to device passcode.
   );
 
   /// Prebuilt hardened instance for callers that already gated on
@@ -103,4 +124,36 @@ class SecureStoreOptions {
     requireSupportedPlatform();
     return storage;
   }
+
+  /// Whether [usedCredentialFallback] was set on the last
+  /// [newStorageWithFallback] call. Callers (enrollment, attestation)
+  /// check this to stamp the appropriate tier — never silent.
+  static bool usedCredentialFallback = false;
+
+  /// Capability-gated storage: tries strong-biometric first, falls back
+  /// to device-credential (PIN/pattern/password) when no Class-3
+  /// biometric is enrolled. Returns the appropriate storage instance and
+  /// sets [usedCredentialFallback] so callers can stamp the tier honestly.
+  ///
+  /// [hasBiometrics]: injectable check for testability. Production passes
+  /// a `local_auth` or platform-channel probe; null uses the strong-first
+  /// default (no fallback — existing behavior preserved for callers that
+  /// don't opt in).
+  static FlutterSecureStorage newStorageWithFallback({
+    bool? hasBiometrics,
+  }) {
+    requireSupportedPlatform();
+    // When biometric availability is unknown (null), assume strong first
+    // (same as existing behavior). Only explicit false triggers fallback.
+    if (hasBiometrics == false) {
+      usedCredentialFallback = true;
+      return const FlutterSecureStorage(
+        aOptions: aOptsFallback,
+        iOptions: iOptsFallback,
+      );
+    }
+    usedCredentialFallback = false;
+    return storage;
+  }
 }
+

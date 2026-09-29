@@ -99,7 +99,7 @@ void main() {
       expect(out.decision, ProveDecision.confirmed);
     });
 
-    test('relayed hop<=2 confirms (flagged); hop>2 rejects', () async {
+    test('Option A: valid proof with rotating challenge confirms regardless of return radio sighting', () async {
       final (sess, wid, _, stu) = await setup();
       final sw = randBytes(32);
       const j = 0;
@@ -121,15 +121,13 @@ void main() {
         );
       }
 
+      // Under Option A, hearing the rotating challenge C_j over BLE establishes
+      // physical presence; absent or high-hop return BLE radio sighting confirms.
       expect(v(1, -75).decision, ProveDecision.confirmed);
       expect(v(2, -78).decision, ProveDecision.confirmed);
-      expect(v(3, -70).decision, ProveDecision.invalid);
-      expect(v(0, -74).decision, ProveDecision.confirmed,
-          reason: 'classroom LOS at threshold passes');
-      expect(v(0, -75).decision, ProveDecision.invalid,
-          reason: 'direct needs RSSI > -75');
-      expect(v(0, -85).decision, ProveDecision.invalid,
-          reason: 'through-wall still rejected');
+      expect(v(3, -70).decision, ProveDecision.confirmed);
+      expect(v(0, -74).decision, ProveDecision.confirmed);
+      expect(v(99, -127).decision, ProveDecision.confirmed);
     });
 
     test('rate limits: /prove 40/10s, /window 5/10s', () {

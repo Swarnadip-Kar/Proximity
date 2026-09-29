@@ -22,10 +22,24 @@
 library;
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+const _hwChannel = MethodChannel('org.iitbhilai.proximity/hardware_id');
 
 /// Stable phone id across reinstalls ('' when unavailable — desktop, web,
 // VM tests, or any plugin failure). Trimmed, never null.
 Future<String> getStableHardwareDeviceId() async {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      final String? aid = await _hwChannel.invokeMethod<String>('getAndroidId');
+      if (aid != null && aid.trim().isNotEmpty) {
+        return aid.trim();
+      }
+    } catch (_) {
+      // Method channel failed — fall back to device_info_plus below.
+    }
+  }
   try {
     final info = DeviceInfoPlugin();
     try {

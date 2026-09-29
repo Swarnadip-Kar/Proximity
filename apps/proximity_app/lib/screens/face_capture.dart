@@ -240,7 +240,8 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
   ConsumerState<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
 }
 
-class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
+class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
+    with WidgetsBindingObserver {
   CameraController? _ctl;
   String _status = 'Starting camera…';
   bool _busy = false;
@@ -253,8 +254,8 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
   // [_captureAll] owns the manual/auto mutual exclusion once firing).
   bool _autoFired = false;
   /// Dispose latch: set synchronously in dispose; every await in
-  /// [_start]/[_captureAll] re-checks it alongside [mounted] so no async
-  /// work (takePicture, pop, setState) runs after dispose.
+  // [_start]/[_captureAll] re-checks it alongside [mounted] so no async
+  // work (takePicture, pop, setState) runs after dispose.
   bool _cancelled = false;
 
   bool get _done => _cancelled || !mounted;
@@ -262,12 +263,29 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (!canUseFace()) return; // build() shows the blocked card.
     unawaited(_start());
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final ctl = _ctl;
+    if (ctl == null || !ctl.value.isInitialized) return;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _ctl?.dispose();
+      _ctl = null;
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_cancelled && mounted) {
+        unawaited(_start());
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cancelled = true;
     unawaited(_ctl?.dispose());
     _ctl = null;

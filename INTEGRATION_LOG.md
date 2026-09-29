@@ -3162,3 +3162,31 @@ prompts on every prove (screen before face scan). Five reviewable commits.
 Verify: protocol 224/224 incl. updated -75 boundary tests; transport full
 suite green; ble engine green; app roster/secure-store/face suites green;
 `flutter analyze` clean on touched files.
+
+## Option A Pure WiFi/TCP Proving + Multi-Tick Professor Signatures + Hardware & Biometric Stability (2026-09-30)
+
+Scope: Large lecture hall (100–500 students) scalability overhaul, resolving the contradiction between forward mesh relay and strictly local BLE responses, eliminating BLE broadcast storms and proving stalls, multi-tick professor signatures to tolerate network/clock jitter, idempotent duplicate confirmations, Android native hardware ID, and biometric fallback.
+
+- Option A Pure WiFi/TCP Proving (protocol, transport, ble, app):
+  - Root cause resolved: In 500-seat lecture halls, the professor's challenge C_j reaches back rows via intermediate student relays (hop 0 -> 1 -> 2 -> 3). However, student reverse BLE response beacons were strictly local and never relayed (to avoid broadcast storms). Consequently, back rows (10–30m away) could never reach the professor's BLE receiver directly, causing systematic `no-ble-sighting` failures. Furthermore, 100–500 phones simultaneously advertising BLE response bursts saturated the 2.4 GHz channel, collided with WiFi on shared antennas, and caused proving hangs due to 6s server polling waits.
+  - Proving model: Physical classroom presence is cryptographically proven by possession of the 10-second rotating air-gapped challenge C_j (emitted exclusively over 2.4 GHz BLE radio in the classroom) + live on-device face scan (>= 0.85) + hardware device key attestation (pkD, dSig) + TLS channel binding.
+  - Dropped mandatory return BLE sighting requirement in `verifyProve` (`protocol/verify.dart`).
+  - Removed student response advertising bursts (`advertiseStudentResponse`) from student driver; students only listen to BLE and mesh relay professor challenges C_j and IP hints continuously.
+  - Removed server-side `_awaitSighting` polling loop and `no-ble-sighting` wait from `transport/server.dart`. Proving is fast, deterministic pure HTTP/TLS POST (500 proves process in 261ms).
+  - Dead code and tests removed across protocol, transport, and app driver.
+
+- Multi-Tick Professor Signatures & Idempotent Confirmation:
+  - In `/window`, professor pre-signs multiple contiguous ticks (j, j-1, j-2, j-3) to tolerate clock drift and network jitter between token fetching and proving.
+  - Added idempotent duplicate confirmation in `/prove` for tickets that have already been marked in the current round.
+
+- Native Hardware ID & Biometric Keystore Stability:
+  - Biometric fallback: Configured `BiometricPrompt` fallback to `biometricOrDeviceCredential` in `secure_store_options.dart` and `secure_store.dart` for PIN/Pattern devices or devices without fingerprint hardware. Added key re-generation cleanup on invalidation in `hw_device_key.dart`.
+  - Android ID: Implemented native `Settings.Secure.ANDROID_ID` via MethodChannel in `MainActivity.kt` and `device_hardware_id.dart` for consistent, persistent hardware identification across reboots and app launches.
+
+- UI & Camera Lifecycle Fixes:
+  - Added `WidgetsBindingObserver` in `face_capture.dart` to cleanly unmount/re-initialize camera on app background/pause, preventing surface texture crashes.
+  - Fixed round 1 reset in `take_attendance.dart` where `live = false` triggered premature navigation.
+  - Added null-safety guards for `packAir` and `packAirV3` in `engine.dart` and `relay.dart`.
+
+Verify: protocol tests 224/224 pass; transport tests 68/68 pass; student driver tests 23/23 pass; `dart analyze` and `flutter analyze` clean with 0 issues.
+

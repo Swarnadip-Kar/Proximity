@@ -1055,6 +1055,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         _lastSavedSig = '';
         _bankedElapsed = null;
         elapsed = Duration.zero;
+        // Defense-in-depth: the `live` guard at entry (line 1006)
+        // rejects `live == true`, but a racing stop-window that hasn't
+        // completed setState yet could leave it stale. Explicit false
+        // ensures the dock shows Start (windowNo==0 + !live + hosting).
+        live = false;
       });
       bumpLiveHistoryTick();
       return;

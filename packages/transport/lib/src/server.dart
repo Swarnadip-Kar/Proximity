@@ -237,6 +237,11 @@ class ProxServer {
   /// between WiFi latency and scan intervals. 6s covers the student 3x
   /// response burst (~1s) plus one duty-cycled scan window on balanced
   /// Android stacks; uniform on all platforms. Tests shrink it.
+  /// Sighting grace: how long /prove holds the connection waiting for
+  /// the BLE response to land on the professor's scanner. 6s covers
+  /// the burst duration + relay overhead in a 100+ student hall
+  /// (ADV bus contention 1-3s, fire-and-forget response burst ~1s)
+  /// while staying safely below the client's 10s HTTP timeout.
   Duration sightingGrace = const Duration(seconds: 6);
 
   /// Test-only chain-gate override (HW transport tests use fake-DER chains
@@ -300,30 +305,6 @@ class ProxServer {
   WindowParams? get window => _window;
   String get bearer => _bearer;
 
-  /// Polls the radio lookup until the expected response sighting lands or
-  /// [sightingGrace] elapses. The lookup never throws out (a radio-layer
-  /// hiccup mid-wait must not 500 the POST).
-  Future<RadioSighting?> _awaitSighting({
-    required Uint8List peerW,
-    required String expectedAirKey,
-    required String expectedUuid,
-  }) async {
-    final until = DateTime.now().add(sightingGrace);
-    while (true) {
-      RadioSighting? s;
-      try {
-        s = sightings(
-            peerW: peerW,
-            expectedAirKey: expectedAirKey,
-            expectedUuid: expectedUuid);
-      } catch (_) {
-        s = null;
-      }
-      if (s != null) return s;
-      if (DateTime.now().isAfter(until)) return null;
-      await Future.delayed(const Duration(milliseconds: 250));
-    }
-  }
 
   /// Opens a window: fresh secrets + fresh host bearer. Students see
   /// `windowOpen: true` on their next beacon and begin proving. The window
@@ -634,6 +615,11 @@ class ProxServer {
     // is already C_{j} but the radio copy is C_{j-1}. Ship the previous
     // signature too so the client can verify either token instead of
     // failing a live round as "fake professor".
+    // Ship j-1 AND j-2 signatures: in a 500-seat hall, relay propagation
+    // can delay challenges by 2+ rotation ticks (20s). Without j-2 the
+    // client throws 'prof signature mismatch' on a perfectly valid but
+    // relay-delayed token. Three ticks (30s) covers the realistic worst
+    // case (relay jitter + scan restart + ADV bus contention).
     Map<String, Object>? prev;
     if (j >= 1) {
       final cjPrev = w.challengeFor(j - 1);
@@ -645,6 +631,34 @@ class ProxServer {
           windowId: w.windowId,
           j: j - 1,
           challenge: cjPrev,
+        )),
+      };
+    }
+    Map<String, Object>? prev2;
+    if (j >= 2) {
+      final cjPrev2 = w.challengeFor(j - 2);
+      prev2 = {
+        'j_prev2': j - 2,
+        'sigP_prev2': hexEncode(ProxCrypto.signProfChallenge(
+          profSk: profSk,
+          sessionId: w.sessionId,
+          windowId: w.windowId,
+          j: j - 2,
+          challenge: cjPrev2,
+        )),
+      };
+    }
+    Map<String, Object>? prev3;
+    if (j >= 3) {
+      final cjPrev3 = w.challengeFor(j - 3);
+      prev3 = {
+        'j_prev3': j - 3,
+        'sigP_prev3': hexEncode(ProxCrypto.signProfChallenge(
+          profSk: profSk,
+          sessionId: w.sessionId,
+          windowId: w.windowId,
+          j: j - 3,
+          challenge: cjPrev3,
         )),
       };
     }
@@ -665,6 +679,8 @@ class ProxServer {
       if (profPhoto.isNotEmpty) 'profPhoto': profPhoto,
       if (profName.isNotEmpty) 'profName': profName,
       if (prev != null) ...prev,
+      if (prev2 != null) ...prev2,
+      if (prev3 != null) ...prev3,
     });
   }
 
@@ -991,33 +1007,13 @@ class ProxServer {
       // The sighting that actually verified (drives the verify-rule log).
       RadioSighting? verifiedSight = sight;
 
-      // Sighting grace: crypto, freshness, single-use and face all passed
-      // but the scan hasn't delivered the response yet (the POST beats the
-      // scan — normal). The answer went on air BEFORE the POST, so wait
-      // for the radio instead of failing a present student. A token that
-      // ages past freshness during the wait honestly verdicts `late`.
-      if (outcome.decision == ProveDecision.invalid &&
-          outcome.reason == 'no-ble-sighting' &&
-          peerW.length == 8) {
-        final lateSight = await _awaitSighting(
-            peerW: peerW,
-            expectedAirKey: expectedAirKey,
-            expectedUuid: expectedUuid);
-        if (lateSight != null) {
-          outcome = runVerify(lateSight, DateTime.now().toUtc(),
-              singleUse: true); // claimed by the first verify above
-          verifiedSight = lateSight;
-        }
-      }
 
-      // Duplicate-POST idempotency: the client retries a POST up to 3x
-      // when the ACK is lost on flaky WiFi. The retry carries the identical
-      // body, so a bare (ID,j) replay is EXPECTED here — and the mark
-      // already exists from the first processing. Confirm the duplicate
-      // (tally unchanged) instead of failing a marked student as invalid.
-      // A replay with no prior mark is still a genuine replay → invalid.
-      if (outcome.decision == ProveDecision.invalid &&
-          outcome.reason == 'replay-id-j' &&
+      // Duplicate-POST / retry idempotency: the client retries a POST up to 3x
+      // when the ACK is lost on flaky WiFi, or retries on the next rotation (j+1)
+      // after a timeout. If the mark already exists in the tally for this window,
+      // confirm the proof and issue a signed ACK (tally unchanged) so the student
+      // phone transitions to 'Marked' instead of getting stuck in proving retries.
+      if (outcome.decision != ProveDecision.confirmed &&
           tally.isMarked(id, _windowNo)) {
         outcome = const VerifyOutcome(
             ProveDecision.confirmed, 'duplicate-confirmed');

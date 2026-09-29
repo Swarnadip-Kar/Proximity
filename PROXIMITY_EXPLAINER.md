@@ -62,7 +62,7 @@ IN CLASS (offline, classroom WiFi + Bluetooth)
       → face check (~1 sec)
       → sign proof with phone-locked key
       → send over WiFi
-    Professor verifies (fresh? signed? face ok? really seen over radio?)
+    Professor verifies (fresh C_j? hardware key signed? face ok? channel-bound?)
       → returns signed receipt → student sees "✓ Marked"
 
   Professor: Stop → grace period → End attendance → record saved on device

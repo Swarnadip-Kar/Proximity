@@ -766,19 +766,16 @@ void main() {
     }
   });
 
-  test('unheard response proves on the next rotation and marks',
+  test('Option A: unheard return response proves and marks immediately on first hearing',
       timeout: const Timeout(Duration(minutes: 2)), () async {
-    // The professor's radio misses the first answer (no-ble-sighting):
-    // the student re-announces + re-proves on the next live token
-    // instead of failing.
-    // Fresh FULL proof (HW test device + checkFace ticket + liveness).
+    // Under Option A (Pure WiFi/TCP Proving), physical presence is proven by hearing
+    // the rotating challenge C_j over BLE radio. Return response sightings are not required,
+    // so students mark immediately without waiting or retrying across rotations.
     final prof = ProxCrypto.generateEdKeypair();
     final seed = randBytes(32);
     final hw = await freshHwDevice(email: _email, seedBytes: seed, salt: 74);
     final store = await hwEnrolledStore(email: _email, hw: hw);
     final engine = ProxBleEngine(radio: FakeBleRadio());
-    // First answer unheard, re-announced answers heard.
-    var lookups = 0;
     final server = ProxServer(
       classLabel: 't',
       profSk: prof.privateKey,
@@ -787,10 +784,7 @@ void main() {
               {required peerW,
               required expectedAirKey,
               required expectedUuid}) =>
-          (++lookups <= 1)
-              ? null
-              : RealHostDriver.matchResponse(
-                  engine, expectedAirKey, expectedUuid),
+          null, // Return BLE response is completely unheard (e.g. back row of 500-seat hall)
       pinnedRoots: hw.pins,
       // ignore: cascade_invocations
     )..testChainGate = testChainGate;
@@ -806,9 +800,7 @@ void main() {
         ),
         1,
       );
-      // Challenge for the CURRENT sub-epoch, computed lazily at inject
-      // time so the token always matches j_now.
-      void injectCurrent({bool withResponse = false}) {
+      void injectCurrent() {
         final w = server.window!;
         final tok =
             w.challengeFor(w.jForTime(DateTime.now().toUtc()).clamp(0, 1 << 30));
@@ -820,28 +812,9 @@ void main() {
           rssiDbm: -55,
           at: DateTime.now().toUtc(),
         ));
-        if (withResponse) {
-          // The professor's radio hears the re-announced answer.
-          engine.handleSighting(BleSighting(
-            type: kAirTypeResponse,
-            token8: ProxCrypto.responseToken(tok, _email),
-            ipHost: '127.0.0.1',
-            ipPort: server.port,
-            rssiDbm: -55,
-            at: DateTime.now().toUtc(),
-          ));
-        }
       }
 
       Future.delayed(const Duration(milliseconds: 300), injectCurrent);
-      // Next rotation (j advanced): new token, answer heard this time.
-      // Rotations are 10s (kSubEpochSeconds — was 5s when this test was
-      // written): the re-announce must land PAST the boundary, or the
-      // retry keeps waiting for a token different from the tried one
-      // (same-token echoes never resolve) and the test stalls to its
-      // timeout. ~12s keeps the whole test (~15s) far under the 2min cap.
-      Future.delayed(const Duration(seconds: 12),
-          () => injectCurrent(withResponse: true));
       final d = RealStudentDriver(
         store: store,
         verifier: mockVerifier(),

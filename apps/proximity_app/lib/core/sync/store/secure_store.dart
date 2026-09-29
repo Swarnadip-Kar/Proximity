@@ -43,12 +43,30 @@ class SecureDeviceStore implements DeviceStore {
   // trigger migrate/reset wipes of each other's data.
   // Backup exclusion lives in AndroidManifest (`allowBackup=false`,
   // `fullBackupContent=false`) + res/xml/data_extraction_rules.xml.
-  SecureDeviceStore({FlutterSecureStorage? secure})
-      : _secure = secure ??
+  SecureDeviceStore({
+    FlutterSecureStorage? secure,
+    FlutterSecureStorage? fallbackSecure,
+  })  : _secure = secure ??
             const FlutterSecureStorage(
               aOptions: SecureStoreOptions.aOpts,
               iOptions: SecureStoreOptions.iOpts,
+            ),
+        _fallbackSecure = fallbackSecure ??
+            const FlutterSecureStorage(
+              aOptions: SecureStoreOptions.aOptsFallback,
+              iOptions: SecureStoreOptions.iOptsFallback,
             );
+
+  final FlutterSecureStorage _fallbackSecure;
+
+  bool _isBiometricUnavailable(Object e) {
+    final s = '$e'.toLowerCase();
+    return s.contains('biometric') ||
+        s.contains('none_enrolled') ||
+        s.contains('no_hardware') ||
+        s.contains('cryptofailed') ||
+        s.contains('keystore');
+  }
 
   /// Test-only view of the wired storage (lets tests assert the hardened
   /// options are actually passed, not just that the constants exist).
@@ -89,9 +107,18 @@ class SecureDeviceStore implements DeviceStore {
     String? raw;
     try {
       raw = await _secure.read(key: _kEnroll);
-    } catch (_) {
-      _lastSecureFailAt = now;
-      return _enrollmentCache;
+    } catch (e) {
+      if (_isBiometricUnavailable(e)) {
+        try {
+          raw = await _fallbackSecure.read(key: _kEnroll);
+        } catch (_) {
+          _lastSecureFailAt = now;
+          return _enrollmentCache;
+        }
+      } else {
+        _lastSecureFailAt = now;
+        return _enrollmentCache;
+      }
     }
     if (raw == null) {
       _enrollmentCache = null;
@@ -115,14 +142,29 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeEnrollment(StoredEnrollment e) async {
-    await _secure.write(key: _kEnroll, value: jsonEncode(e.toJson()));
+    final payload = jsonEncode(e.toJson());
+    try {
+      await _secure.write(key: _kEnroll, value: payload);
+    } catch (err) {
+      if (_isBiometricUnavailable(err)) {
+        await _fallbackSecure.write(key: _kEnroll, value: payload);
+        SecureStoreOptions.usedCredentialFallback = true;
+      } else {
+        rethrow;
+      }
+    }
     _enrollmentCache = e;
     _enrollmentLoaded = true;
   }
 
   @override
   Future<void> clearEnrollment() async {
-    await _secure.delete(key: _kEnroll);
+    try {
+      await _secure.delete(key: _kEnroll);
+    } catch (_) {}
+    try {
+      await _fallbackSecure.delete(key: _kEnroll);
+    } catch (_) {}
     _enrollmentCache = null;
     _enrollmentLoaded = true;
   }
@@ -487,20 +529,39 @@ class SecureDeviceStore implements DeviceStore {
     if (_installIdLoaded) return _installIdCache;
     final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) return _installIdCache;
+    String? v;
     try {
-      final v = await _secure.read(key: _kInstall);
-      _installIdCache = v;
-      _installIdLoaded = true;
-      return v;
-    } catch (_) {
-      _lastSecureFailAt = now;
-      return _installIdCache;
+      v = await _secure.read(key: _kInstall);
+    } catch (e) {
+      if (_isBiometricUnavailable(e)) {
+        try {
+          v = await _fallbackSecure.read(key: _kInstall);
+        } catch (_) {
+          _lastSecureFailAt = now;
+          return _installIdCache;
+        }
+      } else {
+        _lastSecureFailAt = now;
+        return _installIdCache;
+      }
     }
+    _installIdCache = v;
+    _installIdLoaded = true;
+    return v;
   }
 
   @override
   Future<void> writeInstallId(String id) async {
-    await _secure.write(key: _kInstall, value: id);
+    try {
+      await _secure.write(key: _kInstall, value: id);
+    } catch (e) {
+      if (_isBiometricUnavailable(e)) {
+        await _fallbackSecure.write(key: _kInstall, value: id);
+        SecureStoreOptions.usedCredentialFallback = true;
+      } else {
+        rethrow;
+      }
+    }
     _installIdCache = id;
     _installIdLoaded = true;
   }

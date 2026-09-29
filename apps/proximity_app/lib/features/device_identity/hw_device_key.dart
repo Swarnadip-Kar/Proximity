@@ -657,7 +657,10 @@ class HwDeviceKey implements DeviceKey {
     requireMobileFace();
     final challenge = enrollmentChallenge(
         email: email, installId: installId, pkS: pkS);
-    final handle = await _backend.generateKey(
+    try {
+      await _backend.deleteKey(alias: alias);
+    } catch (_) {}
+    var handle = await _backend.generateKey(
         alias: alias, attestationChallenge: challenge);
     if (handle.level == AttestationLevel.none) {
       throw StateError(
@@ -667,8 +670,20 @@ class HwDeviceKey implements DeviceKey {
     try {
       att = await _backend.attest(alias: alias, serverNonce: challenge);
     } catch (e) {
-      throw StateError(
-          'attestation failed — re-enroll on a device with secure hardware (${e.runtimeType}).');
+      if (_isKeyInvalidated(e)) {
+        try {
+          await _backend.deleteKey(alias: alias);
+          handle = await _backend.generateKey(
+              alias: alias, attestationChallenge: challenge);
+          att = await _backend.attest(alias: alias, serverNonce: challenge);
+        } catch (_) {
+          throw StateError(
+              'attestation failed — re-enroll on a device with secure hardware ($e).');
+        }
+      } else {
+        throw StateError(
+            'attestation failed — re-enroll on a device with secure hardware ($e).');
+      }
     }
     late final List<Uint8List> chain;
     if (!att.isApple) {

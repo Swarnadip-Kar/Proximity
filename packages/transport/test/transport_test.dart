@@ -626,7 +626,7 @@ void main() {
     }
   });
 
-  test('absent sighting still invalid after grace', () async {
+  test('absent radio sighting confirms immediately under Option A', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
@@ -653,9 +653,10 @@ void main() {
       final cj = window.challengeFor(window.jForTime(DateTime.now().toUtc()));
       final desc = await client.fetchWindow(cj);
       final res = await proveOnce(client, desc, cj, desc.jNow, stu, fd: fd);
-      expect(res.decision, ProveDecision.invalid);
-      expect(res.reason, 'no-ble-sighting');
-      expect(server.tally.presentCount, 0);
+      // Option A: Possession of the rotating air challenge C_j + valid biometric/HW keys
+      // proves physical presence. Absent return sighting confirms immediately without delay.
+      expect(res.decision, ProveDecision.confirmed);
+      expect(server.tally.presentCount, 1);
     } finally {
       client.close();
       await server.stop();
@@ -711,6 +712,47 @@ void main() {
       // A token from no live epoch is still rejected (fake professor?).
       await expectLater(
           client.fetchWindow(Uint8List.fromList(List.filled(8, 7))),
+          throwsStateError);
+    } finally {
+      client.close();
+      await server.stop();
+    }
+  });
+
+  test('relay-delay token (j-2) verifies via two-tick fallback in 500-seat hall',
+      () async {
+    // In a 500-seat hall with mesh relays, the heard token can be two ticks
+    // (20s) behind the live rotation. The server ships sigP_prev2 so the
+    // client can verify j-2 without 'prof signature mismatch'.
+    final prof = ProxCrypto.generateEdKeypair();
+    final stu = ProxCrypto.generateEdKeypair();
+    final server = await makeServer(prof: prof, stu: stu);
+    final client = ProxClient(host: '127.0.0.1', port: server.port);
+    try {
+      server.openWindow(
+        WindowParams(
+          sessionId: server.window!.sessionId,
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc().subtract(const Duration(seconds: 22)),
+          classLabel: 'CS500-Auditorium',
+        ),
+        1,
+      );
+      final w = server.window!;
+      expect(w.jForTime(DateTime.now().toUtc()), 2);
+      // Radio challenge from j=0 (2 ticks behind) verifies via sigP_prev2
+      final descPrev2 = await client.fetchWindow(w.challengeFor(0));
+      expect(descPrev2.jNow, 0);
+      // Radio challenge from j=1 (1 tick behind) verifies via sigP_prev
+      final descPrev = await client.fetchWindow(w.challengeFor(1));
+      expect(descPrev.jNow, 1);
+      // Live radio challenge j=2 verifies via live sigP
+      final desc = await client.fetchWindow(w.challengeFor(2));
+      expect(desc.jNow, 2);
+      // Stale token older than 2 ticks (j >= 3 behind) fails
+      await expectLater(
+          client.fetchWindow(Uint8List.fromList(List.filled(8, 9))),
           throwsStateError);
     } finally {
       client.close();

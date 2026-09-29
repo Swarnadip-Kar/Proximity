@@ -5,7 +5,6 @@
 // re-running the code under test): pkD = 0x01..0x20 ‖ 0x21..0x40,
 // challenge = 0x55*32, authData = 0x11*32 ‖ 0x45 ‖ u32be(7).
 // CBOR/COSE fixtures below are hand-built definite-length encodings.
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:pointycastle/export.dart';
