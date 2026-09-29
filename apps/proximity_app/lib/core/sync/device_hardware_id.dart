@@ -30,7 +30,9 @@ const _hwChannel = MethodChannel('org.iitbhilai.proximity/hardware_id');
 /// Stable phone id across reinstalls ('' when unavailable — desktop, web,
 // VM tests, or any plugin failure). Trimmed, never null.
 Future<String> getStableHardwareDeviceId() async {
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+  if (kIsWeb) return '';
+
+  if (defaultTargetPlatform == TargetPlatform.android) {
     try {
       final String? aid = await _hwChannel.invokeMethod<String>('getAndroidId');
       if (aid != null && aid.trim().isNotEmpty) {
@@ -39,23 +41,21 @@ Future<String> getStableHardwareDeviceId() async {
     } catch (_) {
       // Method channel failed — fall back to device_info_plus below.
     }
-  }
-  try {
-    final info = DeviceInfoPlugin();
     try {
+      final info = DeviceInfoPlugin();
       final android =
           await info.androidInfo.timeout(const Duration(seconds: 4));
       final id = android.id.trim();
       if (id.isNotEmpty) return id;
-    } catch (_) {
-      // Not Android (or plugin missing) — try iOS below.
-    }
+    } catch (_) {}
+  } else if (defaultTargetPlatform == TargetPlatform.iOS) {
     try {
+      final info = DeviceInfoPlugin();
       final ios = await info.iosInfo.timeout(const Duration(seconds: 4));
-      return (ios.identifierForVendor ?? '').trim();
-    } catch (_) {
-      // Not iOS either (desktop/web/VM) — no stable id.
-    }
-  } catch (_) {}
+      final id = (ios.identifierForVendor ?? '').trim();
+      if (id.isNotEmpty) return id;
+    } catch (_) {}
+  }
+
   return '';
 }
