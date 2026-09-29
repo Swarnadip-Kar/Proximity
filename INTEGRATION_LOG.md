@@ -3181,7 +3181,7 @@ Scope: Large lecture hall (100–500 students) scalability overhaul, resolving t
 
 - Native Hardware ID & Biometric Keystore Stability:
   - Biometric fallback: Configured `BiometricPrompt` fallback to `biometricOrDeviceCredential` in `secure_store_options.dart` and `secure_store.dart` for PIN/Pattern devices or devices without fingerprint hardware. Added key re-generation cleanup on invalidation in `hw_device_key.dart`.
-  - Android ID: Implemented native `Settings.Secure.ANDROID_ID` via MethodChannel in `MainActivity.kt` and `device_hardware_id.dart` for consistent, persistent hardware identification across reboots and app launches.
+  - Device Hardware ID Parity: Implemented native `Settings.Secure.ANDROID_ID` via MethodChannel in `MainActivity.kt` (resolving `device_info_plus` returning shared ROM `Build.ID` on Android) and clean explicit platform branching in `device_hardware_id.dart`. Android queries the native channel with fail-soft fallback, while iOS directly queries Apple's native `UIDevice.current.identifierForVendor` via `device_info_plus` without throwing blind `PlatformException`s.
 
 - UI & Camera Lifecycle Fixes:
   - Added `WidgetsBindingObserver` in `face_capture.dart` to cleanly unmount/re-initialize camera on app background/pause, preventing surface texture crashes.
