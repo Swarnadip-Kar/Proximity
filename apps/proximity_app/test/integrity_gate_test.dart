@@ -33,6 +33,8 @@ IntegrityVerdict _verdict({
   bool tampered = false,
   bool emulator = false,
   bool debug = false,
+  bool installerUntrusted = false,
+  bool pilot = false,
 }) =>
     IntegrityVerdict(
       rooted: rooted,
@@ -40,6 +42,8 @@ IntegrityVerdict _verdict({
       tampered: tampered,
       emulator: emulator,
       debug: debug,
+      installerUntrusted: installerUntrusted,
+      pilot: pilot,
       hash: IntegrityGate.verdictHashOf(
         rooted: rooted,
         hooked: hooked,
@@ -144,6 +148,38 @@ void main() {
       final reason = IntegrityGate.enrollBlockReason(
           _verdict(rooted: true, hooked: true, tampered: true, emulator: true));
       expect(reason.toLowerCase(), contains('root'));
+    });
+
+    test('installer-only taint names the pilot-flag remedy (non-pilot)', () {
+      // Field shape of "flag used but still blocked": the binary was NOT
+      // built with the flag — say exactly that instead of the re-sign copy.
+      final reason = IntegrityGate.enrollBlockReason(_verdict(
+          tampered: true, installerUntrusted: true, pilot: false));
+      expect(reason, contains('PROX_PILOT_SIDELOAD'));
+      expect(reason, isNot(contains('re-signed')));
+    });
+
+    test('genuine re-sign keeps the re-sign copy (never waived)', () {
+      final reason = IntegrityGate.enrollBlockReason(
+          _verdict(tampered: true, installerUntrusted: false, pilot: false));
+      expect(reason, contains('tampered or re-signed'));
+      // Pilot binary, genuine tamper: still the re-sign copy.
+      final pilotReason = IntegrityGate.enrollBlockReason(
+          _verdict(tampered: true, installerUntrusted: true, pilot: true));
+      expect(pilotReason, contains('tampered or re-signed'));
+    });
+
+    test('installer context never enters the dSig hash', () {
+      // Professor-side comparison stays frozen 5-signal: same signals,
+      // different installer/pilot context → identical hash.
+      final a = IntegrityGate.verdictHashOf(
+          rooted: false,
+          hooked: false,
+          tampered: true,
+          emulator: false,
+          debug: false);
+      expect(_verdict(tampered: true, installerUntrusted: true).hash, a);
+      expect(_verdict(tampered: true, pilot: true).hash, a);
     });
   });
 

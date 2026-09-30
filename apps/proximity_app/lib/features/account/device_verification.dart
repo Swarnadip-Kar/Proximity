@@ -75,6 +75,11 @@ class _DeviceVerificationCardState
           'injected into this app.';
     }
     if (v.tampered) {
+      if (v.installerUntrusted && !v.pilot) {
+        return 'This sideloaded install cannot prove its installer — '
+            'enrollment refuses on this binary (store build or '
+            'pilot-flagged rebuild).';
+      }
       return 'This install looks tampered or re-signed — it may not be '
           'the released app.';
     }

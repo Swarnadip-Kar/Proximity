@@ -98,18 +98,31 @@ import 'package:proximity_protocol/protocol.dart';
 enum IntegrityOp { startup, enroll, host, prove }
 
 /// Raw per-signal snapshot from a probe. All false = clean device.
+///
+/// `installerUntrusted` is the RAW installer-distrust bit (suite
+/// `isAppIntegrityValid == false` on a non-debug build), kept SEPARATE
+/// from `tampered` (genuine re-sign): the pilot flag waives the former,
+/// never the latter, and the enroll refusal names the right remedy for
+/// each. `pilot` records whether this binary was compiled with
+/// `--dart-define=PROX_PILOT_SIDELOAD=true` (build context, same class as
+/// `debug` — never part of the dSig hash, which stays frozen 5-signal so
+/// professor-side comparison never churns).
 class IntegritySignals {
   final bool rooted;
   final bool hooked;
   final bool tampered;
   final bool emulator;
   final bool debug;
+  final bool installerUntrusted;
+  final bool pilot;
   const IntegritySignals({
     this.rooted = false,
     this.hooked = false,
     this.tampered = false,
     this.emulator = false,
     this.debug = false,
+    this.installerUntrusted = false,
+    this.pilot = false,
   });
 }
 
@@ -223,12 +236,21 @@ class PlatformIntegrityProbe implements IntegrityProbe {
         BleLog.log('SEC',
             'pilot-sideload: installer-trust waived (re-sign/root/hook/emulator still block)');
       }
+      // Raw installer distrust rides alongside (never waived, never gated):
+      // it lets the refusal name the pilot-flag remedy when the ONLY taint
+      // is an untrusted installer on a non-pilot binary — the field shape
+      // of "pilot flag used but still blocked" (flag not baked into that
+      // binary, or a genuine re-sign: distinguished below, not merged).
+      final installerBad =
+          !status.isAppIntegrityValid && !kDebugMode;
       return IntegritySignals(
         rooted: status.isRooted,
         hooked: status.isRuntimeHooked,
         tampered: status.isTampered || installerTaint,
         emulator: status.isEmulator,
         debug: kDebugMode,
+        installerUntrusted: installerBad,
+        pilot: pilotAllowSideload,
       );
     } catch (_) {
       return IntegritySignals(debug: kDebugMode);
@@ -238,12 +260,19 @@ class PlatformIntegrityProbe implements IntegrityProbe {
 
 /// Immutable integrity verdict: the five signals + the stable hash bound
 /// into dSig. `hash` is 8 lowercase hex chars.
+///
+/// `installerUntrusted` + `pilot` are build/provenance context (see
+/// [IntegritySignals]) — carried for honest refusal copy and SEC logs,
+/// deliberately EXCLUDED from [IntegrityGate.verdictHashOf] so the
+/// professor-side dSig comparison never churns on packaging metadata.
 class IntegrityVerdict {
   final bool rooted;
   final bool hooked;
   final bool tampered;
   final bool emulator;
   final bool debug;
+  final bool installerUntrusted;
+  final bool pilot;
   final String hash;
 
   const IntegrityVerdict({
@@ -252,6 +281,8 @@ class IntegrityVerdict {
     required this.tampered,
     required this.emulator,
     required this.debug,
+    this.installerUntrusted = false,
+    this.pilot = false,
     required this.hash,
   });
 
@@ -269,23 +300,30 @@ class IntegrityVerdict {
 
   /// One-line human summary for SEC logs: CLEAN (plus the debug-build
   /// note — `d:true` alone is expected for `flutter run` / Mac desktop
-  /// and never blocks) or TAINTED with the exact signals. Pure.
+  /// and never blocks) or TAINTED with the exact signals. Pure. The pilot
+  /// bit rides along (`+ pilot sideload`) so a field log instantly shows
+  /// whether the sideload waiver was even compiled into that binary.
   String get summary {
     final bad = [
       if (rooted) 'rooted',
       if (hooked) 'hooked (frida/xposed)',
-      if (tampered) 'tampered app',
+      if (tampered)
+        installerUntrusted && !pilot
+            ? 'tampered app (untrusted installer, non-pilot binary)'
+            : 'tampered app',
       if (emulator) 'emulator',
     ];
     if (bad.isEmpty) {
-      return debug ? 'clean (debug build — expected, never blocks)' : 'clean';
+      return debug
+          ? 'clean (debug build — expected, never blocks)'
+          : 'clean${pilot ? ' (pilot sideload)' : ''}';
     }
-    return 'TAINTED (${bad.join(', ')})${debug ? ' + debug build' : ''} — enroll refuses, marks flag, hosting stays advisory';
+    return 'TAINTED (${bad.join(', ')})${debug ? ' + debug build' : ''}${pilot ? ' + pilot sideload' : ''} — enroll refuses, marks flag, hosting stays advisory';
   }
 
   @override
   String toString() =>
-      'IntegrityVerdict(r:$rooted h:$hooked t:$tampered e:$emulator d:$debug hash:$hash)';
+      'IntegrityVerdict(r:$rooted h:$hooked t:$tampered e:$emulator d:$debug i:$installerUntrusted p:$pilot hash:$hash)';
 }
 
 /// Public API for 2C integrity (handoff: callers depend on this class,
@@ -362,6 +400,8 @@ class IntegrityGate {
         tampered: s.tampered,
         emulator: s.emulator,
         debug: s.debug,
+        installerUntrusted: s.installerUntrusted,
+        pilot: s.pilot,
         hash: verdictHashOf(
           rooted: s.rooted,
           hooked: s.hooked,
@@ -435,6 +475,11 @@ class IntegrityGate {
   /// Enroll gate (§5): '' when enroll may proceed, else an actionable
   /// refusal naming the first taint in signal order
   /// (privileged → hooked → tampered → emulator). Debug alone returns ''.
+  /// The tampered branch distinguishes cause: an untrusted installer on a
+  /// NON-pilot binary names the pilot-flag/store remedy (the field shape
+  /// of "flag used but still blocked" — the flag wasn't baked into that
+  /// binary); anything else keeps the re-sign copy (the pilot never waives
+  /// a genuine re-sign).
   static String enrollBlockReason(IntegrityVerdict verdict) {
     if (verdict.rooted) {
       return 'This device looks rooted or jailbroken — enrollment is blocked '
@@ -445,6 +490,12 @@ class IntegrityGate {
           'is blocked while code injection is present. Remove it and try again.';
     }
     if (verdict.tampered) {
+      if (verdict.installerUntrusted && !verdict.pilot) {
+        return 'This sideloaded install cannot prove its installer — '
+            'enrollment is blocked. Reinstall Proximity from the official '
+            'store build, or rebuild with the pilot sideload flag '
+            '(--dart-define=PROX_PILOT_SIDELOAD=true).';
+      }
       return 'This install looks tampered or re-signed — enrollment is '
           'blocked. Reinstall Proximity from the official store build.';
     }
