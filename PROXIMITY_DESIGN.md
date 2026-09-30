@@ -489,7 +489,10 @@ Signatures exclude the TTL byte so relays can decrement it without invalidating 
 Rotation tolerance: `/window` ships `sigP_prev` alongside `sigP`, so a fetch
 landing just after the 10 s tick still verifies the heard token (either `j`
 verifies; only neither-matching is a genuine mismatch). Single-use is scoped
-`(windowId, ID, j)` so retakes never false-replay. Deduplication: LRU
+`(windowId, ID, j)` so retakes never false-replay. Lost-ACK healing: a retry
+whose mark already exists returns idempotent `duplicate-confirmed` + signed
+ACK; a corrupt ACK retries the next rotation (never a terminal error —
+`Sig_p` verified pre-POST, so it can't be a fake). Deduplication: LRU
 seen-set (1000 entries, 5-min expiry) keyed `sender + ts + type + digest`,
 identical to BitChat dedup.
 
@@ -501,16 +504,18 @@ identical to BitChat dedup.
 
 - Advertise interval 200 ms, connectable, TxPower Low (`-12 dBm` small room, `-6 dBm` large hall).
 - Scan: foreground continuous, filter `PROX_SVC`, in-app prefix check `BaseP/BaseS`, RSSI logged per sighting.
-- Rotation: stop/start advertise every 10 s to publish next `UUID_P(j)` / `UUID_S`.
+- Rotation: stop/start advertise every 10 s to publish next `UUID_P(j)`. Students never advertise (Option A).
 - MTU 517 negotiated before any GATT read/write. `autoConnect=false` for fast fallback connects. Minimum 5 s between scan restarts (Android scanner rate-limit guard).
 
 ### 6.2 Mesh relay (challenge distribution, students help)
 
 Back rows cannot hear the professor directly. Front-row phones re-advertise what they heard, with BitChat flood controls:
 
-- Only professor challenge PDUs are relayed. Student responses are direct (or directed-forwarded, below).
+- Only professor challenge PDUs are relayed. Students transmit nothing
+  (Option A, 2026-09-30): the student response beacon path is retired —
+  presence rides the heard challenge + TCP prove, never a re-air — so
+  there is no response storm to control.
 - Rules: if `TTL > 0`, unseen, `RSSI > -80 dBm`, wait `jitter 10–220 ms` (wider when dense), re-advertise same `UUID_P` with `TTL-1`, never back to ingress link (split horizon). Originate `TTL=3`, dense graphs cap at 2. LRU-dedup suppresses storms. Fanout is implicit in radio (one re-advertise reaches all nearby).
-- Response relay (rare, AP-isolated corners): if a student hears a neighbor `UUID_S` with hop < 2 and the professor is GATT-connected, forward via directed GATT write with `TTL-1` and tight jitter. Never broadcast-flood responses.
 - Presence: while window is open all devices advertise/scan continuously (30 s burst, no duty cycling needed). Reachability timeout 60 s covers the full window plus tally.
 - Implementation (verified live 2026-09): every student relays — browsing,
   waiting, face-capture and listening phases all forward (bitchat-style:
@@ -638,7 +643,6 @@ Present rule (default): `Present = pass every window taken`, else `Partial`/`Abs
 3. The room auto-continues to the face check when the window opens (~1 s). App holds `faceValid`.
 4. While the window is open the phone automatically, with no further taps:
    - scans the rotating challenge, extracts `C_j`,
-   - advertises the response token,
    - relays challenges if front-row (invisible to user),
    - POSTs `Sig_s` per fresh rotation until a verdict lands,
    - shows step status (`Waiting for the class signal…` → `Signal heard — proving…` → `Proof sent — confirming…`), then `✓ Marked` on signed ACK.
@@ -669,7 +673,7 @@ backgrounding pauses proving and is shown as `Paused — reopen`.
   freshness (`0 <= now - t_j < 17 s`) plus LRU dedup. Replayed POST or
   re-advertised UUID is marked late/invalid; retakes (fresh windowId)
   never false-replay.
-- **Back-row works:** controlled-flood relay brings the challenge to every seat; WiFi POSTs need no relay; BLE response sightings tolerate a single relay hop (v3 relayed bit → hop 1, flagged, RSSI-gated).
+- **Back-row works:** controlled-flood relay brings the challenge to every seat; WiFi POSTs need no relay and no return BLE sighting (Option A). A lost ACK heals on the next rotation via idempotent `duplicate-confirmed`; a corrupt ACK retries the next rotation instead of erroring the round.
 - **Equal where it runs:** every marking device advertises/scans the
   same packets, verifies the same signatures, runs the same face gate
   and timing. Off-mobile there is no weaker path — there is no path
@@ -763,8 +767,8 @@ mandatory during windows on all OS (keep-open banner).
 
 ## 9. Scale, robustness, testing
 
-- Load: 500 POSTs/30 s (~17/s) + 500 UUID advertisers + 6 rotations. Ed25519 verify total ~1000–2500 per lecture, well under 1 s on phone/laptop. Jitter 0–2 s plus server `Retry-After` spreads herd. BLE capture requires 1/6 sub-epochs seen per student, not all.
-- Collisions: 200 ms adv interval + continuous scan + GATT-read fallback on CRC fail. Field-tune TxPower and `-75 dBm` direct / `-80 dBm` relay thresholds per hall with `nRF Connect` walk-test. Student response airs 3x (~350ms apart, strongest wins); Android scans LOW_LATENCY/allMatches during window+listen (other platforms ignore the block); server sighting grace 6s. Auto face-scan trigger is WiFi (`POST /waiting` + 2s `GET /window` poll), never BLE — BLE gates discovery (IP hints) and the prove sighting only.
+- Load: 500 POSTs/30 s (~17/s) + 6 rotations. Ed25519 verify total ~1000–2500 per lecture, well under 1 s on phone/laptop. Jitter 0–2 s plus server `Retry-After` spreads herd. Students transmit no BLE (Option A) — the 2.4 GHz air carries professor challenges + mesh relays only. BLE capture requires 1/6 sub-epochs seen per student, not all.
+- Collisions: 200 ms adv interval + continuous scan + GATT-read fallback on CRC fail. Field-tune TxPower and `-75 dBm` direct / `-80 dBm` relay thresholds per hall with `nRF Connect` walk-test. Android scans LOW_LATENCY/allMatches during window+listen (other platforms ignore the block). Auto face-scan trigger is WiFi (`POST /waiting` + 2s `GET /window` poll), never BLE — BLE gates discovery (IP hints) only. Live-screen teardown is bounded at 10 s so back-nav never wedges on a hung radio.
 - Clock drift: 17 s one-sided acceptance (10 s rotation + 7 s grace) covers typical phone drift; professor is time authority (signed `serverTime` in ACK); the app banners median drift over recent verdicts instead of silently verdicting late.
 - MAC rotation: neutralized by rotating `peerW` in scan response + presented-key HMAC lookup (500 HMACs per sighting batch, trivial).
 - Crash windows (stated): a crash between the history write and the

@@ -3190,3 +3190,18 @@ Scope: Large lecture hall (100–500 students) scalability overhaul, resolving t
 
 Verify: protocol tests 224/224 pass; transport tests 68/68 pass; student driver tests 23/23 pass; `dart analyze` and `flutter analyze` clean with 0 issues.
 
+## Reliability + enrollment-storage follow-ups (2026-09-30)
+
+Field follow-up to Option A: six small commits closing the bugs Option A exposed or left behind.
+
+- fix(store) `6cf3a52` — secure-storage crypto recovery. Root cause of the field `Save failed: PlatformException(...IllegalBlockSizeException...)`: the strong + credential FSS configs shared `storageNamespace prox_enroll`, so their KeyStore alias/IV/blob clobbered each other (post-auth `doFinal` throw); lock-set changes orphan the blob the same way. Fallback moved to `prox_enroll_cred`, failures fall across slots with a persisted tier hint (`prox.secure.tier.v1`), total failure throws an honest actionable copy (no Java stack in the banner). Save keeps `faceDone` on persist-only failure so retry stays enabled. Pattern/PIN-lock phones now enroll via the cred slot (honest `standard` tier); HW DKey still needs real secure hardware by design.
+- fix(prove) `4239471` — corrupt ACK retries the next rotation. `Sig_p` verifies pre-POST, so a bad ACK is corrupt bytes, never a fake; non-suspicious `_TryNext` (never feeds the 6-strike fake-professor tripwire).
+- perf(store) `5ee8ef1` — `StoredEnrollment.toJson` drops the duplicated `attestationChain` alias (reader still accepts both keys), halving every biometric-gated write.
+- fix(face) `a7b1e0a` — camera resume: pause parks + setStates away from the preview, resume restarts when controllerless (the old guard returned early on null `_ctl` = black screen on reopen), starts are single-flighted, backgrounded inits are dropped.
+- fix(nav) `8be4c06` — live-screen teardown bounded at 10 s in `_leave`/`_endAttendance` so a hung radio/save delays back-nav but never wedges it.
+- chore(ble) `cb4b79b` — retired `advertiseStudentResponse` + burst fields + `_advExclusive` + heard-address bookkeeping (dead since Option A); 2 engine tests + 1 integration-test hunk updated. Server keeps hearing legacy responses for mixed fleets.
+
+Not bugs (verified, no change): prof pin list showing N keys is TOFU by design (ephemeral per-session `pkP`, capped at 8 in `uploadProfKey`); MAC-address device ID is infeasible (Android 6+/10+ and iOS never expose the radio MAC to apps — ANDROID_ID/`identifierForVendor` stays); TTL stays (hop cap only, never the unreliability source).
+
+Verify: app suite 1195/1195; ble 36/36; `flutter analyze` clean on all touched files. `PROXIMITY_DESIGN.md` §§5.3/6.1/6.2/7/7.3/9 updated to Option A reality.
+
