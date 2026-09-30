@@ -118,8 +118,8 @@ class SecureDeviceStore implements DeviceStore {
   /// `PlatformException(...javax.crypto...)` + Java stack to the UI banner.
   StateError _secureStorePersistError() => StateError(
         'Secure storage rejected the save (phone lock / fingerprint set '
-        'changed). Tap Save again — your capture is kept. If it repeats, '
-        're-enroll your fingerprint or PIN in Settings, then save again.',
+        'changed). Unlock and try again — nothing already saved was lost. '
+        'If it repeats, re-enroll your fingerprint or PIN in Settings.',
       );
 
   /// Tier hint: which FSS namespace holds the live data ('strong' =

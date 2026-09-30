@@ -615,9 +615,14 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
     }
   } catch (_) {}
   final id = newInstallId();
-  try {
-    await store.writeInstallId(id);
-  } catch (_) {}
+  // Durability gate: an id that never persisted must never be cached or
+  // claimed with — every fresh id reads as "another device" downstream,
+  // so a swallowed write here turns one dismissed biometric prompt into a
+  // perpetual cooldown confusion (plus a restamped move clock on every
+  // reclaim). Throw honestly instead: callers surface unlock-and-retry
+  // (upload/generate/enrollFace fail with copy; entryStudentGate treats
+  // throws as unknown-stay-put, per its contract).
+  await store.writeInstallId(id);
   _cachedInstallId = id;
   return id;
 }

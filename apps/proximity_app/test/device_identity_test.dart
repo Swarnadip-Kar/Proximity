@@ -5,6 +5,8 @@ import 'package:proximity_app/core/device_identity.dart';
 import 'package:proximity_app/core/device_store.dart';
 
 void main() {
+  setUp(clearInstallIdCacheForTest);
+
   test('newInstallId is 128-bit hex, stable via store', () async {
     final a = newInstallId(Random(1));
     final b = newInstallId(Random(2));
@@ -16,4 +18,28 @@ void main() {
     final first = await getOrCreateInstallId(store);
     expect(await getOrCreateInstallId(store), first);
   });
+
+  test('failed persist throws and never caches a phantom id', () async {
+    // A swallowed write used to cache + return an id that never
+    // persisted: every downstream claim then read as "another device"
+    // (perpetual cooldown confusion). Now the write failure throws and
+    // the next call serves the durable id once the store heals.
+    final store = _FailingWriteStore()..failWrites = true;
+    await expectLater(getOrCreateInstallId(store), throwsStateError);
+    store.failWrites = false;
+    const durable = 'ab12cd34ef56ab78ab12cd34ef56ab78';
+    await store.writeInstallId(durable);
+    expect(await getOrCreateInstallId(store), durable);
+  });
+}
+
+/// InMemoryDeviceStore with scriptable install-id write failures.
+class _FailingWriteStore extends InMemoryDeviceStore {
+  bool failWrites = false;
+
+  @override
+  Future<void> writeInstallId(String id) async {
+    if (failWrites) throw StateError('secure store unavailable');
+    return super.writeInstallId(id);
+  }
 }
