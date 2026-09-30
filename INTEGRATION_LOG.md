@@ -3236,6 +3236,12 @@ Field batch: `unknown-pkS|pin-mismatch` refusals after mid-class re-enrolls, `ta
 
 Verify: app suite 1207/1207; ble 36/36; `flutter analyze` clean on all touched files.
 
+## Offline-first pin policy: re-key marks with review flag (2026-09-30)
+
+Field log showed `unknown-pkS|pin-mismatch` refusing every rotation with the refresh hook firing but never converging (offline prof): the refusal itself was the internet dependency. Fully-valid proofs under a stale pin now CONFIRM + `unverified-student-key` flag (roster review via faceFlag, `pin-mismatch` log token preserved) — consistent with first-seen TOFU; fake crypto still fails closed upstream. Hook fires on the flag tokens too, clearing the flag on convergence. Deliberate policy change, logged in PROXIMITY_SECURITY.md: pins distinguish first-seen from re-keyed for review, never refuse offline.
+
+Verify: transport 33/33 (stale-pin test restructured across fresh windows — same-j would replay-mask the flag); app 1207/1207; protocol 224/224; `flutter analyze` clean.
+
 ## Plugin migration off + tampered-only verdict decoded (2026-09-30)
 
 Field logcat on the enroll-blocked phone showed the FSS backup-migration crashing on a fresh biometric namespace (`IllegalStateException: Cipher not initialized` — current cipher built without a biometric CryptoObject, 0 items) with `resetOnError` wiping the Keystore key right after. Per the reporter's call (testing phase, no backward compat needed):
