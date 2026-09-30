@@ -3225,3 +3225,14 @@ Field report: `This Gmail was enrolled on another device` on the SAME phone (rei
 
 Verify: app suite 1201/1201 (incl. new phantom-id durability test); `flutter analyze` clean.
 
+## Stale-pin self-heal + installer-trust messaging + cumulative Class N (2026-09-30)
+
+Field batch: `unknown-pkS|pin-mismatch` refusals after mid-class re-enrolls, `tampered or re-signed` blocks persisting under the pilot flag, and new sessions reading `Class 1` after conducted sessions.
+
+- fix(pins) — both sides stalled on stale pins (prof refused all session, student died terminally). Student retries the next rotation on `unknown-pkS` (server answered — non-suspicious, window-close still bounds the loop); prof fires a debounced (60s) background directory-pin refresh via the hosting screen's `onUnknownPkSHook` so the next rotation marks. Hook clears on `endHosting`; `FakeHostDriver` stubbed. New hook throttle test.
+- fix(integrity) — the tampered bit merged two causes (untrusted installer on a non-pilot binary vs genuine re-sign; pilot waives only the former), so "flag used but still blocked" always read as re-sign. Verdicts now carry `installerUntrusted` + `pilot` context (excluded from the frozen 5-signal dSig hash); installer-only taints name the `--dart-define=PROX_PILOT_SIDELOAD=true` rebuild remedy in the enroll refusal + device card, SEC logs show pilot state. Genuine re-sign copy unchanged (never waived).
+- fix(roster) — new visits numbered rounds from 1 (`Class 1` on the 10th session). Header now adds completed history sessions (own draft excluded) to the in-visit round, display-only; round identity/logic untouched. New offset widget test.
+- feat(session)+test(roster) — present-first filter defaults (user UI change) committed; entry-behavior tests updated to match.
+
+Verify: app suite 1207/1207; ble 36/36; `flutter analyze` clean on all touched files.
+
