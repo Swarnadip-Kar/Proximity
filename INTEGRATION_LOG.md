@@ -3236,3 +3236,12 @@ Field batch: `unknown-pkS|pin-mismatch` refusals after mid-class re-enrolls, `ta
 
 Verify: app suite 1207/1207; ble 36/36; `flutter analyze` clean on all touched files.
 
+## Plugin migration off + tampered-only verdict decoded (2026-09-30)
+
+Field logcat on the enroll-blocked phone showed the FSS backup-migration crashing on a fresh biometric namespace (`IllegalStateException: Cipher not initialized` — current cipher built without a biometric CryptoObject, 0 items) with `resetOnError` wiping the Keystore key right after. Per the reporter's call (testing phase, no backward compat needed):
+
+- fix(store) — `migrateOnAlgorithmChange: false` on all three Android FSS configs (`prox_enroll`, `prox_enroll_cred`, `prox_seal`): namespace-per-config IS the migration strategy, so plugin-level migration is pure crash risk. Mismatches now go straight to delete+clean-reinit, risking only already-unrecoverable data. Pinned in options + hardening tests.
+- Verdict hash `a84086a7` decoded locally (`SHA256("v1|r|h|t|e|d")[:8]`): **tampered-only** — no root/hook/emulator/debug. With the pilot flag absent from that binary this is the untrusted-installer taint, which the previous commit's message now names with the rebuild remedy; a genuine re-sign keeps the hard block (never waived). After the FSS wipe that phone holds no enrollment/installId — re-enroll (same-phone reclaim makes it instant); confirm the `pilot-sideload: installer-trust waived` SEC line to prove the flag baked in.
+
+Verify: options/hardening/crypto/migration suites 29/29; `flutter analyze` clean.
+
