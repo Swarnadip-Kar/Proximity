@@ -98,8 +98,8 @@ class ProxBleEngine {
   /// skips are logged (never silent); other errors keep their caller's
   /// semantics (logged + rethrown by [_advertiseProf]).
   /// [rethrowOnTimeout]: true for one-shot calls whose caller reports
-  /// failure (rotation start, student response); false for rotation ticks,
-  /// which must keep ticking if the radio recovers.
+  /// failure (rotation start); false for rotation ticks, which must keep
+  /// ticking if the radio recovers.
   /// Returns false when the op was SKIPPED (radio busy) — callers that
   /// consume dedup keys (relay) must release them so the next hearing
   /// retries instead of starving.
@@ -122,39 +122,11 @@ class ProxBleEngine {
     }
   }
 
-  /// Runs one advertise op EXCLUSIVELY: waits (bounded) for an in-flight
-  /// op to finish instead of skipping like [_advGuard]. For the student
-  /// response, which must precede its POST — a skipped response
-  /// guarantees `no-ble-sighting`, and the old skip-then-log-success lied
-  /// about it (observed live). Throws on timeout: the caller logs FAILED
-  /// honestly and the POST still goes out (the server's sighting grace
-  /// may yet save it; otherwise the next rotation proves).
-  Future<void> _advExclusive(Future<void> Function() fn, String what,
-      {Duration wait = const Duration(seconds: 3)}) async {
-    final until = DateTime.now().add(wait);
-    while (_advBusy) {
-      if (DateTime.now().isAfter(until)) {
-        BleLog.log('BLE', 'ADV busy too long, $what ABORTED');
-        throw StateError('ADV busy ($what)');
-      }
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
-    await _advGuard(fn, what);
-  }
-
   /// Our HTTPS server address, advertised in every packet we originate.
   /// Set by the host from its announce IP:port; relays forward the heard
   /// address unchanged so back rows learn the server IP too.
   String _serverHost = '';
   int _serverPort = 8443;
-
-  /// Server address heard in the latest challenge (drives the student
-  /// response packet + IP-hint discovery).
-  String _heardHost = '';
-  int _heardPort = 0;
-
-  /// Format of the latest heard challenge (response echoes it).
-  bool _heardLegacy = false;
 
   /// Sets our server address (clears on unusable input → originate stops).
   void setServerIp(String host, int port) {
@@ -537,90 +509,6 @@ class ProxBleEngine {
     }
   }
 
-  /// Student: advertise response token R_IDj once C_j known, in the format
-  /// of the heard challenge (v1 heard → v1 UUID_S response). The v2 packet
-  /// echoes the heard server address (professors ignore it; relays of
-  /// challenges preserve the original).
-  ///
-  /// Burst (uniform on all platforms): the SAME response airs
-  /// [responseBurst] times (~350ms apart, ~1s total) before returning, so
-  /// a duty-cycled professor scan catches at least one airing and the
-  /// host's strongest-first lookup keeps the best RSSI. A single-shot ADV
-  /// against a balanced scan window was a coin flip — the field shape of
-  /// the `no-ble-sighting` reports. Best-effort after the first airing: a
-  /// failed re-air never fails the prove (the first ADV is already out and
-  /// the server's sighting grace still applies).
-  int responseBurst = 3;
-  Duration responseBurstGap = const Duration(milliseconds: 350);
-
-  Future<void> advertiseStudentResponse(
-      String studentId, Uint8List challenge, int j, Uint8List peerW) async {
-    final rid = ProxCrypto.responseToken(challenge, studentId);
-    if (_heardLegacy) {
-      final uuid = UuidCodec.packResponse(rid);
-      _ownAdvertising = 'uuid:${UuidCodec.normalize(uuid)}';
-      try {
-        await _advExclusive(() async {
-          await radio.stopAdvertising();
-          await radio.startLegacyUuid(uuid);
-        }, 'response v1 j=$j');
-        BleLog.log('BLE',
-            'ADV response v1 j=$j uuid=${BleLog.shortUuid(uuid)}… via ${radio.platformName}');
-      } catch (e) {
-        BleLog.log('BLE', 'ADV response FAILED: $e');
-        rethrow;
-      }
-      for (var n = 1; n < responseBurst; n++) {
-        await Future.delayed(responseBurstGap);
-        try {
-          await _advExclusive(() async {
-            await radio.stopAdvertising();
-            await radio.startLegacyUuid(uuid);
-          }, 'response v1 re-air ${n + 1}/$responseBurst j=$j');
-        } catch (_) {
-          break;
-        }
-      }
-      return;
-    }
-    if (_heardHost.isEmpty) {
-      BleLog.log('BLE', 'ADV response SKIPPED (no server heard yet)');
-      return;
-    }
-    final mfg = packAir(
-        type: kAirTypeResponse,
-        token8: rid,
-        host: _heardHost,
-        port: _heardPort);
-    if (mfg == null) {
-      BleLog.log('BLE', 'ADV response SKIPPED (packAir failed)');
-      return;
-    }
-    _ownAdvertising = _airKey(kAirTypeResponse, rid);
-    try {
-      await _advExclusive(() async {
-        await radio.stopAdvertising();
-        await radio.startAirPacket(kAirSvc, mfg, scanResponse: peerW);
-      }, 'response j=$j');
-      BleLog.log('BLE',
-          'ADV response j=$j tok=${_hex4(rid)}… via ${radio.platformName}');
-    } catch (e) {
-      BleLog.log('BLE', 'ADV response FAILED: $e');
-      rethrow;
-    }
-    for (var n = 1; n < responseBurst; n++) {
-      await Future.delayed(responseBurstGap);
-      try {
-        await _advExclusive(() async {
-          await radio.stopAdvertising();
-          await radio.startAirPacket(kAirSvc, mfg, scanResponse: peerW);
-        }, 'response re-air ${n + 1}/$responseBurst j=$j');
-      } catch (_) {
-        break;
-      }
-    }
-  }
-
   /// Incoming sighting: log RSSI, fire callbacks, relay challenges w/ flood controls.
   ///
   /// Routine repeats are silent: the same packet arrives every second
@@ -653,9 +541,6 @@ class ProxBleEngine {
     _lastSightAt = DateTime.now().toUtc();
     if (s.isChallenge) {
       _lastChallengeAt = _lastSightAt;
-      _heardHost = s.ipHost;
-      _heardPort = s.ipPort;
-      _heardLegacy = s.legacy;
       final loud = _loud(s.key, 0);
       if (loud) {
         BleLog.log('BLE',
@@ -681,8 +566,6 @@ class ProxBleEngine {
       // exactly like a v2 IP hint (unverified, join gates unchanged) and
       // relayed so back rows learn the server IP too.
       _lastChallengeAt = _lastSightAt;
-      _heardHost = s.ipHost;
-      _heardPort = s.ipPort;
       final loud = _loud(s.key, 1);
       if (loud) {
         BleLog.log('BLE',

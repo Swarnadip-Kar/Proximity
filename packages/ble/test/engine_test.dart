@@ -220,39 +220,6 @@ void main() {
     await engine.stop();
   });
 
-  test('student response waits for the radio (never skip+lie)', () async {
-    // Observed live: the relay held the ADV guard, the response ADV was
-    // busy-skipped, yet `response on air` logged success — a guaranteed
-    // no-ble-sighting. The response now waits for the guard and only
-    // logs on actual TX.
-    final radio = _GateRadio()..gate = Completer<void>();
-    final engine = ProxBleEngine(radio: radio);
-    await engine.startScanning();
-    engine.relayEnabled = true;
-    // Occupy the guard with a relay op (held at the gate past jitter).
-    engine.handleSighting(
-        challengeSighting([3, 3, 3, 3, 3, 3, 3, 3], legacy: true));
-    await Future.delayed(const Duration(milliseconds: 400));
-    // The response must NOT have completed (old code returned instantly
-    // having skipped) — it waits for the guard instead.
-    var done = false;
-    final cj = Uint8List.fromList([3, 3, 3, 3, 3, 3, 3, 3]);
-    final pending = engine
-        .advertiseStudentResponse(
-            's@x.in', cj, 0, Uint8List.fromList(List.filled(8, 9)))
-        .then((_) => done = true);
-    await Future.delayed(const Duration(milliseconds: 300));
-    expect(done, isFalse);
-    // Release: relay finishes, response transmits for real.
-    radio.gate!.complete();
-    await pending.timeout(const Duration(seconds: 5));
-    expect(done, isTrue);
-    final rid = ProxCrypto.responseToken(cj, 's@x.in');
-    expect(radio.advertisingLegacyUuid,
-        UuidCodec.normalize(UuidCodec.packResponse(rid)));
-    await engine.stop();
-  });
-
   test('restartScanIfSilent re-arms only a silent scan (throttled)', () async {
     // Browse watchdog: a dead CHALLENGE channel heals via restart; a live
     // one is left alone, restarts run at most once per window, and a
@@ -355,45 +322,6 @@ void main() {
     await engine.startProfRotation(window);
     expect(radio.advertisingMfg, isNull);
     expect(radio.advertisingLegacyUuid, isNull);
-    await engine.stop();
-  });
-
-  test('student response echoes heard format (v2 and v1)', () async {
-    final radio = FakeBleRadio();
-    final engine = ProxBleEngine(radio: radio);
-    // No heard server yet → skipped.
-    await engine.advertiseStudentResponse(
-        's@x.in',
-        Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
-        0,
-        Uint8List.fromList(List.filled(8, 9)));
-    expect(radio.advertisingMfg, isNull);
-    // v2 heard → v2 response echoing its server.
-    engine.handleSighting(challengeSighting([1, 2, 3, 4, 5, 6, 7, 8]));
-    await engine.advertiseStudentResponse(
-        's@x.in',
-        Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
-        0,
-        Uint8List.fromList(List.filled(8, 9)));
-    final pdu = unpackAir(radio.advertisingMfg!)!;
-    expect(pdu.type, kAirTypeResponse);
-    expect(
-        pdu.token8,
-        ProxCrypto.responseToken(
-            Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]), 's@x.in'));
-    expect(pdu.host, '10.50.19.107');
-    // v1 heard → v1 UUID_S response.
-    engine.handleSighting(
-        challengeSighting([2, 2, 2, 2, 2, 2, 2, 2], legacy: true));
-    await engine.advertiseStudentResponse(
-        's@x.in',
-        Uint8List.fromList([2, 2, 2, 2, 2, 2, 2, 2]),
-        0,
-        Uint8List.fromList(List.filled(8, 9)));
-    expect(
-        radio.advertisingLegacyUuid,
-        UuidCodec.packResponse(ProxCrypto.responseToken(
-            Uint8List.fromList([2, 2, 2, 2, 2, 2, 2, 2]), 's@x.in')));
     await engine.stop();
   });
 

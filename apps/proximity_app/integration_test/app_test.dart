@@ -60,7 +60,8 @@ void main() {
         FaceDecision.pass);
     gate.requireFreshForSign();
 
-    // Student builds Sig_s + UUID_S + peerW; advertises response.
+    // Student builds Sig_s + peerW (Option A: no BLE response beacon —
+    // presence rides the heard challenge + TCP prove, never a re-air).
     final stuPk32 =
         Uint8List.fromList(stuKeys.publicKey.bytes.sublist(0, 32));
     final peerW = ProxCrypto.peerAlias(stuPk32, window.windowId);
@@ -73,8 +74,7 @@ void main() {
       studentId: studentId,
       faceScore: 0.85,
     );
-    await stuEngine.advertiseStudentResponse(studentId, cj, j, peerW);
-    expect(unpackAir(stuRadio.advertisingMfg!)!.isResponse, isTrue);
+    // NOTE: retired — Option A students never re-air responses.
 
     // Professor verifies POST + BLE sighting (direct, -55 dBm).
     final once = SingleUseTracker();
