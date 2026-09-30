@@ -111,6 +111,69 @@ void main() {
     expect(find.text('Partial 0'), findsOneWidget);
     expect(find.text('Absent 1'), findsOneWidget);
     expect(find.text('1 round'), findsOneWidget);
+    // Badges filter the list: Present shows A + B only…
+    await t.tap(find.text('Present 2'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('a@x.in'), findsOneWidget);
+    expect(find.textContaining('b@x.in'), findsOneWidget);
+    expect(find.textContaining('c@x.in'), findsNothing);
+    // …Partial is empty (single round), Absent shows C only…
+    await t.tap(find.text('Partial 0'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('No partials'), findsOneWidget);
+    await t.tap(find.text('Absent 1'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('c@x.in'), findsOneWidget);
+    expect(find.textContaining('a@x.in'), findsNothing);
+    // …and tapping the selected badge returns to the full list.
+    await t.tap(find.text('Absent 1'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('a@x.in'), findsOneWidget);
+    expect(find.textContaining('c@x.in'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('session detail absent uses the course union', (t) async {
+    // D joined a later session only: viewing the earlier session must
+    // still list D as absent (matching exports + the editor).
+    final s1 = ClassRecord(
+      id: 'u1',
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-04',
+      timestampIso: '2026-09-04T10:00:00.000Z',
+      windows: [
+        {'a@x.in': true, 'b@x.in': true},
+      ],
+      names: const {'a@x.in': 'A', 'b@x.in': 'B'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2'},
+    );
+    final s2 = ClassRecord(
+      id: 'u2',
+      courseId: 'CS201',
+      classLabel: 'CS201',
+      dateIso: '2026-09-05',
+      timestampIso: '2026-09-05T10:00:00.000Z',
+      windows: [
+        {'d@x.in': true},
+      ],
+      names: const {'d@x.in': 'D'},
+      rolls: const {'d@x.in': '4'},
+    );
+    await t.pumpWidget(_wrap(
+        store: InMemoryDeviceStore(),
+        cloud: FakeCloudSync(),
+        home: MaterialApp(
+          theme: proxLightTheme(),
+          home: SessionDetailScreen(record: s1, courseSessions: [s1, s2]),
+        )));
+    await t.pumpAndSettle();
+    expect(find.text('Present 2'), findsOneWidget);
+    expect(find.text('Absent 1'), findsOneWidget);
+    await t.tap(find.text('Absent 1'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('d@x.in'), findsOneWidget);
+    expect(find.textContaining('a@x.in'), findsNothing);
     expect(t.takeException(), isNull);
   });
 

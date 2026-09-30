@@ -54,6 +54,11 @@ class SessionDetailScreen extends ConsumerStatefulWidget {
 class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   late ClassRecord _record;
 
+  /// Active Present/Partial/Absent filter tab. `all` is the legacy full
+  /// list; tapping a badge narrows to that verdict, tapping it again
+  /// returns to `all`.
+  _SessionFilter _filter = _SessionFilter.all;
+
   @override
   void initState() {
     super.initState();
@@ -78,12 +83,50 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
     return true;
   }
 
+  /// Marked in at least one round (present or partial).
+  bool _markedAnywhere(String email) {
+    for (final w in _record.windows) {
+      if (w[email] == true) return true;
+    }
+    return false;
+  }
+
+  /// Partial = marked in some but not all rounds.
+  bool _isPartial(String email) =>
+      _markedAnywhere(email) && !_isPresent(email);
+
+  /// Course-mates absent from this session: union over the course (plus
+  /// this record, so newcomers here are covered) minus anyone marked in
+  /// any round here. A newcomer from a later class reads as absent in
+  /// earlier ones (matching exports + the editor). Falls back to the
+  /// session-local missing list when the course union is unknown.
+  List<RosterEntry> _absentEntries() {
+    final sessions = widget.courseSessions;
+    if (sessions.isEmpty) {
+      final names = _record.names;
+      final rolls = _record.rolls;
+      final out = [
+        for (final email in _persons)
+          if (!_markedAnywhere(email))
+            RosterEntry(
+                email: email,
+                name: names[email] ?? email,
+                roll: rolls[email] ?? ''),
+      ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      return out;
+    }
+    final here = <String>{
+      for (final w in _record.windows)
+        for (final e in w.entries)
+          if (e.value) e.key,
+    };
+    final union = courseRoster([...sessions, _record]);
+    return [for (final m in union) if (!here.contains(m.email)) m];
+  }
+
   /// Per-round ticks for one student: 'R1 ✓ · R2 ✗'.
   String _ticksFor(String email) =>
       ticksForWindows(_record.windows, email);
-
-  int _partialCount() =>
-      partialCountOf(_record.windows, _record.allEmails);
 
   /// Re-reads this session after the editor saves (upsert keeps the id).
   Future<void> _reload() async {
@@ -135,10 +178,20 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
     final persons = _persons;
-    final present = persons.where(_isPresent).length;
-    final partials = _partialCount();
-    final absent = (persons.length - present - partials).clamp(0, 1 << 30);
+    final presentEmails = persons.where(_isPresent).toList();
+    final partialEmails = persons.where(_isPartial).toList();
+    final absentEntries = _absentEntries();
+    final present = presentEmails.length;
+    final partials = partialEmails.length;
+    final absent = absentEntries.length;
     final windows = _record.windows.length;
+    final visiblePersons = switch (_filter) {
+      _SessionFilter.all => persons,
+      _SessionFilter.present => presentEmails,
+      _SessionFilter.partial => partialEmails,
+      // Absent renders from [absentEntries] below, not [persons].
+      _SessionFilter.absent => const <String>[],
+    };
     return AdaptiveScaffold(
       title: 'Session',
       actions: [
@@ -186,17 +239,32 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 spacing: ProxSpacing.sm,
                 runSpacing: ProxSpacing.xs,
                 children: [
-                  VerdictBadge(
+                  _FilterBadge(
                     status: ProxStatus.marked,
                     label: 'Present $present',
+                    selected: _filter == _SessionFilter.present,
+                    onTap: () => setState(() => _filter =
+                        _filter == _SessionFilter.present
+                            ? _SessionFilter.all
+                            : _SessionFilter.present),
                   ),
-                  VerdictBadge(
+                  _FilterBadge(
                     status: ProxStatus.late,
                     label: 'Partial $partials',
+                    selected: _filter == _SessionFilter.partial,
+                    onTap: () => setState(() => _filter =
+                        _filter == _SessionFilter.partial
+                            ? _SessionFilter.all
+                            : _SessionFilter.partial),
                   ),
-                  VerdictBadge(
+                  _FilterBadge(
                     status: ProxStatus.absent,
                     label: 'Absent $absent',
+                    selected: _filter == _SessionFilter.absent,
+                    onTap: () => setState(() => _filter =
+                        _filter == _SessionFilter.absent
+                            ? _SessionFilter.all
+                            : _SessionFilter.absent),
                   ),
                 ],
               ),
@@ -235,9 +303,32 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
               const SizedBox(height: ProxSpacing.md),
               if (persons.isEmpty)
                 const ProxEmptyState(message: 'Nobody listed in this session.')
+              else if (_filter == _SessionFilter.absent)
+                if (absentEntries.isEmpty)
+                  const ProxEmptyState(
+                      message: 'Nobody absent — everyone on the roster '
+                          'is marked in this session.')
+                else
+                  for (final m in absentEntries)
+                    Padding(
+                      key: ValueKey<String>('absent-${m.email}'),
+                      padding:
+                          const EdgeInsets.only(bottom: ProxSpacing.sm),
+                      child: StudentCard(
+                        name: m.name.isNotEmpty ? m.name : m.email,
+                        subtitle:
+                            '${ticksForWindows(_record.windows, m.email)} · ${rosterSubtitle(m.roll, m.email)}',
+                      ),
+                    )
+              else if (visiblePersons.isEmpty)
+                ProxEmptyState(
+                    message: _filter == _SessionFilter.partial
+                        ? 'No partials in this session.'
+                        : 'Nobody present in every round yet.')
               else
-                for (final email in persons)
+                for (final email in visiblePersons)
                   Padding(
+                    key: ValueKey<String>('person-$email'),
                     padding:
                         const EdgeInsets.only(bottom: ProxSpacing.sm),
                     child: StudentCard(
@@ -252,4 +343,36 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
       ),
     );
   }
+}
+
+/// Attendance filter behind the tappable Present/Partial/Absent badges.
+/// `all` is the legacy full list; tapping a badge narrows to that
+/// verdict, tapping it again returns to `all`.
+enum _SessionFilter { all, present, partial, absent }
+
+/// One tappable attendance badge: the same `VerdictBadge` look (selected
+/// reads `active`), wrapped in a tap target that toggles its filter.
+class _FilterBadge extends StatelessWidget {
+  final ProxStatus status;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterBadge({
+    required this.status,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: VerdictBadge(
+          status: status,
+          label: label,
+          active: selected,
+        ),
+      );
 }
