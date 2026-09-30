@@ -127,17 +127,18 @@ void main() {
   test('stopWindow grace still accepts proofs, then closes', () async {
     // The reported "linger but can't mark": Stop ends rotation, but the
     // server window stays OPEN for the grace — a proof on the wire still
-    // marks — and only then hard-closes.
+    // marks — and only then hard-closes. Professors never scan (Option
+    // A): the radio stays off from window open through grace end.
     final radio = FakeBleRadio();
     final engine = ProxBleEngine(radio: radio);
     final driver = makeDriver(engine: engine)
       ..scanLinger = const Duration(milliseconds: 300);
     await driver.startHosting(classLabel: 'CS101', port: 0);
     await driver.startWindow(1);
-    expect(radio.scanning, isTrue);
+    expect(radio.scanning, isFalse);
     await driver.stopWindow();
-    // Scan held past the stop (hints resumed in parallel)…
-    expect(radio.scanning, isTrue);
+    // No scan held past the stop (hints resume advertising in parallel)…
+    expect(radio.scanning, isFalse);
     expect(driver.windowLive, isTrue);
     await Future.delayed(const Duration(seconds: 1));
     // …then window closed and scan released, retake-safe.

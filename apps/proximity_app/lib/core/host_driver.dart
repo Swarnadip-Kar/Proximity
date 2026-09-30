@@ -776,23 +776,20 @@ class RealHostDriver implements HostDriver {
     _scanHold?.cancel(); // retake owns the scan from here
     _engine.relayEnabled = false; // professors originate, never relay
     BleLog.log('MESH', 'mesh off (prof originates, never relays)');
-    try {
-      await _engine.startScanning(deferIfNotReady: true);
-    } catch (e) {
-      BleLog.log('BLE', 'prof scan start FAILED: $e');
-    }
+    // Option A: professors never scan. The return-sighting lookup the
+    // scan fed is advisory-only now (verify never refuses on
+    // no-sighting), and students transmit nothing to hear — a whole
+    // window of scanning buys battery drain and a confusing
+    // "BLE scan active" line, no information.
     try {
       await _engine.startProfRotation(window);
       BleLog.log('BLE', 'prof advertising challenges (10s rotation)');
     } catch (e) {
       BleLog.log('BLE', 'prof ADV start FAILED: $e');
-      // Half-open cleanup: the window + scan above succeeded, so unwind
-      // them before surfacing — never leave a live window with no beacons.
+      // Half-open cleanup: the window above succeeded, so unwind it
+      // before surfacing — never leave a live window with no beacons.
       try {
         server.closeWindow();
-      } catch (_) {}
-      try {
-        await _engine.stopScanOnly();
       } catch (_) {}
       rethrow;
     }
@@ -939,29 +936,23 @@ class RealHostDriver implements HostDriver {
       }
     } catch (_) {}
     try {
-      // Keep scanning: late student responses still arrive for ~seconds
-      // after close and must be heard (their POSTs were already sent).
-      await _engine.stop(keepScanning: true);
+      // No scan to hold: professors never scan (Option A) — stop
+      // everything, keep advertising idle hints below for discoverability.
+      await _engine.stop();
     } catch (_) {}
     // Hosting continues: resume idle hints so the waiting class stays
     // discoverable for the retake (rotation only runs inside windows).
     try {
       await _engine.startIdleHintRotation();
     } catch (_) {}
-    try {
-      await _engine.startScanning(deferIfNotReady: true);
-    } catch (_) {}
     // Grace: the server window stays OPEN for the linger, so proofs
-    // already on the wire (or a last rotation token) still mark. Only
-    // then does the window hard-close. A retake/end meanwhile cancels
-    // this timer and owns the window immediately — so a firing timer
-    // always means grace elapsed with no new window: close unconditionally.
+    // already on the wire still mark. Only then does the window
+    // hard-close. A retake/end meanwhile cancels this timer and owns the
+    // window immediately — so a firing timer always means grace elapsed
+    // with no new window: close unconditionally.
     _scanHold = Timer(scanLinger, () async {
       _server?.closeWindow();
-      try {
-        await _engine.stopScanOnly();
-        BleLog.log('BLE', 'post-window grace done (window closed, scan off)');
-      } catch (_) {}
+      BleLog.log('BLE', 'post-window grace done (window closed)');
     });
     BleLog.log('BLE', 'window stopped (grace running)');
   }

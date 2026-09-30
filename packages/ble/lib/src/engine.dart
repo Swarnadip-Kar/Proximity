@@ -308,7 +308,7 @@ class ProxBleEngine {
     return restartScan(quiet: true);
   }
 
-  Future<void> stop({bool keepScanning = false}) async {
+  Future<void> stop() async {
     final gen = _generation;
     _halted = true;
     _dropPendingScan(); // explicit stop wins over a deferral
@@ -319,30 +319,19 @@ class ProxBleEngine {
     _rotTimer?.cancel();
     stopIdleHintRotation();
     _advBusy = false; // a wedged advertise must not jam the next round
-    BleLog.log(
-        'BLE', keepScanning ? 'radio stop (adv off, scan held)' : 'radio stop (adv+scan off)');
+    BleLog.log('BLE', 'radio stop (adv+scan off)');
     try {
       await radio.stopAdvertising().timeout(advTimeout);
     } catch (_) {}
     // A newer startScanning (next screen) wins over this trailing stop:
     // never kill a scan that began after stop() did.
-    if (!keepScanning && gen == _generation) {
+    if (gen == _generation) {
       try {
         await radio.stopScanning().timeout(advTimeout);
       } catch (_) {}
-    } else if (!keepScanning) {
+    } else {
       BleLog.log('BLE', 'stop skipped scan-off (rescanned, gen $gen→$_generation)');
     }
-  }
-
-  /// Stops scanning only (advertising untouched): ends a post-window
-  /// scan linger without silencing idle hints. Never throws.
-  Future<void> stopScanOnly() async {
-    _generation++;
-    _dropPendingScan();
-    try {
-      await radio.stopScanning().timeout(advTimeout);
-    } catch (_) {}
   }
 
   /// Professor: rotate challenge token C_j every 10s for as long as the
