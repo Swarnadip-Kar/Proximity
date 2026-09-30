@@ -1053,24 +1053,27 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             skipPreclaim = true;
           }
           if (!skipPreclaim) {
-            final preVerdict = evaluateStudentClaim(
+            final preVerdict = evaluateStudentClaimWithEvidence(
                 localInstallId: installId,
                 binding: preBinding,
                 installEmail: preInstall,
                 email: email,
-                localDeviceId: preclaimDeviceId);
+                localDeviceId: preclaimDeviceId,
+                installDenied: installDenied);
             if (preVerdict.isReclaim) {
               BleLog.log('SYNC',
                   'pre-claim same-phone reclaim (move cooldown skipped)');
             }
-            final effective = installDenied && preVerdict.ok
-                ? const StudentClaimResult(StudentClaim.installConflict)
-                : preVerdict;
-            if (!effective.ok) {
+            if (!preVerdict.ok) {
               BleLog.log('SYNC', 'device claim refused (see screen message)');
+              logCooldownFacts(
+                  verdict: preVerdict,
+                  localInstallId: installId,
+                  binding: preBinding,
+                  localDeviceId: preclaimDeviceId);
               state = state.copyWith(
                   phase: EnrollPhase.error,
-                  message: studentClaimMessage(effective, preBinding));
+                  message: studentClaimMessage(preVerdict, preBinding));
               return null;
             }
           }

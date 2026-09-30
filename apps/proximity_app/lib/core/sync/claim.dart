@@ -9,6 +9,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
+import 'package:proximity_ble/ble.dart';
 
 import '../security/revocation_cache.dart';
 import 'store/record_helpers.dart';
@@ -487,6 +488,55 @@ class ClaimWrite {
       required this.createdAtMillis,
       required this.lastMoveAtMillis,
       required this.moveCount});
+}
+
+/// Pre-claim shaped verdict shared by the enroll upload pre-check and the
+/// entry registration gate: the install-denial evidence rule (denied
+/// install-doc read after a clean own-doc read proves another Gmail holds
+/// this install) plus the same-phone reclaim evidence. Pure — the
+/// misleading-cooldown bug class lives here: every caller MUST thread
+/// [localDeviceId] through, or same-phone reinstalls refuse before the
+/// reclaim-capable transaction is ever reached.
+StudentClaimResult evaluateStudentClaimWithEvidence({
+  required String localInstallId,
+  required StudentDeviceDoc? binding,
+  required String? installEmail,
+  required String email,
+  String localDeviceId = '',
+  bool installDenied = false,
+  DateTime? now,
+}) {
+  final preVerdict = evaluateStudentClaim(
+      localInstallId: localInstallId,
+      binding: binding,
+      installEmail: installEmail,
+      email: email,
+      localDeviceId: localDeviceId,
+      now: now);
+  return installDenied && preVerdict.ok
+      ? const StudentClaimResult(StudentClaim.installConflict)
+      : preVerdict;
+}
+
+/// One-line field diagnosis for cooldown refusals (prefix-only, no PII):
+/// tells a stale-install from a missing/rotated hardware id at a glance.
+/// No-op unless [verdict] is cooldownBlocked (rare, always worth one line).
+void logCooldownFacts({
+  required StudentClaimResult verdict,
+  required String localInstallId,
+  required StudentDeviceDoc? binding,
+  required String localDeviceId,
+}) {
+  if (verdict.claim != StudentClaim.cooldownBlocked) return;
+  String short(String s) =>
+      s.length <= 8 ? (s.isEmpty ? '∅' : s) : '${s.substring(0, 8)}…';
+  final stored = (binding?.deviceId ?? '').trim();
+  final local = localDeviceId.trim();
+  BleLog.log('SYNC',
+      'cooldown-blocked: install local=${short(localInstallId)} bound=${short(binding?.installId ?? '')} '
+      'storedDevice=${stored.isEmpty ? 'absent' : 'present'} '
+      'localDevice=${local.isEmpty ? 'absent' : 'present'} '
+      'match=${stored.isNotEmpty && local.isNotEmpty && stored == local}');
 }
 
 ClaimWrite resolveStudentClaimWrite({

@@ -300,4 +300,80 @@ void main() {
     expect(blob.contains('faceScore'), isFalse);
     expect(doc['faceFlags'], isA<List>());
   });
+
+  test('evidence helper threads device id (the pre-claim cooldown bug)',
+      () async {
+    // Regression: both pre-claim call sites once called evaluateStudentClaim
+    // WITHOUT localDeviceId, so same-phone reinstalls refused with the
+    // misleading cooldown copy before the reclaim-capable transaction ran.
+    // The helper makes omission structurally unlikely (one call shape).
+    final now = DateTime.now().toUtc();
+    final base = now.millisecondsSinceEpoch - 24 * 60 * 60 * 1000;
+    final binding = StudentDeviceDoc(
+      email: 's@x.in',
+      uid: 'u',
+      pkHex: 'aa',
+      name: 'S',
+      roll: '1',
+      modelVer: 'v',
+      installId: 'iA',
+      org: 'x.in',
+      lastMoveAtMillis: base,
+      lastSeenAtMillis: base,
+      deviceId: 'phone-1',
+    );
+    // Matching hardware id reclaims through the helper.
+    final reclaimed = evaluateStudentClaimWithEvidence(
+        localInstallId: 'iB',
+        binding: binding,
+        installEmail: null,
+        email: 's@x.in',
+        localDeviceId: 'phone-1',
+        now: now);
+    expect(reclaimed.ok, isTrue);
+    expect(reclaimed.isReclaim, isTrue);
+    // Omitted hardware id keeps the cooldown (documents why every caller
+    // must pass it — the default preserves old behavior, not the fix).
+    final refused = evaluateStudentClaimWithEvidence(
+        localInstallId: 'iB',
+        binding: binding,
+        installEmail: null,
+        email: 's@x.in',
+        now: now);
+    expect(refused.claim, StudentClaim.cooldownBlocked);
+    // Install-denial evidence still overrides an ok verdict…
+    final conflict = evaluateStudentClaimWithEvidence(
+        localInstallId: 'iB',
+        binding: null,
+        installEmail: null,
+        email: 's@x.in',
+        installDenied: true,
+        now: now);
+    expect(conflict.claim, StudentClaim.installConflict);
+    // …but never masks a genuine refusal.
+    final stillRefused = evaluateStudentClaimWithEvidence(
+        localInstallId: 'iB',
+        binding: binding,
+        installEmail: null,
+        email: 's@x.in',
+        installDenied: true,
+        now: now);
+    expect(stillRefused.claim, StudentClaim.cooldownBlocked);
+    // Facts log never throws (prefix-only, cooldown-gated).
+    logCooldownFacts(
+        verdict: refused,
+        localInstallId: 'iB',
+        binding: binding,
+        localDeviceId: '');
+    logCooldownFacts(
+        verdict: reclaimed,
+        localInstallId: 'iB',
+        binding: binding,
+        localDeviceId: 'phone-1');
+    logCooldownFacts(
+        verdict: refused,
+        localInstallId: 'iB',
+        binding: null,
+        localDeviceId: '');
+  });
 }

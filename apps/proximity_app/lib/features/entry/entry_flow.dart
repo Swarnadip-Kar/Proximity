@@ -29,6 +29,7 @@ import '../../core/cloud_sync.dart';
 import '../../core/device_store.dart';
 import '../../core/enrollment.dart';
 import '../../core/security/integrity.dart';
+import '../../core/sync/device_hardware_id.dart';
 import '../../core/sync_hook.dart';
 import '../../mode.dart';
 
@@ -570,15 +571,34 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
   try {
     localPk = (await store.readEnrollment())?.pkHex ?? '';
   } catch (_) {}
-  final probed = evaluateStudentClaim(
+  // Same-phone reclaim evidence (mirrors the enroll pre-claim): without
+  // the stable phone id here, a same-phone reinstall refuses at
+  // registration with the misleading cooldown copy before any
+  // reclaim-capable transaction runs. Fail-soft '' = old behavior.
+  var gateDeviceId = '';
+  try {
+    gateDeviceId = await getStableHardwareDeviceId();
+  } catch (_) {}
+  final probed = evaluateStudentClaimWithEvidence(
       localInstallId: installId,
       binding: binding,
       installEmail: installEmail,
-      email: lower);
-  final verdict = installDenied && probed.ok
-      ? const StudentClaimResult(StudentClaim.installConflict)
-      : probed;
+      email: lower,
+      localDeviceId: gateDeviceId,
+      installDenied: installDenied);
+  if (probed.isReclaim) {
+    BleLog.log(
+        'STATE', 'entry gate same-phone reclaim (move cooldown skipped)');
+  }
+  final verdict = probed;
   BleLog.log('STATE', 'entry claim gate $lower → ${verdict.claim.name}');
+  if (verdict.claim == StudentClaim.cooldownBlocked) {
+    logCooldownFacts(
+        verdict: verdict,
+        localInstallId: installId,
+        binding: binding,
+        localDeviceId: gateDeviceId);
+  }
   // Owner-lazy six-month purge (no backend): a binding this stale is
   // already purge-eligible, so best-effort delete own user data now (rules
   // re-gate every delete on server time). Zero extra reads on the live
