@@ -255,6 +255,72 @@ void main() {
       expect(container.read(appModeProvider), AppMode.unset);
     });
 
+  group('unlock outcome tri-state (prompt dismissal)', () {
+    const acct = SignedAccount(
+        email: _email,
+        displayName: 'Test User',
+        uid: 'test-uid',
+        org: 'example.com');
+
+    test('isUnlockDismissal matches cancels, not crypto/disk errors', () {
+      expect(
+          isUnlockDismissal(
+              StateError('Biometric authentication error [10]: canceled')),
+          isTrue);
+      expect(isUnlockDismissal(StateError('auth_canceled')), isTrue);
+      expect(isUnlockDismissal(StateError('user_cancelled')), isTrue);
+      expect(
+          isUnlockDismissal(StateError(
+              'PlatformException(Exception encountered, javax.crypto.IllegalBlockSizeException, null)')),
+          isFalse);
+      expect(isUnlockDismissal(StateError('disk full')), isFalse);
+    });
+
+    testWidgets('linked outcome restores identity', (t) async {
+      final store = await _enrolledStore();
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.linked);
+      expect(container.read(linkedIdentityProvider)!.gmail, _email);
+    });
+
+    testWidgets('empty store yields empty, provider untouched', (t) async {
+      final store = InMemoryDeviceStore();
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.empty);
+      expect(container.read(linkedIdentityProvider), isNull);
+    });
+
+    testWidgets('dismissed prompt yields dismissed, never linked',
+        (t) async {
+      final store = _ThrowingStore(
+          StateError('Biometric authentication error [3]: canceled'));
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(
+          await attemptUnlockIdentity(ref, acct), UnlockOutcome.dismissed);
+      expect(container.read(linkedIdentityProvider), isNull);
+    });
+
+    testWidgets('non-cancel throw degrades to empty (setup owns it)',
+        (t) async {
+      final store = _ThrowingStore(StateError('disk full'));
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.empty);
+      expect(container.read(linkedIdentityProvider), isNull);
+    });
+  });
+
     testWidgets('resume narrates the wait while busy', (t) async {
       // The disabled-button silence is what read as "no response": while
       // busy, the resume section now says what it is doing.
@@ -424,3 +490,13 @@ void main() {
 }
 
 Future<void> _noopContinue(Map<String, String> role, String which) async {}
+
+/// DeviceStore that throws a scripted error on enrollment reads (prompt
+/// dismissal / I/O failure probes for the unlock tri-state).
+class _ThrowingStore extends InMemoryDeviceStore {
+  final Object error;
+  _ThrowingStore(this.error);
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() async => throw error;
+}

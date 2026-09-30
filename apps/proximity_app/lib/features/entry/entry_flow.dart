@@ -129,11 +129,34 @@ Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
   }
 }
 
-/// Repopulate [linkedIdentityProvider] from the on-device enrollment when
-/// it belongs to [acct] (same Gmail, case-insensitive).
+/// Outcome of an explicit identity-unlock attempt (see
+/// [attemptUnlockIdentity]): `linked` restores Mark, `empty` means no
+/// enrollment for this account (setup flow owns the next step),
+/// `dismissed` means the user cancelled the biometric prompt — stay
+/// locked on Accounts with retry (locked-tab taps re-resolve), never
+/// auto-push setup for an enrolled user who just declined to unlock.
+enum UnlockOutcome { linked, empty, dismissed }
+
+/// Best-effort prompt-dismissal detector (Android BiometricPrompt
+/// cancel/back, iOS LAErrorUserCancel): message-based like every other
+/// platform-error matcher here. A missed cancel degrades to `empty`
+/// (setup push), never to a false link — fail-safe direction.
+bool isUnlockDismissal(Object e) {
+  final s = '$e'.toLowerCase();
+  return s.contains('canceled') ||
+      s.contains('cancelled') ||
+      s.contains('user_cancel') ||
+      s.contains('auth_canceled');
+}
+
+/// Unlocks [linkedIdentityProvider] from the on-device enrollment when it
+/// belongs to [acct] (same Gmail, case-insensitive). This is the ONLY
+/// launcher of the biometric prompt on the entry path — callers invoke it
+/// from explicit user context (shell resolve, locked-tab retry), never at
+/// app start (see `main.dart`).
 ///
-/// Mirrors the startup preseed rule in `main.dart` (`initialLinked`, ~line
-/// 168) field-by-field — `LinkedIdentity(name: stored.name,
+/// Mirrors the startup preseed rule in `main.dart` (`initialLinked`)
+/// field-by-field — `LinkedIdentity(name: stored.name,
 /// gmail: stored.email, roll: stored.roll, org: stored.org)` — so a
 /// re-sign-in restores exactly what a restart would have preseeded from
 /// the same enrollment doc. Fail-soft throughout: a store read throw, an
@@ -142,18 +165,20 @@ Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
 /// heartbeat/touch call here — no network-semantics change. Never throws
 /// (a post-await provider touch on a dead screen is swallowed, same as
 /// [entrySignOut]'s clearing touch).
-Future<void> relinkLinkedIdentity(WidgetRef ref, SignedAccount acct) async {
+Future<UnlockOutcome> attemptUnlockIdentity(
+    WidgetRef ref, SignedAccount acct) async {
   try {
     StoredEnrollment? stored;
     try {
       stored = await ref.read(deviceStoreProvider).readEnrollment();
-    } catch (_) {
+    } catch (e) {
+      if (isUnlockDismissal(e)) return UnlockOutcome.dismissed;
       stored = null;
     }
-    if (stored == null) return;
+    if (stored == null) return UnlockOutcome.empty;
     final want = acct.email.toLowerCase();
-    if (want.isEmpty) return;
-    if (stored.email.toLowerCase() != want) return;
+    if (want.isEmpty) return UnlockOutcome.empty;
+    if (stored.email.toLowerCase() != want) return UnlockOutcome.empty;
     final linked = LinkedIdentity(
         name: stored.name,
         gmail: stored.email,
@@ -163,7 +188,17 @@ Future<void> relinkLinkedIdentity(WidgetRef ref, SignedAccount acct) async {
       ref.read(linkedIdentityProvider.notifier).state = linked;
     } catch (_) {}
     BleLog.log('STATE', 'entry relink $want');
-  } catch (_) {}
+    return UnlockOutcome.linked;
+  } catch (_) {
+    return UnlockOutcome.empty;
+  }
+}
+
+/// Backward-compatible wrapper: repopulates [linkedIdentityProvider]
+/// from the on-device enrollment, ignoring the outcome. Prefer
+/// [attemptUnlockIdentity] where the caller branches on dismiss vs empty.
+Future<void> relinkLinkedIdentity(WidgetRef ref, SignedAccount acct) async {
+  await attemptUnlockIdentity(ref, acct);
 }
 
 /// Offline-professor path: no sign-in, no cloud — classes stay on this

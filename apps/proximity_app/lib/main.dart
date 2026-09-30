@@ -156,10 +156,13 @@ Future<void> main() async {
   try {
     await ForceUpdate.hydrateCachedFloor();
   } catch (_) {}
-  // Restore linked identity from secure device storage so sign-in state
-  // (Firebase Auth) + identity survive restarts with zero taps.
-  // Fail-open: secure storage may be unavailable (e.g. unsigned sim
-  // builds) — the app still starts, user simply enrolls.
+  // Linked identity is NOT read here: the enrollment doc lives behind the
+  // biometric-gated store, and reading it would pop a system prompt over
+  // the splash on every cold start (dismissable, so it never worked as a
+  // lock — and trained dismissal). Startup stays prompt-free; the student
+  // shell resolve (`shells.dart` → `relinkLinkedIdentity`) unlocks on
+  // entering the student area, and prove/enroll re-prompt per operation.
+  // Fail-open preserved: an unread store simply starts de-identified.
   // Debug-only preview seeding: release ignores PROX_MODE entirely.
   final DeviceStore store = (kDebugMode &&
           (_debugMode == 'course' ||
@@ -167,12 +170,6 @@ Future<void> main() async {
               _debugMode == 'prof'))
       ? await _debugSeededStore()
       : SecureDeviceStore();
-  StoredEnrollment? stored;
-  try {
-    stored = await store.readEnrollment();
-  } catch (_) {
-    stored = null;
-  }
   // Restore the last-used mode (preview flag wins when given).
   // One Gmail may hold BOTH roles now: routing only checks that the cached
   // roles belong to the currently signed-in account AND include the saved
@@ -246,13 +243,9 @@ Future<void> main() async {
     faceVerifier = const UnavailableFaceVerifier();
     deviceKey = const UnavailableDeviceKey();
   }
-  final LinkedIdentity? initialLinked = stored == null
-      ? null
-      : LinkedIdentity(
-          name: stored.name,
-          gmail: stored.email,
-          roll: stored.roll,
-          org: stored.org);
+  // Identity preseed is ALWAYS null at launch now (see above): the shell
+  // resolve unlocks on entering the student area.
+  final LinkedIdentity? initialLinked = null;
   final im = initialMode;
   // Preseed enrollment with the signed-in account so the enroll screen
   // doesn't ask for Google twice after landing sign-in.

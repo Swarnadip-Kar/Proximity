@@ -570,6 +570,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// settle on exactly one flow.
   var _flowOpen = false;
 
+  /// Last resolve ended in a prompt dismissal (not "unenrolled"): the
+  /// shell parks locked WITHOUT auto-pushing setup. Set fresh on every
+  /// resolve conclusion; consumed once by [_applyResolved].
+  var _unlockDismissed = false;
+
   @override
   void dispose() {
     try {
@@ -764,15 +769,27 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     } catch (_) {
       linked = null;
     }
-    if (_linkedMatchesAccount(acct, linked)) return true;
-    if (acct == null) return false;
+    if (_linkedMatchesAccount(acct, linked)) {
+      _unlockDismissed = false;
+      return true;
+    }
+    if (acct == null) {
+      _unlockDismissed = false;
+      return false;
+    }
     final want = acct.email.trim().toLowerCase();
     // Async gap: the store read + provider touch below may outlive a
-    // rapid switch or disposal. [relinkLinkedIdentity] is fail-soft (never
-    // throws, swallows dead-screen touches), so awaiting it is safe.
+    // rapid switch or disposal. [attemptUnlockIdentity] is fail-soft
+    // (never throws, swallows dead-screen touches), so awaiting it is
+    // safe. A dismissed prompt is NOT "unenrolled": flag it so the shell
+    // parks locked with retry (locked-tab taps re-resolve) instead of
+    // auto-pushing setup for an enrolled user who just declined to unlock.
+    UnlockOutcome outcome = UnlockOutcome.empty;
     try {
-      await relinkLinkedIdentity(ref, acct);
-    } catch (_) {}
+      outcome = await attemptUnlockIdentity(ref, acct);
+    } catch (_) {
+      outcome = UnlockOutcome.empty;
+    }
     if (!mounted || gen != _gateGen) return null;
     final freshAcct = _readCurrentAccount();
     LinkedIdentity? freshLinked;
@@ -783,7 +800,9 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     final freshWant = freshAcct?.email.trim().toLowerCase() ?? '';
     if (freshWant != want) return null;
-    return _linkedMatchesAccount(freshAcct, freshLinked);
+    final matched = _linkedMatchesAccount(freshAcct, freshLinked);
+    _unlockDismissed = !matched && outcome == UnlockOutcome.dismissed;
+    return matched;
   }
 
   /// First-frame resolve: the shell mounts on Accounts (index 2). An
@@ -861,7 +880,10 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       setState(() => _index = 2);
       _animateTo(2, from);
     }
-    _maybePushFlow(gen);
+    // Dismissed unlock parks here WITHOUT the setup push: the enrollment
+    // exists, the user just declined the prompt — locked-tab taps/swipes
+    // re-resolve (re-prompt) as the retry path.
+    if (!_unlockDismissed) _maybePushFlow(gen);
   }
 
   /// Auto-push ONE SetupFlowScreen on the shell ROOT navigator (covers all
