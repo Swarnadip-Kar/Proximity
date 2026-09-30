@@ -18,8 +18,12 @@ void main() {
     expect(params['biometricPromptNegativeButton'], isNotEmpty);
     // Namespace isolation (FSS v11): enrollment (AES-wrap) must never share
     // the default namespace with the seal store (RSA-wrap) — shared markers
-    // flip and trigger migrate/reset wipes. Crash-resistant migration on.
+    // flip and trigger migrate/reset wipes. Plugin-level migration stays
+    // OFF (namespace-per-config is the migration strategy — the backup
+    // path crashes on fresh biometric namespaces); crash-resistant flag
+    // kept inert.
     expect(params['storageNamespace'], 'prox_enroll');
+    expect(params['migrateOnAlgorithmChange'], 'false');
     expect(params['migrateWithBackup'], 'true');
   });
 
@@ -50,6 +54,7 @@ void main() {
     final strong = SecureStoreOptions.aOpts.toMap();
     final fallback = SecureStoreOptions.aOptsFallback.toMap();
     expect(fallback['storageNamespace'], 'prox_enroll_cred');
+    expect(fallback['migrateOnAlgorithmChange'], 'false');
     expect(fallback['storageNamespace'],
         isNot(equals(strong['storageNamespace'])));
     expect(fallback['storageNamespace'], isNot(equals('prox_seal')));

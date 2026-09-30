@@ -57,14 +57,24 @@ class SecureStoreOptions {
   /// wrap here). Without isolation the two instances flip each other's
   /// algorithm markers and trigger migrate/reset wipes (FSS v11
   /// `FlutterSecureStorageConfig`: namespace suffixes KeyStore aliases and
-  /// scopes all prefs). `migrateWithBackup: true` makes any future
-  /// algorithm migration crash-resistant (backup before migrate).
+  /// scopes all prefs).
+  ///
+  /// `migrateOnAlgorithmChange: false` (with `resetOnError` default true):
+  /// namespace-per-config IS the migration strategy — a config change
+  /// ships a NEW namespace, never a marker flip — because the plugin's
+  /// backup-migration crashes on fresh biometric namespaces
+  /// (`IllegalStateException: Cipher not initialized` initializing the
+  /// current cipher without a biometric CryptoObject, observed in field
+  /// logcat) and then `resetOnError` wipes the Keystore key anyway. Off
+  /// goes straight to delete+clean-reinit on mismatch: crash-free, and
+  /// the only data at risk is already unrecoverable.
   static const aOpts = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.strongBiometricOnly,
     biometricPromptTitle: 'Authenticate to access Proximity',
     biometricPromptNegativeButton: 'Cancel',
     storageNamespace: 'prox_enroll',
+    migrateOnAlgorithmChange: false,
     migrateWithBackup: true,
   );
 
@@ -85,13 +95,15 @@ class SecureStoreOptions {
   /// `BiometricPrompt.onAuthenticationSucceeded` (the field
   /// "Save failed: PlatformException(...IllegalBlockSizeException...)").
   /// Separate namespaces = separate keys/blobs = no clobber.
-  /// `migrateWithBackup: true` makes any future algorithm migration
-  /// crash-resistant (backup before migrate).
+  /// `migrateOnAlgorithmChange: false` like [aOpts] (namespace-per-config
+  /// is the migration strategy; the plugin backup path crashes on fresh
+  /// biometric namespaces — see above).
   static const aOptsFallback = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.biometricOrDeviceCredential,
     biometricPromptTitle: 'Authenticate to access Proximity',
     storageNamespace: 'prox_enroll_cred',
+    migrateOnAlgorithmChange: false,
     migrateWithBackup: true,
   );
 

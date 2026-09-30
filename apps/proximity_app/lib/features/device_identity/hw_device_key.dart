@@ -388,6 +388,11 @@ abstract class HwSealStore {
 /// AES-wrap key cipher vs plain `AndroidOptions` RSA wrap here). Sharing the
 /// default namespace flips algorithm markers and triggers migrate/reset
 /// wipes of the OTHER store's data — the namespaces must stay distinct.
+/// `migrateOnAlgorithmChange: false`: namespace-per-config is the
+/// migration strategy (a config change ships a new namespace); the plugin
+/// backup-migration path crashes on fresh namespaces
+/// (`IllegalStateException: Cipher not initialized`, observed in field
+/// logcat) and wipes the key anyway — off goes straight to clean reinit.
 class FlutterSealStore implements HwSealStore {
   final FlutterSecureStorage storage;
 
@@ -395,6 +400,7 @@ class FlutterSealStore implements HwSealStore {
       [this.storage = const FlutterSecureStorage(
         aOptions: AndroidOptions(
           storageNamespace: 'prox_seal',
+          migrateOnAlgorithmChange: false,
           migrateWithBackup: true,
         ),
         iOptions: IOSOptions(

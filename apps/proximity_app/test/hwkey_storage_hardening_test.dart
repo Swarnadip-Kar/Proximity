@@ -243,6 +243,11 @@ void main() {
       final enrollMap = SecureStoreOptions.aOpts.toMap();
       expect(sealMap['storageNamespace'], 'prox_seal');
       expect(sealMap['migrateWithBackup'], 'true');
+      // Plugin-level migration stays OFF on both (namespace-per-config
+      // is the migration strategy — the backup path crashes on fresh
+      // namespaces and wipes the key anyway).
+      expect(sealMap['migrateOnAlgorithmChange'], 'false');
+      expect(enrollMap['migrateOnAlgorithmChange'], 'false');
       expect(enrollMap['storageNamespace'], 'prox_enroll');
       expect(sealMap['storageNamespace'],
           isNot(equals(enrollMap['storageNamespace'])));
