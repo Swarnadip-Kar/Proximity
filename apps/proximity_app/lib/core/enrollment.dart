@@ -1188,25 +1188,41 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
               : 0);
       // Sealed-only (security §2 F1 fix): `sealedKeyHex + pkDHex +
       // chainDERHex` only — no raw-seed field exists.
-      await _store.writeEnrollment(StoredEnrollment(
-        email: email,
-        name: name,
-        roll: roll,
-        pkHex: pkHex,
-        sealedKeyHex: hexEncode(sealed),
-        chainDERHex: chainDERHex,
-        appAttestRawHex: appAttestRawHex,
-        appAttestCredKeyHex: appAttestCredKeyHex,
-        faceId: faceId,
-        enrolledAt: now,
-        verifierVer: _verifier.verifierVer,
-        org: org,
-        pkDHex: hexEncode(pkDRaw),
-        attestationLevel: attestationLevelName(_deviceKey.level),
-        attestedAt: _deviceKey.attestedAt,
-        attestedUntil: _deviceKey.attestedUntil,
-        lastFaceRescanAtMillis: rescanStampMillis,
-      ));
+      // Local-persist-only failure (secure-store lock changed under us —
+      // the field IllegalBlockSizeException): the online claim above
+      // already succeeded and the key/face/account are all still valid, so
+      // stay on faceDone (Save stays enabled, capture visibly kept) with
+      // the honest store copy — never drop to error/"capture pending",
+      // which would strand retry behind another face scan.
+      try {
+        await _store.writeEnrollment(StoredEnrollment(
+          email: email,
+          name: name,
+          roll: roll,
+          pkHex: pkHex,
+          sealedKeyHex: hexEncode(sealed),
+          chainDERHex: chainDERHex,
+          appAttestRawHex: appAttestRawHex,
+          appAttestCredKeyHex: appAttestCredKeyHex,
+          faceId: faceId,
+          enrolledAt: now,
+          verifierVer: _verifier.verifierVer,
+          org: org,
+          pkDHex: hexEncode(pkDRaw),
+          attestationLevel: attestationLevelName(_deviceKey.level),
+          attestedAt: _deviceKey.attestedAt,
+          attestedUntil: _deviceKey.attestedUntil,
+          lastFaceRescanAtMillis: rescanStampMillis,
+        ));
+      } on StateError catch (e) {
+        final m = '$e';
+        if (m.contains('Secure storage rejected the save')) {
+          state = state.copyWith(
+              phase: EnrollPhase.faceDone, message: 'Save failed: $m');
+          return null;
+        }
+        rethrow;
+      }
       state = state.copyWith(
           phase: EnrollPhase.uploaded, message: '', attestationDebug: '');
       return LinkedIdentity(name: name, gmail: email, roll: roll, org: org);

@@ -123,6 +123,13 @@ class EnrollResultScreen extends ConsumerWidget {
           ),
           const SizedBox(height: ProxSpacing.lg),
           ResultStatusSection(st: st, hasFace: hasFace),
+          // Persist-only save failure keeps faceDone (Save stays enabled):
+          // the refusal classifier hides faceDone messages by construction,
+          // so render the store copy explicitly here with a retry action.
+          if (st.message.isNotEmpty && hasFace) ...[
+            const SizedBox(height: ProxSpacing.md),
+            EnrollNotice(message: st.message, isError: true),
+          ],
           if (refusal != EnrollRefusal.none) ...[
             const SizedBox(height: ProxSpacing.md),
             ResultRefusalSection(st: st, refusal: refusal, ctl: ctl),

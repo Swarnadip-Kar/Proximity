@@ -73,11 +73,25 @@ class SecureStoreOptions {
   /// stamps [AttestationLevel.standard] instead of `.full`, and the
   /// professor sees a banner. Never silent — a credential-only device
   /// cannot claim biometric-tier security.
+  ///
+  /// `storageNamespace: 'prox_enroll_cred'` (DISTINCT from [aOpts]'s
+  /// `'prox_enroll'`): the two instances MUST NOT share a namespace. FSS
+  /// v11 derives the KeyStore alias (`.<namespace>`), the IV pref
+  /// (`KeyStoreIV1`) and the wrapped app-key blob from the namespace, so
+  /// two configs with different `biometricType` (different
+  /// `UserAuthenticationParameters`) sharing one namespace clobber each
+  /// other's IV/blob — the loser's post-auth `cipher.doFinal` then throws
+  /// `javax.crypto.IllegalBlockSizeException` inside
+  /// `BiometricPrompt.onAuthenticationSucceeded` (the field
+  /// "Save failed: PlatformException(...IllegalBlockSizeException...)").
+  /// Separate namespaces = separate keys/blobs = no clobber.
+  /// `migrateWithBackup: true` makes any future algorithm migration
+  /// crash-resistant (backup before migrate).
   static const aOptsFallback = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.biometricOrDeviceCredential,
     biometricPromptTitle: 'Authenticate to access Proximity',
-    storageNamespace: 'prox_enroll',
+    storageNamespace: 'prox_enroll_cred',
     migrateWithBackup: true,
   );
 

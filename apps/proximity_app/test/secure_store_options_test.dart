@@ -41,8 +41,23 @@ void main() {
     );
   });
 
-  test('desktop/web fail closed', () {
-    // Unit tests run with an Android default platform; override to a
+  test('credential fallback uses a DISTINCT namespace (no alias clobber)', () {
+    // Field root cause (IllegalBlockSizeException after biometric auth):
+    // two FSS configs with different biometricType sharing one
+    // storageNamespace share the KeyStore alias + IV + wrapped app-key
+    // blob, so one side's write orphans the other's blob. The fallback
+    // slot must never equal the strong slot (nor the seal slot).
+    final strong = SecureStoreOptions.aOpts.toMap();
+    final fallback = SecureStoreOptions.aOptsFallback.toMap();
+    expect(fallback['storageNamespace'], 'prox_enroll_cred');
+    expect(fallback['storageNamespace'],
+        isNot(equals(strong['storageNamespace'])));
+    expect(fallback['storageNamespace'], isNot(equals('prox_seal')));
+    expect(fallback['biometricType'],
+        AndroidBiometricType.biometricOrDeviceCredential.name);
+  });
+
+  test('desktop/web fail closed', () {    // Unit tests run with an Android default platform; override to a
     // records-only target: the gate must throw rather than hand out storage
     // that silently persists secrets weakly.
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;

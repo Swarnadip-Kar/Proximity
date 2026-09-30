@@ -41,6 +41,18 @@ class SecureDeviceStore implements DeviceStore {
   // ('prox_enroll' here via SecureStoreOptions.aOpts vs 'prox_seal' there):
   // different key ciphers sharing one namespace flip algorithm markers and
   // trigger migrate/reset wipes of each other's data.
+  // The credential-fallback instance below is a THIRD namespace
+  // ('prox_enroll_cred' via SecureStoreOptions.aOptsFallback), never the
+  // same as the strong slot: FSS v11 derives the KeyStore alias
+  // (`.<namespace>`), the IV pref and the wrapped app-key blob from the
+  // namespace, so two configs with different `biometricType` (different
+  // `UserAuthenticationParameters`) sharing one namespace clobber each
+  // other's IV/blob — the loser's post-auth `cipher.doFinal` then throws
+  // `javax.crypto.IllegalBlockSizeException` inside
+  // `BiometricPrompt.onAuthenticationSucceeded` (field report: "Save
+  // failed: PlatformException(...IllegalBlockSizeException...)"). Separate
+  // namespaces = separate keys/blobs = no clobber; the tier hint below
+  // picks the live slot so steady state costs one prompt, not two.
   // Backup exclusion lives in AndroidManifest (`allowBackup=false`,
   // `fullBackupContent=false`) + res/xml/data_extraction_rules.xml.
   SecureDeviceStore({
@@ -59,14 +71,97 @@ class SecureDeviceStore implements DeviceStore {
 
   final FlutterSecureStorage _fallbackSecure;
 
-  bool _isBiometricUnavailable(Object e) {
+  /// True for every secure-store failure that must try the OTHER slot
+  /// instead of surfacing raw platform text:
+  /// - pre-auth unavailability (no strong biometric enrolled, no hardware,
+  ///   prompt cancelled/dismissed);
+  /// - POST-AUTH key/blob mismatch: the prompt succeeded but the stored
+  ///   Keystore-wrapped app-key blob cannot be unwrapped with the unlocked
+  ///   key (`IllegalBlockSizeException` / `BadPaddingException` /
+  ///   `KeyPermanentlyInvalidatedException` after a fingerprint/PIN-set
+  ///   change — `setInvalidatedByBiometricEnrollment(true)` orphans the old
+  ///   blob by OS design);
+  /// - iOS keychain lockout/invalidation (`biometryCurrentSet` items die
+  ///   with the enrolled set: err -34018/-25300).
+  ///
+  /// Non-matching errors (I/O, Firestore, programming bugs) rethrow
+  /// untouched — they are never a signal to switch slots.
+  bool _isSecureStoreAuthOrKeyFailure(Object e) {
     final s = '$e'.toLowerCase();
     return s.contains('biometric') ||
         s.contains('none_enrolled') ||
         s.contains('no_hardware') ||
         s.contains('cryptofailed') ||
-        s.contains('keystore');
+        s.contains('keystore') ||
+        s.contains('illegalblocksize') ||
+        s.contains('badpadding') ||
+        s.contains('bad padding') ||
+        s.contains('aeadbadtagexception') ||
+        s.contains('invalidat') ||
+        s.contains('usernotauthenticated') ||
+        s.contains('user_not_authenticated') ||
+        s.contains('cryptoobject') ||
+        s.contains('auth_canceled') ||
+        s.contains('authcanceled') ||
+        s.contains('user_cancel') ||
+        s.contains('canceled') ||
+        s.contains('cancelled') ||
+        s.contains('keychain') ||
+        s.contains('-34018') ||
+        s.contains('-25300') ||
+        s.contains('authfailed') ||
+        s.contains('authentication failed');
   }
+
+  /// Honest, prompt-free copy for an unrecoverable secure-store write (both
+  /// slots refused with an auth/key failure). Never leaks the raw
+  /// `PlatformException(...javax.crypto...)` + Java stack to the UI banner.
+  StateError _secureStorePersistError() => StateError(
+        'Secure storage rejected the save (phone lock / fingerprint set '
+        'changed). Tap Save again — your capture is kept. If it repeats, '
+        're-enroll your fingerprint or PIN in Settings, then save again.',
+      );
+
+  /// Tier hint: which FSS namespace holds the live data ('strong' =
+  /// `prox_enroll`, 'cred' = `prox_enroll_cred`). Unencrypted SharedPrefs,
+  /// best-effort: a hint, never a secret. Starts at strong; flips to the
+  /// slot that answers after the other fails with an auth/key error, so a
+  /// corrupted strong slot costs one prompt per process (not two forever).
+  static const _kTierPref = 'prox.secure.tier.v1';
+  static const _kTierCred = 'cred';
+  bool _preferCredSlot = false;
+  bool _tierLoaded = false;
+
+  Future<void> _ensureTierLoaded() async {
+    if (_tierLoaded) return;
+    _tierLoaded = true;
+    try {
+      final prefs = await _prefs();
+      _preferCredSlot = prefs.getString(_kTierPref) == _kTierCred;
+    } catch (_) {
+      _preferCredSlot = false;
+    }
+  }
+
+  Future<void> _persistTier() async {
+    try {
+      final prefs = await _prefs();
+      await prefs.setString(
+          _kTierPref, _preferCredSlot ? _kTierCred : 'strong');
+    } catch (_) {}
+  }
+
+  /// Adopts [credPreferred], persisting the hint only when it flips (steady
+  /// state costs no extra prefs write).
+  Future<void> _adoptTier(bool credPreferred) async {
+    if (_preferCredSlot == credPreferred) return;
+    _preferCredSlot = credPreferred;
+    await _persistTier();
+  }
+
+  /// Strong slot first by default, cred slot first once it proved live.
+  List<FlutterSecureStorage> _orderedSlots() =>
+      _preferCredSlot ? [_fallbackSecure, _secure] : [_secure, _fallbackSecure];
 
   /// Test-only view of the wired storage (lets tests assert the hardened
   /// options are actually passed, not just that the constants exist).
@@ -102,23 +197,35 @@ class SecureDeviceStore implements DeviceStore {
     if (_enrollmentLoaded) return _enrollmentCache;
     final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) return _enrollmentCache;
+    await _ensureTierLoaded();
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
     // a missing enrollment just means "enroll".
     String? raw;
-    try {
-      raw = await _secure.read(key: _kEnroll);
-    } catch (e) {
-      if (_isBiometricUnavailable(e)) {
-        try {
-          raw = await _fallbackSecure.read(key: _kEnroll);
-        } catch (_) {
+    var sawAuthFailure = false;
+    for (final slot in _orderedSlots()) {
+      try {
+        raw = await slot.read(key: _kEnroll);
+      } catch (e) {
+        if (!_isSecureStoreAuthOrKeyFailure(e)) {
           _lastSecureFailAt = now;
           return _enrollmentCache;
         }
-      } else {
-        _lastSecureFailAt = now;
-        return _enrollmentCache;
+        sawAuthFailure = true;
+        continue;
       }
+      // The answering slot becomes the preferred slot: after an auth/key
+      // failure on the preferred slot, the slot that answers (hit or clean
+      // miss) is adopted, so steady state costs one prompt. A clean miss on
+      // the preferred slot breaks immediately (fresh installs must not pay
+      // two prompts).
+      if (raw != null || sawAuthFailure) {
+        await _adoptTier(identical(slot, _fallbackSecure));
+      }
+      break;
+    }
+    if (raw == null && sawAuthFailure) {
+      _lastSecureFailAt = now;
+      return _enrollmentCache;
     }
     if (raw == null) {
       _enrollmentCache = null;
@@ -143,18 +250,33 @@ class SecureDeviceStore implements DeviceStore {
   @override
   Future<void> writeEnrollment(StoredEnrollment e) async {
     final payload = jsonEncode(e.toJson());
-    try {
-      await _secure.write(key: _kEnroll, value: payload);
-    } catch (err) {
-      if (_isBiometricUnavailable(err)) {
-        await _fallbackSecure.write(key: _kEnroll, value: payload);
-        SecureStoreOptions.usedCredentialFallback = true;
-      } else {
-        rethrow;
+    await _ensureTierLoaded();
+    for (final slot in _orderedSlots()) {
+      try {
+        await slot.write(key: _kEnroll, value: payload);
+      } catch (err) {
+        if (!_isSecureStoreAuthOrKeyFailure(err)) rethrow;
+        // Best-effort: drop the unreadable entry so a later init cannot
+        // trip on stale data (the Keystore blob itself is namespaced away
+        // from the other slot, which is tried next). Native delete needs
+        // no cipher, so it works even when init is what failed.
+        try {
+          await slot.delete(key: _kEnroll);
+        } catch (_) {}
+        continue;
       }
+      final usedCred = identical(slot, _fallbackSecure);
+      await _adoptTier(usedCred);
+      SecureStoreOptions.usedCredentialFallback = usedCred;
+      _enrollmentCache = e;
+      _enrollmentLoaded = true;
+      return;
     }
-    _enrollmentCache = e;
-    _enrollmentLoaded = true;
+    // Both slots refused with auth/key failures (e.g. the field
+    // IllegalBlockSizeException after a lock-set change): honest copy, no
+    // raw PlatformException + Java stack. Nothing is cached — a later Save
+    // retries storage instead of believing an unpersisted doc.
+    throw _secureStorePersistError();
   }
 
   @override
@@ -165,6 +287,7 @@ class SecureDeviceStore implements DeviceStore {
     try {
       await _fallbackSecure.delete(key: _kEnroll);
     } catch (_) {}
+    await _adoptTier(false);
     _enrollmentCache = null;
     _enrollmentLoaded = true;
   }
@@ -529,21 +652,28 @@ class SecureDeviceStore implements DeviceStore {
     if (_installIdLoaded) return _installIdCache;
     final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) return _installIdCache;
+    await _ensureTierLoaded();
     String? v;
-    try {
-      v = await _secure.read(key: _kInstall);
-    } catch (e) {
-      if (_isBiometricUnavailable(e)) {
-        try {
-          v = await _fallbackSecure.read(key: _kInstall);
-        } catch (_) {
+    var sawAuthFailure = false;
+    for (final slot in _orderedSlots()) {
+      try {
+        v = await slot.read(key: _kInstall);
+      } catch (e) {
+        if (!_isSecureStoreAuthOrKeyFailure(e)) {
           _lastSecureFailAt = now;
           return _installIdCache;
         }
-      } else {
-        _lastSecureFailAt = now;
-        return _installIdCache;
+        sawAuthFailure = true;
+        continue;
       }
+      if (v != null || sawAuthFailure) {
+        await _adoptTier(identical(slot, _fallbackSecure));
+      }
+      break;
+    }
+    if (v == null && sawAuthFailure) {
+      _lastSecureFailAt = now;
+      return _installIdCache;
     }
     _installIdCache = v;
     _installIdLoaded = true;
@@ -552,18 +682,25 @@ class SecureDeviceStore implements DeviceStore {
 
   @override
   Future<void> writeInstallId(String id) async {
-    try {
-      await _secure.write(key: _kInstall, value: id);
-    } catch (e) {
-      if (_isBiometricUnavailable(e)) {
-        await _fallbackSecure.write(key: _kInstall, value: id);
-        SecureStoreOptions.usedCredentialFallback = true;
-      } else {
-        rethrow;
+    await _ensureTierLoaded();
+    for (final slot in _orderedSlots()) {
+      try {
+        await slot.write(key: _kInstall, value: id);
+      } catch (e) {
+        if (!_isSecureStoreAuthOrKeyFailure(e)) rethrow;
+        try {
+          await slot.delete(key: _kInstall);
+        } catch (_) {}
+        continue;
       }
+      final usedCred = identical(slot, _fallbackSecure);
+      await _adoptTier(usedCred);
+      SecureStoreOptions.usedCredentialFallback = usedCred;
+      _installIdCache = id;
+      _installIdLoaded = true;
+      return;
     }
-    _installIdCache = id;
-    _installIdLoaded = true;
+    throw _secureStorePersistError();
   }
 
   @override
