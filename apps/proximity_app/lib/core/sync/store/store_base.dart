@@ -99,10 +99,10 @@ class StoredEnrollment {
         // Security §2 sealed-only: `sealedKeyHex` + `pkDHex` + `chainDERHex`.
         'pkHex': pkHex,
         'sealedKeyHex': sealedKeyHex,
+        // Single chain key (payload diet for the biometric-gated write):
+        // readers accept the legacy Firestore wire alias `attestationChain`
+        // (see fromJson), so pre-upgrade docs with both keys still parse.
         'chainDERHex': List<String>.of(chainDERHex),
-        // Firestore wire alias (security §7 `attestationChain`): written
-        // alongside for forward-compat with sec-sync claim/sync layers.
-        'attestationChain': List<String>.of(chainDERHex),
         'faceId': faceId,
         'enrolledAt': enrolledAt.toIso8601String(),
         'verifierVer': verifierVer,

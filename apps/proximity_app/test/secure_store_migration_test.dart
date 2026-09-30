@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/security/secure_store_options.dart';
 import 'package:proximity_app/core/sync/store/secure_store.dart';
+import 'package:proximity_app/core/sync/store/store_base.dart';
 
 /// In-memory FlutterSecureStorage stand-in (platform channels are
 /// unavailable in unit tests; SecureDeviceStore takes any instance).
@@ -108,6 +109,37 @@ void main() {
 
     final back = (await store.readEnrollment())!;
     expect(back.sealedKeyHex, 'deadbeef');
+    expect(fake.writeCount, 0);
+  });
+
+  test('chain written once (no attestationChain alias duplication)', () async {
+    final fake = _FakeSecure();
+    final store = SecureDeviceStore(secure: fake);
+    await store.writeEnrollment(StoredEnrollment(
+      email: 'a@x.in',
+      name: 'A',
+      roll: '1',
+      pkHex: 'cd' * 32,
+      sealedKeyHex: 'deadbeef',
+      chainDERHex: const ['ab12', 'cd34'],
+      enrolledAt: DateTime.utc(2026, 1, 1),
+    ));
+    final written = jsonDecode(fake.backend['prox.enrollment.v1']!)
+        as Map<String, dynamic>;
+    expect(written['chainDERHex'], ['ab12', 'cd34']);
+    expect(written.containsKey('attestationChain'), isFalse);
+    expect((await store.readEnrollment())!.chainDERHex, ['ab12', 'cd34']);
+  });
+
+  test('legacy dual-key doc still parses (attestationChain alias)', () async {
+    final fake = _FakeSecure();
+    final doc = _doc(sealedKeyHex: 'deadbeef')
+      ..['chainDERHex'] = ['ab12']
+      ..['attestationChain'] = ['ab12'];
+    fake.backend['prox.enrollment.v1'] = jsonEncode(doc);
+    final store = SecureDeviceStore(secure: fake);
+
+    expect((await store.readEnrollment())!.chainDERHex, ['ab12']);
     expect(fake.writeCount, 0);
   });
 }
