@@ -78,6 +78,15 @@ class StudentDeviceDoc {
   /// deviceId reclaims instantly); never a sole identity signal (Gmail
   /// auth + fresh face + fresh HW key still gate every claim).
   final String deviceId;
+
+  /// Last SAVED face re-scan stamp, UTC epoch millis (0 = never rescanned).
+  /// Mirrors StoredEnrollment.lastFaceRescanAtMillis server-side so a
+  /// clear-data / reinstall cannot wipe the 30-day face quota (local-only
+  /// stamps were bypassed by reinstalling). Stamped on every non-first
+  /// claim (any successful face save replaces the template); first bind
+  /// leaves 0 so one reinstall stays free, then the quota applies.
+  /// Additive: pre-upgrade docs read 0 (allowed once).
+  final int lastFaceRescanAtMillis;
   const StudentDeviceDoc(
       {required this.email,
       required this.uid,
@@ -102,7 +111,8 @@ class StudentDeviceDoc {
       this.integrityFlag = '',
       this.appAttestRawHex = '',
       this.appAttestCredKeyHex = '',
-      this.deviceId = ''});
+      this.deviceId = '',
+      this.lastFaceRescanAtMillis = 0});
 }
 
 /// Minimum gap between two different-device enrollments of one Gmail.
@@ -116,8 +126,11 @@ const kStudentMoveCooldown = Duration(days: 30);
 /// account every 30 days. Same duration as [kStudentMoveCooldown] but a
 /// SEPARATE rule (device moves vs face-template replaces): changing one
 /// must never change the other, hence the separate constant even though
-/// both are currently 30 days. Enforced locally on the rescan-SAVE path
-/// only (see EnrollmentController.upload); no claim/rules/server change.
+/// both are currently 30 days. Enforced on the rescan-SAVE path
+/// (see EnrollmentController.upload) against max(local, server) stamps —
+/// the server stamp ([StudentDeviceDoc.lastFaceRescanAtMillis]) survives
+/// clear-data/reinstall so the quota cannot be wiped locally. No
+/// rules-verdict change (type-lock only).
 const kFaceRescanCooldown = Duration(days: 30);
 
 /// Lost-phone exemption window: when the STORED binding's last-seen is

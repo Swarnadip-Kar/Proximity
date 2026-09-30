@@ -271,6 +271,11 @@ service cloud.firestore {
         (!('deviceId' in request.resource.data) ||
           (request.resource.data.deviceId is string &&
             request.resource.data.deviceId.size() <= 128)) &&
+        // Server face-rescan stamp (clear-data fix): optional int, 0 =
+        // never rescanned. Honest clients stamp now on non-first saves, 0
+        // on first bind; pre-upgrade docs omit it (reads as 0).
+        (!('lastFaceRescanAtMillis' in request.resource.data) ||
+          request.resource.data.lastFaceRescanAtMillis is int) &&
         (!('livenessVer' in request.resource.data) ||
           (request.resource.data.livenessVer is string &&
            request.resource.data.livenessVer.size() <= 128)) &&

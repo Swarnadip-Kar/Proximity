@@ -93,7 +93,8 @@ class FakeCloudSync implements CloudSync {
             attestationChain: List<String>.of(doc.attestationChain),
             livenessVer: doc.livenessVer,
             integrityFlag: doc.integrityFlag,
-            deviceId: doc.deviceId);
+            deviceId: doc.deviceId,
+            lastFaceRescanAtMillis: doc.lastFaceRescanAtMillis);
     devices[withOrg.email.toLowerCase()] = withOrg;
     if (withOrg.installId.isNotEmpty) {
       installs[withOrg.installId] = withOrg.email.toLowerCase();
@@ -155,6 +156,7 @@ class FakeCloudSync implements CloudSync {
       livenessVer: binding.livenessVer,
       integrityFlag: binding.integrityFlag,
       deviceId: binding.deviceId,
+      lastFaceRescanAtMillis: binding.lastFaceRescanAtMillis,
     );
     final row = dir[key];
     if (row != null) {
@@ -251,6 +253,7 @@ class FakeCloudSync implements CloudSync {
       appAttestRawHex: doc.appAttestRawHex.trim().toLowerCase(),
       appAttestCredKeyHex: doc.appAttestCredKeyHex.trim().toLowerCase(),
       deviceId: doc.deviceId.trim(),
+      lastFaceRescanAtMillis: doc.lastFaceRescanAtMillis,
     );
     installs[installId] = key;
     dir[key] = StudentDirectoryEntry(
@@ -304,6 +307,7 @@ class FakeCloudSync implements CloudSync {
       livenessVer: binding.livenessVer,
       integrityFlag: binding.integrityFlag,
       deviceId: binding.deviceId,
+      lastFaceRescanAtMillis: binding.lastFaceRescanAtMillis,
     );
     return true;
   }

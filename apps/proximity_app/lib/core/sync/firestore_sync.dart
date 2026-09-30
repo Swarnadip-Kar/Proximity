@@ -372,6 +372,8 @@ class FirestoreCloudSync implements CloudSync {
         appAttestCredKeyHex:
             (d?['appAttestCredKeyHex'] as String? ?? '').trim().toLowerCase(),
         deviceId: (d?['deviceId'] as String? ?? '').trim(),
+        lastFaceRescanAtMillis:
+            (d?['lastFaceRescanAtMillis'] as num?)?.toInt() ?? 0,
       );
 
   @override
@@ -443,6 +445,11 @@ class FirestoreCloudSync implements CloudSync {
           // desktop / pre-upgrade). Rules enforce the match server-side
           // (isSamePhoneReclaim); the client assertion alone moves nothing.
           'deviceId': doc.deviceId.trim(),
+          // Server face-rescan stamp (0 = never rescanned): survives
+          // clear-data/reinstall so the 30-day face quota cannot be wiped
+          // locally. Honest clients stamp now on non-first saves, 0 on
+          // first bind (see enrollment upload).
+          'lastFaceRescanAtMillis': doc.lastFaceRescanAtMillis,
           'updatedAt': at.toIso8601String(),
         }, SetOptions(merge: true));
         tx.set(instRef, {

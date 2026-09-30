@@ -981,6 +981,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // an install enrolled as another Gmail, refuses before anything is
       // stored locally (false-attendance enrollments stop here).
       final cloud = _cloud;
+      // Server face stamp for the claim doc (clear-data fix): local default
+      // here (first enrollment 0, rescan now); the online branch upgrades a
+      // clear-data reinstall (no local prev, binding exists) to now so the
+      // server persists the quota even when local was wiped.
+      var claimFaceStamp = isFaceRescan
+          ? nowMillis
+          : (prevEnrollment != null &&
+                  prevEnrollment.email.toLowerCase() == email
+              ? prevEnrollment.lastFaceRescanAtMillis
+              : 0);
       if (cloud != null && cloud.available) {
         var online = false;
         try {
@@ -1078,6 +1088,40 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   message: studentClaimMessage(preVerdict, preBinding));
               return null;
             }
+            // Server face quota (clear-data fix): the local stamp alone is
+            // wiped by reinstall/clear-data, so enforce max(local, binding).
+            // A binding with a recent stamp blocks even when local says
+            // first enrollment (prev wiped). Zero (never rescanned,
+            // incl. pre-upgrade) always allows once, then stamps.
+            if (preBinding != null) {
+              final prev = prevEnrollment;
+              final sameAccount = prev != null &&
+                  prev.email.toLowerCase() == email;
+              final localStamp =
+                  sameAccount ? prev.lastFaceRescanAtMillis : 0;
+              final effectiveStamp =
+                  localStamp > preBinding.lastFaceRescanAtMillis
+                      ? localStamp
+                      : preBinding.lastFaceRescanAtMillis;
+              // Any upload with an existing binding replaces the template
+              // (enrollFace always produced a fresh faceId above), so this
+              // runs even when local says first (clear-data case).
+              if (faceRescanBlocked(
+                  stampMillis: effectiveStamp, now: now)) {
+                final eligible =
+                    faceRescanEligibleAt(effectiveStamp);
+                BleLog.log('FACE',
+                    'face rescan refused (server cooldown until ${dateIsoOf(eligible)})');
+                state = state.copyWith(
+                    phase: EnrollPhase.error,
+                    message: faceRescanCooldownMessage(eligible));
+                return null;
+              }
+              // This save replaces the template (fresh faceId above), so
+              // stamp the server quota now — including the clear-data case
+              // where local said first (prev wiped, binding exists).
+              claimFaceStamp = nowMillis;
+            }
           }
         }
         // Security §5 pre-enroll gate (claim): re-probed fresh at upload
@@ -1164,7 +1208,8 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   livenessVer: kLivenessVer,
                   integrityFlag: enrollIntegrityFlag,
                   appAttestRawHex: appAttestRawHex,
-                  appAttestCredKeyHex: appAttestCredKeyHex),
+                  appAttestCredKeyHex: appAttestCredKeyHex,
+                  lastFaceRescanAtMillis: claimFaceStamp),
               installId: installId);
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? (outcome.isReclaim ? 'same-phone reclaim' : 'device move') : 'same device'})');
@@ -1203,13 +1248,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // Rescan stamp: a successful template replacement stamps now; a
       // first enrollment preserves any same-account stamp (normally 0) and
       // a different account starts at 0. Failed saves return above, so they
-      // never stamp. Old template handling otherwise unchanged.
-      final rescanStampMillis = isFaceRescan
-          ? nowMillis
-          : (prevEnrollment != null &&
-                  prevEnrollment.email.toLowerCase() == email
-              ? prevEnrollment.lastFaceRescanAtMillis
-              : 0);
+      // never stamp. [claimFaceStamp] already carries the server-aware
+      // value (clear-data reinstall upgrades to now via the binding above);
+      // reuse it so local and server agree.
+      final rescanStampMillis = claimFaceStamp;
       // Sealed-only (security §2 F1 fix): `sealedKeyHex + pkDHex +
       // chainDERHex` only — no raw-seed field exists.
       // Local-persist-only failure (secure-store lock changed under us —
