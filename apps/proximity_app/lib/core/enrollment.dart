@@ -1012,6 +1012,18 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // refusal path). Own-doc denied → genuine rules problem → deploy
         // hint verbatim. Unknown read failures skip the pre-claim and the
         // transaction below decides, exactly as before.
+        //
+        // Same-phone reclaim evidence (see device_hardware_id.dart): fetch
+        // the stable phone id BEFORE the verdict — a same-phone reinstall
+        // (new installId, same ANDROID_ID/identifierForVendor) must
+        // evaluate to instant allowedMove here, not the misleading
+        // "enrolled on another device" cooldown refusal. Without this the
+        // transaction (which does receive deviceId) is never reached.
+        // Fail-soft '' = pre-reclaim behavior. Logged prefix-only.
+        var preclaimDeviceId = '';
+        try {
+          preclaimDeviceId = await getStableHardwareDeviceId();
+        } catch (_) {}
         var skipPreclaim = false;
         StudentDeviceDoc? preBinding;
         try {
@@ -1045,7 +1057,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 localInstallId: installId,
                 binding: preBinding,
                 installEmail: preInstall,
-                email: email);
+                email: email,
+                localDeviceId: preclaimDeviceId);
+            if (preVerdict.isReclaim) {
+              BleLog.log('SYNC',
+                  'pre-claim same-phone reclaim (move cooldown skipped)');
+            }
             final effective = installDenied && preVerdict.ok
                 ? const StudentClaimResult(StudentClaim.installConflict)
                 : preVerdict;
@@ -1105,7 +1122,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           // a same-phone reinstall presents the stored deviceId and skips
           // the 30-day move cooldown — Gmail auth + fresh face + fresh HW
           // key still gate the claim, and the server re-checks the match.
-          final hardwareDeviceId = await getStableHardwareDeviceId();
+          // Reuses the pre-claim fetch above so verdict and transaction
+          // always see the same id.
+          final hardwareDeviceId = preclaimDeviceId;
           final outcome = await cloud.claimStudentDevice(
               doc: StudentDeviceDoc(
                   email: email,
