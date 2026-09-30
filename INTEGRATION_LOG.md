@@ -3205,3 +3205,13 @@ Not bugs (verified, no change): prof pin list showing N keys is TOFU by design (
 
 Verify: app suite 1195/1195; ble 36/36; `flutter analyze` clean on all touched files. `PROXIMITY_DESIGN.md` §§5.3/6.1/6.2/7/7.3/9 updated to Option A reality.
 
+## Prompt-free launch + honest unlock + scan-free professors (2026-09-30)
+
+Field report: opening the app pops a biometric prompt that back/Cancel bypasses. Investigation: no app-lock exists — the prompt is `main()` reading the biometric-gated enrollment at startup (`SecureDeviceStore.readEnrollment` → native `BiometricPrompt`), kept fail-open for sims. Dismissal just starts the app de-identified; secrets stay encrypted and prove/enroll re-prompt per operation, but hosting/records were never behind biometrics at all — theater that trained dismissal.
+
+- fix(entry) — no prompt at launch: `main()` no longer reads enrollment (preseed always null); the student-shell resolve unlocks on entering the student area. New `attemptUnlockIdentity` tri-state (`linked`/`empty`/`dismissed`, prompt-cancel detected best-effort); a dismissed prompt parks locked on Accounts with locked-tab-tap retry instead of auto-pushing setup for an enrolled user. 5 new `entry_relink_test` cases.
+- perf(ble) — professors stop scanning: the return-sighting lookup is advisory-only (`verifyProve` never refuses on `no-sighting`) and students transmit nothing, so a window-long scan bought drain + a confusing `BLE scan active` line. `startWindow`/`stopWindow` scan-free; `engine.stop()`/`stopScanOnly()` retired post-grace API simplified to `stop()`.
+- Behavior notes: prof `sightings` wiring stays (returns null → `no-sighting` rule in logs); `matchResponse` kept for tests; no mixed fleet assumed (testing phase) — stale-version interop explicitly not preserved.
+
+Verify: app suite 1200/1200 (incl. 5 unlock tri-state + updated grace expectations); ble 36/36; `flutter analyze` clean on all touched files.
+
