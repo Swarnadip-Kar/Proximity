@@ -261,6 +261,11 @@ class LiveRosterBody extends StatelessWidget {
   /// by the host screen). Null keeps the legacy tally-size ceiling.
   final int? rosterTotal;
 
+  /// Course roster for the absent list (history union, newest name/roll
+  /// wins — see `courseRoster`). Empty keeps the legacy count-only absent
+  /// (no absent names to list).
+  final List<RosterEntry> roster;
+
   /// Live-open round number from the host ([TakeAttendanceScreen._windowNo]).
   /// The tally only notes a round at Stop (never at open, so the
   /// intersection cannot collapse mid-round) — without this the `Class N`
@@ -278,6 +283,7 @@ class LiveRosterBody extends StatelessWidget {
     this.onRemoveStudent,
     this.includeWaiting = true,
     this.rosterTotal,
+    this.roster = const [],
     this.liveWindowNo = 0,
   });
 
@@ -302,6 +308,7 @@ class LiveRosterBody extends StatelessWidget {
             tally: tally,
             onRemove: onRemoveStudent,
             rosterTotal: rosterTotal,
+            roster: roster,
             groups: groups,
             liveWindowNo: liveWindowNo),
       ],
@@ -456,13 +463,19 @@ class PartialSection extends StatelessWidget {
   }
 }
 
-/// Attendance summary: `Attendance` title + `Present n` (green, marked)
-/// + `Partial m` (yellow, late) + `Absent k` (red, absent) badges, then
-/// the same tri-color share bar as the session cards. Same `VerdictBadge`
-/// + `SessionShareBar` components as the records rows — no new pills, no
-/// raw colors, no copy-paste. Counts come from the already-filtered
-/// intersection gate above (search narrows present; partials hide under
-/// search, count reads 0).
+/// Roster filter behind the tappable Present/Partial/Absent badges.
+/// `all` is the legacy combined list (present + partial + dup-absent);
+/// tapping a badge narrows the list to that verdict, tapping it again
+/// returns to `all`.
+enum RosterFilter { all, present, partial, absent }
+
+/// Attendance summary: `Attendance` title + tappable `Present n` (green,
+/// marked) + `Partial m` (yellow, late) + `Absent k` (red, absent) badges,
+/// then the same tri-color share bar as the session cards. Same
+/// `VerdictBadge` + `SessionShareBar` components as the records rows — no
+/// new pills, no raw colors, no copy-paste. Counts are always the
+/// unfiltered totals (search only narrows the list below, never the
+/// counts); the selected badge reads `active` so the filter is visible.
 class _AttendanceSummary extends StatelessWidget {
   final int present;
   final int partial;
@@ -472,23 +485,51 @@ class _AttendanceSummary extends StatelessWidget {
   /// → no trailing, header reads exactly as before).
   final int classNo;
 
+  /// Active filter tab (highlights its badge via `active`).
+  final RosterFilter selected;
+
+  /// Tapping a badge selects its filter (tapping the selected one again
+  /// returns to [RosterFilter.all]). Null = read-only badges.
+  final ValueChanged<RosterFilter>? onSelect;
+
   const _AttendanceSummary({
     required this.present,
     required this.partial,
     required this.absent,
     this.classNo = 0,
+    this.selected = RosterFilter.all,
+    this.onSelect,
   });
 
   /// One badge cell: equal third of the row, scales down instead of
   /// wrapping — the trio always fits one line (same contract as the
-  /// session-card counts row).
-  Widget _cell(VerdictBadge badge) => Expanded(
+  /// session-card counts row). Tappable when [onSelect] is set; the
+  /// selected badge reads `active` (filled icon variant).
+  Widget _cell({
+    required VerdictBadge badge,
+    required RosterFilter filter,
+  }) {
+    final tap = onSelect;
+    final cell = Expanded(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.center,
+        child: badge,
+      ),
+    );
+    if (tap == null) return cell;
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => tap(filter == selected ? RosterFilter.all : filter),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
           child: badge,
         ),
-      );
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -520,20 +561,32 @@ class _AttendanceSummary extends StatelessWidget {
         const SizedBox(height: ProxSpacing.xs),
         Row(
           children: [
-            _cell(VerdictBadge(
-              status: ProxStatus.marked,
-              label: 'Present $present',
-            )),
+            _cell(
+              badge: VerdictBadge(
+                status: ProxStatus.marked,
+                label: 'Present $present',
+                active: selected == RosterFilter.present,
+              ),
+              filter: RosterFilter.present,
+            ),
             const SizedBox(width: ProxSpacing.xs),
-            _cell(VerdictBadge(
-              status: ProxStatus.late,
-              label: 'Partial $partial',
-            )),
+            _cell(
+              badge: VerdictBadge(
+                status: ProxStatus.late,
+                label: 'Partial $partial',
+                active: selected == RosterFilter.partial,
+              ),
+              filter: RosterFilter.partial,
+            ),
             const SizedBox(width: ProxSpacing.xs),
-            _cell(VerdictBadge(
-              status: ProxStatus.absent,
-              label: 'Absent $absent',
-            )),
+            _cell(
+              badge: VerdictBadge(
+                status: ProxStatus.absent,
+                label: 'Absent $absent',
+                active: selected == RosterFilter.absent,
+              ),
+              filter: RosterFilter.absent,
+            ),
           ],
         ),
         const SizedBox(height: ProxSpacing.sm),
@@ -547,18 +600,23 @@ class _AttendanceSummary extends StatelessWidget {
   }
 }
 
-/// Search + present (intersection) + partial + dup-absent. Owns the search
-/// field state and the intersection-gated filtering; renders via
-/// [RosterSearchField], driver reads and filtering are unchanged).
+/// Search + present (intersection) + partial + absent. Owns the search
+/// field state, the Present/Partial/Absent filter tabs, and the
+/// intersection-gated filtering; renders via [RosterSearchField].
 class MarkedRosterSection extends StatefulWidget {
   final TallyStore tally;
 
-  /// Professor eject sink, threaded to present + partial + dup-absent rows.
+  /// Professor eject sink, threaded to present + partial + absent rows.
   final Future<bool> Function(String email)? onRemove;
 
   /// Class-strength ceiling for the absent count (history union, loaded
   /// by the host screen). Null keeps the legacy tally-size ceiling.
+  /// Ignored when [roster] is non-empty (absent = listed names instead).
   final int? rosterTotal;
+
+  /// Course roster for the absent list (history union — see `courseRoster`).
+  /// Empty keeps the legacy count-only absent (dup rows still list).
+  final List<RosterEntry> roster;
 
   /// Symmetric dup groups (see [PresentSection.groups]): drives red
   /// Duplicate pills + the auto-absent row list below.
@@ -574,6 +632,7 @@ class MarkedRosterSection extends StatefulWidget {
       required this.tally,
       this.onRemove,
       this.rosterTotal,
+      this.roster = const [],
       this.groups = const {},
       this.liveWindowNo = 0});
 
@@ -583,11 +642,19 @@ class MarkedRosterSection extends StatefulWidget {
 
 class _MarkedRosterSectionState extends State<MarkedRosterSection> {
   String _search = '';
+  RosterFilter _filter = RosterFilter.all;
+
+  bool _matches(String query, String email, String name, String roll) {
+    if (query.isEmpty) return true;
+    final q = query.toLowerCase();
+    return email.contains(q) ||
+        name.toLowerCase().contains(q) ||
+        roll.toLowerCase().contains(q);
+  }
 
   @override
   Widget build(BuildContext context) {
     final tally = widget.tally;
-    final present = tally.confirmedCount;
     final windowNos = tally.windowNos;
     // Live round number (max, not count): sparse numbering after a discard
     // ([1,2,5]) must still read Class N as the newest round, never the
@@ -596,41 +663,84 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
     final notedTaken = windowNos.isEmpty ? 0 : windowNos.last;
     final windowsTaken =
         widget.liveWindowNo > notedTaken ? widget.liveWindowNo : notedTaken;
-    // Intersection + partials: search narrows the confirmed set but keeps
-    // the intersection gate (a partial never promotes via search).
-    final confirmedRows = _search.isEmpty
-        ? tally.confirmed
-        : tally.search(_search).where((r) {
-            if (windowNos.isEmpty) return r.wins.isNotEmpty;
+    // Unfiltered totals: counts never move with search or the filter tabs
+    // (the old search-narrowed counts read 0 mid-typing).
+    final presentRowsAll = tally.confirmed;
+    final partialRowsAll = windowNos.isEmpty
+        ? const <AttendanceRecord>[]
+        : tally.presentAny.where((r) {
             for (final w in windowNos) {
-              if (!r.wins.contains(w)) return false;
+              if (!r.wins.contains(w)) return true;
             }
-            return true;
+            return false;
           }).toList();
-    final partialRows = _search.isEmpty
-        ? tally.presentAny.where((r) {
-            if (windowNos.isEmpty) return false;
-            var all = true;
-            for (final w in windowNos) {
-              if (!r.wins.contains(w)) {
-                all = false;
-                break;
-              }
-            }
-            return !all;
-          }).toList()
-        : const <AttendanceRecord>[];
-    // Dup auto-absent rows: wins stripped (empty) but still grouped — the
-    // row, name and faceFlag stay so exports read Absent, flagged. They
-    // vanish from presentAny (wins empty), so list them explicitly here
-    // with red Duplicate pills instead of letting them disappear. Hidden
-    // during search (search narrows present only, same as partials).
-    final dupAbsentRows = _search.isEmpty
-        ? tally.search('').where((r) {
-            if (r.wins.isNotEmpty) return false;
-            return (widget.groups[r.email] ?? const {}).isNotEmpty;
-          }).toList()
-        : const <AttendanceRecord>[];
+    // Tally rows with no marks at all: dup auto-absent (wins stripped,
+    // still grouped) plus ensure-only rows. Listed explicitly — they
+    // vanish from presentAny (wins empty).
+    final emptyRowsAll =
+        tally.search('').where((r) => r.wins.isEmpty).toList();
+    // History-union absentees: on the course roster but marked nowhere
+    // this visit (and not already listed as an empty tally row).
+    final emptyEmails = {for (final r in emptyRowsAll) r.email};
+    final markedAny = {for (final r in tally.presentAny) r.email};
+    final historyAbsentAll = [
+      for (final m in widget.roster)
+        if (!markedAny.contains(m.email) &&
+            !emptyEmails.contains(m.email))
+          m,
+    ];
+    final present = presentRowsAll.length;
+    final partial = partialRowsAll.length;
+    final int absent;
+    if (widget.roster.isNotEmpty) {
+      absent = historyAbsentAll.length + emptyRowsAll.length;
+    } else {
+      // Legacy ceiling: history union when the host knows it (absent
+      // starts at class strength), else the live tally size. Maxes
+      // with the live size so newcomers never shrink the ceiling
+      // mid-visit.
+      final ceiling =
+          widget.rosterTotal != null && widget.rosterTotal! > tally.size
+              ? widget.rosterTotal!
+              : tally.size;
+      absent = (ceiling - present - partial).clamp(0, 1 << 30);
+    }
+    // Search narrows each list below (counts stay total). The intersection
+    // gate lives in the tally reads above, so a partial never promotes
+    // via search.
+    final confirmedRows = [
+      for (final r in presentRowsAll)
+        if (_matches(_search, r.email, r.name, r.roll)) r,
+    ];
+    final partialRows = [
+      for (final r in partialRowsAll)
+        if (_matches(_search, r.email, r.name, r.roll)) r,
+    ];
+    final dupAbsentRows = [
+      for (final r in emptyRowsAll)
+        if ((widget.groups[r.email] ?? const {}).isNotEmpty &&
+            _matches(_search, r.email, r.name, r.roll))
+          r,
+    ];
+    final plainEmptyRows = [
+      for (final r in emptyRowsAll)
+        if ((widget.groups[r.email] ?? const {}).isEmpty &&
+            _matches(_search, r.email, r.name, r.roll))
+          r,
+    ];
+    final historyAbsent = [
+      for (final m in historyAbsentAll)
+        if (_matches(_search, m.email, m.name, m.roll)) m,
+    ];
+    final showPresent =
+        _filter == RosterFilter.all || _filter == RosterFilter.present;
+    final showPartial =
+        _filter == RosterFilter.all || _filter == RosterFilter.partial;
+    // The Absent tab lists everyone missing: history-union absentees plus
+    // every unmarked tally row. The legacy `all` view keeps its exact
+    // composition (present + partial + dup-absent rows only).
+    final showAbsentLegacy = _filter == RosterFilter.all;
+    final showAbsentTab = _filter == RosterFilter.absent;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -640,43 +750,36 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           onChanged: (v) => setState(() => _search = v),
         ),
         const SizedBox(height: ProxSpacing.sm),
-        Builder(
-          builder: (context) {
-            // Ceiling: history union when the host knows it (absent
-            // starts at class strength), else the live tally size. Maxes
-            // with the live size so newcomers never shrink the ceiling
-            // mid-visit. Recomputed every build — ticks and marks update
-            // it live.
-            final ceiling = widget.rosterTotal != null &&
-                    widget.rosterTotal! > widget.tally.size
-                ? widget.rosterTotal!
-                : widget.tally.size;
-            final absent =
-                (ceiling - present - partialRows.length).clamp(0, 1 << 30);
-            return _AttendanceSummary(
-              present: present,
-              partial: partialRows.length,
-              absent: absent,
-              classNo: windowsTaken,
-            );
-          },
+        _AttendanceSummary(
+          present: present,
+          partial: partial,
+          absent: absent,
+          classNo: windowsTaken,
+          selected: _filter,
+          onSelect: (f) => setState(() => _filter = f),
         ),
         const SizedBox(height: ProxSpacing.sm),
-        PresentSection(
-          present: present,
-          windowsTaken: windowsTaken,
-          confirmedRows: confirmedRows,
-          windowNos: windowNos,
-          groups: widget.groups,
-          onRemove: widget.onRemove,
-        ),
-        PartialSection(
-          partialRows: partialRows,
-          windowNos: windowNos,
-          groups: widget.groups,
-          onRemove: widget.onRemove,
-        ),
-        if (dupAbsentRows.isNotEmpty) ...[
+        if (showPresent)
+          PresentSection(
+            present: present,
+            windowsTaken: windowsTaken,
+            confirmedRows: confirmedRows,
+            windowNos: windowNos,
+            groups: widget.groups,
+            onRemove: widget.onRemove,
+          ),
+        if (showPartial)
+          if (partialRows.isNotEmpty)
+            PartialSection(
+              partialRows: partialRows,
+              windowNos: windowNos,
+              groups: widget.groups,
+              onRemove: widget.onRemove,
+            )
+          else if (_filter == RosterFilter.partial)
+            const ProxEmptyLine(
+                'No partials — everyone marked is present in every round.'),
+        if (showAbsentLegacy && dupAbsentRows.isNotEmpty) ...[
           const SizedBox(height: ProxSpacing.sm),
           for (final r in dupAbsentRows)
             Padding(
@@ -698,6 +801,63 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
               ),
             ),
         ],
+        if (showAbsentTab)
+          if (historyAbsent.isEmpty &&
+              dupAbsentRows.isEmpty &&
+              plainEmptyRows.isEmpty)
+            const ProxEmptyLine(
+                'Nobody absent — everyone on the roster is marked.')
+          else ...[
+            for (final r in dupAbsentRows)
+              Padding(
+                key: ValueKey<String>('dupabsent-${r.email}'),
+                padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                child: RemovableRosterRow(
+                  email: r.email,
+                  displayName: r.name.isNotEmpty ? r.name : r.email,
+                  onRemove: widget.onRemove,
+                  child: StudentCard(
+                    name: r.name.isNotEmpty ? r.name : r.email,
+                    subtitle:
+                        '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                    photoUrl: r.photoUrl,
+                    status: null,
+                    footer:
+                        rosterStatusFooter(r.late, r.faceFlag, isDup: true),
+                    roundTrail: rosterTickPills(r.wins, windowNos),
+                  ),
+                ),
+              ),
+            for (final r in plainEmptyRows)
+              Padding(
+                key: ValueKey<String>('absent-${r.email}'),
+                padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                child: RemovableRosterRow(
+                  email: r.email,
+                  displayName: r.name.isNotEmpty ? r.name : r.email,
+                  onRemove: widget.onRemove,
+                  child: StudentCard(
+                    name: r.name.isNotEmpty ? r.name : r.email,
+                    subtitle:
+                        '${rosterSubtitle(r.roll, r.email)}${r.late ? ' · late' : ''}',
+                    photoUrl: r.photoUrl,
+                    status: const VerdictBadge(status: ProxStatus.absent),
+                    roundTrail: rosterTickPills(r.wins, windowNos),
+                  ),
+                ),
+              ),
+            for (final m in historyAbsent)
+              Padding(
+                key: ValueKey<String>('absent-${m.email}'),
+                padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
+                child: StudentCard(
+                  name: m.name.isNotEmpty ? m.name : m.email,
+                  subtitle: rosterSubtitle(m.roll, m.email),
+                  status: const VerdictBadge(status: ProxStatus.absent),
+                  roundTrail: rosterTickPills(const {}, windowNos),
+                ),
+              ),
+          ],
       ],
     );
   }

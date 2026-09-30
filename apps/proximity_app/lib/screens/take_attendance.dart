@@ -293,6 +293,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// with the live tally size so newcomers never shrink it.
   int _historyUnion = 0;
 
+  /// Course roster for the Absent tab (same history union as [_historyUnion],
+  /// with names/rolls — the tab lists who is missing, not just how many).
+  List<RosterEntry> _historyRoster = const [];
+
   @override
   void initState() {
     super.initState();
@@ -308,7 +312,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   /// Loads the history union for the roster absent ceiling (same
-  /// course filter as the overview roster count).
+  /// course filter as the overview roster count) plus the roster itself
+  /// for the Absent tab list.
   Future<void> _loadUnion() async {
     try {
       final history = await ref.read(deviceStoreProvider).readHistory();
@@ -318,7 +323,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               (r.courseId.isEmpty && r.classLabel == widget.courseName))
           .toList();
       if (!mounted) return;
-      setState(() => _historyUnion = courseRoster(mine).length);
+      final roster = courseRoster(mine);
+      setState(() {
+        _historyUnion = roster.length;
+        _historyRoster = roster;
+      });
     } catch (_) {}
   }
 
@@ -1482,6 +1491,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                           onRemoveStudent: _removeStudent,
                           includeWaiting: false,
                           rosterTotal: _historyUnion,
+                          roster: _historyRoster,
                           liveWindowNo: _windowNo,
                         ),
                       ),

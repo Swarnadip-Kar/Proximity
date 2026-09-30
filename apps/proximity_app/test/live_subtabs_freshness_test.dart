@@ -413,6 +413,15 @@ void main() {
     // Default = Roster: nobody marked yet — absent reads the union.
     expect(find.text('Present 0'), findsOneWidget);
     expect(find.text('Absent 2'), findsOneWidget);
+    // Absent tab lists the union members missing from this visit.
+    await t.tap(find.text('Absent 2'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('a@x.in'), findsOneWidget);
+    expect(find.textContaining('b@x.in'), findsOneWidget);
+    // Tapping the selected badge again returns to the combined list.
+    await t.tap(find.text('Absent 2'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('a@x.in'), findsNothing);
     // Live window + marks, then Stop notes the round: the intersection
     // contract counts noted windows only, so the trio recomputes on the
     // tick rebuilds with no tab switch and no professor tap. Bounded
@@ -427,10 +436,27 @@ void main() {
     expect(find.text('Stop'), findsOneWidget);
     host.tally.mark('a@x.in', 'A', 1, roll: '1');
     host.tally.mark('b@x.in', 'B', 1, roll: '2');
+    // ensureVisible: the floating dock can otherwise swallow the tap
+    // (hit-test miss leaves the window live and the roster stale).
+    await t.ensureVisible(find.text('Stop'));
+    await t.pumpAndSettle();
     await t.tap(find.text('Stop'));
     await t.pumpAndSettle();
-    expect(find.text('Present 2'), findsOneWidget);
+    // FakeHostDriver seeds 2 demo students on startWindow — all four are
+    // marked in the single round, so the union absent clears.
+    expect(find.text('Present 4'), findsOneWidget);
     expect(find.text('Absent 0'), findsOneWidget);
+    // Present tab shows every marked row; Partial tab is empty (single
+    // round — no partials possible); Absent tab is empty (union clears).
+    await t.tap(find.text('Present 4'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('a@x.in'), findsOneWidget);
+    await t.tap(find.text('Partial 0'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('No partials'), findsOneWidget);
+    await t.tap(find.text('Absent 0'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Nobody absent'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
