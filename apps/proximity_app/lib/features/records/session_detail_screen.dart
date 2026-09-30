@@ -54,10 +54,9 @@ class SessionDetailScreen extends ConsumerStatefulWidget {
 class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   late ClassRecord _record;
 
-  /// Active Present/Partial/Absent filter tab. `all` is the legacy full
-  /// list; tapping a badge narrows to that verdict, tapping it again
-  /// returns to `all`.
-  _SessionFilter _filter = _SessionFilter.all;
+  /// Active Present/Partial/Absent filter tab. Entry defaults to the
+  /// Present list (see [_MarkedRosterSectionState._filter]).
+  _SessionFilter _filter = _SessionFilter.present;
 
   @override
   void initState() {
@@ -192,6 +191,12 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
       // Absent renders from [absentEntries] below, not [persons].
       _SessionFilter.absent => const <String>[],
     };
+    final listWord = switch (_filter) {
+      _SessionFilter.present => 'Present list',
+      _SessionFilter.partial => 'Partial list',
+      _SessionFilter.absent => 'Absent list',
+      _SessionFilter.all => null,
+    };
     return AdaptiveScaffold(
       title: 'Session',
       actions: [
@@ -299,32 +304,29 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 expanded: true,
               ),
               const SizedBox(height: ProxSpacing.md),
-              ProxSectionHeader(
-                title: 'Attendance',
-                padding: EdgeInsets.zero,
-                // Filtered-list label: names the visible list beside the
-                // title (same words as the live roster's list header).
-                trailing: switch (_filter) {
-                  _SessionFilter.present => Text(
-                      'Present list',
-                      style: ProxType.caption(
-                          color: c.contentSecondary),
+              // Active list name centred on the same line as the title
+              // (overlay, so no extra row); `all` shows none.
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  const ProxSectionHeader(
+                    title: 'Attendance',
+                    padding: EdgeInsets.zero,
+                  ),
+                  if (listWord != null)
+                    IgnorePointer(
+                      child: Text(
+                        listWord,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: ProxType.body(color: c.contentPrimary)
+                            .copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  _SessionFilter.partial => Text(
-                      'Partial list',
-                      style: ProxType.caption(
-                          color: c.contentSecondary),
-                    ),
-                  _SessionFilter.absent => Text(
-                      'Absent list',
-                      style: ProxType.caption(
-                          color: c.contentSecondary),
-                    ),
-                  _SessionFilter.all => null,
-                },
+                ],
               ),
               const SizedBox(height: ProxSpacing.md),
-              if (persons.isEmpty)
+              if (persons.isEmpty && absentEntries.isEmpty)
                 const ProxEmptyState(message: 'Nobody listed in this session.')
               else if (_filter == _SessionFilter.absent)
                 if (absentEntries.isEmpty)
@@ -347,7 +349,7 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 ProxEmptyState(
                     message: _filter == _SessionFilter.partial
                         ? 'No partials in this session.'
-                        : 'Nobody present in every round yet.')
+                        : 'Nobody present in every round.')
               else
                 for (final email in visiblePersons)
                   Padding(
@@ -369,7 +371,8 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 }
 
 /// Attendance filter behind the tappable Present/Partial/Absent badges.
-/// `all` is the legacy full list; tapping a badge narrows to that
-/// verdict, tapping it again returns to `all`. Badges render via the
-/// shared [SelectableVerdictBadge] (visible selected ring).
+/// Entry defaults to [present]; tapping a badge narrows to that verdict,
+/// tapping the selected one again returns to the combined [all] view.
+/// Badges render via the shared [SelectableVerdictBadge] (visible
+/// selected ring).
 enum _SessionFilter { all, present, partial, absent }
