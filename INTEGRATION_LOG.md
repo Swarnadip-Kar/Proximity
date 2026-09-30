@@ -3215,3 +3215,13 @@ Field report: opening the app pops a biometric prompt that back/Cancel bypasses.
 
 Verify: app suite 1200/1200 (incl. 5 unlock tri-state + updated grace expectations); ble 36/36; `flutter analyze` clean on all touched files.
 
+## Same-phone reclaim repair + install-id durability (2026-09-30)
+
+Field report: `This Gmail was enrolled on another device` on the SAME phone (reinstall / new login). Root causes, both client-side (server rules `isSamePhoneReclaim` + transaction `resolveStudentClaimWrite` were already complete and pinned by tests):
+
+- fix(claim) `87a22b3` — the enroll pre-claim verdict never passed `localDeviceId`, so ANY installId change died at the pre-claim with the misleading cooldown refusal before the reclaim-capable transaction was reached. The stable phone id is now fetched before the verdict and the same value rides the claim doc; reclaim grants log.
+- fix(claim) `64a12b0` — `getOrCreateInstallId` swallowed write failures and cached the phantom id: every claim with it read as "another device" (perpetual cooldown confusion + move-clock restamps on each reclaim). Write failures now throw honestly (unlock-and-retry surfacing; gates treat throws as unknown-stay-put); persist copy made step-neutral.
+- iOS/Android recheck: Android ANDROID_ID (MethodChannel → `device_info_plus` fallback) is per-signing-key per-user — stable across reinstalls, correctly distinct across users/clones; resets only on factory reset. iOS identifierForVendor resets when the LAST vendor app is uninstalled — reinstall-cycle testing on iOS breaks reclaim by platform design (documented limit, nothing code can do). Empty id (`''`) fails soft to pre-reclaim behavior on both.
+
+Verify: app suite 1201/1201 (incl. new phantom-id durability test); `flutter analyze` clean.
+
