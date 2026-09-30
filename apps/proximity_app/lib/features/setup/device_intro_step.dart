@@ -25,11 +25,13 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/auth.dart';
 import '../../core/enrollment.dart';
 import '../../core/platformx.dart';
 import '../../design/tokens.dart';
 import '../../features/face_identity/face_blocked.dart';
 import '../../main.dart';
+import '../../mode.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import 'device_identity_screen.dart';
@@ -40,13 +42,21 @@ import 'setup_step_scope.dart';
 /// Confirm device page: [DeviceIdentityContent] (which account, which
 /// device, move status, offline note, sign-out) + a flow-only Continue.
 ///
-/// The content's own guards/branches (mobile key/move vs records-only note,
-/// Continue CTA is added (each page advances one page via scope.next()).
-class DeviceConfirmStep extends StatelessWidget {
+/// When this device already holds the enrollment for the signed-in Gmail
+/// (re-sign-in returner: linked identity matches), the button completes
+/// the flow straight to the main app — no details/key/face screens again.
+/// Otherwise it advances to account & key as before.
+class DeviceConfirmStep extends ConsumerWidget {
   const DeviceConfirmStep({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final acct = ref.watch(accountProvider).valueOrNull;
+    final linked = ref.watch(linkedIdentityProvider);
+    final alreadyEnrolled = acct != null &&
+        linked != null &&
+        linked.gmail.trim().toLowerCase() ==
+            acct.email.trim().toLowerCase();
     return AdaptiveScaffold(
       title: 'Confirm device',
       body: Center(
@@ -60,12 +70,20 @@ class DeviceConfirmStep extends StatelessWidget {
                 const DeviceIdentityContent(),
                 const SizedBox(height: ProxSpacing.lg),
                 ProxPrimaryButton(
-                  icon: const Icon(Icons.arrow_forward),
-                  label: const Text('Continue'),
+                  icon: Icon(alreadyEnrolled
+                      ? Icons.check
+                      : Icons.arrow_forward),
+                  label: Text(alreadyEnrolled
+                      ? 'Continue to app'
+                      : 'Continue'),
                   onPressed: () {
                     final scope = SetupStepScope.of(context);
                     if (scope != null) {
-                      scope.next();
+                      if (alreadyEnrolled) {
+                        scope.complete();
+                      } else {
+                        scope.next();
+                      }
                     }
                   },
                 ),

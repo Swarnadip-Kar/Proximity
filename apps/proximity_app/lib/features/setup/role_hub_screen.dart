@@ -120,13 +120,28 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
             ref, () => mounted, widget.account, role, which);
         _refreshRoles();
         // In-flow student continue still needs enrollment (the flow only
-        // opens unenrolled): step to device. Professor continues flip the
-        // app home — the flow yields via its mode listener (shell path
+        // opens unenrolled): step to device — UNLESS this device already
+        // holds the enrollment (re-sign-in returner: gate said sameDevice,
+        // linked relinked). Then stepping to device/details strands an
+        // enrolled user in enrollment screens; complete the flow instead
+        // so they land directly on the main app. Professor continues flip
+        // the app home — the flow yields via its mode listener (shell path
         // pops to the revealed shell; fresh-install home already
         // switched), so no step here.
         if (mounted && which == 'student' && scope != null) {
+          var enrolledHere = false;
           try {
-            await scope.next();
+            final linked = ref.read(linkedIdentityProvider);
+            enrolledHere = linked != null &&
+                linked.gmail.trim().toLowerCase() ==
+                    widget.account.email.trim().toLowerCase();
+          } catch (_) {}
+          try {
+            if (enrolledHere) {
+              await scope.complete();
+            } else {
+              await scope.next();
+            }
           } catch (_) {}
         }
       });
