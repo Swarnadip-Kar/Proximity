@@ -889,7 +889,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     if (_leaving) return;
     _leaving = true;
     try {
-      await _teardown();
+      // Bounded: a wedged radio stop or a hanging draft save must delay
+      // back-nav, never wedge it (the reported stuck live screen).
+      await _teardown().timeout(const Duration(seconds: 10));
     } catch (_) {}
     if (mounted) {
       _bypass = true;
@@ -1137,11 +1139,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _recordOrg = null;
       _bankedElapsed = null;
       // Shared tail: awaited endHosting via _teardown (save:false — the
-      // draft was cleared above and must not be rewritten). A teardown
-      // throw stays caught and the pop still proceeds (uniform with
-      // _leave; previously an endHosting throw surfaced serverError and
-      // kept the screen mounted).
-      await _teardown(save: false);
+      // draft was cleared above and must not be rewritten). Bounded like
+      // _leave: a hang still lands on the retryable catch below instead of
+      // stranding the screen. A teardown throw stays caught and the pop
+      // still proceeds (uniform with _leave; previously an endHosting
+      // throw surfaced serverError and kept the screen mounted).
+      await _teardown(save: false).timeout(const Duration(seconds: 10));
       if (mounted) {
         _bypass = true;
         Navigator.of(context).pop();
