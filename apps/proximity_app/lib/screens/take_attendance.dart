@@ -297,6 +297,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// with names/rolls — the tab lists who is missing, not just how many).
   List<RosterEntry> _historyRoster = const [];
 
+  /// Completed sessions of this course before THIS visit (history records
+  /// excluding this visit's own draft record): the `Class N` header shows
+  /// prior + current round so a new session reads Class 10 after 9
+  /// conducted, not Class 1. Display only — round identity and records
+  /// stay visit-scoped.
+  int _priorSessionCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -313,7 +320,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   /// Loads the history union for the roster absent ceiling (same
   /// course filter as the overview roster count) plus the roster itself
-  /// for the Absent tab list.
+  /// for the Absent tab list — and the completed-session count for the
+  /// cumulative `Class N` header (this visit's own record excluded, so
+  /// the live session never counts itself).
   Future<void> _loadUnion() async {
     try {
       final history = await ref.read(deviceStoreProvider).readHistory();
@@ -324,9 +333,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           .toList();
       if (!mounted) return;
       final roster = courseRoster(mine);
+      final rid = _recordId;
+      final prior = rid == null || rid.isEmpty
+          ? mine.length
+          : mine.where((r) => r.id != rid).length;
       setState(() {
         _historyUnion = roster.length;
         _historyRoster = roster;
+        _priorSessionCount = prior;
       });
     } catch (_) {}
   }
@@ -1219,6 +1233,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           'snapshot upserted ${rec.id} (${tally.confirmedCount} present)');
       await syncEngine.noteLocalSave(
           store: store, cloud: cloud, prof: prof, record: rec);
+      // This visit's record just landed in history: recount prior
+      // sessions with the new record excluded (see _loadUnion) so the
+      // header stays cumulative without ever counting itself.
+      unawaited(_loadUnion());
     } catch (_) {}
   }
 
@@ -1502,6 +1520,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                           rosterTotal: _historyUnion,
                           roster: _historyRoster,
                           liveWindowNo: _windowNo,
+                          sessionOffset: _priorSessionCount,
                         ),
                       ),
                       // 1 — Waiting only: parked joiners for the next window.

@@ -13,7 +13,9 @@
 //
 // One roster, single-purpose blocks sharing the same data: [LiveRosterBody]
 // composes [WaitingListSection], [DupFlagSection], then
-// [MarkedRosterSection] (search + [PresentSection] + [PartialSection]).
+// [MarkedRosterSection] (search + Attendance summary + the Present/Partial/
+// Absent list chosen by the filter badges; entry defaults to Present and
+// the active list name shares the `Attendance` header line).
 // Manual inbox + direct add NEVER compose here — they live behind the
 // sub-nav as their own sections (the inbox/add screens composing the
 // `features/manual_attendance/` module, §4.8). The search
@@ -273,6 +275,11 @@ class LiveRosterBody extends StatelessWidget {
   /// tally's newest noted round, never counted.
   final int liveWindowNo;
 
+  /// Completed sessions of this course before this visit (see
+  /// [MarkedRosterSection.sessionOffset]): forwarded for the cumulative
+  /// `Class N` header. 0 = legacy in-visit numbering.
+  final int sessionOffset;
+
   const LiveRosterBody({
     super.key,
     required this.waitingRows,
@@ -285,6 +292,7 @@ class LiveRosterBody extends StatelessWidget {
     this.rosterTotal,
     this.roster = const [],
     this.liveWindowNo = 0,
+    this.sessionOffset = 0,
   });
 
   @override
@@ -310,7 +318,8 @@ class LiveRosterBody extends StatelessWidget {
             rosterTotal: rosterTotal,
             roster: roster,
             groups: groups,
-            liveWindowNo: liveWindowNo),
+            liveWindowNo: liveWindowNo,
+            sessionOffset: sessionOffset),
       ],
     );
   }
@@ -370,8 +379,7 @@ class PresentSection extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (confirmedRows.isEmpty)
-          const ProxEmptyLine(
-              'Nobody present in every round yet — partials stay listed below.')
+          const ProxEmptyLine('Nobody present in every round yet.')
         else
           // No entrance motion on present rows (see the settle note
           // above): same card row, instant mount — the cascade would
@@ -464,9 +472,9 @@ class PartialSection extends StatelessWidget {
 }
 
 /// Roster filter behind the tappable Present/Partial/Absent badges.
-/// `all` is the legacy combined list (present + partial + dup-absent);
-/// tapping a badge narrows the list to that verdict, tapping it again
-/// returns to `all`.
+/// Entry defaults to [present]; tapping a badge narrows the list to that
+/// verdict, tapping the selected one again returns to the combined [all]
+/// view.
 enum RosterFilter { all, present, partial, absent }
 
 /// Attendance summary: `Attendance` title + tappable `Present n` (green,
@@ -537,26 +545,50 @@ class _AttendanceSummary extends StatelessWidget {
     // Header copies the Add-tab contract exactly (ProxSectionHeader:
     // gradient accent bar + 17px title, zero padding); badges + bar sit
     // below it, mirroring the session-card stack minus course/date. The
-    // live round number rides the header trailing slot ("Class 3") —
-    // the title itself stays exact 'Attendance'.
+    // active list name + live round number share the header trailing
+    // line: title left, list name centred, `Class 3` right — the title
+    // itself stays exact 'Attendance', and the combined `all` view keeps
+    // the legacy Class-only trailing.
+    final listWord = switch (selected) {
+      RosterFilter.present => 'Present list',
+      RosterFilter.partial => 'Partial list',
+      RosterFilter.absent => 'Absent list',
+      RosterFilter.all => null,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        ProxSectionHeader(
-          title: 'Attendance',
-          padding: EdgeInsets.zero,
-          // Class number reads at the SAME size as the title (one
-          // header line, two facts — never a shrunken caption).
-          trailing: classNo > 0
-              ? Text(
-                  'Class $classNo',
-                  style: ProxType.title(color: c.contentPrimary).copyWith(
-                    fontSize: 17,
-                    letterSpacing: -0.2,
-                  ),
-                )
-              : null,
+        // Title left, `Class N` right; the active list name is centred
+        // on the same line (overlay, so no extra row and the header's
+        // own layout is untouched).
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            ProxSectionHeader(
+              title: 'Attendance',
+              padding: EdgeInsets.zero,
+              // Class number reads at the SAME size as the title (one
+              // header line, two facts — never a shrunken caption).
+              trailing: classNo <= 0
+                  ? null
+                  : Text(
+                      'Class $classNo',
+                      style: ProxType.title(color: c.contentPrimary)
+                          .copyWith(fontSize: 17, letterSpacing: -0.2),
+                    ),
+            ),
+            if (listWord != null)
+              IgnorePointer(
+                child: Text(
+                  listWord,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: ProxType.body(color: c.contentPrimary)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: ProxSpacing.xs),
         Row(
@@ -621,6 +653,13 @@ class MarkedRosterSection extends StatefulWidget {
   /// while a round is live (the tally notes at Stop, never at open).
   final int liveWindowNo;
 
+  /// Completed sessions of this course BEFORE this visit (history records
+  /// excluding this visit's own draft record). Added to the in-visit
+  /// round for the `Class N` header only — round identity, present-in-
+  /// every-round logic, and trail pills stay visit-scoped. 0 keeps the
+  /// legacy in-visit numbering byte-for-byte.
+  final int sessionOffset;
+
   const MarkedRosterSection(
       {super.key,
       required this.tally,
@@ -628,7 +667,8 @@ class MarkedRosterSection extends StatefulWidget {
       this.rosterTotal,
       this.roster = const [],
       this.groups = const {},
-      this.liveWindowNo = 0});
+      this.liveWindowNo = 0,
+      this.sessionOffset = 0});
 
   @override
   State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
@@ -636,7 +676,11 @@ class MarkedRosterSection extends StatefulWidget {
 
 class _MarkedRosterSectionState extends State<MarkedRosterSection> {
   String _search = '';
-  RosterFilter _filter = RosterFilter.all;
+
+  /// Entry defaults to the Present list (professors open the roster to
+  /// see who is in, then tab to Partial/Absent; the selected badge
+  /// toggles back to the combined `all` view).
+  RosterFilter _filter = RosterFilter.present;
 
   bool _matches(String query, String email, String name, String roll) {
     if (query.isEmpty) return true;
@@ -748,27 +792,14 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           present: present,
           partial: partial,
           absent: absent,
-          classNo: windowsTaken,
+          // Cumulative session label: prior completed sessions + the
+          // in-visit round. Logic below this line stays visit-scoped —
+          // only the header adds the offset.
+          classNo: windowsTaken + widget.sessionOffset,
           selected: _filter,
           onSelect: (f) => setState(() => _filter = f),
         ),
         const SizedBox(height: ProxSpacing.sm),
-        // Filtered-list label: names the visible list (Present/Partial/
-        // Absent list) so the tab state reads in words, not just the
-        // badge ring. The combined `all` view keeps its legacy headerless
-        // rows.
-        if (_filter != RosterFilter.all) ...[
-          ProxSectionHeader(
-            title: switch (_filter) {
-              RosterFilter.present => 'Present list',
-              RosterFilter.partial => 'Partial list',
-              RosterFilter.absent => 'Absent list',
-              RosterFilter.all => 'Attendance',
-            },
-            padding: EdgeInsets.zero,
-          ),
-          const SizedBox(height: ProxSpacing.sm),
-        ],
         if (showPresent)
           PresentSection(
             present: present,

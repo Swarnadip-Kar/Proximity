@@ -237,4 +237,28 @@ void main() {
     expect(find.textContaining('Partial'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
+
+  testWidgets('Class header adds prior-session offset (display only)',
+      (t) async {
+    // 9 conducted sessions + a live round 1 must read Class 10, not
+    // Class 1; the offset defaults to 0 (legacy in-visit numbering).
+    final tally = TallyStore();
+    tally.noteWindow(1);
+    tally.mark('a@univ.edu', 'A', 1, roll: '1');
+    await t.pumpWidget(_themed(MarkedRosterSection(
+      tally: tally,
+      liveWindowNo: 1,
+      sessionOffset: 9,
+    )));
+    await t.pumpAndSettle();
+    expect(find.text('Class 10'), findsOneWidget);
+    expect(find.text('Class 1'), findsNothing);
+    await t.pumpWidget(_themed(MarkedRosterSection(
+      tally: tally,
+      liveWindowNo: 1,
+    )));
+    await t.pumpAndSettle();
+    expect(find.text('Class 1'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
 }
