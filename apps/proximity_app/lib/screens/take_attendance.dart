@@ -1482,6 +1482,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                           onRemoveStudent: _removeStudent,
                           includeWaiting: false,
                           rosterTotal: _historyUnion,
+                          liveWindowNo: _windowNo,
                         ),
                       ),
                       // 1 — Waiting only: parked joiners for the next window.

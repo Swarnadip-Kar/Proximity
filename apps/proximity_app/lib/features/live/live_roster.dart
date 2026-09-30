@@ -261,6 +261,13 @@ class LiveRosterBody extends StatelessWidget {
   /// by the host screen). Null keeps the legacy tally-size ceiling.
   final int? rosterTotal;
 
+  /// Live-open round number from the host ([TakeAttendanceScreen._windowNo]).
+  /// The tally only notes a round at Stop (never at open, so the
+  /// intersection cannot collapse mid-round) — without this the `Class N`
+  /// header lags one round behind while a round is live. Maxed with the
+  /// tally's newest noted round, never counted.
+  final int liveWindowNo;
+
   const LiveRosterBody({
     super.key,
     required this.waitingRows,
@@ -271,6 +278,7 @@ class LiveRosterBody extends StatelessWidget {
     this.onRemoveStudent,
     this.includeWaiting = true,
     this.rosterTotal,
+    this.liveWindowNo = 0,
   });
 
   @override
@@ -294,7 +302,8 @@ class LiveRosterBody extends StatelessWidget {
             tally: tally,
             onRemove: onRemoveStudent,
             rosterTotal: rosterTotal,
-            groups: groups),
+            groups: groups,
+            liveWindowNo: liveWindowNo),
       ],
     );
   }
@@ -555,12 +564,18 @@ class MarkedRosterSection extends StatefulWidget {
   /// Duplicate pills + the auto-absent row list below.
   final Map<String, Set<String>> groups;
 
+  /// Live-open round number from the host (see [LiveRosterBody.liveWindowNo]).
+  /// Maxed with the tally's newest noted round so `Class N` stays true
+  /// while a round is live (the tally notes at Stop, never at open).
+  final int liveWindowNo;
+
   const MarkedRosterSection(
       {super.key,
       required this.tally,
       this.onRemove,
       this.rosterTotal,
-      this.groups = const {}});
+      this.groups = const {},
+      this.liveWindowNo = 0});
 
   @override
   State<MarkedRosterSection> createState() => _MarkedRosterSectionState();
@@ -575,8 +590,12 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
     final present = tally.confirmedCount;
     final windowNos = tally.windowNos;
     // Live round number (max, not count): sparse numbering after a discard
-    // must still read Class N as the newest round, never the count.
-    final windowsTaken = windowNos.isEmpty ? 0 : windowNos.last;
+    // ([1,2,5]) must still read Class N as the newest round, never the
+    // count — and a live-open round with no marks yet (noted only at Stop)
+    // must already count, via the host's live window number.
+    final notedTaken = windowNos.isEmpty ? 0 : windowNos.last;
+    final windowsTaken =
+        widget.liveWindowNo > notedTaken ? widget.liveWindowNo : notedTaken;
     // Intersection + partials: search narrows the confirmed set but keeps
     // the intersection gate (a partial never promotes via search).
     final confirmedRows = _search.isEmpty
