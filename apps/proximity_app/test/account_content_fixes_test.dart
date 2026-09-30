@@ -28,6 +28,7 @@ import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/account/face_id_screen.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -125,6 +126,11 @@ Future<void> _drain(WidgetTester t, [int steps = 8]) async {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    HardwareDeviceIds.source = () async => '';
+  });
+
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
   });
 
   group('face-id inline rescan rules', () {
