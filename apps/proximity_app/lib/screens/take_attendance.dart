@@ -407,6 +407,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // email→pkS map locally whenever online, then hydrate the live server
     // so offline `unknown-pkS` enforcement survives restarts. Best-effort.
     unawaited(_prefetchStudentPins());
+    // Mid-window convergence: a student who re-enrolls mid-class lands on
+    // a stale pin until the next window-start prefetch — the driver's
+    // debounced unknown-pkS hook refreshes in background so the NEXT
+    // rotation marks instead of refusing all session. Cleared with the
+    // driver on teardown (a dead ref touch fails soft inside prefetch).
+    try {
+      ref.read(hostDriverProvider).onUnknownPkSHook =
+          () => unawaited(_prefetchStudentPins());
+    } catch (_) {}
     if (!mounted) return;
     String? warn;
     try {

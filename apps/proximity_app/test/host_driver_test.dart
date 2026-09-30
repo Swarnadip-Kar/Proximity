@@ -13,6 +13,29 @@ void main() {
         engine: engine ?? ProxBleEngine(radio: FakeBleRadio()),
       );
 
+  test('unknown-pkS pin-refresh hook fires once per throttle window',
+      () async {
+    // Mid-window re-enroll convergence: the first unknown-pkS triggers
+    // the hosting screen's background refresh; repeats inside the
+    // throttle are suppressed; unrelated reasons never trigger.
+    final driver = makeDriver();
+    var calls = 0;
+    driver.onUnknownPkSHook = () => calls++;
+    driver.noteUnknownPkSForPinRefreshForTest(
+        's@x.in', 'unknown-pkS|pin-mismatch presented=eaefb0c3…');
+    expect(calls, 1);
+    driver.noteUnknownPkSForPinRefreshForTest(
+        's@x.in', 'unknown-pkS|pin-mismatch presented=eaefb0c3…');
+    expect(calls, 1);
+    driver.noteUnknownPkSForPinRefreshForTest('s@x.in', 'confirmed|ok');
+    expect(calls, 1);
+    driver.unknownPkSRefreshThrottle = Duration.zero;
+    driver.noteUnknownPkSForPinRefreshForTest(
+        's@x.in', 'unknown-pkS|pin-mismatch presented=eaefb0c3…');
+    expect(calls, 2);
+    await driver.endHosting();
+  });
+
   test('manual entry before any window marks round 1 immediately', () async {
     // Windows always number from 1, so a pre-Start manual entry lands in
     // round 1 at once: visible immediately, captured by drafts, and the

@@ -165,6 +165,14 @@ abstract class HostDriver {
   /// Returns pinned count.
   Future<int> hydrateStudentPins(Map<String, String> emailToPkSHex) async =>
       0;
+
+  /// Mid-window pin-convergence hook: set by the hosting screen to refresh
+  /// directory pins when a prove lands on a stale pin. The driver invokes
+  /// it (debounced) on `unknown-pkS` verdicts — a student who re-enrolled
+  /// mid-class then marks on the next rotation instead of refusing all
+  /// session. Null = no refresh (default; offline hosts simply keep
+  /// refusing until the next window-start prefetch).
+  set onUnknownPkSHook(void Function()? fn) {}
 }
 
 /// Arms the lecture-key pin publisher (idempotent — re-arming replaces
@@ -622,6 +630,7 @@ class RealHostDriver implements HostDriver {
         BleLog.log('NET', 'prove $email -> $decision ($reason)');
         _applyDupFaceToken(email, reason);
         _applyIntegrityFlag(email, reason);
+        _noteUnknownPkSForPinRefresh(email, reason);
       },
       tally: _tally,
       sessionOrg: sessionOrg,
@@ -1030,13 +1039,46 @@ class RealHostDriver implements HostDriver {
     BleLog.log('SEC', 'integrity flagged (tainted device, kept present): $me');
   }
 
-  /// Test seam: applies the same flag parsing as the live `onProve`
-  /// callback (dup + integrity) without needing a full HTTPS prove round.
+  /// Test seam: applies the same parsing as the live `onProve`
+  /// callback (dup + integrity + unknown-pkS pin-refresh trigger) without
+  /// needing a full HTTPS prove round.
   /// The tally must already hold the email (server marks before flagging);
   /// unknown emails no-op, exactly like the live path.
   void applyProveFlagsForTest(String email, String reason) {
     _applyDupFaceToken(email, reason);
     _applyIntegrityFlag(email, reason);
+    _noteUnknownPkSForPinRefresh(email, reason);
+  }
+
+  /// Mid-window pin-convergence trigger (see [HostDriver.onUnknownPkSHook]):
+  /// invokes the hosting screen's refresh at most once per
+  /// [unknownPkSRefreshThrottle]. Best-effort, never throws — an offline
+  /// host simply keeps refusing until the next window-start prefetch.
+  Duration unknownPkSRefreshThrottle = const Duration(seconds: 60);
+  DateTime? _lastUnknownPkSRefresh;
+  void Function()? _onUnknownPkSHook;
+
+  /// Test seam: forwards to [_noteUnknownPkSForPinRefresh] without needing
+  /// a full HTTPS prove round.
+  void noteUnknownPkSForPinRefreshForTest(String email, String reason) =>
+      _noteUnknownPkSForPinRefresh(email, reason);
+
+  @override
+  set onUnknownPkSHook(void Function()? fn) => _onUnknownPkSHook = fn;
+
+  void _noteUnknownPkSForPinRefresh(String email, String reason) {
+    if (!reason.contains('unknown-pkS')) return;
+    final now = DateTime.now().toUtc();
+    final last = _lastUnknownPkSRefresh;
+    if (last != null && now.difference(last) < unknownPkSRefreshThrottle) {
+      return;
+    }
+    _lastUnknownPkSRefresh = now;
+    BleLog.log('SEC',
+        'unknown-pkS for ${email.trim().toLowerCase()} — refreshing directory pins in background');
+    try {
+      _onUnknownPkSHook?.call();
+    } catch (_) {}
   }
 
   /// Parses the server's `dupface:a,b` reason token into roster flags +
@@ -1171,6 +1213,8 @@ class RealHostDriver implements HostDriver {
     _scanHold = null;
     _crlRefresh?.cancel();
     _crlRefresh = null;
+    _onUnknownPkSHook = null; // hosting screen's pin-refresh hook dies here
+    _lastUnknownPkSRefresh = null;
     final announcer = _announcer;
     _announcer = null;
     final server = _server;
@@ -1255,6 +1299,9 @@ class FakeHostDriver implements HostDriver {
   Future<int> hydrateStudentPins(
           Map<String, String> emailToPkSHex) async =>
       0;
+
+  @override
+  set onUnknownPkSHook(void Function()? fn) {}
 
   @override
   TallyStore get tally => _tally;

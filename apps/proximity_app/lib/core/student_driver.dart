@@ -1594,11 +1594,17 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // server was real and answering. `window-closed` carries no signable
       // context (unsigned by contract), so it MUST resolve here before
       // the ACK check below — otherwise a closed window reads as BAD-sig.
+      // `unknown-pkS` joins them: the professor holds a stale pin for a
+      // re-enrolled key and converges via directory refresh (see the
+      // onUnknownPkS hook) — the next rotation, not a terminal error, is
+      // the fix. Non-suspicious throughout: the server answered, so this
+      // is never fake-professor evidence.
       if (res.decision == ProveDecision.invalid &&
           (res.reason == 'window-mismatch' ||
               res.reason == 'window-closed' ||
               res.reason == 'bad-challenge' ||
               res.reason == 'no-ble-sighting' ||
+              res.reason == 'unknown-pkS' ||
               res.reason == 'replay-id-j')) {
         throw _TryNext('prove ${res.reason}');
       }
