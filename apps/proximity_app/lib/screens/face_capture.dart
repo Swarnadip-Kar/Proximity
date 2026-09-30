@@ -270,14 +270,23 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final ctl = _ctl;
-    if (ctl == null || !ctl.value.isInitialized) return;
+    if (_cancelled || !mounted) return;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
-      _ctl?.dispose();
+      // Park the preview while backgrounded (a live controller keeps the
+      // sensor locked and the OS may kill the surface anyway). setState so
+      // build() drops the preview instead of holding a disposed handle.
+      final ctl = _ctl;
       _ctl = null;
+      if (ctl != null) {
+        setState(() => _status = 'Paused — returning…');
+        unawaited(ctl.dispose());
+      }
     } else if (state == AppLifecycleState.resumed) {
-      if (!_cancelled && mounted) {
+      // The pause path above always nulls _ctl, so a null controller here
+      // means "needs restart" — the old guard (return when _ctl == null)
+      // could never reach this branch and reopening stranded on black.
+      if (_ctl == null) {
         unawaited(_start());
       }
     }
@@ -292,7 +301,22 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     super.dispose();
   }
 
+  bool _starting = false;
+
   Future<void> _start() async {
+    // Single-flight: initState + a rapid pause/resume pair (or double
+    // resume) must never build two controllers — the loser leaks the
+    // sensor lock and the preview attaches to a disposed handle (black).
+    if (_starting) return;
+    _starting = true;
+    try {
+      await _startInner();
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _startInner() async {
     final perm = await Permission.camera.request();
     if (_done) return;
     if (!perm.isGranted) {
@@ -316,6 +340,13 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
           enableAudio: false);
       await ctl.initialize();
       if (_done) {
+        await ctl.dispose();
+        return;
+      }
+      // Initialized while backgrounded (pause raced init): the surface is
+      // gone — drop it so resume restarts clean instead of showing black.
+      if (WidgetsBinding.instance.lifecycleState !=
+          AppLifecycleState.resumed) {
         await ctl.dispose();
         return;
       }
