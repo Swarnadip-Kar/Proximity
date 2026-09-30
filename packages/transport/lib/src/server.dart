@@ -847,24 +847,22 @@ class ProxServer {
         return _json(
             {'decision': 'invalid', 'reason': 'bad-body: pkS'}, 400);
       }
-      // C1 TOFU enforcement: a pinned pkS mismatching the presented key
-      // fails closed (unknown-pkS). Unpinned emails stay TOFU (first prove
-      // pins implicitly only via explicit pinStudentKeys — never auto-pin
-      // here, so a transient attacker cannot self-pin over the LAN).
-      // Offline-first reading: an UNPINNED email is NOT fatal for being
-      // offline — first-seen proves mark normally (TOFU) and the host log
-      // carries a `first-seen` token (see the flagged reason below). A
-      // PINNED mismatch (stale pin after a student re-enroll, or a second
-      // device) fails closed; the log suffix says `pin-mismatch` (not
-      // "unknown") and the ACK is signed, so the student sees the true
-      // `unknown-pkS` verdict instead of `BAD prof signature`.
+      // C1 TOFU enforcement (offline-first): pins distinguish first-seen
+      // from re-keyed — they never refuse. Unpinned emails mark via TOFU
+      // (first prove pins implicitly only via explicit pinStudentKeys —
+      // never auto-pin here, so a transient attacker cannot self-pin over
+      // the LAN). A PINNED mismatch (stale pin after a student re-enroll,
+      // or a second device) MARKS with an `unverified-student-key` flag
+      // (see the flagged reason below) instead of failing closed:
+      // refusing makes marking internet-dependent (only an online
+      // directory fetch converges the pin), while the review queue +
+      // face-dup detection own re-key review offline. The mismatch rides
+      // the host log as `pin-mismatch` with the presented prefix, and the
+      // ACK stays signed, so both sides see one story.
       final presentedPkHex = hexEncode(presentedPk).toLowerCase();
       final pinned = _pinnedPkS[id];
-      if (pinned != null && pinned != presentedPkHex) {
-        return signedInvalid(id, jEarly, 'unknown-pkS',
-            logSuffix:
-                'pin-mismatch presented=${presentedPkHex.substring(0, 8)}…');
-      }
+      final pinMismatch =
+          pinned != null && pinned != presentedPkHex;
       final stuPk = ed.PublicKey(presentedPk);
 
       final expectedCj = w.challengeFor(j);
@@ -1240,6 +1238,9 @@ class ProxServer {
       final flags = [
         ...outcome.attestationFlags,
         if (integrityFlag == 'integrity-flagged') 'integrity-flagged',
+        // Re-keyed known email (see the C1 note at the pin check): marked,
+        // flagged for professor review — never refused offline.
+        if (pinMismatch) 'unverified-student-key',
       ];
       if (bound) {
         // First presenter wins the stamp + full ticket (transplant scope:
@@ -1285,9 +1286,16 @@ class ProxServer {
         // email had NO pin when it proved and marked normally anyway —
         // offline first sight is not fatal. Lets the professor tell
         // "marked on first sight (TOFU)" apart from "marked on a known
-        // pin" in the terminal, and from `unknown-pkS|pin-mismatch`
-        // (a STALE pin refusing a re-enrolled key) above.
+        // pin" in the terminal, and from `unverified-student-key`
+        // (a STALE pin watching a re-enrolled key) below.
         if (marked && pinned == null) 'first-seen',
+        // Re-key review marker (log only, never the wire verdict): a
+        // pinned email proved under a different key and marked anyway
+        // (see C1 above) — the app parses it into a roster review flag.
+        // The presented prefix tells stale-re-enroll apart at a glance;
+        // the directory refresh (prof hook) clears it on convergence.
+        if (marked && pinMismatch)
+          'pin-mismatch presented=${presentedPkHex.substring(0, 8)}…',
         // Vector receipt marker (log only, never the wire verdict): a
         // decodable session vector planted with no dup match. Lets the
         // professor terminal confirm the dedup path is ARMED per prove

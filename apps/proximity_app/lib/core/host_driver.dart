@@ -168,10 +168,11 @@ abstract class HostDriver {
 
   /// Mid-window pin-convergence hook: set by the hosting screen to refresh
   /// directory pins when a prove lands on a stale pin. The driver invokes
-  /// it (debounced) on `unknown-pkS` verdicts — a student who re-enrolled
-  /// mid-class then marks on the next rotation instead of refusing all
-  /// session. Null = no refresh (default; offline hosts simply keep
-  /// refusing until the next window-start prefetch).
+  /// it (debounced) on pin-disagreement verdicts — invalid `unknown-pkS`
+  /// or flagged `unverified-student-key`/`pin-mismatch` marks — so a
+  /// student who re-enrolled mid-class converges instead of disagreeing
+  /// all session. Null = no refresh (default; offline hosts simply keep
+  /// flagging until the next window-start prefetch).
   set onUnknownPkSHook(void Function()? fn) {}
 }
 
@@ -630,6 +631,7 @@ class RealHostDriver implements HostDriver {
         BleLog.log('NET', 'prove $email -> $decision ($reason)');
         _applyDupFaceToken(email, reason);
         _applyIntegrityFlag(email, reason);
+        _applyUnverifiedKeyFlag(email, reason);
         _noteUnknownPkSForPinRefresh(email, reason);
       },
       tally: _tally,
@@ -1040,14 +1042,28 @@ class RealHostDriver implements HostDriver {
   }
 
   /// Test seam: applies the same parsing as the live `onProve`
-  /// callback (dup + integrity + unknown-pkS pin-refresh trigger) without
-  /// needing a full HTTPS prove round.
+  /// callback (dup + integrity + unverified-key + unknown-pkS pin-refresh
+  /// trigger) without needing a full HTTPS prove round.
   /// The tally must already hold the email (server marks before flagging);
   /// unknown emails no-op, exactly like the live path.
   void applyProveFlagsForTest(String email, String reason) {
     _applyDupFaceToken(email, reason);
     _applyIntegrityFlag(email, reason);
+    _applyUnverifiedKeyFlag(email, reason);
     _noteUnknownPkSForPinRefresh(email, reason);
+  }
+
+  /// Re-key review flag: a pinned email that marked under a new key
+  /// (server `unverified-student-key` token) lands in the roster review
+  /// set like every other flag — the professor sees flagged, never a
+  /// silent mark. Unknown/unmarked emails no-op (their own prove plants
+  /// the flag symmetrically when it lands).
+  void _applyUnverifiedKeyFlag(String email, String reason) {
+    if (!reason.contains('unverified-student-key')) return;
+    final me = email.trim().toLowerCase();
+    if (me.isEmpty) return;
+    _tally.setFaceFlag(me);
+    BleLog.log('SEC', 'unverified student key (re-enrolled? review): $me');
   }
 
   /// Mid-window pin-convergence trigger (see [HostDriver.onUnknownPkSHook]):
@@ -1067,7 +1083,13 @@ class RealHostDriver implements HostDriver {
   set onUnknownPkSHook(void Function()? fn) => _onUnknownPkSHook = fn;
 
   void _noteUnknownPkSForPinRefresh(String email, String reason) {
-    if (!reason.contains('unknown-pkS')) return;
+    // Fires on the legacy invalid token AND the mark-with-flag tokens:
+    // both mean "pin disagrees with the presented key" and both benefit
+    // from a background directory refresh (convergence clears the flag
+    // on subsequent proofs).
+    if (!reason.contains('unknown-pkS') &&
+        !reason.contains('pin-mismatch') &&
+        !reason.contains('unverified-student-key')) return;
     final now = DateTime.now().toUtc();
     final last = _lastUnknownPkSRefresh;
     if (last != null && now.difference(last) < unknownPkSRefreshThrottle) {

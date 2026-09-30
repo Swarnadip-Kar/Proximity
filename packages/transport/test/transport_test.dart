@@ -367,7 +367,9 @@ void main() {
     // a ZERO sigAck, so the student logged `BAD prof signature` while the
     // professor logged `unknown-pkS` — the same event, two stories. Every
     // early invalid is now signed; unpinned first-seen emails still mark
-    // (TOFU, offline-first) with a `first-seen` log token.
+    // (TOFU, offline-first) with a `first-seen` log token; stale pins mark
+    // with an `unverified-student-key` flag (refusing would make marking
+    // internet-dependent).
     final prof = ProxCrypto.generateEdKeypair();
     final stu = ProxCrypto.generateEdKeypair();
     final fd = freshDevice(email: _email, pkS: pk32(stu.publicKey));
@@ -408,9 +410,23 @@ void main() {
           isTrue);
       expect(proved.last, contains('first-seen'));
       // 2) Stale pin (professor cached an older key, student re-enrolled):
-      // fails closed as unknown-pkS — but the ACK VERIFIES, so the student
-      // sees the true verdict instead of `BAD prof signature`.
+      // marks WITH an unverified-student-key flag (offline-first: refusing
+      // would make marking internet-dependent) — and the ACK VERIFIES, so
+      // the student sees a clean mark instead of `BAD prof signature`.
+      // Fresh window (new single-use scope — same-j would replay into
+      // duplicate-confirmed and mask the flag, unlike the field where
+      // retries ride the next rotation).
       server.pinStudentKey(_email, hexEncode(Uint8List(32)), force: true);
+      server.openWindow(
+        WindowParams(
+          sessionId: server.window!.sessionId,
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'CS201-Room301',
+        ),
+        2,
+      );
       final cj2 = server.window!.challengeFor(0);
       final desc2 = await client.fetchWindow(cj2);
       final stale = await proveFresh(
@@ -423,8 +439,9 @@ void main() {
         fd: fd,
         face: 0.9,
       );
-      expect(stale.decision, ProveDecision.invalid);
-      expect(stale.reason, 'unknown-pkS');
+      expect(stale.decision, ProveDecision.confirmed);
+      expect(stale.reason, 'ok');
+      expect(stale.flags, contains('unverified-student-key'));
       expect(
           stale.verifyAck(
             profPk: prof.publicKey,
@@ -434,12 +451,17 @@ void main() {
             studentId: _email,
           ),
           isTrue,
-          reason: 'early invalids must verify — never BAD-sig');
+          reason: 'flagged marks must verify — never BAD-sig');
       expect(proved.last, contains('pin-mismatch'));
+      expect(proved.last, contains('unverified-student-key'));
+      // Same holder across windows: still one present body, now flagged.
+      expect(server.tally.presentCount, 1);
       // 3) Forced re-pin (what the professor's per-window prefetch now
-      // does): the fresh directory key converges instead of refusing for
-      // the rest of the session. New window (new single-use scope), same
-      // student key — marks normally.
+      // does): the fresh directory key converges — the flag drops on the
+      // next proof. New window (new single-use scope), same student key —
+      // marks normally with no flag.
+      server.pinStudentKeys({_email: hexEncode(pk32(stu.publicKey))},
+          force: true);
       server.pinStudentKeys({_email: hexEncode(pk32(stu.publicKey))},
           force: true);
       server.openWindow(
@@ -450,7 +472,7 @@ void main() {
           t0: DateTime.now().toUtc(),
           classLabel: 'CS201-Room301',
         ),
-        2,
+        3,
       );
       final cj3 = server.window!.challengeFor(0);
       final desc3 = await client.fetchWindow(cj3);
