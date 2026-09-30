@@ -3225,6 +3225,12 @@ Field report: `This Gmail was enrolled on another device` on the SAME phone (rei
 
 Verify: app suite 1201/1201 (incl. new phantom-id durability test); `flutter analyze` clean.
 
+## Entry-gate reclaim + shared evidence helper (2026-09-30)
+
+Field report persisted: same-phone cooldown refusal. The enrollment pre-claim fix missed its twin — `entryStudentGate` (registration/Continue) verdicts without `localDeviceId` too. Both sites now share `evaluateStudentClaimWithEvidence` (single call shape, omission structural) and cooldown refusals log prefix-only facts (install pair, device presence/match) so the next field report is instantly diagnosable. Helper pinned by matrix tests (reclaim/omit/deny combinations).
+
+Verify: claim/device-identity suites green; `flutter analyze` clean.
+
 ## Stale-pin self-heal + installer-trust messaging + cumulative Class N (2026-09-30)
 
 Field batch: `unknown-pkS|pin-mismatch` refusals after mid-class re-enrolls, `tampered or re-signed` blocks persisting under the pilot flag, and new sessions reading `Class 1` after conducted sessions.
@@ -3241,6 +3247,10 @@ Verify: app suite 1207/1207; ble 36/36; `flutter analyze` clean on all touched f
 Field log showed `unknown-pkS|pin-mismatch` refusing every rotation with the refresh hook firing but never converging (offline prof): the refusal itself was the internet dependency. Fully-valid proofs under a stale pin now CONFIRM + `unverified-student-key` flag (roster review via faceFlag, `pin-mismatch` log token preserved) — consistent with first-seen TOFU; fake crypto still fails closed upstream. Hook fires on the flag tokens too, clearing the flag on convergence. Deliberate policy change, logged in PROXIMITY_SECURITY.md: pins distinguish first-seen from re-keyed for review, never refuse offline.
 
 Verify: transport 33/33 (stale-pin test restructured across fresh windows — same-j would replay-mask the flag); app 1207/1207; protocol 224/224; `flutter analyze` clean.
+
+## Test-hang root cause + e2e reclaim proof (2026-09-30)
+
+Full-suite runs hung on `setup_claim_denial_test`: the new device-id fetch awaits native channels whose Timer deadlines freeze under flutter_test FakeAsync (no pump → 4s timeouts never fire). `HardwareDeviceIds.source` (IntegrityGate.probe precedent, channel hops bounded to 4s regardless) lets tests script it; 9 files updated, plus the previously-missing proof — same-phone reinstall reclaiming through `upload()` end-to-end, not just the pure verdict.
 
 ## Plugin migration off + tampered-only verdict decoded (2026-09-30)
 
