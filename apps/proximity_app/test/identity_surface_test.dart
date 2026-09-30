@@ -332,8 +332,14 @@ void main() {
       MarkedRosterSection(tally: tally),
     ));
     await t.pumpAndSettle();
+    // Entry defaults to the Present list: present shows, partial hides.
     expect(find.textContaining('a@univ.edu'), findsOneWidget);
+    expect(find.textContaining('b@univ.edu'), findsNothing);
+    // Partial badge narrows to the partial list.
+    await t.tap(find.text('Partial 1'));
+    await t.pumpAndSettle();
     expect(find.textContaining('b@univ.edu'), findsOneWidget);
+    expect(find.textContaining('a@univ.edu'), findsNothing);
   });
 
   testWidgets('professor manual inbox shows student email', (t) async {

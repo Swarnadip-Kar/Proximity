@@ -106,18 +106,22 @@ void main() {
         )));
     await t.pumpAndSettle();
     // Centered verdict row: Present / Partial / Absent badges with real
-    // counts, windows caption below.
+    // counts, windows caption below. Entry defaults to the Present list.
     expect(find.text('Present 2'), findsOneWidget);
     expect(find.text('Partial 0'), findsOneWidget);
     expect(find.text('Absent 1'), findsOneWidget);
     expect(find.text('1 round'), findsOneWidget);
-    // Badges filter the list: Present shows A + B only…
-    await t.tap(find.text('Present 2'));
-    await t.pumpAndSettle();
     expect(find.text('Present list'), findsOneWidget);
     expect(find.textContaining('a@x.in'), findsOneWidget);
     expect(find.textContaining('b@x.in'), findsOneWidget);
     expect(find.textContaining('c@x.in'), findsNothing);
+    // Tapping the selected badge returns to the full list…
+    await t.tap(find.text('Present 2'));
+    await t.pumpAndSettle();
+    expect(find.text('Present list'), findsNothing);
+    expect(find.textContaining('a@x.in'), findsOneWidget);
+    expect(find.textContaining('b@x.in'), findsOneWidget);
+    expect(find.textContaining('c@x.in'), findsOneWidget);
     // …Partial is empty (single round), Absent shows C only…
     await t.tap(find.text('Partial 0'));
     await t.pumpAndSettle();
