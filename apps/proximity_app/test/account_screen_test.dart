@@ -23,6 +23,7 @@ import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/account/face_id_screen.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/screens/shells.dart';
 import 'package:proximity_app/screens/student_home.dart';
@@ -142,6 +143,14 @@ const _acct = SignedAccount(
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // Widget-test harness: the real hardware-id source awaits native
+    // channels whose timers never advance under FakeAsync (hangs the
+    // move-status gate). Stub to '' (no reclaim) unless a test overrides.
+    HardwareDeviceIds.source = () async => '';
+  });
+
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
   });
 
   group('student account menu (compact root)', () {
@@ -270,6 +279,59 @@ void main() {
       expect(find.textContaining('Enrolled as other@example.edu'),
           findsNothing);
       expect(find.text('R9999'), findsNothing);
+    });
+
+    testWidgets('same-phone reinstall shows reclaim, not move copy',
+        (t) async {
+      // Same phone, fresh install within the 30-day window: the gate
+      // reclaims (allowedMove + isReclaim) so the UI must say re-enroll,
+      // never the "30 days have passed" move sentence.
+      HardwareDeviceIds.source = () async => 'phone-1';
+      final store = InMemoryDeviceStore();
+      await store.writeInstallId(_installId);
+      final movedAt = DateTime.now().toUtc().millisecondsSinceEpoch -
+          const Duration(days: 1).inMilliseconds;
+      final cloud = _boundCloud(
+        installId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        pkHex: 'aa' * 32,
+        lastMoveAtMillis: movedAt,
+      );
+      cloud.devices[_email] = StudentDeviceDoc(
+        email: _email,
+        uid: 'test-uid',
+        pkHex: 'aa' * 32,
+        name: 'Test User',
+        roll: 'R1001',
+        modelVer: kFaceVerifierVer,
+        installId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        platform: 'android',
+        org: 'example.com',
+        createdAtMillis: movedAt,
+        lastMoveAtMillis: movedAt,
+        lastSeenAtMillis: movedAt,
+        updatedAtMillis: movedAt,
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'NONE',
+        deviceId: 'phone-1',
+      );
+      cloud.installs['bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'] = _email;
+      await t.pumpWidget(ProviderScope(
+        overrides: _accountOverrides(
+          store: store,
+          linked: null,
+          cloud: cloud,
+        ),
+        child: MaterialApp(
+            theme: proxLightTheme(), home: AccountDevicePage(acct: _acct)),
+      ));
+      await _drain(t);
+
+      expect(find.text('Same phone — re-enroll here'), findsOneWidget);
+      expect(find.text('Eligible to move here'), findsNothing);
+      expect(
+          find.textContaining('same phone that holds the enrollment',
+              findRichText: true),
+          findsOneWidget);
     });
 
     testWidgets('face-id row pushes the isolated status page', (t) async {

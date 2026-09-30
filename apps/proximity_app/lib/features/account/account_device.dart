@@ -222,13 +222,19 @@ class AccountDeviceSection extends ConsumerWidget {
           ],
         );
       case StudentClaim.allowedMove:
+        final isReclaim = gate.verdict.isReclaim;
         return Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const ProxStateBadge(
-                state: ProxState.waiting, label: 'Eligible to move here'),
-            ProxSyncNote(deviceAllowedMoveNote()),
+            ProxStateBadge(
+                state: ProxState.waiting,
+                label: isReclaim
+                    ? 'Same phone — re-enroll here'
+                    : 'Eligible to move here'),
+            ProxSyncNote(isReclaim
+                ? deviceReclaimNote()
+                : deviceAllowedMoveNote()),
             if (trust != null) ...[
               const SizedBox(height: ProxSpacing.sm),
               trust,

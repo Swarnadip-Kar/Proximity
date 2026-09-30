@@ -59,6 +59,13 @@ String deviceAllowedMoveNote() =>
     'The ${kStudentMoveCooldown.inDays} days since the last move have passed '
     '— enrolling here moves it (at most once a month).';
 
+/// Same-phone reinstall sentence: the binding already lives on THIS phone
+/// (fresh install / cleared data, same hardware id) so the 30-day move
+/// rule never applied — this is a free re-enrollment, not a move.
+String deviceReclaimNote() =>
+    'This is the same phone that holds the enrollment (fresh install) — '
+    're-enrolling here is free and instant, no 30-day wait.';
+
 /// Full device/binding rules (enrollment surfaces): important callout +
 /// rows, with the EXACT re-enroll/next-eligible date where the gate data is
 /// already available, reinstall/app-data-clear to switch identity, manual
