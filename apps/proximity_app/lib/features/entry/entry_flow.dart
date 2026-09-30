@@ -575,9 +575,11 @@ Future<StudentGate> entryStudentGate(WidgetRef ref, String email) async {
   // the stable phone id here, a same-phone reinstall refuses at
   // registration with the misleading cooldown copy before any
   // reclaim-capable transaction runs. Fail-soft '' = old behavior.
+  // Injectable source (HardwareDeviceIds.source): the real read awaits
+  // native channels that never answer in widget tests.
   var gateDeviceId = '';
   try {
-    gateDeviceId = await getStableHardwareDeviceId();
+    gateDeviceId = await HardwareDeviceIds.source();
   } catch (_) {}
   final probed = evaluateStudentClaimWithEvidence(
       localInstallId: installId,

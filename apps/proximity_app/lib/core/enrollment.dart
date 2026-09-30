@@ -1020,9 +1020,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // "enrolled on another device" cooldown refusal. Without this the
         // transaction (which does receive deviceId) is never reached.
         // Fail-soft '' = pre-reclaim behavior. Logged prefix-only.
+        // Injectable source (HardwareDeviceIds.source): the real read
+        // awaits native channels that never answer in widget tests.
         var preclaimDeviceId = '';
         try {
-          preclaimDeviceId = await getStableHardwareDeviceId();
+          preclaimDeviceId = await HardwareDeviceIds.source();
         } catch (_) {}
         var skipPreclaim = false;
         StudentDeviceDoc? preBinding;
