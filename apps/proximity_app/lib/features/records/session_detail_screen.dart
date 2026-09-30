@@ -239,28 +239,31 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 spacing: ProxSpacing.sm,
                 runSpacing: ProxSpacing.xs,
                 children: [
-                  _FilterBadge(
+                  SelectableVerdictBadge(
                     status: ProxStatus.marked,
                     label: 'Present $present',
                     selected: _filter == _SessionFilter.present,
+                    semanticLabel: 'Show present list',
                     onTap: () => setState(() => _filter =
                         _filter == _SessionFilter.present
                             ? _SessionFilter.all
                             : _SessionFilter.present),
                   ),
-                  _FilterBadge(
+                  SelectableVerdictBadge(
                     status: ProxStatus.late,
                     label: 'Partial $partials',
                     selected: _filter == _SessionFilter.partial,
+                    semanticLabel: 'Show partial list',
                     onTap: () => setState(() => _filter =
                         _filter == _SessionFilter.partial
                             ? _SessionFilter.all
                             : _SessionFilter.partial),
                   ),
-                  _FilterBadge(
+                  SelectableVerdictBadge(
                     status: ProxStatus.absent,
                     label: 'Absent $absent',
                     selected: _filter == _SessionFilter.absent,
+                    semanticLabel: 'Show absent list',
                     onTap: () => setState(() => _filter =
                         _filter == _SessionFilter.absent
                             ? _SessionFilter.all
@@ -296,9 +299,29 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
                 expanded: true,
               ),
               const SizedBox(height: ProxSpacing.md),
-              const ProxSectionHeader(
+              ProxSectionHeader(
                 title: 'Attendance',
                 padding: EdgeInsets.zero,
+                // Filtered-list label: names the visible list beside the
+                // title (same words as the live roster's list header).
+                trailing: switch (_filter) {
+                  _SessionFilter.present => Text(
+                      'Present list',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  _SessionFilter.partial => Text(
+                      'Partial list',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  _SessionFilter.absent => Text(
+                      'Absent list',
+                      style: ProxType.caption(
+                          color: c.contentSecondary),
+                    ),
+                  _SessionFilter.all => null,
+                },
               ),
               const SizedBox(height: ProxSpacing.md),
               if (persons.isEmpty)
@@ -347,32 +370,6 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 
 /// Attendance filter behind the tappable Present/Partial/Absent badges.
 /// `all` is the legacy full list; tapping a badge narrows to that
-/// verdict, tapping it again returns to `all`.
+/// verdict, tapping it again returns to `all`. Badges render via the
+/// shared [SelectableVerdictBadge] (visible selected ring).
 enum _SessionFilter { all, present, partial, absent }
-
-/// One tappable attendance badge: the same `VerdictBadge` look (selected
-/// reads `active`), wrapped in a tap target that toggles its filter.
-class _FilterBadge extends StatelessWidget {
-  final ProxStatus status;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _FilterBadge({
-    required this.status,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: VerdictBadge(
-          status: status,
-          label: label,
-          active: selected,
-        ),
-      );
-}
