@@ -1614,11 +1614,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         studentId: identity.gmail.toLowerCase(),
       );
       if (!ok) {
-        BleLog.log('NET', 'ACK received but BAD prof signature');
+        // Corrupt ACK bytes (or a mid-prove prof re-key): Sig_p already
+        // verified for this rotation before the POST, so the server is
+        // real — this is transient, not a fake. Prove the next rotation
+        // (non-suspicious: never feeds the fake-professor streak) instead
+        // of stranding a present student on a terminal error.
+        BleLog.log('NET', 'ACK received but BAD prof signature — next signal…');
         BleLog.log('CRYPTO', 'ack verify BAD code=${desc.display} j=$j');
-        return const MarkedReceipt(
-            detail: 'Bad professor signature',
-            result: StudentResult.error);
+        throw _TryNext('ack bad prof signature');
       }
       BleLog.log('CRYPTO',
           'ack verify ok code=${desc.display} j=$j (${res.decision.name})');
