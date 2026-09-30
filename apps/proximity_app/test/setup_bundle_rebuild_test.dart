@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -93,6 +95,15 @@ class _CleanProbe implements IntegrityProbe {
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   // Clean integrity verdict for generateKey; restored afterwards so
   // probe-sensitive suites keep the real probe.
   setUp(() => IntegrityGate.probe = const _CleanProbe());

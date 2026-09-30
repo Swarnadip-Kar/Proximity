@@ -10,6 +10,8 @@
 //   still) — success pins all 5 were measured; a first-still spoof still
 //   aborts at the centre slot with the gallery untouched.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
@@ -81,6 +83,15 @@ Future<EnrollmentController> _keyReadyScripted({
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   group('enrollFace passive liveness gate (before gallery write)', () {
     test('spoof (low liveness, matching face) fails, gallery untouched',
         () async {

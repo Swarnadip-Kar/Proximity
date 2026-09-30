@@ -16,6 +16,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/app_config/force_update.dart';
@@ -103,6 +105,15 @@ Future<WidgetRef> _pumpRef(WidgetTester t, ProviderContainer container) async {
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   group('entry relink (Task 1)', () {
     testWidgets('same-Gmail sign-in restores linked identity', (t) async {
       final store = await _enrolledStore();

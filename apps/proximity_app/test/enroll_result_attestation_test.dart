@@ -6,6 +6,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/attestation_self_check.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
@@ -65,6 +67,15 @@ EnrollmentController _controller() {
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   testWidgets('save screen shows notice + Debug card + attestation next step',
       (t) async {
     final ctl = _controller();

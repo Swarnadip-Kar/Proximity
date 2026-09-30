@@ -11,6 +11,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
@@ -64,6 +66,15 @@ class _CleanProbe implements IntegrityProbe {
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   group('stale account invalidation', () {
     test('switch-account rebuilds the draft from the current account',
         () async {

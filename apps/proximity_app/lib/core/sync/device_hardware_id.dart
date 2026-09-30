@@ -27,14 +27,32 @@ import 'package:flutter/services.dart';
 
 const _hwChannel = MethodChannel('org.iitbhilai.proximity/hardware_id');
 
+/// Injectable hardware-id source. Production always uses
+/// [getStableHardwareDeviceId]; tests override [source] (with tearDown
+/// reset) because the real function awaits native channels whose
+/// Timer-based deadlines never advance under flutter_test's FakeAsync —
+/// awaiting it directly in a widget test hangs forever. Mirrors the
+/// `IntegrityGate.probe` precedent.
+class HardwareDeviceIds {
+  HardwareDeviceIds._();
+  static Future<String> Function() source = getStableHardwareDeviceId;
+}
+
 /// Stable phone id across reinstalls ('' when unavailable — desktop, web,
 // VM tests, or any plugin failure). Trimmed, never null.
+//
+// Every native hop carries a deadline: an unanswered MethodChannel (unit
+// tests, dead engine) must degrade to '' instead of hanging the caller
+// forever — entry gates await this on the UI path.
 Future<String> getStableHardwareDeviceId() async {
   if (kIsWeb) return '';
+  const hopBudget = Duration(seconds: 4);
 
   if (defaultTargetPlatform == TargetPlatform.android) {
     try {
-      final String? aid = await _hwChannel.invokeMethod<String>('getAndroidId');
+      final String? aid = await _hwChannel
+          .invokeMethod<String>('getAndroidId')
+          .timeout(hopBudget);
       if (aid != null && aid.trim().isNotEmpty) {
         return aid.trim();
       }
@@ -44,14 +62,14 @@ Future<String> getStableHardwareDeviceId() async {
     try {
       final info = DeviceInfoPlugin();
       final android =
-          await info.androidInfo.timeout(const Duration(seconds: 4));
+          await info.androidInfo.timeout(hopBudget);
       final id = android.id.trim();
       if (id.isNotEmpty) return id;
     } catch (_) {}
   } else if (defaultTargetPlatform == TargetPlatform.iOS) {
     try {
       final info = DeviceInfoPlugin();
-      final ios = await info.iosInfo.timeout(const Duration(seconds: 4));
+      final ios = await info.iosInfo.timeout(hopBudget);
       final id = (ios.identifierForVendor ?? '').trim();
       if (id.isNotEmpty) return id;
     } catch (_) {}

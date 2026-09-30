@@ -7,6 +7,8 @@
 //   template); first enrollment never gated; started-but-unsaved rescans
 //   never stamp; failed saves never stamp.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -71,6 +73,15 @@ Future<void> _overwriteStamp(
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   group('kFaceRescanCooldown constant', () {
     test('is 30 days, same duration but a separate rule', () {
       expect(kFaceRescanCooldown, const Duration(days: 30));

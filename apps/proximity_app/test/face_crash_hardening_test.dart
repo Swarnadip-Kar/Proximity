@@ -6,6 +6,8 @@
 // on the pre-fix code (false pass or uncaught throw); (a5),(b2),(b4) pin
 // the already-correct fail-closed paths so they cannot regress.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -77,6 +79,15 @@ Future<EnrollmentController> _keyReadyCtl({
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   group('crash (a): marking-time verify never throws, never false-passes',
       () {
     test('(a1) empty imagePath is inconclusive, never a pass', () async {

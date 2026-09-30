@@ -13,6 +13,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
+
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -68,6 +70,15 @@ Future<EnrollmentController> _readyToSave(
 }
 
 void main() {
+  // Hardware id has no native side in tests (and its channel deadlines
+  // freeze under FakeAsync): never touch the real reader here.
+  setUp(() {
+    HardwareDeviceIds.source = () async => '';
+  });
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
+  });
+
   setUp(clearInstallIdCacheForTest);
 
   group('isRulesDenialMessage (evidence check)', () {
@@ -173,6 +184,39 @@ void main() {
       expect(id!.gmail, 'b@univ.edu');
       expect(ctl.state.phase, EnrollPhase.uploaded);
       expect((await store.readEnrollment())?.email, 'b@univ.edu');
+    });
+
+    test('same-phone reinstall reclaims through upload (field cooldown bug)',
+        () async {
+      // End-to-end regression for "enrolled on another device" on the
+      // SAME phone: the pre-claim once verdicts without the hardware id,
+      // so reclaim never fired before the transaction. Same binding shape
+      // as the cooldown test above, plus matching hardware ids.
+      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final cloud = FakeCloudSync();
+      cloud.devices['b@univ.edu'] = StudentDeviceDoc(
+        email: 'b@univ.edu',
+        uid: 'ub',
+        pkHex: 'aa',
+        name: 'Old',
+        roll: '1',
+        modelVer: 'v',
+        installId: 'install-old-01',
+        lastMoveAtMillis: now - 5 * _dayMs,
+        lastSeenAtMillis: now - 5 * _dayMs,
+        deviceId: 'phone-1',
+      );
+      HardwareDeviceIds.source = () async => 'phone-1';
+      final ctl = await _readyToSave(auth, store, cloud,
+          installId: 'install-new-02');
+      final id = await ctl.upload();
+      expect(id, isNotNull);
+      expect(ctl.state.phase, EnrollPhase.uploaded);
+      expect((await store.readEnrollment())?.email, 'b@univ.edu');
+      expect((await cloud.fetchStudentDevice('b@univ.edu'))?.installId,
+          'install-new-02');
     });
 
     test('raw FirebaseException never reaches the screen message', () async {
