@@ -26,6 +26,7 @@ import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/live/live_refresh.dart';
 import 'package:proximity_app/features/live/live_session.dart';
+import 'package:proximity_app/widgets/verdict_badge.dart';
 import 'package:proximity_app/features/records/course_overview_screen.dart';
 import 'package:proximity_app/features/records/prof_courses_screen.dart';
 import 'package:proximity_app/screens/shells.dart';
@@ -416,11 +417,17 @@ void main() {
     // Absent tab lists the union members missing from this visit.
     await t.tap(find.text('Absent 2'));
     await t.pumpAndSettle();
+    expect(find.text('Absent list'), findsOneWidget);
+    expect(
+        find.byWidgetPredicate(
+            (w) => w is SelectableVerdictBadge && w.selected),
+        findsOneWidget);
     expect(find.textContaining('a@x.in'), findsOneWidget);
     expect(find.textContaining('b@x.in'), findsOneWidget);
     // Tapping the selected badge again returns to the combined list.
     await t.tap(find.text('Absent 2'));
     await t.pumpAndSettle();
+    expect(find.text('Absent list'), findsNothing);
     expect(find.textContaining('a@x.in'), findsNothing);
     // Live window + marks, then Stop notes the round: the intersection
     // contract counts noted windows only, so the trio recomputes on the

@@ -217,3 +217,71 @@ class _VerdictBadgeState extends State<VerdictBadge>
     return badge;
   }
 }
+
+/// Tappable verdict badge with a visible selected state — the filter-tab
+/// language shared by the live roster + session detail attendance headers.
+///
+/// Unselected reads exactly like a plain [VerdictBadge] (same pill, same
+/// metrics). Selected adds a status-color wash + ring around the pill plus
+/// the filled icon variant, so the active tab is obvious on both themes.
+/// Same outer size either way (transparent ring when unselected), so
+/// toggling never shifts the row. Null [onTap] renders read-only.
+class SelectableVerdictBadge extends StatelessWidget {
+  final ProxStatus status;
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  /// Screen-reader hint (e.g. 'Show present list'). Defaults to [label].
+  final String? semanticLabel;
+
+  const SelectableVerdictBadge({
+    super.key,
+    required this.status,
+    required this.label,
+    this.selected = false,
+    this.onTap,
+    this.semanticLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ProxIcons.statusColor(context, status);
+    final ring = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: selected
+            ? color.withValues(alpha: 0.16)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(ProxRadii.pill),
+        border: Border.all(
+          color: selected
+              ? color.withValues(alpha: 0.65)
+              : Colors.transparent,
+          width: 1.5,
+        ),
+      ),
+      child: VerdictBadge(
+        status: status,
+        label: label,
+        active: selected,
+      ),
+    );
+    final tap = onTap;
+    final child = tap == null
+        ? ring
+        : GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: tap,
+            child: ring,
+          );
+    // Traits only (button + selected) — the label stays on the inner
+    // badge, so readers announce it once.
+    return Semantics(
+      button: tap != null,
+      selected: selected,
+      label: semanticLabel,
+      child: child,
+    );
+  }
+}

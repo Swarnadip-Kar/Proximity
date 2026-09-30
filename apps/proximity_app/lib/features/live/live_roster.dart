@@ -504,28 +504,28 @@ class _AttendanceSummary extends StatelessWidget {
   /// One badge cell: equal third of the row, scales down instead of
   /// wrapping — the trio always fits one line (same contract as the
   /// session-card counts row). Tappable when [onSelect] is set; the
-  /// selected badge reads `active` (filled icon variant).
+  /// selected badge carries the visible ring via
+  /// [SelectableVerdictBadge] (tapping the selected one returns to all).
   Widget _cell({
-    required VerdictBadge badge,
+    required ProxStatus status,
+    required String label,
     required RosterFilter filter,
+    required String semanticLabel,
   }) {
     final tap = onSelect;
-    final cell = Expanded(
+    return Expanded(
       child: FittedBox(
         fit: BoxFit.scaleDown,
         alignment: Alignment.center,
-        child: badge,
-      ),
-    );
-    if (tap == null) return cell;
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => tap(filter == selected ? RosterFilter.all : filter),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.center,
-          child: badge,
+        child: SelectableVerdictBadge(
+          status: status,
+          label: label,
+          selected: selected == filter,
+          onTap: tap == null
+              ? null
+              : () =>
+                  tap(filter == selected ? RosterFilter.all : filter),
+          semanticLabel: semanticLabel,
         ),
       ),
     );
@@ -562,30 +562,24 @@ class _AttendanceSummary extends StatelessWidget {
         Row(
           children: [
             _cell(
-              badge: VerdictBadge(
-                status: ProxStatus.marked,
-                label: 'Present $present',
-                active: selected == RosterFilter.present,
-              ),
+              status: ProxStatus.marked,
+              label: 'Present $present',
               filter: RosterFilter.present,
+              semanticLabel: 'Show present list',
             ),
             const SizedBox(width: ProxSpacing.xs),
             _cell(
-              badge: VerdictBadge(
-                status: ProxStatus.late,
-                label: 'Partial $partial',
-                active: selected == RosterFilter.partial,
-              ),
+              status: ProxStatus.late,
+              label: 'Partial $partial',
               filter: RosterFilter.partial,
+              semanticLabel: 'Show partial list',
             ),
             const SizedBox(width: ProxSpacing.xs),
             _cell(
-              badge: VerdictBadge(
-                status: ProxStatus.absent,
-                label: 'Absent $absent',
-                active: selected == RosterFilter.absent,
-              ),
+              status: ProxStatus.absent,
+              label: 'Absent $absent',
               filter: RosterFilter.absent,
+              semanticLabel: 'Show absent list',
             ),
           ],
         ),
@@ -759,6 +753,22 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           onSelect: (f) => setState(() => _filter = f),
         ),
         const SizedBox(height: ProxSpacing.sm),
+        // Filtered-list label: names the visible list (Present/Partial/
+        // Absent list) so the tab state reads in words, not just the
+        // badge ring. The combined `all` view keeps its legacy headerless
+        // rows.
+        if (_filter != RosterFilter.all) ...[
+          ProxSectionHeader(
+            title: switch (_filter) {
+              RosterFilter.present => 'Present list',
+              RosterFilter.partial => 'Partial list',
+              RosterFilter.absent => 'Absent list',
+              RosterFilter.all => 'Attendance',
+            },
+            padding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: ProxSpacing.sm),
+        ],
         if (showPresent)
           PresentSection(
             present: present,
