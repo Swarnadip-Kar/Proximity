@@ -269,13 +269,14 @@ void main() {
       final overlay = _codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final combined = sections + face + overlay;
-      // The live frame renders bare: no fit/decoration/effect wrappers and
-      // no outer ratio box anywhere on the preview paths (the plugin owns
-      // the one true AspectRatio internally; the retired outer wrapper is
-      // gone).
+      // The live frame renders full-bleed raw: uniform-scale cover inside
+      // a ClipRect (squish impossible, no color treatment), no
+      // letterbox/pillar bars and no outer ratio box anywhere on the
+      // preview paths.
+      expect(combined.contains('FittedBox('), isTrue);
+      expect(combined.contains('BoxFit.cover'), isTrue);
+      expect(combined.contains('ClipRect('), isTrue);
       for (final ban in [
-        'FittedBox(',
-        'BoxFit.cover',
         'BoxFit.fill',
         'BoxFit.contain',
         'BoxFit.fitWidth',
@@ -489,7 +490,7 @@ void main() {
       expect(box.center, const Size(400, 800).center(Offset.zero));
     });
 
-    test('guide oval is portrait, centered, 0.70 x 0.62 with wide clamp',
+    test('guide oval is portrait, centered, 0.64 x 0.58 with wide clamp',
         () {
       const aspects = [3 / 4, 4 / 3, 20 / 9, 1.0];
       const sizes = [Size(800, 400), Size(400, 800), Size(600, 600)];
@@ -506,8 +507,8 @@ void main() {
           // Height always the 0.62 fraction; width is 0.70 except on
           // wide/desktop boxes where the portrait clamp narrows it to
           // h * faceWidthToHeight so the guide stays a face ellipse.
-          final rawW = preview.width * 0.70;
-          final h = preview.height * 0.62;
+          final rawW = preview.width * 0.64;
+          final h = preview.height * 0.58;
           final expectedW =
               rawW >= h ? h * CaptureOverlay.faceWidthToHeight : rawW;
           expect(oval.width, moreOrLessEquals(expectedW, epsilon: 0.01));
@@ -526,7 +527,7 @@ void main() {
       final phoneOval =
           CaptureOverlay.guideRectForAspect(const Size(400, 800), 9 / 16);
       expect(phoneOval.width,
-          moreOrLessEquals(phonePreview.width * 0.70, epsilon: 0.01));
+          moreOrLessEquals(phonePreview.width * 0.64, epsilon: 0.01));
     });
 
     test('different aspects give different ovals (proves derivation)', () {

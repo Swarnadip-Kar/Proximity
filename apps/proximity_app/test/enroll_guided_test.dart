@@ -456,21 +456,21 @@ void main() {
       expect(combined.contains('FaceOval('), isFalse);
       expect(combined.contains('FaceCaptureOvalOverlay('), isFalse);
       expect(combined.contains('EnrollAngleDots('), isFalse);
-      // (d) bare-surface squish fix: BARE CameraPreview (zero treatment,
-      // direct child of a loose, centered Stack) with the DISPLAYED
-      // (orientation-adjusted) ratio plumbed to the overlay; NO fit
-      // transform and NO outer ratio box anywhere (cover cropped the face
-      // area, stretch elongated it, the outer AspectRatio double-boxed
-      // against the plugin internals — all three retired). Code-only:
-      // doc comments keep naming the retired chains for provenance.
+      // (d) full-bleed cover: the sensor frame COVERS the loose Stack via
+      // FittedBox+cover inside a ClipRect (uniform scale — squish
+      // impossible, no color treatment), so no letterbox bars exist to
+      // diverge. NO other fit transform and NO outer ratio box anywhere
+      // (fill/contain/width/height stretches retired). Code-only: doc
+      // comments keep naming the retired chains for provenance.
       expect(code.contains('AspectRatio('), isFalse);
       expect(code.contains('LetterboxedPreview'), isFalse);
       expect(code.contains('StackFit.expand'), isFalse);
       expect(code.contains('CameraPreview('), isTrue);
       expect(code.contains('StackFit.loose'), isTrue);
       expect(code.contains('displayedPreviewAspect'), isTrue);
-      expect(code.contains('FittedBox('), isFalse);
-      expect(code.contains('BoxFit.cover'), isFalse);
+      expect(code.contains('FittedBox('), isTrue);
+      expect(code.contains('BoxFit.cover'), isTrue);
+      expect(code.contains('ClipRect('), isTrue);
       expect(code.contains('BoxFit.fill'), isFalse);
       expect(code.contains('BoxFit.contain'), isFalse);
       // (e) save-error toast stays Positioned + saveError-gated with the

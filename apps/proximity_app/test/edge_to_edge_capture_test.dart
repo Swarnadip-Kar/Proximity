@@ -304,9 +304,12 @@ void main() {
       final overlay = _codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final combined = sections + face + overlay;
+      // Full-bleed raw feed: FittedBox+cover inside ClipRect only
+      // (uniform scale, no filter). Everything else stays banned.
+      expect(combined.contains('FittedBox('), isTrue);
+      expect(combined.contains('BoxFit.cover'), isTrue);
+      expect(combined.contains('ClipRect('), isTrue);
       for (final ban in [
-        'FittedBox(',
-        'BoxFit.cover',
         'BoxFit.fill',
         'BoxFit.contain',
         'BoxFit.fitWidth',

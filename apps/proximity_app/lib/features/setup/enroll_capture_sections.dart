@@ -200,33 +200,28 @@ class EnrollCapturePreview extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
     final ctl = controller;
-    // Displayed video-box aspect for the overlay: the overlay MUST derive
-    // its oval/comet from this same box, never the full Stack size —
-    // otherwise the guide drifts off the undistorted feed whenever the
-    // screen differs from the sensor. Explicit test-seam value wins;
-    // otherwise resolve from the live controller (orientation-adjusted via
-    // [displayedPreviewAspect]); uninitialized/test fake → null keeps the
-    // full-size fallback with zero visual change on the placeholder.
-    double? previewAspect = previewAspectRatio;
-    if (previewAspect == null && ctl != null) {
-      try {
-        if (ctl.value.isInitialized) {
-          final a = displayedPreviewAspect(ctl.value);
-          if (a.isFinite && a > 0) previewAspect = a;
-        }
-      } catch (_) {
-        previewAspect = null;
-      }
-    }
-    // ZERO treatment: the preview surface is a DIRECT Stack child — bare
-    // `CameraPreview` (which self-maintains its native aspect internally),
-    // with no Container/Box/decoration/effect/fit of any kind around it.
-    // The Stack stays loose + centered so nothing ever force-fills the
-    // frame (`StackFit.expand` would stretch faces again). Null
-    // controller (test fake only, never on-device) renders an undecorated
-    // spacer of the same place in the tree.
-    final surface =
-        preview ?? (ctl != null ? CameraPreview(ctl) : const SizedBox.expand());
+    // Overlay aspect: under full-bleed cover the video box IS the Stack,
+    // so the overlay always takes the null (full size) path — deriving
+    // from a bar box would shrink the guide off the visible feed. The
+    // explicit test-seam value is accepted for signature compat and
+    // ignored (the seam renders bare, same as the placeholder).
+    // NOTE: [displayedPreviewAspect] stays as the documented helper for
+    // the raw sensor ratio (unit-tested directly); the live path no
+    // longer needs it because cover needs no aspect assumption.
+    // ZERO treatment, full-bleed edition: the live sensor frame COVERS
+    // the Stack (center-cropped at a uniform scale — never squished, no
+    // color treatment, raw feed as the background) instead of letterboxing
+    // with pillar/letter bars. No bars means no gap widths that can ever
+    // differ between entries; the overlay derives from the full Stack
+    // (aspect null below) so guide/wheels stay aligned with the visible
+    // feed by construction. Capture stills are unaffected (takePicture
+    // returns the full sensor frame, never the crop). Null controller
+    // (test fake only, never on-device) renders an undecorated spacer of
+    // the same place in the tree.
+    final surface = preview ??
+        (ctl != null
+            ? _CoverFeed(child: CameraPreview(ctl))
+            : const SizedBox.expand());
     // Below-app-bar layout: the Stack starts directly under the opaque
     // bar (no top offset — the old "rides low" Padding died with the
     // transparent overlay bar). Padding is layout-neutral for the path
@@ -251,7 +246,12 @@ class EnrollCapturePreview extends StatelessWidget {
           totalAngles: totalAngles,
           statusLine: statusLine,
           sweepAngle: sweepAngle,
-          previewAspectRatio: previewAspect,
+          // Cover path (live controller): the video box IS the Stack, so
+          // the overlay takes the null (full size) path — deriving from a
+          // bar box would shrink the guide off the visible feed. Seam path
+          // (tests): the bare test frame keeps its video box so the guide
+          // stays aligned with it there too.
+          previewAspectRatio: preview == null ? null : previewAspectRatio,
           topInset: overlayTopInset,
           showStatusLine: promptVisible,
           poseYaw: liveYaw,
@@ -275,6 +275,29 @@ class EnrollCapturePreview extends StatelessWidget {
               : null,
         ),
       ],
+    );
+  }
+}
+
+/// Full-bleed camera surface: the native preview COVERS its box
+/// (center-cropped) instead of letterboxing. No aspect assumption
+/// anywhere: the child sizes itself naturally and [BoxFit.cover] applies
+/// a uniform scale — squish is impossible by construction (non-uniform
+/// scales never occur), and no color filter touches the feed. [ClipRect]
+/// crops the bleed (FittedBox never clips by itself).
+class _CoverFeed extends StatelessWidget {
+  final Widget child;
+  const _CoverFeed({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: child,
+        ),
+      ),
     );
   }
 }

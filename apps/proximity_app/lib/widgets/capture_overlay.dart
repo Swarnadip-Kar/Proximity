@@ -221,7 +221,7 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Face-guide oval derived from the ACTUAL preview box (see
-  /// [previewRectFor]): the same 0.70w x 0.62h fractions applied to the
+  /// [previewRectFor]): the same 0.64w x 0.58h fractions applied to the
   /// video rect, not the full Stack size. Null aspect == [guideRectFor]
   /// legacy behavior. Pure for unit tests.
   ///
@@ -237,8 +237,8 @@ class CaptureOverlay extends StatefulWidget {
 
   static Rect guideRectForAspect(Size size, double? aspectRatio) {
     final preview = previewRectFor(size, aspectRatio);
-    var w = preview.width * 0.70;
-    final h = preview.height * 0.62;
+    var w = preview.width * 0.64;
+    final h = preview.height * 0.58;
     if (w >= h) w = h * faceWidthToHeight;
     return Rect.fromCenter(
       center: preview.center,

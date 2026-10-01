@@ -216,25 +216,28 @@ void main() {
           .where((l) => !l.trimLeft().startsWith('//'))
           .join('\n');
       final combined = codeOf(sections) + codeOf(screen);
-      // Bare CameraPreview, zero treatment: the retired LetterboxedPreview
-      // wrapper (and its outer AspectRatio) is gone with the FittedBox /
-      // BoxFit chains (cover cropped the face area; fill/contain/fit
-      // would stretch or re-crop it; the outer ratio box double-boxed
-      // against the plugin's own orientation-adjusted ratio).
+      // Full-bleed raw feed (user-directed edge-to-edge): the sensor frame
+      // COVERS the Stack via FittedBox+cover inside a ClipRect — a uniform
+      // scale by construction, so squish is impossible (non-uniform scales
+      // never occur). No letterbox AspectRatio boxes, no color filter on
+      // the feed, no other fit anywhere.
       expect(combined.contains('LetterboxedPreview'), isFalse);
       expect(combined.contains('AspectRatio('), isFalse);
       expect(combined.contains('CameraPreview('), isTrue);
       expect(combined.contains('StackFit.loose'), isTrue);
-      expect(combined.contains('FittedBox('), isFalse);
-      for (final fit in [
-        'BoxFit.cover',
+      expect(combined.contains('FittedBox('), isTrue);
+      expect(combined.contains('BoxFit.cover'), isTrue);
+      expect(combined.contains('ClipRect('), isTrue);
+      for (final banned in [
         'BoxFit.fill',
         'BoxFit.contain',
         'BoxFit.fitWidth',
-        'BoxFit.fitHeight'
+        'BoxFit.fitHeight',
+        'ColorFiltered(',
+        'ColorFilter.',
       ]) {
-        expect(combined.contains(fit), isFalse,
-            reason: 'distortion transform in preview: $fit');
+        expect(combined.contains(banned), isFalse,
+            reason: 'distortion/filter transform in preview: $banned');
       }
     });
   });
