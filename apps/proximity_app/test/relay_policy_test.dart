@@ -69,5 +69,19 @@ void main() {
       // → caught → active (today's behavior preserved).
       expect(await shouldRelayPassively(), isFalse);
     });
+
+    test('android honors the injected memory reader', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      RelayMemReader.read = () async => <String, Object?>{
+            'totalMemBytes': 2 * 1024 * 1024 * 1024,
+            'lowRamDevice': false,
+          };
+      try {
+        expect(await shouldRelayPassively(), isTrue);
+      } finally {
+        RelayMemReader.read = readRelayMemory;
+        debugResetRelayPolicyForTest();
+      }
+    });
   });
 }

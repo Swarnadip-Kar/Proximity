@@ -26,6 +26,7 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/host_driver.dart';
+import 'package:proximity_app/core/relay_policy.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
@@ -118,6 +119,11 @@ Future<void> _settleShort(WidgetTester t) async {
 }
 
 void main() {
+  // Stub memory reader (see account_photo_test): the student shell arms
+  // the relay policy on mount, whose real 2 s timeout never advances
+  // under FakeAsync.
+  setUp(() => RelayMemReader.read = () async => <String, Object?>{});
+  tearDown(() => RelayMemReader.read = readRelayMemory);
   group('shells + tabs landscape (tab bar intact)', () {
     for (final size in [const Size(740, 360), const Size(844, 390)]) {
       testWidgets(

@@ -25,6 +25,24 @@ const int kLowRamPassiveBytes = 4 * 1024 * 1024 * 1024;
 const MethodChannel _memChannel =
     MethodChannel('org.iitbhilai.proximity/hardware_id');
 
+/// Injectable memory reader. Default reads the native channel; tests
+/// inject values — the real read's 2 s timeout Timer never advances under
+/// the testWidgets FakeAsync clock, so any suite pumping the student
+/// shell must stub this (same stall as HardwareDeviceIds/IntegrityGate).
+class RelayMemReader {
+  RelayMemReader._();
+  static Future<Map<String, Object?>> Function() read = readRelayMemory;
+}
+
+/// Default reader: one native channel hop, empty map when answered
+/// without data (fail-open downstream). Public so tests can restore it
+/// in tearDown.
+Future<Map<String, Object?>> readRelayMemory() async {
+  final m =
+      await _memChannel.invokeMethod<Map<Object?, Object?>>('getMemoryInfo');
+  return Map<String, Object?>.from(m ?? {});
+}
+
 /// Pure decision: OS low-RAM flag wins; otherwise total RAM under the
 /// floor is passive. Unknown RAM (0) with no flag stays active
 /// (fail-open to today's behavior — never strand a capable phone).
@@ -65,11 +83,10 @@ Future<bool> shouldRelayPassively() {
   if (flight != null) return flight;
   Future<bool> read() async {
     try {
-      final m = await _memChannel
-          .invokeMethod<Map<Object?, Object?>>('getMemoryInfo')
+      final m = await RelayMemReader.read()
           .timeout(const Duration(seconds: 2));
-      final total = (m?['totalMemBytes'] as int?) ?? 0;
-      final low = (m?['lowRamDevice'] as bool?) ?? false;
+      final total = (m['totalMemBytes'] as int?) ?? 0;
+      final low = (m['lowRamDevice'] as bool?) ?? false;
       return passiveForMemory(lowRamDevice: low, totalMemBytes: total);
     } catch (_) {
       return false;

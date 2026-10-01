@@ -12,6 +12,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/relay_policy.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
@@ -66,7 +67,12 @@ Future<void> _drain(WidgetTester t, [int steps = 6]) async {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // Stub memory reader: the student shell arms the relay policy on
+    // mount, and the real read's 2 s timeout Timer never advances under
+    // FakeAsync — teardown fails on the pending Timer.
+    RelayMemReader.read = () async => <String, Object?>{};
   });
+  tearDown(() => RelayMemReader.read = readRelayMemory);
 
   group('SignedAccount photo field', () {
     test('defaults to null and stays const-compatible', () {
