@@ -142,6 +142,7 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
 
   final List<BleLogEntry> _entries = [];
   final List<BleLogEntry> _pending = [];
+  int _dropped = 0;
   StreamSubscription<BleLogEntry>? _sub;
   Timer? _flush;
 
@@ -162,6 +163,13 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
     );
     _sub = BleLog.stream.listen((e) {
       if (!mounted) return;
+      // Storm cap: drawer buffers at most 200 pending lines per flush;
+      // older lines drop with a counter instead of growing unbounded and
+      // janking the 500ms flush on old phones.
+      if (_pending.length >= 200) {
+        _pending.removeAt(0);
+        _dropped++;
+      }
       _pending.add(e);
       _flush ??= Timer(_flushEvery, _applyPending);
     });
@@ -288,7 +296,9 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
                   ),
                 ),
                 Text(
-                  '${visible.length} of ${_entries.length}',
+                  _dropped > 0
+                      ? '${visible.length} of ${_entries.length} (+$_dropped dropped)'
+                      : '${visible.length} of ${_entries.length}',
                   style: ProxType.caption(color: c.contentSecondary),
                 ),
                 TextButton(

@@ -197,13 +197,15 @@ class BrowseTile extends StatelessWidget {
             ),
       onTap: onTap,
     );
-    final row = Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(child: card),
-        const SizedBox(width: ProxSpacing.sm),
-        _SignalCluster(bars: bars, windowOpen: a.windowOpen),
-      ],
+    final row = RepaintBoundary(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(child: card),
+          const SizedBox(width: ProxSpacing.sm),
+          _SignalCluster(bars: bars, windowOpen: a.windowOpen),
+        ],
+      ),
     );
     // Non-idle ring (window open only — mirrors the `idle` caption /
     // `Open` badge source of truth): the same gradient + glow idiom as

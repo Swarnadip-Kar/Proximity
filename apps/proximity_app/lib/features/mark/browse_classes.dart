@@ -120,43 +120,14 @@ class BrowseClassesView extends StatefulWidget {
 }
 
 class _BrowseClassesViewState extends State<BrowseClassesView> {
-  // Radar-sweep ambient loop (presentation only — not a behavior timing):
-  // 2400ms revolution advanced on a 50ms tick, timer-driven so widget
-  // tests still settle (same pattern as the entry hero). Static under
-  // reduce-motion.
-  static const _radarPeriod = Duration(milliseconds: 2400);
-  static const _radarTick = Duration(milliseconds: 50);
-  Timer? _radar;
-  var _sweep = 0.0;
   var _blockedDismissed = false;
   var _errorDismissed = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_radar != null || ProxMotion.reduced(context)) return;
-    _radar = Timer.periodic(_radarTick, (_) {
-      if (!mounted) return;
-      setState(() {
-        _sweep += 2 *
-            3.141592653589793 *
-            _radarTick.inMilliseconds /
-            _radarPeriod.inMilliseconds;
-      });
-    });
-  }
 
   @override
   void didUpdateWidget(BrowseClassesView old) {
     super.didUpdateWidget(old);
     // A fresh join error re-shows its banner after a dismiss.
     if (old.joinError != widget.joinError) _errorDismissed = false;
-  }
-
-  @override
-  void dispose() {
-    _radar?.cancel();
-    super.dispose();
   }
 
   /// Shared sheet content for the fallback button below (single instance).
@@ -314,28 +285,27 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
             )),
           ],
           if (widget.live.isEmpty)
-            _slim(BrowseEmptyState(
-              // Reduce-motion: no sweep head — the static rings + soft halo
-              // carry "scanning" without motion (§9 ambient-animation rule).
-              sweepAngle: ProxMotion.reduced(context) ? null : _sweep,
-            ))
+            _slim(const _EmptyRadar())
           else
             for (var i = 0; i < widget.live.length; i++)
               _slim(Padding(
                 padding: const EdgeInsets.only(top: ProxSpacing.sm),
-                child: BrowseTile(
-                  live: widget.live[i],
-                  profEmail:
-                      widget.profEmailByHost[widget.live[i].last.key] ?? '',
-                  profPhotoUrl: gatedPhotoFor(widget.profPhotoByHost,
-                      widget.live[i].last.key),
-                  verifyLabel: widget.profVerifyByHost[
-                          widget.live[i].last.key] ??
-                      '',
-                  classNo: widget.windowNoByHost[
-                          widget.live[i].last.key] ??
-                      0,
-                  onTap: () => widget.onTapLive(widget.live[i]),
+                child: RepaintBoundary(
+                  child: BrowseTile(
+                    key: ValueKey('browse-${widget.live[i].last.key}'),
+                    live: widget.live[i],
+                    profEmail:
+                        widget.profEmailByHost[widget.live[i].last.key] ?? '',
+                    profPhotoUrl: gatedPhotoFor(widget.profPhotoByHost,
+                        widget.live[i].last.key),
+                    verifyLabel: widget.profVerifyByHost[
+                            widget.live[i].last.key] ??
+                        '',
+                    classNo: widget.windowNoByHost[
+                            widget.live[i].last.key] ??
+                        0,
+                    onTap: () => widget.onTapLive(widget.live[i]),
+                  ),
                 ),
               )),
           _slim(Padding(
@@ -370,6 +340,52 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
           child: child,
         ),
       );
+}
+
+/// Empty-state radar: owns its own 200ms sweep timer so the parent
+/// browse list never rebuilds (old 50ms timer called setState on the
+/// whole BrowseClassesView at 20fps — the 84-frame skip signature).
+/// Only mounted when the list is empty; static under reduce-motion.
+class _EmptyRadar extends StatefulWidget {
+  const _EmptyRadar();
+
+  @override
+  State<_EmptyRadar> createState() => _EmptyRadarState();
+}
+
+class _EmptyRadarState extends State<_EmptyRadar> {
+  static const _period = Duration(milliseconds: 2400);
+  static const _tick = Duration(milliseconds: 200);
+  Timer? _t;
+  var _sweep = 0.0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_t != null || ProxMotion.reduced(context)) return;
+    _t = Timer.periodic(_tick, (_) {
+      if (!mounted) return;
+      setState(() {
+        _sweep +=
+            2 * 3.141592653589793 * _tick.inMilliseconds / _period.inMilliseconds;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: BrowseEmptyState(
+        sweepAngle: ProxMotion.reduced(context) ? null : _sweep,
+      ),
+    );
+  }
 }
 
 /// Joining-as avatar for the browse top-left (visual only): the

@@ -46,9 +46,10 @@ abstract final class ProxDurations {
   /// [ProxStateBadge].
   static const dotPulse = Duration(milliseconds: 800);
 
-  /// System-log flush cadence: bursty radio entries coalesce to ≤5
-  /// setStates/s. Consumed by the log views.
-  static const logFlush = Duration(milliseconds: 200);
+  /// System-log flush cadence: bursty radio entries coalesce to ≤2
+  /// setStates/s (was 5/s — drawer rebuild + autoscroll dominated old
+  /// phones during BLE bursts). Consumed by the log views.
+  static const logFlush = Duration(milliseconds: 500);
 
   /// Directory-search debounce (one round trip per pause, stale
   /// generations dropped). Consumed by the manual-add form.
