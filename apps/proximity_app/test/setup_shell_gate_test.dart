@@ -265,6 +265,48 @@ void main() {
       }
     });
 
+    testWidgets('stale dismiss never re-locks an unlocked shell',
+        (t) async {
+      // Pass-then-banner flake: the shell unlocks (prompt passed), then a
+      // stale dismissed verdict lands (duplicate prompt canceled while one
+      // was showing). The shell must stay on Mark — never re-lock, never
+      // park, never push, never banner.
+      final store = _FlakyPromptStore();
+      late ProviderContainer container;
+      await t.pumpWidget(helpers.testScope(
+          store: store,
+          home: MaterialApp(
+              theme: proxLightTheme(),
+              home: Builder(builder: (context) {
+                container = ProviderScope.containerOf(context);
+                return const StudentShell();
+              }))));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      // Proven unlock: on Mark, no flow, no banner.
+      expect(find.byType(StudentHomeScreen).hitTestable(), findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      // A stale duplicate prompt verdict arrives (dismissed): the identity
+      // listener re-resolves, the store replays the dismissal.
+      container.read(linkedIdentityProvider.notifier).state = null;
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.byType(StudentHomeScreen).hitTestable(), findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(find.text('Unlock to continue — approve the phone prompt.'),
+          findsNothing);
+      expect(find.text('Checking enrollment…'), findsNothing);
+      expect(t.takeException(), isNull);
+      // Drain stagger one-shots (stepped: lets each tick settle).
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+    });
+
     testWidgets('enrolled student lands on Mark', (t) async {
       await t.pumpWidget(helpers.testScope(
         linked: _linked,
@@ -403,6 +445,28 @@ void main() {
     });
 
   });
+}
+
+/// Enrollment store whose first read serves the doc (prompt passed) and
+/// every later read replays a prompt dismissal (stale duplicate prompt
+/// verdict stand-in): the shell must stay unlocked on Mark throughout.
+class _FlakyPromptStore extends InMemoryDeviceStore {
+  int reads = 0;
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() async {
+    reads++;
+    if (reads == 1) {
+      return StoredEnrollment(
+        email: 'student@example.com',
+        name: 'Test User',
+        roll: 'R1',
+        pkHex: 'cd' * 32,
+        enrolledAt: DateTime.utc(2026, 1, 1),
+      );
+    }
+    throw const SecureStoreDismissed();
+  }
 }
 
 /// Enrollment store gated on a test-controlled future (slow biometric

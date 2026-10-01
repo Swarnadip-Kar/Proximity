@@ -606,6 +606,17 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// gates the signed-in paths.
   var _wasEnrolled = false;
 
+  /// Resolve single-flight: mount, account/identity listeners and taps
+  /// all funnel here, and only one biometric-gated read runs at a time —
+  /// a second prompt while one is showing throws canceled, and that
+  /// duplicate's dismissed conclusion used to re-lock an unlocked shell
+  /// (the pass-then-banner flake). Extra triggers during a flight set
+  /// [_resolveQueued] and re-run once after (never dropped, never
+  /// overlapping).
+  var _resolveBusy = false;
+  var _resolveQueued = false;
+  var _resolveQueuedUserInitiated = false;
+
   @override
   void dispose() {
     try {
@@ -873,21 +884,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// enrolled current account advances to Mark once proven; anything else
   /// stays on Accounts with Mark/Courses locked and auto-pushes the setup
   /// flow (single-flight) — except sign-out (park, no push) and unknown
-  /// (do nothing). Generation-guarded so a switch racing mount cannot
-  /// land the wrong tab or push a stale flow.
+  /// (do nothing). Serialized with every other trigger via
+  /// [_enqueueResolve] (never overlapping prompts).
   Future<void> _initialResolve() async {
     if (!mounted) return;
-    final gen = ++_gateGen;
-    _beginResolve();
-    try {
-      final resolved =
-          await _resolveCurrentEnrollment(gen);
-      if (!mounted || gen != _gateGen) return;
-      if (resolved == _GateResolve.unknown) return;
-      _applyResolved(resolved, gen);
-    } finally {
-      _endResolve(gen);
-    }
+    await _enqueueResolve(userInitiated: false);
   }
 
   /// Applies a resolve result: unlocks + advances to Mark on enrolled,
@@ -905,6 +906,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (!mounted || gen != _gateGen) return;
     final enrolled = resolved == _GateResolve.enrolled;
     if (enrolled) _wasEnrolled = true;
+    // A dismissed prompt NEVER re-locks an unlocked shell: with
+    // serialized resolves the only way a dismiss lands while unlocked is
+    // a stale prompt verdict (the user passed on a later pass, or the
+    // prompt was superseded) — re-locking is the pass-then-banner flake.
+    if (_unlockDismissed && !_tabsLocked) return;
     if (enrolled) {
       // Advance to Mark only from the Account ROOT: while the auto-pushed
       // flow is open above the shell, the user stays in it to finish
@@ -957,7 +963,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // Dismissed unlock parks here WITHOUT the setup push: the enrollment
     // exists, the user just declined the prompt — locked-tab taps/swipes
     // re-resolve (re-prompt) as the retry path. Signed-out parks the same
-    // way (lock, no push): sign-out is not unenrollment.
+    // way (lock, no push): sign-out is not unenrollment. (The unlocked
+    // case early-returned above and never reaches this lock.)
     if (resolved == _GateResolve.unenrolled && !_unlockDismissed) {
       _maybePushFlow(gen);
     }
@@ -1028,22 +1035,55 @@ class _StudentShellState extends ConsumerState<StudentShell> {
 
   /// Re-resolve the CURRENT account's enrollment (initial mount, taps,
   /// swipes, identity / account changes, first registration all funnel
-  /// here). Stale generations abort silently — the newest resolve owns
-  /// navigation and the single auto-push. [userInitiated] marks explicit
-  /// taps (Retry, locked-tab re-tap): the store read re-prompts past the
-  /// dismissal cooldown instead of silently replaying it.
+  /// here). Serialized: at most one biometric-gated read runs; triggers
+  /// during a flight re-run once after (coalesced, never dropped).
+  /// [userInitiated] marks explicit taps (Retry, locked-tab re-tap): the
+  /// store read re-prompts past the dismissal cooldown instead of
+  /// silently replaying it.
   Future<void> _refreshEnrollmentState({bool userInitiated = false}) async {
     if (!mounted) return;
-    final gen = ++_gateGen;
-    _beginResolve();
+    await _enqueueResolve(userInitiated: userInitiated);
+  }
+
+  /// Serialized resolve runner (see [_resolveBusy]): one pass per call,
+  /// plus one coalesced pass when triggers arrived mid-flight (their
+  /// userInitiated flags OR together, so a tap-retry queued behind a
+  /// mount resolve still re-prompts). Generation-guarded per pass so a
+  /// switch racing the read cannot land the wrong tab or push a stale
+  /// flow — with serialization the guard is belt-and-braces (no other
+  /// pass can interleave a generation bump).
+  Future<void> _enqueueResolve({required bool userInitiated}) async {
+    if (_resolveBusy) {
+      _resolveQueued = true;
+      _resolveQueuedUserInitiated =
+          _resolveQueuedUserInitiated || userInitiated;
+      return;
+    }
+    _resolveBusy = true;
+    var ui = userInitiated;
     try {
-      final resolved = await _resolveCurrentEnrollment(gen,
-          userInitiated: userInitiated);
-      if (!mounted || gen != _gateGen) return;
-      if (resolved == _GateResolve.unknown) return;
-      _applyResolved(resolved, gen);
+      while (mounted) {
+        final gen = ++_gateGen;
+        _beginResolve();
+        try {
+          final resolved = await _resolveCurrentEnrollment(gen,
+              userInitiated: ui);
+          if (!mounted || gen != _gateGen) return;
+          if (resolved == _GateResolve.unknown) {
+            // Fall through: a queued trigger still gets its pass below.
+          } else {
+            _applyResolved(resolved, gen);
+          }
+        } finally {
+          _endResolve(gen);
+        }
+        if (!_resolveQueued) return;
+        _resolveQueued = false;
+        ui = _resolveQueuedUserInitiated;
+        _resolveQueuedUserInitiated = false;
+      }
     } finally {
-      _endResolve(gen);
+      _resolveBusy = false;
     }
   }
 
