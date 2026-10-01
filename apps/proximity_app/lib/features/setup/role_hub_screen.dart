@@ -73,8 +73,21 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
     try {
       await fn();
     } catch (e) {
+      // Unmissable failure: the inline footer note sits below the fold on
+      // small screens, where a gate/floor/timeout refusal reads as "the
+      // button does nothing". Mirror it in a SnackBar (best-effort: no
+      // Scaffold ancestor in some harnesses) while keeping the inline copy.
+      final msg = '$e'.replaceFirst('StateError: ', '');
       if (mounted) {
-        setState(() => _status = '$e'.replaceFirst('StateError: ', ''));
+        setState(() => _status = msg);
+        try {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            SnackBar(
+              content: Text(msg),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        } catch (_) {}
       }
       BleLog.log('STATE', 'entry hub action failed: $e');
     } finally {
