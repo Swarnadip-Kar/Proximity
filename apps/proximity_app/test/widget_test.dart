@@ -33,6 +33,10 @@ import 'package:proximity_transport/transport.dart';
 
 ProviderScope testScope(
     {String email = 'student@example.com',
+    // Signed-out harness: no session on the stream or sync getter — the
+    // cold-start-after-update shape where Firebase has not restored yet.
+    // The shell must park without pushing any flow until arrival.
+    bool signedOut = false,
     LinkedIdentity? linked,
     InMemoryDeviceStore? store,
     int? discoveryPort,
@@ -47,8 +51,10 @@ ProviderScope testScope(
     // unenrolled routing, so join-gate contracts pump StudentHomeScreen
     // directly instead of the full shell.
     Widget? home}) {
-  final auth = FakeAuthService(
-      SignedAccount(email: email, displayName: 'Test User', uid: 'test-uid'));
+  final auth = signedOut
+      ? FakeAuthService()
+      : FakeAuthService(
+          SignedAccount(email: email, displayName: 'Test User', uid: 'test-uid'));
   final deviceStore = store ?? InMemoryDeviceStore();
   // Landing bypass: widget tests target home screens directly unless they
   // exercise the landing itself. Students with a linked identity default

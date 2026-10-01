@@ -749,8 +749,16 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// linked identity, else one relink attempt (stored enrollment read for
   /// this Gmail — covers the sign-in → tab-build race where linked is
   /// still null). Returns true = enrolled (gate stays shut), false =
-  /// genuinely unenrolled (push), null = stale/aborted (newer gate owns
-  /// the decision — caller must do nothing, never push/pop).
+  /// signed-in but genuinely unenrolled (push), null = unknown/stale
+  /// (newer gate owns the decision, or the account itself is not known
+  /// yet — caller must do nothing, never push/pop). The null-account
+  /// case is load-bearing: on a cold start (notably the first launch
+  /// after an update, when Firebase Auth + Keystore re-init delay the
+  /// session) acct reads null while the persisted session is still
+  /// restoring — misreading that as unenrolled auto-pushes the setup
+  /// flow over an enrolled user, who must then kill + reopen to land on
+  /// Mark. The account listener re-resolves on arrival, so deferring
+  /// costs nothing and a premature push costs a full phantom enroll.
   SignedAccount? _readCurrentAccount() {
     try {
       final streamed = ref.read(accountProvider).valueOrNull;
@@ -780,7 +788,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     if (acct == null) {
       _unlockDismissed = false;
-      return false;
+      return null;
     }
     final want = acct.email.trim().toLowerCase();
     // Async gap: the store read + provider touch below may outlive a

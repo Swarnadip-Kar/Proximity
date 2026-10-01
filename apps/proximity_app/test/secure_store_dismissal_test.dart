@@ -3,6 +3,7 @@
 // so a dismissal can never read as "unenrolled" (shell enroll push) and a
 // dismissed install-id read can never mint a forked identity. Immediate
 // retries stay dismissed without re-prompting (anti-hammer).
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/security/secure_store_options.dart';
@@ -64,6 +65,109 @@ class _CancelSlot extends FlutterSecureStorage {
   }) async {}
 }
 
+/// Slot whose key exists but whose biometric-bound cipher cannot init —
+/// the first launch after an app update, before the namespace re-binds.
+class _FreshNamespaceSlot extends FlutterSecureStorage {
+  _FreshNamespaceSlot({bool cred = false})
+      : super(
+          aOptions:
+              cred ? SecureStoreOptions.aOptsFallback : SecureStoreOptions.aOpts,
+          iOptions:
+              cred ? SecureStoreOptions.iOptsFallback : SecureStoreOptions.iOpts,
+        );
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw StateError(
+        'IllegalStateException: Cipher not initialized');
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw StateError(
+        'IllegalStateException: Cipher not initialized');
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {}
+}
+
+/// Slot whose platform side is not attached yet (first-frame race).
+class _DetachedSlot extends FlutterSecureStorage {
+  _DetachedSlot({bool cred = false})
+      : super(
+          aOptions:
+              cred ? SecureStoreOptions.aOptsFallback : SecureStoreOptions.aOpts,
+          iOptions:
+              cred ? SecureStoreOptions.iOptsFallback : SecureStoreOptions.iOpts,
+        );
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw MissingPluginException(
+        'No implementation found for method read on channel plugins.it_nomad.flutter_secure_storage');
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw MissingPluginException(
+        'No implementation found for method write on channel plugins.it_nomad.flutter_secure_storage');
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {}
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -111,6 +215,35 @@ void main() {
       const e = SecureStoreDismissed();
       expect('$e', contains('user_cancel'));
       expect('$e', contains('Unlock and try again'));
+    });
+  });
+
+  group('transient first-read failures (never empty, never a push)', () {
+    test('fresh Keystore namespace reads dismissed, not empty', () async {
+      final strong = _FreshNamespaceSlot();
+      final cred = _FreshNamespaceSlot(cred: true);
+      final store =
+          SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+      // First launch after an update: the key exists but the
+      // biometric-bound cipher cannot init until the namespace re-binds.
+      // Data may exist behind the lock — park dismissed with retry.
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
+    });
+
+    test('detached platform channel reads dismissed, not empty', () async {
+      final strong = _DetachedSlot();
+      final cred = _DetachedSlot(cred: true);
+      final store =
+          SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
     });
   });
 }

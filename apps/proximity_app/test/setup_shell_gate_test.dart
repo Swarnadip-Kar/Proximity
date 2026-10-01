@@ -172,6 +172,33 @@ void main() {
       }
     });
 
+    testWidgets(
+        'unknown account parks locked without pushing any flow', (t) async {
+      // Cold-start-after-update shape: Firebase has not restored the
+      // session yet, so the account reads null. The shell must NOT read
+      // that as unenrolled (that auto-pushes a phantom enrollment over
+      // an enrolled user); it parks locked on Accounts until the account
+      // listener re-resolves on arrival.
+      await t.pumpWidget(helpers.testScope(
+          signedOut: true,
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(
+          find.byType(StudentAccountScreen).hitTestable(), findsOneWidget);
+      expect(
+          find.byType(StudentHomeScreen).hitTestable(), findsNothing);
+      // Drain stagger one-shots (stepped: lets each tick settle).
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+    });
+
     testWidgets('enrolled student lands on Mark', (t) async {
       await t.pumpWidget(helpers.testScope(
         linked: _linked,

@@ -100,6 +100,15 @@ class SecureDeviceStore implements DeviceStore {
         s.contains('bad padding') ||
         s.contains('aeadbadtagexception') ||
         s.contains('invalidat') ||
+        // Fresh namespace after an app update: the Keystore key exists but
+        // the biometric-bound cipher cannot init until the namespace
+        // re-binds (`IllegalStateException: Cipher not initialized`). Data
+        // may exist behind the lock — never report empty (that pushes a
+        // phantom enrollment); park dismissed with retry instead.
+        s.contains('cipher') ||
+        // First-frame channel race: the platform side is not attached yet.
+        // Transient — retry, never empty.
+        s.contains('missingplugin') ||
         s.contains('usernotauthenticated') ||
         s.contains('user_not_authenticated') ||
         s.contains('cryptoobject') ||
