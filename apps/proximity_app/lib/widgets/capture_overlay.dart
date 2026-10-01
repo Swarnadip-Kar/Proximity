@@ -116,11 +116,11 @@ class CaptureOverlay extends StatefulWidget {
   final bool showProgress;
   final bool showBeacon;
 
-  /// Top chrome inset (additive edge-to-edge option, default 0 = no inset):
-  /// clears a transparent overlay app bar when the preview extends behind
-  /// it (enroll passes the app-bar height). Callers without an overlay app
-  /// bar leave 0. Pure layout — zero effect on beacon/progress semantics,
-  /// prompt copy, signal tones, or motion.
+  /// Top chrome inset (additive option, default 0 = no inset): reserves
+  /// room above the progress bar for any transparent overlay chrome the
+  /// caller paints behind (today no caller extends behind chrome — enroll
+  /// sits below its opaque bar and passes 0). Pure layout — zero effect
+  /// on beacon/progress semantics, prompt copy, signal tones, or motion.
   final double topInset;
 
   /// Prompt-line visibility (default true): enroll hides the rotating
@@ -435,18 +435,11 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 ),
                 child: const SizedBox.expand(),
               ),
-              // (1) ONE slim progress bar, pinned just below the top app
-              // bar: screen-margin pill (the overlay-float language —
-              // full-bleed lines belong on opaque app-bar seams like
-              // [SetupProgressOverlay], not floating over video).
-              // Edge-to-edge: the bar clears a transparent overlay app
-              // bar via [topInset] plus the notch via SafeArea (the video
-              // + scrim paint fullscreen under both). [topInset] is
-              // screen-measured but this Stack starts [ProxSpacing.xxl]
-              // lower (preview rides low), so subtract that here —
-              // otherwise the bar lands a full offset below the seam.
-              // Standalone callers keep topInset 0 (clamped, never
-              // negative). Hidden in single-shot mode (mark/face).
+              // Below-app-bar layout: the video starts under an opaque bar
+              // (the notch/status area is consumed above), so the bar
+              // needs no top SafeArea — only the bottom/gesture clearance
+              // below. [topInset] stays additive for any future overlay-bar
+              // caller (clamped, never negative).
               if (widget.showProgress)
                 Positioned(
                   top: (widget.topInset - ProxSpacing.xxl)
@@ -454,6 +447,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   left: ProxSpacing.screenMargin,
                   right: ProxSpacing.screenMargin,
                   child: SafeArea(
+                    top: false,
                     bottom: false,
                     child: ClipRRect(
                       borderRadius: ProxRadii.chipRadius,

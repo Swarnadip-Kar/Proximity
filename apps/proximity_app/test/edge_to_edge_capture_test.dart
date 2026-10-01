@@ -138,30 +138,29 @@ void main() {
   // probe-sensitive suites keep the real probe.
   setUp(() => IntegrityGate.probe = const _CleanProbe());
   tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
-  group('edge-to-edge scaffold flags (enroll composer)', () {
-    testWidgets('body extends behind status bar + transparent app bar',
+  group('below-app-bar scaffold flags (enroll composer)', () {
+    testWidgets('body starts below an opaque app bar, inset zero',
         (t) async {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // Exactly one fullscreen-extending Scaffold (the capture screen;
-      // the harness home keeps defaults).
+      // The capture screen never extends behind chrome: opaque bar, body
+      // below it (the feed must not slide under the top bar).
       expect(
           find.byWidgetPredicate((w) =>
-              w is Scaffold &&
-              w.extendBodyBehindAppBar &&
-              w.extendBody),
-          findsOneWidget);
-      // Transparent overlay app bar (Cancel action retained).
-      final appBar = t.widget<AppBar>(find.byWidgetPredicate((w) =>
-          w is AppBar && w.backgroundColor == Colors.transparent));
-      expect(appBar.elevation, 0);
+              w is Scaffold && w.extendBodyBehindAppBar),
+          findsNothing);
+      // Opaque app bar (Cancel action retained).
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is AppBar && w.backgroundColor == Colors.transparent),
+          findsNothing);
       expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
       expect(find.text('Face capture'), findsOneWidget);
-      // Overlay top bar clears the app bar via the additive inset.
+      // Overlay needs no top inset under an opaque bar.
       final overlay =
           t.widget<CaptureOverlay>(find.byType(CaptureOverlay));
-      expect(overlay.topInset, moreOrLessEquals(kToolbarHeight));
+      expect(overlay.topInset, 0.0);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -169,14 +168,12 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    test('composer source pins the fullscreen chrome (source pin)', () {
+    test('composer source pins the below-bar chrome (source pin)', () {
       final screen = _codeOf(
           File('lib/features/setup/enroll_capture.dart').readAsStringSync());
-      expect(screen.contains('extendBodyBehindAppBar: true'), isTrue);
-      expect(screen.contains('extendBody: true'), isTrue);
-      expect(screen.contains('Colors.transparent'), isTrue);
+      expect(screen.contains('extendBodyBehindAppBar: false'), isTrue);
       expect(screen.contains('overlayTopInset'), isTrue);
-      expect(screen.contains('kToolbarHeight'), isTrue);
+      expect(screen.contains('overlayTopInset: 0.0'), isTrue);
     });
   });
 

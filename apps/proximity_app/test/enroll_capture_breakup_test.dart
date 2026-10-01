@@ -143,13 +143,12 @@ void main() {
         (t) async {
       // Wide box (800x400) + portrait ratio (3:4): the frame self-sizes
       // through the loose Stack — ratio kept, zero treatment. The Stack
-      // sits 32 below the box top (preview rides low), so the
-      // height-constrained frame is 400-32 tall.
+      // starts at the box top (below-app-bar layout, no ride-low offset),
+      // so the height-constrained frame is the full 400 tall.
       const ratio = 3 / 4;
       final feed = await pumpBare(t, boxW: 800, boxH: 400, ratio: ratio);
       expect(feed.width / feed.height, moreOrLessEquals(ratio, epsilon: 0.01));
-      expect(
-          feed.height, moreOrLessEquals(400 - ProxSpacing.xxl, epsilon: 1));
+      expect(feed.height, moreOrLessEquals(400, epsilon: 1));
       await t.pumpWidget(const SizedBox());
     });
 

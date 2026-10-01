@@ -163,19 +163,15 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
     // replace the feed; the opening spinner shows until open completes.
     final failMessage =
         isDenied || isFailed || (!isOpening && noKey) ? previewMessage : null;
-    // `## Edge-to-edge capture`): the preview extends behind the status
-    // bar and the app bar — transparent overlay app bar, body fullscreen
-    // behind it. Cancel stays wired to the existing [_cancel] nav
-    // (STEP-SCOPE intact); the overlay top bar clears the app bar via
-    // `overlayTopInset` + SafeArea while the video paints under it.
+    // Preview sits BELOW the app bar (opaque, default theme bar — the
+    // feed never paints under chrome): body starts under the bar, the
+    // overlay top bar needs no inset, and the oval is derived from the
+    // undistorted video box only. Cancel stays wired to [_cancel].
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      extendBodyBehindAppBar: false,
       extendBody: true,
       appBar: AppBar(
         title: const Text('Face capture'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
         actions: [
           // Cancel is label-truthful in every state: dispose the session
           // camera and enroll nothing (fail-closed). Dispose-safe: pop
@@ -188,13 +184,9 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
       ),
       body: Column(
         children: [
-          // Preview region (audit vs FaceCaptureScreen in
-          // lib/screens/face_capture.dart — no SafeArea in either camera
-          // path (no double-apply); THIS screen now extends behind the
-          // status bar + transparent overlay app bar (extendBody +
-          // extendBodyBehindAppBar true, same AppBar height, Cancel
-          // unchanged) so the preview fills edge-to-edge — the still
-          // modal keeps its own opaque chrome (out of scope, untouched).
+          // Preview region (below the opaque app bar — no SafeArea in
+          // either camera path (no double-apply); the body starts under
+          // the bar so the feed never slides under chrome.
           // Squish fix (2026-09-10 breakup): the feed renders letterboxed
           // (AspectRatio on the controller's own ratio, plain bars) — never
           // stretched, never cover-cropped. Kept deviations, one line each:
@@ -234,8 +226,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               // The toast owns the message on error — hide the rotating
               // prompt so the two never stack on small preview areas.
               promptVisible: !saveError,
-              // Clears the transparent overlay app bar above.
-              overlayTopInset: kToolbarHeight,
+              // No inset: the bar is opaque and the body starts below it.
+              overlayTopInset: 0.0,
             ),
           ),
           // Bottom bar: validated shows Continue, save-error shows

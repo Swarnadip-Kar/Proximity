@@ -186,14 +186,14 @@ class EnrollCapturePreview extends StatelessWidget {
     // spacer of the same place in the tree.
     final surface =
         preview ?? (ctl != null ? CameraPreview(ctl) : const SizedBox.expand());
-    // Preview rides low: top offset drops the whole feed + overlay block
-    // (Padding is layout-neutral for the path pins — no SafeArea, aspect,
-    // fit, constraint, or container in the preview chain).
-    return Padding(
-      padding: const EdgeInsets.only(top: ProxSpacing.xxl),
-      child: Stack(
-        alignment: Alignment.center,
-        fit: StackFit.loose,
+    // Below-app-bar layout: the Stack starts directly under the opaque
+    // bar (no top offset — the old "rides low" Padding died with the
+    // transparent overlay bar). Padding is layout-neutral for the path
+    // pins — no SafeArea, aspect, fit, constraint, or container in the
+    // preview chain.
+    return Stack(
+      alignment: Alignment.center,
+      fit: StackFit.loose,
       children: [
         surface,
         // The overlay ACTUALLY renders above the preview: this
@@ -231,7 +231,6 @@ class EnrollCapturePreview extends StatelessWidget {
               : null,
         ),
       ],
-      ),
     );
   }
 }

@@ -153,13 +153,12 @@ void main() {
       await _openSession(t);
       final scaffold =
           t.element(find.byType(Scaffold).last).widget as Scaffold;
-      // Edge-to-edge (2026-09-10 `## Edge-to-edge capture`, supersedes the
-      // old body-below-AppBar pin): keyboard-aware, body fullscreen behind
-      // the status bar + transparent overlay app bar; chrome avoids the
-      // notch via SafeArea overlays while the video paints under it.
+      // Below-app-bar layout (supersedes the 2026-09-10 edge-to-edge
+      // capture): keyboard-aware body starting under the opaque app bar —
+      // the feed never paints under chrome.
       expect(scaffold.resizeToAvoidBottomInset ?? true, isTrue);
       expect(scaffold.extendBody, isTrue);
-      expect(scaffold.extendBodyBehindAppBar, isTrue);
+      expect(scaffold.extendBodyBehindAppBar, isFalse);
       // Same AppBar height (default toolbar, no custom preferredSize).
       final appBar =
           t.element(find.byType(AppBar).last).widget as AppBar;
