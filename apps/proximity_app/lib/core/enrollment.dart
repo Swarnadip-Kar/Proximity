@@ -707,13 +707,22 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     for (var i = 0; i < imagePaths.length; i++) {
       final slot = faceEnrollSlots[i];
       final path = imagePaths[i];
+      // (1)+(2) concurrently: Euler presence and passive liveness are
+      // independent reads of the same still. Both futures start before the
+      // first await, so native detector + scorer overlap instead of adding.
+      // Verdict order is unchanged (pose evaluated first, then liveness) and
+      // fail-closed: a pose refusal abandons the in-flight liveness probe
+      // (errors swallowed — the slot already failed).
+      final poseGate = _poseGate;
+      final poseFuture = poseGate?.readPose(path);
+      final liveFuture = _liveness.detectPassive(path);
       // (1) Euler window + face presence (wired gate only; capture already
       // gated, so a null gate skips — liveness + plugin checks still run).
-      final poseGate = _poseGate;
-      if (poseGate != null) {
+      if (poseFuture != null) {
         try {
-          final reading = await poseGate.readPose(path);
+          final reading = await poseFuture;
           if (reading == null) {
+            unawaited(liveFuture.then((_) {}, onError: (_) {}));
             _slotFail(slot,
                 'The $slot still did not read clearly (no face found) — recapture just that angle in good light, holding still.');
             return;
@@ -721,20 +730,23 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           final decision = EnrollPoseWindows.check(
               slot, reading.yaw, reading.pitch, reading.roll);
           if (!decision.ok) {
+            unawaited(liveFuture.then((_) {}, onError: (_) {}));
             _slotFail(slot,
                 'The $slot still missed its angle — ${decision.hint}');
             return;
           }
         } catch (e) {
+          unawaited(liveFuture.then((_) {}, onError: (_) {}));
           _slotFail(slot,
               'The $slot still did not read clearly — recapture just that angle in good light, holding still ($e)');
           return;
         }
       }
       // (2) Passive liveness on THIS still (fail-closed per still).
+      // Awaits the probe started above (already overlapping the pose read).
       LivenessResult live;
       try {
-        live = await _liveness.detectPassive(path);
+        live = await liveFuture;
       } on StateError catch (e) {
         _slotFail(slot, '$e');
         return;
