@@ -203,12 +203,16 @@ class FirebaseAuthService implements AuthService {
 
   @override
   Future<void> signOut() async {
+    // Bounded + fail-soft: a stalled GoogleSignIn/Firebase hangs this await
+    // forever with no timeout of its own, wedging sign-out (disabled
+    // button, no navigation). Sign-out is best-effort local teardown —
+    // entrySignOut proceeds regardless and the account stream settles it.
     try {
-      await _gsi.signOut();
+      await _gsi.signOut().timeout(const Duration(seconds: 8));
     } catch (_) {}
     if (!available) return;
     try {
-      await _auth.signOut();
+      await _auth.signOut().timeout(const Duration(seconds: 8));
     } catch (_) {}
   }
 }

@@ -26,6 +26,7 @@ import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/mode.dart';
 import 'package:proximity_app/screens/shells.dart';
+import 'package:proximity_app/screens/setup_flow_screen.dart';
 import 'package:proximity_app/screens/student_home.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -415,6 +416,51 @@ void main() {
       expect(container.read(linkedIdentityProvider), isNull);
     });
 
+    testWidgets('sign-out ends the session and exits to landing', (t) async {
+      // The reported breakage: tap leaves the account page unchanged
+      // (session alive and/or mode stuck). Pin the full contract.
+      final auth = FakeAuthService(const SignedAccount(
+          email: _email,
+          displayName: 'Test User',
+          uid: 'test-uid',
+          org: 'example.com'));
+      final store = await _enrolledStore();
+      final container = ProviderContainer(overrides: [
+        authServiceProvider.overrideWithValue(auth),
+        cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+        deviceStoreProvider.overrideWithValue(store),
+        faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+        deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+        enrollmentControllerProvider.overrideWith(
+          (ref) => EnrollmentController(
+            auth: ref.watch(authServiceProvider),
+            store: ref.watch(deviceStoreProvider),
+            verifier: FakeFaceVerifier(),
+            deviceKey: FakeDeviceKey(),
+          ),
+        ),
+      ]);
+      addTearDown(container.dispose);
+      container.read(appModeProvider.notifier).state = AppMode.student;
+      await t.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child:
+            MaterialApp(theme: proxLightTheme(), home: const StudentAccountScreen()),
+      ));
+      await _drain(t);
+
+      await t.ensureVisible(find.byKey(const Key('account-sign-out')));
+      await _drain(t);
+      await t.tap(find.byKey(const Key('account-sign-out')));
+      await _drain(t);
+
+      expect(auth.current, isNull, reason: 'session must end');
+      expect(container.read(linkedIdentityProvider), isNull);
+      expect(container.read(appModeProvider), AppMode.unset,
+          reason: 'mode must exit to landing');
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('records-only device sees the records note, no native rows',
         (t) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -606,12 +652,12 @@ void main() {
   });
 
   group('shell tabs', () {
-    testWidgets('Account tabs host the menu roots', (t) async {
-      final store = await _enrolledStore();
-      await t.pumpWidget(ProviderScope(
-        overrides: [
-          ..._accountOverrides(
-              store: store, cloud: _boundCloud()),
+    List<Override> shellOverrides(
+            {InMemoryDeviceStore? store,
+            FakeCloudSync? cloud,
+            LinkedIdentity? linked = _linked}) =>
+        [
+          ..._accountOverrides(store: store, cloud: cloud, linked: linked),
           hostDriverProvider.overrideWithValue(FakeHostDriver()),
           studentDriverProvider
               .overrideWithValue(FakeStudentDriver(windowOpenProbe: false)),
@@ -619,7 +665,12 @@ void main() {
               .overrideWithValue(ProxBleEngine(radio: FakeBleRadio())),
           blePermissionProvider.overrideWithValue(() async => true),
           btPowerProvider.overrideWithValue(() async => BtState.on),
-        ],
+        ];
+
+    testWidgets('Account tabs host the menu roots', (t) async {
+      final store = await _enrolledStore();
+      await t.pumpWidget(ProviderScope(
+        overrides: shellOverrides(store: store, cloud: _boundCloud()),
         child: MaterialApp(theme: proxLightTheme(), home: const StudentShell()),
       ));
       for (var i = 0; i < 4; i++) {
@@ -638,5 +689,35 @@ void main() {
         await t.pump(const Duration(milliseconds: 500));
       }
     });
+
+    testWidgets('dismissed unlock parks locked with no setup push',
+        (t) async {
+      // Back-press on the launch biometric prompt must park on Accounts
+      // (locked, retry on tap) — never auto-push enrollment for data that
+      // exists behind the lock.
+      final store = _DismissingEnrollStore();
+      await store.writeInstallId(_installId);
+      await t.pumpWidget(ProviderScope(
+        overrides:
+            shellOverrides(store: store, cloud: _boundCloud(), linked: null),
+        child: MaterialApp(theme: proxLightTheme(), home: const StudentShell()),
+      ));
+      await _drain(t, 10);
+
+      expect(find.byType(SetupFlowScreen), findsNothing,
+          reason: 'dismissal must not push the enrollment flow');
+      expect(find.byType(StudentAccountScreen), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
   });
+}
+
+/// Enrollment store whose biometric gate dismisses with nothing proven:
+///
+/// readEnrollment throws the typed dismissal (secure-backend contract),
+/// so the shell must park locked — never read the dismissal as empty.
+class _DismissingEnrollStore extends InMemoryDeviceStore {
+  @override
+  Future<StoredEnrollment?> readEnrollment() async =>
+      throw const SecureStoreDismissed();
 }
