@@ -334,7 +334,7 @@ packages/storage/        tally + course history + roster helpers (in-memory API;
 
 Prereqs: Flutter stable, Firebase CLI + flutterfire, Xcode (iOS/macOS),
 Android SDK. Firebase project: `proximity-attendence`. Suite status:
-protocol 225 · transport 73 · ble 37 · storage 19 · app 1238 — green,
+protocol 225 · transport 73 · ble 38 · storage 19 · app 1238 — green,
 `flutter analyze` clean, `flutter build web` green.
 
 ```bash
