@@ -133,12 +133,14 @@ class FaceIdScreen extends ConsumerWidget {
                               .restartFace();
                           // The EXACT enrollment capture screen (same const
                           // widget the setup flow embeds and the route table
-                          // builds) — pushed directly with the enroll/capture
-                          // name (pop/finish semantics preserved) so no
-                          // guard table can ever divert the rescan to a
-                          // different capture UI.
+                          // builds) — pushed on the ROOT navigator with the
+                          // enroll/capture name (pop/finish semantics
+                          // preserved), so the shell tab bar hides and the
+                          // preview gets the identical fullscreen area as
+                          // enrollment: no guard table and no tab chrome can
+                          // ever divert or shrink the rescan UI.
                           unawaited(
-                            Navigator.of(context)
+                            Navigator.of(context, rootNavigator: true)
                                 .push(
                                   MaterialPageRoute(
                                     settings: const RouteSettings(

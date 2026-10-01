@@ -275,6 +275,47 @@ void main() {
       }
       expect(t.takeException(), isNull);
     });
+
+    testWidgets('rescan capture covers the tab bar (root navigator)',
+        (t) async {
+      // Regression pin for the boxed/short rescan preview: pushed from a
+      // tab, the capture must land on the ROOT navigator (tab bar
+      // hidden, identical fullscreen area as enrollment) — never inside
+      // the tab navigator under the shell chrome.
+      final innerNav = GlobalKey<NavigatorState>();
+      final store = await _enrolledStore();
+      await t.pumpWidget(ProviderScope(
+        overrides: _overrides(store: store, cloud: _boundCloud()),
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: Scaffold(
+            body: Navigator(
+              key: innerNav,
+              onGenerateRoute: (_) => MaterialPageRoute(
+                  builder: (_) => const FaceIdScreen()),
+            ),
+            bottomNavigationBar: const Text('TAB BAR'),
+          ),
+        ),
+      ));
+      await _drain(t);
+
+      await t.tap(find.byKey(const Key('face-id-rescan')));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+      await t.tap(find.text('Continue to face scan'));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      // Tab chrome hidden behind the fullscreen root route…
+      expect(find.text('TAB BAR').hitTestable(), findsNothing);
+      // …because the capture is NOT in the tab navigator…
+      expect(innerNav.currentState!.canPop(), isFalse);
+      // …whose FaceIdScreen still sits beneath (pop returns to it).
+      expect(find.byType(FaceIdScreen), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
   });
 
   group('enrollment inline device rules + days + why', () {
