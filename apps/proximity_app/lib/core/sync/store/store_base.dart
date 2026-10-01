@@ -209,6 +209,13 @@ abstract class DeviceStore {
   /// decide navigation/identity (unlock, install-id minting) must catch
   /// both explicitly and park/retry.
   Future<StoredEnrollment?> readEnrollment();
+
+  /// Explicit-retry read: same as [readEnrollment] but clears any
+  /// prompt-anti-hammer cooldown first, so a user-tapped Retry
+  /// re-prompts instead of silently replaying the dismissal. Auto flows
+  /// (mount, listeners) must use [readEnrollment]; tapped retries use
+  /// this. Default implementations delegate plainly.
+  Future<StoredEnrollment?> readEnrollmentRetry();
   Future<void> writeEnrollment(StoredEnrollment e);
   Future<void> clearEnrollment();
   Future<List<ClassRecord>> readHistory();

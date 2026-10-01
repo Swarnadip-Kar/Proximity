@@ -374,7 +374,7 @@ void main() {
       // Relocation only: open/close, classify-fill loop, save, dispose,
       // timers — byte-identical bodies, called out in the breakup entry.
       inOrder(sessionLib(), [
-        'Future<void> _openCamera()',
+        'Future<void> _openCamera({',
         'void _startLoop()',
         'Future<void> _autoLoop()',
         'Future<String?> _captureOne()',

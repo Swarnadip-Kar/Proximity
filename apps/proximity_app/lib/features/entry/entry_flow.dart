@@ -160,6 +160,11 @@ bool isUnlockDismissal(Object e) {
 /// from explicit user context (shell resolve, locked-tab retry), never at
 /// app start (see `main.dart`).
 ///
+/// [userInitiated] marks an explicit tap (Retry button, locked-tab
+/// re-tap): the read bypasses the dismissal anti-hammer cooldown and
+/// re-prompts instead of silently replaying the dismissal. Mount and
+/// listener resolves pass false (a cooldown replay there stays silent).
+///
 /// Mirrors the startup preseed rule in `main.dart` (`initialLinked`)
 /// field-by-field — `LinkedIdentity(name: stored.name,
 /// gmail: stored.email, roll: stored.roll, org: stored.org)` — so a
@@ -171,11 +176,17 @@ bool isUnlockDismissal(Object e) {
 /// (a post-await provider touch on a dead screen is swallowed, same as
 /// [entrySignOut]'s clearing touch).
 Future<UnlockOutcome> attemptUnlockIdentity(
-    WidgetRef ref, SignedAccount acct) async {
+    WidgetRef ref,
+    SignedAccount acct, {
+    bool userInitiated = false,
+  }) async {
   try {
     StoredEnrollment? stored;
     try {
-      stored = await ref.read(deviceStoreProvider).readEnrollment();
+      final store = ref.read(deviceStoreProvider);
+      stored = userInitiated
+          ? await store.readEnrollmentRetry()
+          : await store.readEnrollment();
     } on SecureStoreDismissed {
       // Prompt dismissed with nothing proven: park locked with retry —
       // never misread as unenrolled (that pushes enrollment for data that

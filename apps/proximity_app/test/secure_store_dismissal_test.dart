@@ -272,6 +272,32 @@ void main() {
       expect('$e'.toLowerCase(), isNot(contains('cancel')));
       expect('$e', contains('try again'));
     });
+
+    test('explicit retry re-prompts past the cooldown', () async {
+      final strong = _CancelSlot();
+      final cred = _CancelSlot(cred: true);
+      final store =
+          SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+      // First read prompts (both slots) then dismisses + coolstamps.
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
+      expect(strong.reads, 1);
+      // Auto re-read inside the cooldown: silent replay, no new prompt.
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
+      expect(strong.reads, 1);
+      // Explicit user retry: cooldown cleared, prompts again.
+      await expectLater(
+        store.readEnrollmentRetry(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
+      expect(strong.reads, 2);
+    });
   });
 }
 

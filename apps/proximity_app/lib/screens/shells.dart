@@ -588,6 +588,18 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// (re-prompt) as the retry path.
   var _unlockNudgeHidden = false;
 
+  /// Resolve in flight (initial mount, taps, retries): the locked shell
+  /// shows a slim "Checking enrollment…" row instead of dead silence
+  /// while the biometric-gated store read runs. Never stuck on: every
+  /// conclusion path clears it for its own generation.
+  var _resolving = false;
+
+  /// Last resolve hit a transient store failure: parked locked with a
+  /// visible Retry (every tap visibly re-attempts — a silent abort is
+  /// what read as "retry does nothing"). Cleared on every new resolve
+  /// start; Dismiss hides it until the next failure.
+  var _storeError = false;
+
   /// Latched on any enrolled resolve: distinguishes sign-out (account
   /// gone AFTER enrollment — park locked, never push) from a cold-start
   /// account gap (unknown — do nothing and wait for arrival). Never
@@ -658,6 +670,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// account — an unenrolled conclusion re-pushes the flow (single-flight).
   /// No snackbar: the pushed flow IS the hint (dropped to avoid snackbar
   /// storms on rapid taps; dimming + snap-back remain the visual layer).
+  /// Explicit tap: the retry bypasses the dismissal cooldown and
+  /// re-prompts instead of silently replaying it.
   void _stayOnAccountAndPushFlow() {
     if (!mounted) return;
     if (_index != 2) {
@@ -665,7 +679,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       setState(() => _index = 2);
       _animateTo(2, from);
     }
-    unawaited(_refreshEnrollmentState());
+    unawaited(_refreshEnrollmentState(userInitiated: true));
   }
 
   void _animateTo(int i, int from) {
@@ -742,7 +756,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       try {
         if (_pages.hasClients) _pages.jumpToPage(_index);
       } catch (_) {}
-      unawaited(_refreshEnrollmentState());
+      unawaited(_refreshEnrollmentState(userInitiated: true));
       return;
     }
     if (!mounted) return;
@@ -793,7 +807,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// vanished after enrollment), `unknown` aborts silently (stale
   /// generation, transient store failure, or account not known yet —
   /// never push, never park).
-  Future<_GateResolve> _resolveCurrentEnrollment(int gen) async {
+  Future<_GateResolve> _resolveCurrentEnrollment(int gen,
+      {bool userInitiated = false}) async {
     var acct = _readCurrentAccount();
     LinkedIdentity? linked;
     try {
@@ -822,15 +837,20 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // auto-pushing setup for an enrolled user who just declined to unlock.
     UnlockOutcome outcome = UnlockOutcome.empty;
     try {
-      outcome = await attemptUnlockIdentity(ref, acct);
+      outcome = await attemptUnlockIdentity(ref, acct,
+          userInitiated: userInitiated);
     } catch (_) {
       outcome = UnlockOutcome.error;
     }
-    // A transient store failure is unknown, never unenrolled: abort the
-    // resolve (no push, no park change) — the account listener and
+    // A transient store failure is unknown, never unenrolled: flag the
+    // visible Retry (a silent abort is what read as "retry does
+    // nothing") and abort the resolve — the account listener and
     // locked-tab taps retry.
     if (outcome == UnlockOutcome.error) {
       _unlockDismissed = false;
+      if (mounted) {
+        setState(() => _storeError = true);
+      }
       return _GateResolve.unknown;
     }
     if (!mounted || gen != _gateGen) return _GateResolve.unknown;
@@ -858,10 +878,16 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   Future<void> _initialResolve() async {
     if (!mounted) return;
     final gen = ++_gateGen;
-    final resolved = await _resolveCurrentEnrollment(gen);
-    if (!mounted || gen != _gateGen) return;
-    if (resolved == _GateResolve.unknown) return;
-    _applyResolved(resolved, gen);
+    _beginResolve();
+    try {
+      final resolved =
+          await _resolveCurrentEnrollment(gen);
+      if (!mounted || gen != _gateGen) return;
+      if (resolved == _GateResolve.unknown) return;
+      _applyResolved(resolved, gen);
+    } finally {
+      _endResolve(gen);
+    }
   }
 
   /// Applies a resolve result: unlocks + advances to Mark on enrolled,
@@ -1003,14 +1029,41 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// Re-resolve the CURRENT account's enrollment (initial mount, taps,
   /// swipes, identity / account changes, first registration all funnel
   /// here). Stale generations abort silently — the newest resolve owns
-  /// navigation and the single auto-push.
-  Future<void> _refreshEnrollmentState() async {
+  /// navigation and the single auto-push. [userInitiated] marks explicit
+  /// taps (Retry, locked-tab re-tap): the store read re-prompts past the
+  /// dismissal cooldown instead of silently replaying it.
+  Future<void> _refreshEnrollmentState({bool userInitiated = false}) async {
     if (!mounted) return;
     final gen = ++_gateGen;
-    final resolved = await _resolveCurrentEnrollment(gen);
+    _beginResolve();
+    try {
+      final resolved = await _resolveCurrentEnrollment(gen,
+          userInitiated: userInitiated);
+      if (!mounted || gen != _gateGen) return;
+      if (resolved == _GateResolve.unknown) return;
+      _applyResolved(resolved, gen);
+    } finally {
+      _endResolve(gen);
+    }
+  }
+
+  /// Marks a resolve start: spinner on, previous error cleared. Rebuilds
+  /// only while locked (the only state where the slot is visible) —
+  /// unlocked resolves flip flags silently with zero frames. Safe from
+  /// tap/listener/post-frame contexts (never from build).
+  void _beginResolve() {
+    _storeError = false;
+    _resolving = true;
+    if (mounted && _tabsLocked) setState(() {});
+  }
+
+  /// Marks this generation concluded: clears the spinner only if no newer
+  /// resolve has started since (a stale conclusion must not hide a live
+  /// spinner).
+  void _endResolve(int gen) {
     if (!mounted || gen != _gateGen) return;
-    if (resolved == _GateResolve.unknown) return;
-    _applyResolved(resolved, gen);
+    _resolving = false;
+    if (_tabsLocked) setState(() {});
   }
 
   void _armGate() {
@@ -1073,15 +1126,48 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         // classic inset layout unchanged.
         extendBody: isMobile,
         body: _ShellEdgeBody(
-          // Dismissed-unlock nudge rides IN FLOW above the tabs (never
-          // overlaid on content): the enrollment exists behind the phone
-          // prompt the user just declined — this names the remedy (unlock,
-          // never re-enroll) with an explicit retry. Locked-tab taps/swipes
-          // re-resolve too. Hidden once unlocked, dismissed via X, or
-          // superseded by a non-dismissed resolve.
+          // Resolve slot (locked only, in flow above the tabs — never
+          // overlaid on content): a spinner while a resolve runs (never
+          // dead silence during the biometric-gated read), then the
+          // dismissed-unlock nudge (remedy: unlock, never re-enroll, with
+          // explicit retry), then a transient-failure banner with Retry.
+          // Locked-tab taps/swipes re-resolve too. Nudge hides via X or a
+          // non-dismissed resolve; the error banner hides via X or the
+          // next resolve start.
           child: Column(
             children: [
-              if (_unlockDismissed &&
+              if (_tabsLocked && _resolving)
+                SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm,
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm),
+                    child: Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2),
+                          ),
+                          const SizedBox(width: ProxSpacing.sm),
+                          Text(
+                            'Checking enrollment…',
+                            style: ProxType.caption(
+                                color: ProximityColors.of(context)
+                                    .contentSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else if (_unlockDismissed &&
                   !_unlockNudgeHidden &&
                   _tabsLocked)
                 SafeArea(
@@ -1093,10 +1179,29 @@ class _StudentShellState extends ConsumerState<StudentShell> {
                         ProxSpacing.screenMargin,
                         ProxSpacing.sm),
                     child: _UnlockNudge(
-                      onRetry: () =>
-                          unawaited(_refreshEnrollmentState()),
+                      onRetry: () => unawaited(
+                          _refreshEnrollmentState(userInitiated: true)),
                       onDismiss: () =>
                           setState(() => _unlockNudgeHidden = true),
+                    ),
+                  ),
+                )
+              else if (_storeError && _tabsLocked)
+                SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm,
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm),
+                    child: _UnlockNudge(
+                      message:
+                          'Couldn’t reach secure storage — try again.',
+                      onRetry: () => unawaited(
+                          _refreshEnrollmentState(userInitiated: true)),
+                      onDismiss: () =>
+                          setState(() => _storeError = false),
                     ),
                   ),
                 ),
@@ -1171,12 +1276,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
 /// Unlock nudge banner for a dismissed phone prompt (student shell only).
 /// Shown when the enrollment exists behind the lock the user just
 /// declined: names unlock (never re-enroll) with an explicit retry.
+/// [message] overrides the copy for the transient-failure variant.
 /// Static — no timers, settle-safe.
 class _UnlockNudge extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onDismiss;
+  final String? message;
 
-  const _UnlockNudge({required this.onRetry, required this.onDismiss});
+  const _UnlockNudge(
+      {required this.onRetry, required this.onDismiss, this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -1199,7 +1307,8 @@ class _UnlockNudge extends StatelessWidget {
             const SizedBox(width: ProxSpacing.sm),
             Expanded(
               child: Text(
-                'Unlock to continue — approve the phone prompt.',
+                message ??
+                    'Unlock to continue — approve the phone prompt.',
                 style: ProxType.body(color: c.contentPrimary),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,

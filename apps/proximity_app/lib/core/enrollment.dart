@@ -236,7 +236,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// whole draft (keys, face, roll, restore) and adopts the current
   /// account fresh, so the card/claim/org can never ride a stale preseed.
   /// Call on every enroll entry + after sign-out/switch.
-  Future<void> refreshFromAuth() async {
+  Future<void> refreshFromAuth({bool userInitiated = false}) async {
     SignedAccount? current;
     try {
       current = _auth.current;
@@ -251,7 +251,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       if (current != null && state.account == null) {
         state = state.copyWith(
             phase: EnrollPhase.signedIn, account: current, message: '');
-        await _tryRestore(current);
+        await _tryRestore(current, userInitiated: userInitiated);
         return;
       }
       // Same account but no usable key (e.g. a locked restore that only
@@ -259,7 +259,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // the key gate with a key this device holds. No-op when keys are
       // loaded or nothing is stored.
       if (current != null && _keys == null) {
-        await _tryRestore(current);
+        await _tryRestore(current, userInitiated: userInitiated);
       }
       return;
     }
@@ -277,7 +277,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     } catch (_) {
       // Offline: the persisted account still stands; Save re-checks.
     }
-    await _tryRestore(current);
+    await _tryRestore(current, userInitiated: userInitiated);
   }
 
   /// Background account pickup for the enrollment page (NO sign-in tap):
@@ -362,11 +362,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     return null;
   }
 
-  Future<void> _tryRestore(SignedAccount acct) async {
+  Future<void> _tryRestore(SignedAccount acct,
+      {bool userInitiated = false}) async {
     final email = acct.email.toLowerCase();
     StoredEnrollment? stored;
     try {
-      stored = await _store.readEnrollment();
+      stored = userInitiated
+          ? await _store.readEnrollmentRetry()
+          : await _store.readEnrollment();
     } on SecureStoreDismissed {
       // Dismissed prompt: proceed as if nothing was found (today's null
       // path) — the unlock-owning callers (shell resolve, entry gate)

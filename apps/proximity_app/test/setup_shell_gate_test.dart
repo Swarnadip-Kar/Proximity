@@ -6,6 +6,8 @@
 // dead ends); enrolled students advance to Mark with no flow; the setup
 // flow itself still starts at the first incomplete step; records/mine
 // builds the records screen.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -199,6 +201,70 @@ void main() {
       }
     });
 
+    testWidgets('resolving shows checking state, never silence',
+        (t) async {
+      // Slow store read (biometric-gated on device): while the resolve
+      // awaits it, the locked shell names the wait instead of parking
+      // dead. Answering empty then concludes unenrolled → flow pushes.
+      final store = _GatedEnrollStore();
+      await t.pumpWidget(helpers.testScope(
+          store: store,
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 100));
+      expect(find.text('Checking enrollment…'), findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      store.gate.complete(null);
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.text('Checking enrollment…'), findsNothing);
+      expect(find.byType(SetupFlowScreen), findsOneWidget);
+      // Drain stagger one-shots (stepped: lets each tick settle).
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+    });
+
+    testWidgets('transient store failure shows retry, pushes nothing',
+        (t) async {
+      // Unknown is never unenrolled: no flow, no silence — a visible
+      // banner whose Retry visibly re-attempts (reads climb, banner
+      // persists while the store keeps failing).
+      final store = _FailingEnrollStore();
+      await t.pumpWidget(helpers.testScope(
+          store: store,
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(
+          find.text('Couldn’t reach secure storage — try again.'),
+          findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      final reads = store.reads;
+      expect(reads, greaterThan(0));
+      await t.tap(find.widgetWithText(TextButton, 'Retry'));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(store.reads, greaterThan(reads));
+      expect(
+          find.text('Couldn’t reach secure storage — try again.'),
+          findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(t.takeException(), isNull);
+      // Drain stagger one-shots (stepped: lets each tick settle).
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+    });
+
     testWidgets('enrolled student lands on Mark', (t) async {
       await t.pumpWidget(helpers.testScope(
         linked: _linked,
@@ -337,4 +403,25 @@ void main() {
     });
 
   });
+}
+
+/// Enrollment store gated on a test-controlled future (slow biometric
+/// read stand-in): the shell must show resolve progress while awaiting.
+class _GatedEnrollStore extends InMemoryDeviceStore {
+  Completer<StoredEnrollment?> gate = Completer<StoredEnrollment?>();
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() => gate.future;
+}
+
+/// Enrollment store whose reads always fail transiently (flaky Keystore
+/// stand-in): resolves must surface retry UI, never push, never silence.
+class _FailingEnrollStore extends InMemoryDeviceStore {
+  int reads = 0;
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() async {
+    reads++;
+    throw StateError('disk full');
+  }
 }

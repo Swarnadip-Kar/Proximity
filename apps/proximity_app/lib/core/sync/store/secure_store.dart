@@ -275,6 +275,15 @@ class SecureDeviceStore implements DeviceStore {
   }
 
   @override
+  Future<StoredEnrollment?> readEnrollmentRetry() {
+    // Explicit user retry: clear the dismissal anti-hammer cooldown so
+    // the prompt shows again instead of replaying the dismissal. Cached
+    // proven values still shortcut above (no prompt when unneeded).
+    _lastSecureFailAt = null;
+    return readEnrollment();
+  }
+
+  @override
   Future<void> writeEnrollment(StoredEnrollment e) async {
     final payload = jsonEncode(e.toJson());
     await _ensureTierLoaded();

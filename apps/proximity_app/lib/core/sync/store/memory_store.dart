@@ -20,6 +20,9 @@ class InMemoryDeviceStore implements DeviceStore {
   Future<StoredEnrollment?> readEnrollment() async => enrollment;
 
   @override
+  Future<StoredEnrollment?> readEnrollmentRetry() => readEnrollment();
+
+  @override
   Future<void> writeEnrollment(StoredEnrollment e) async => enrollment = e;
 
   @override

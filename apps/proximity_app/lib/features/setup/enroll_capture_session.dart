@@ -270,10 +270,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// See [_restoreLocked].
   bool get restoreLocked => _restoreLocked;
 
-  /// In-place retry for the locked gate: re-runs restore + camera open
-  /// (re-prompts past the cooldown). No-op while opening/saving or after
-  /// teardown. The composer shows this behind a Try-again button only in
-  /// the locked branch — genuinely keyless drafts keep the static copy.
+  /// In-place retry for the locked gate: re-runs restore + camera open.
+  /// Explicit tap, so the restore re-prompts past the dismissal cooldown
+  /// (mount-time opens stay silent on cooldown). No-op while
+  /// opening/saving or after teardown. The composer shows this behind a
+  /// Try-again button only in the locked branch — genuinely keyless
+  /// drafts keep the static copy.
   Future<void> retryRestoreAndOpen() async {
     if (_done || _saving || _finished || _failed) return;
     if (mounted) {
@@ -282,7 +284,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         _restoreLocked = false;
       });
     }
-    unawaited(_openCamera());
+    unawaited(_openCamera(userInitiated: true));
   }
 
   /// Single-flight for the validated auto-advance: the terminal navigation
@@ -361,7 +363,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
   }
 
-  Future<void> _openCamera() async {
+  Future<void> _openCamera({bool userInitiated = false}) async {
     final cam = _camera;
     if (cam == null) return;
     try {
@@ -385,14 +387,16 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     // refresh — must never hold the preview hostage behind the opening
     // spinner. Same-account with loaded keys is a cheap no-op, a stored
     // key restores here, and a genuinely keyless draft still refuses
-    // honestly below. Deferred past initState via an event-queue hop
-    // (Riverpod forbids provider modification inside widget lifecycles):
-    // awaited, so the key gate below always reads settled state. Never
-    // throws out of open (fail-soft: the gate below decides).
+    // honestly below. [userInitiated] (explicit Try-again tap) re-prompts
+    // past the dismissal cooldown; mount-time opens stay silent on it.
+    // Deferred past initState via an event-queue hop (Riverpod forbids
+    // provider modification inside widget lifecycles): awaited, so the
+    // key gate below always reads settled state. Never throws out of
+    // open (fail-soft: the gate below decides).
     try {
       await Future(() => ref
           .read(enrollmentControllerProvider.notifier)
-          .refreshFromAuth());
+          .refreshFromAuth(userInitiated: userInitiated));
     } catch (_) {}
     if (_done) return;
     final ctl = ref.read(enrollmentControllerProvider);

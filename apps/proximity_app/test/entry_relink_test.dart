@@ -348,6 +348,22 @@ void main() {
       expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.error);
       expect(container.read(linkedIdentityProvider), isNull);
     });
+
+    testWidgets('userInitiated reads via the retry path', (t) async {
+      // Explicit taps must reach readEnrollmentRetry (cooldown-clearing
+      // re-prompt); mount/listener resolves use the plain read.
+      final store = _RecordingStore();
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.empty);
+      expect(store.retryUsed, isFalse);
+      expect(await attemptUnlockIdentity(ref, acct, userInitiated: true),
+          UnlockOutcome.empty);
+      expect(store.retryUsed, isTrue);
+      expect(container.read(linkedIdentityProvider), isNull);
+    });
   });
 
     testWidgets('resume narrates the wait while busy', (t) async {
@@ -528,6 +544,17 @@ class _ThrowingStore extends InMemoryDeviceStore {
 
   @override
   Future<StoredEnrollment?> readEnrollment() async => throw error;
+}
+
+/// Store recording whether the retry read path was used.
+class _RecordingStore extends InMemoryDeviceStore {
+  bool retryUsed = false;
+
+  @override
+  Future<StoredEnrollment?> readEnrollmentRetry() {
+    retryUsed = true;
+    return readEnrollment();
+  }
 }
 
 /// Secure-backend dismissal: back-press with nothing proven throws the

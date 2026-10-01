@@ -254,7 +254,7 @@ void main() {
         'class FakeEnrollSessionCamera',
         'enrollSessionCameraProvider',
         'mixin EnrollCaptureSessionDriver',
-        'Future<void> _openCamera()',
+        'Future<void> _openCamera({',
         'void _startLoop()',
         'Future<void> _autoLoop()',
         'Future<String?> _captureOne()',
