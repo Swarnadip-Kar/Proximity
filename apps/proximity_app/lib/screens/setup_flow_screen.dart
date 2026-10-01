@@ -122,14 +122,20 @@ class _SetupFlowScreenState extends ConsumerState<SetupFlowScreen> {
   void initState() {
     super.initState();
     _pages = PageController();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       // Silent account pickup for the whole flow (mirrors the standalone
       // intro screen's post-frame pickup): steps read the draft account,
       // so the form (not a second sign-in button) greets returning
       // sessions. Fresh installs with no session keep the manual button.
-      unawaited(
-          ref.read(enrollmentControllerProvider.notifier).pickUpAccount());
+      // Awaited BEFORE the start-step computation: the draft's key/phase
+      // (restored from secure storage) decides the first incomplete step,
+      // and racing it lands restored users on device/accountKey instead
+      // of result — the every-run re-enroll loop.
+      try {
+        await ref.read(enrollmentControllerProvider.notifier).pickUpAccount();
+      } catch (_) {}
+      if (!mounted) return;
       _resolveStart();
     });
   }
