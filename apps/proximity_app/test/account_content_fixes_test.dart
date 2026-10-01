@@ -26,6 +26,7 @@ import 'package:proximity_app/features/account/account_device_page.dart';
 import 'package:proximity_app/features/account/account_enrollment_page.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/account/face_id_screen.dart';
+import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/core/sync/device_hardware_id.dart';
@@ -245,6 +246,34 @@ void main() {
           findsNothing);
       expect(find.byKey(const Key('face-id-rescan')), findsOneWidget);
       expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets('rescan entry opens the exact enrollment capture screen',
+        (t) async {
+      // The Accounts entry must build the SAME capture widget the
+      // enrollment flow embeds (no guard table can divert it): identical
+      // preview, overlay, wheels, and retry — never a second capture UI.
+      final store = await _enrolledStore();
+      await t.pumpWidget(ProviderScope(
+        overrides: _overrides(store: store, cloud: _boundCloud()),
+        child: MaterialApp(theme: proxLightTheme(), home: const FaceIdScreen()),
+      ));
+      await _drain(t);
+
+      await t.tap(find.byKey(const Key('face-id-rescan')));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+      await t.tap(find.text('Continue to face scan'));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(EnrollCaptureScreen), findsOneWidget);
+      expect(t.takeException(), isNull);
+      // Drain (the test-env camera fails closed; the session is idle).
+      for (var i = 0; i < 6; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(t.takeException(), isNull);
     });
   });
 

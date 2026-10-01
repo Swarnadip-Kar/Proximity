@@ -10,9 +10,10 @@
 // Content: status line only (`Enrolled · <verifierVer>` / `Needs re-face`
 // on version mismatch) + a low-emphasis `Re-scan face` fallback. Re-scan
 // calls the SAME controller function the enroll-result screen calls
-// (`restartFace` — key kept) and continues into the preserved standalone
-// capture chain (`EnrollFlow.openCapture` → result). Fail-closed throughout:
-// without a device key the capture screen itself refuses.
+// (`restartFace` — key kept) and pushes the SAME capture screen the
+// enrollment flow embeds (`EnrollCaptureScreen`, direct push — no guard
+// table can divert it). Fail-closed throughout: without a device key
+// the capture screen itself refuses.
 library;
 
 import 'dart:async';
@@ -31,7 +32,8 @@ import '../../widgets/prox_states.dart';
 
 import '../../features/face_identity/face_blocked.dart';
 import '../../features/face_identity/face_verifier.dart';
-import '../setup/enroll_flow.dart';
+import '../../routes.dart';
+import '../setup/enroll_capture.dart';
 
 /// Face-ID status page. Pushed from the student Account page with
 /// `RouteSettings(name: 'account/face-id')`.
@@ -96,10 +98,9 @@ class FaceIdScreen extends ConsumerWidget {
                 buttonKey: const Key('face-id-rescan'),
                 sheetBuilder: (sheetContext) {
                   // Single-flight for the rescan entry: Continue double-tap
-                  // pushes one capture only (EnrollFlow drops the second
-                  // while one is open; this latch covers the gap before it
-                  // engages). Per-sheet latch — the sheet is gone after the
-                  // first tap, so a shared build only matters same-frame.
+                  // pushes one capture only (the sheet is gone after the
+                  // first tap, so this latch covers the gap before it
+                  // engages). Per-sheet latch — same-frame only.
                   var entryBusy = false;
                   return Column(
                     mainAxisSize: MainAxisSize.min,
@@ -130,8 +131,24 @@ class FaceIdScreen extends ConsumerWidget {
                           ref
                               .read(enrollmentControllerProvider.notifier)
                               .restartFace();
-                          unawaited(EnrollFlow.openCapture(context)
-                              .whenComplete(() => entryBusy = false));
+                          // The EXACT enrollment capture screen (same const
+                          // widget the setup flow embeds and the route table
+                          // builds) — pushed directly with the enroll/capture
+                          // name (pop/finish semantics preserved) so no
+                          // guard table can ever divert the rescan to a
+                          // different capture UI.
+                          unawaited(
+                            Navigator.of(context)
+                                .push(
+                                  MaterialPageRoute(
+                                    settings: const RouteSettings(
+                                        name: ProxRoutes.enrollCapture),
+                                    builder: (_) =>
+                                        const EnrollCaptureScreen(),
+                                  ),
+                                )
+                                .whenComplete(() => entryBusy = false),
+                          );
                         },
                         child: const Text('Continue to face scan'),
                       ),
