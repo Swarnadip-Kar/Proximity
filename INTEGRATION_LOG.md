@@ -3261,3 +3261,19 @@ Field logcat on the enroll-blocked phone showed the FSS backup-migration crashin
 
 Verify: options/hardening/crypto/migration suites 29/29; `flutter analyze` clean.
 
+
+## Performance + mesh TTL + unlock-copy session (2026-10-01)
+
+Field report: `skipped 84 frames`, black screen/lag on older phones, tap-a-class hangs, BLE storm drowning weak phones, first-open lock confusion ("restore" on phones that were never enrolled).
+
+- perf(ble) — sightings ring-bounded (200, was unbounded ~36k on long browses), `BleLog` batch eviction (was `removeAt(0)` memmove per packet), sub-`-90 dBm` pre-gate + junk never stored, dense auto-sense (`>20 sightings/5s`, relay cap `4/s` sparse / `1/s` dense), passive listen for iOS/low-power (`relay_policy.dart`, linger skipped), relay linger `20s→10s`, scan-callback RSSI pre-filter.
+- perf(ui) — browse 50ms whole-list `setState` (20fps) moved into an empty-state-only `_EmptyRadar` at 200ms; `ValueKey`+`RepaintBoundary` rows; log flush `200ms→500ms` with 200-pending cap + dropped counter.
+- perf(prof) — 1s elapsed `setState` rebuilding the 5-tab `IndexedStack` replaced by a `ValueNotifier` driving only the timer labels; roster rebuilds only on present/waiting change.
+- perf(face) — `ResolutionPreset.max→medium` (mark + enroll), `kMarkingLivenessCaptures 10→5` (worst serial ML ~12s→~6s, fits the 7s accept window).
+- perf(join) — optimistic waiting/face paint before `prewarmRadio` (tap no longer frozen on BLE+TLS); startup `AppCheck+Integrity+hydrate` in `Future.wait` (16s→8s worst) + parallel prefs reads; IP-hint probe `0–800ms` jitter.
+- perf(records+radio) — export-center union hoisted (was O(N²)/row), single `utf8.encode`, watchdogs jittered (browse `30s+0–5s`, listen `0–1.5s` on production budgets only — shrunk-budget tests keep their injection schedule).
+- perf(mesh) — TTL on air: v3 flags `b0 relayed / b1 dense / b2..b3 hop / b4..b7 reserved`, originate hop=0, relay hop+1 enforced at `kMaxRelayHop=2`, host `relayed-hopN` rule. Restart-jitter hang caught by `student_driver_test` (jitter shifted the challenge schedule past the injected sighting) → gated on production budgets.
+- perf(air) — single 19B mfg format (`PX 03`) + v1 UUID ticks for CoreBluetooth-displaced stacks only; `v3Tx`/`packAirV3`/18B v2 deleted (testing phase, no compat needed). Net −34 lines.
+- fix(unlock) — dismissed phone prompt now reads unlock-to-continue everywhere (prove receipt, join gates, shell nudge banner + Retry); genuine unseal failures keep `restore detected — re-enroll`. First-open "restore" on biometric-poor phones was dismissal parking + installId mint refusal, not a real restore.
+
+Verify: protocol 225/225; ble 37/37; transport 68/68; storage 19/19; app full suite running; `flutter analyze` clean on all touched files (one pre-existing info in `host_driver.dart`). Pre-existing failure unrelated to this session: `mark_enrollment_race_test` stale-stack F06 fails identically with and without these changes.

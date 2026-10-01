@@ -107,9 +107,10 @@ page, never someone else's home).
    matcher version, liveness score ≥ 0.85 + allowlisted liveness version,
    hardware `dSig` + chain-vs-pinned-roots, BLE sighting with RSSI gates) and
    returns a signed ACK, which the student sees as ✓ Marked.
-4. Front-row phones re-advertise challenges (TTL/jitter/dedup/split-horizon
-   controlled flood) so back rows hear them — each phone keeps relaying for
-   20s after first hearing the token, never cutting at its own ACK.
+4. Front-row phones re-advertise challenges (hop/jitter/dedup/split-horizon
+   controlled flood, TTL on air enforced at 2 hops) so back rows hear them — each
+   phone keeps relaying for 10s after first hearing the token. iPhones and
+   low-power devices listen passively (prove over WiFi, never re-air).
    **Manual path (LAN-only):** students tap “Request manual attendance”;
    the professor sees a live request list (selective approve/reject +
    Select all) or uses the unified manual-add form (directory search with
@@ -333,7 +334,7 @@ packages/storage/        tally + course history + roster helpers (in-memory API;
 
 Prereqs: Flutter stable, Firebase CLI + flutterfire, Xcode (iOS/macOS),
 Android SDK. Firebase project: `proximity-attendence`. Suite status:
-protocol 189 · transport 66 · ble 38 · storage 18 · app 1110 — green,
+protocol 225 · transport 68 · ble 37 · storage 19 · app 1110 — green,
 `flutter analyze` clean, `flutter build web` green.
 
 ```bash
@@ -398,8 +399,8 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    zero taps) or by typing the IP from the professor's screen (last IP
    prefilled).
    **BLE IP hint:** Android/Linux profs publish `host:port` inside the
-   primary v2 air packet (`FCD2` + `0xFFFF`/`PX 02` manufacturer payload,
-   18 B: token + IPv4 + port — `packages/protocol/lib/src/air.dart`); browsing students
+   primary air packet (`FCD2` + `0xFFFF`/`PX 03` manufacturer payload,
+   19 B: token + IPv4 + port + flags — `packages/protocol/lib/src/air.dart`); browsing students
    background-probe hinted hosts and list answerers in ~2–4 s (no taps,
    no verification of the hint itself — joining still enforces radio +
    signature + face). Apple stacks displace attached manufacturer data
@@ -409,17 +410,15 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    alternate legacy v1 challenge ticks with server-address hint ticks
    (`BaseI64` — IPv4 + port beside the discriminator; the 8-byte
    challenge itself is never truncated, crypto untouched).
-7. **BLE air is v2 + v3-flags + legacy v1, unfiltered scan.** The v2
+7. **BLE air is one mfg format + legacy v1, unfiltered scan.** The
    packet (`packages/protocol/lib/src/air.dart`) is fixed `FCD2` + 18 B
-   manufacturer payload (`PX 02`, type, token8, IPv4, port — 29 B total
+   manufacturer payload (`PX 03`, type, token8, IPv4, port, flags — 30 B total
    in the PRIMARY advertisement on every platform, no scan-response
-   dependence). v3 appends one flags byte (relayed/dense-hint) so v2
-   parsers still prefix-parse mixed-version halls with no flag-day;
-   token bytes are never reused. Android/Linux originate v2;
+   dependence). Flags carry relayed / dense-hint / 2-bit hop count (TTL on air, enforced at 2 hops);
+   token bytes are never reused. Android/Linux originate the mfg format;
    Apple/Windows originate legacy v1 single-UUID ticks alternating
-   challenge and server-address hint. Students parse all formats; relays
-   preserve the heard format. Scanning is unfiltered with in-app parsing
-   (`AirParser`); unknown versions drop with a counted log, never
+   challenge and server-address hint. Students parse both formats. Scanning is unfiltered with in-app parsing
+   (`AirParser`, sub-`-90 dBm` dropped pre-parse); unknown versions drop with a counted log, never
    silently. Verified live 2026-09-05 Mac↔phone (see §6 above for the
    Apple displacement finding that froze this shape).
 8. **Live refresh + explicit leave.** Browsing recomputes the merged
@@ -453,7 +452,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    Present = intersection of all windows taken (`lenientOneOfTwo` per export
    call preserves the old any-window mode).
 11. Prefixes: `BaseP64=9A3B7C1D4E5F6071`, `BaseS64=B7E4A9215C6D8093`,
-    air `FCD2`/`0xFFFF`/`PX 02` (v2; scan filtering uses the 16-bit
+    air `FCD2`/`0xFFFF`/`PX 03` (single format; scan filtering uses the 16-bit
     `FCD2` service — the old `PROX_SVC`/`PROX_CHR` GATT UUIDs are
     deleted). Exports are
     host-only source of truth. (Built from 32-bit halves in code: a >2⁵³

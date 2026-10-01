@@ -433,17 +433,21 @@ non-zero `faceValidAt` + allowlisted `verifierVer` (legacy-neutral
 defaults exist only to keep the migration compilable, never to accept
 legacy proofs at runtime).
 
-### 5.2 Over-air encoding (as built: dual-format v2 + legacy v1)
+### 5.2 Over-air encoding (as built: single mfg format + legacy v1 for Apple-TX)
 
 As built (see README §6–7 and `packages/protocol/lib/src/air.dart`): the air
-packet is v2 `FCD2` + 18 B manufacturer payload (`PX 02`, type, token8,
-IPv4, port — 29 B in the PRIMARY advertisement, no scan-response
-dependence). Android/Linux originate v2; Apple/Windows originate legacy v1
+packet is `FCD2` + 19 B manufacturer payload (`PX 03`, type, token8,
+IPv4, port, flags — 30 B in the PRIMARY advertisement, no scan-response
+dependence). Flags: b0 relayed, b1 dense-hint, b2..b3 hop count
+(0 = direct originate, +1 per re-air, enforced against `kMaxRelayHop=2`
+— TTL on air), b4..b7 reserved (non-zero drops). Android/Linux originate
+the mfg format; Apple/Windows originate legacy v1
 single-UUID ticks alternating challenge and server-address hint UUIDs
 (`BaseI64` + IPv4 + port), so Apple-originated classes stay joinable with
 zero taps despite Apple stacks displacing attached manufacturer data out
-of the primary packet. Students parse all formats; relays preserve the
-heard format. Scanning is unfiltered with in-app parsing (`AirParser`).
+of the primary packet — v1 is kept ONLY for those stacks (no IP/hop to
+carry, single-relay bound). Students parse both formats. Scanning is
+unfiltered with in-app parsing (`AirParser`).
 The 1.0 UUID-only text below (fixed `PROX_SVC` filter, `peerW` in
 scan-response, GATT `PROX_SVC`/`PROX_CHR` fallback) is superseded: the old
 `PROX_SVC`/`PROX_CHR` GATT UUIDs are deleted and discovery is UDP + BLE
@@ -515,28 +519,38 @@ Back rows cannot hear the professor directly. Front-row phones re-advertise what
   (Option A, 2026-09-30): the student response beacon path is retired —
   presence rides the heard challenge + TCP prove, never a re-air — so
   there is no response storm to control.
-- Rules: if `TTL > 0`, unseen, `RSSI > -80 dBm`, wait `jitter 10–220 ms` (wider when dense), re-advertise same `UUID_P` with `TTL-1`, never back to ingress link (split horizon). Originate `TTL=3`, dense graphs cap at 2. LRU-dedup suppresses storms. Fanout is implicit in radio (one re-advertise reaches all nearby).
+- Rules: unseen + `RSSI > -80 dBm` + hop budget left (b2..b3 `< kMaxRelayHop=2`)
+  + `RSSI < -90 dBm` pre-gate drop, wait `jitter 10–220 ms` (upper-half when
+  dense), re-advertise with `hop+1` and the relayed bit, never back to
+  ingress link (split horizon). One re-air per token per device
+  (token-keyed guard, releasable on busy-skip so back rows never starve);
+  per-second relay cap 4/s sparse, 1/s dense (auto-sensed: >20 sightings/5 s
+  flips dense on). Sightings ring-bounded (200). LRU-dedup suppresses storms.
+  Fanout is implicit in radio (one re-advertise reaches all nearby).
 - Presence: while window is open all devices advertise/scan continuously (30 s burst, no duty cycling needed). Reachability timeout 60 s covers the full window plus tally.
-- Implementation (verified live 2026-09): every student relays — browsing,
-  waiting, face-capture and listening phases all forward (bitchat-style:
-  each node re-advertises heard challenges under flood control), with a
-  20 s linger after first hear; professors originate only and their
-  disarmed steady state logs nothing. The air packet (v2,
-  `packages/protocol/lib/src/air.dart`) is fixed `FCD2` + 18 B manufacturer payload (`PX`,
-  ver `02`, type, token8, IPv4, port — 29 B in the PRIMARY advertisement,
-  no scan-response dependence); scanning is unfiltered with in-app parsing
-  (`AirParser` accepts v2 mfg + service-data and legacy v1 single-UUID
-  packets). Android/Linux originate v2; Apple/Windows originate legacy v1
+- Implementation: Android students relay while browsing/waiting/capturing/
+  listening (bitchat-style flood control above), with a 10 s linger after
+  first hear; iPhones and low-power devices listen passively (prove over
+  WiFi, never re-air); professors originate only and their
+  disarmed steady state logs nothing. The air packet
+  (`packages/protocol/lib/src/air.dart`) is fixed `FCD2` + 19 B manufacturer
+  payload (`PX`, ver `03`, type, token8, IPv4, port, flags — 30 B in the
+  PRIMARY advertisement, no scan-response dependence); scanning is
+  unfiltered with in-app parsing (`AirParser` accepts mfg + service-data
+  and legacy v1 single-UUID packets, sub-`-90 dBm` dropped pre-parse).
+  Android/Linux originate the mfg format; Apple/Windows originate legacy v1
   ticks alternating challenge UUIDs (full-strength `C_j`, never truncated)
   and server-address hint UUIDs (`BaseI64` + IPv4 + port — the 4-byte
   address fits beside the discriminator, not inside the challenge), so
   Apple-originated classes publish their HTTPS address through the mesh
   with zero taps despite the displacement (confirmed live 2026-09-05
   Mac→phone: UUID arrives, mfg in no callback, not a split packet; Mac
-  UUID-only arrives as `RX challenge v1`, phone→Mac v2 verified on bleak
-  with rotation). Students parse all formats; relays preserve the heard
-  format (`expectedAirKey`/`expectedUuid`). Air sightings default to
-  `TTL=3`; explicit 0 still drops.
+  UUID-only arrives as `RX challenge v1`). Students parse both formats;
+  mfg relays re-air with hop+1 (`expectedAirKey`/`expectedUuid`). Hop at
+  the ceiling never re-airs.
+- Probe/watchdog herd-spread: IP-hint probes carry 0–800 ms jitter, scan
+  restarts 0–1.5 s / 0–5 s jitter, so 500 phones don't probe/restart in
+  lockstep after each rotation.
 - Class IP over BLE (Android/Linux profs): the HTTPS `host:port` rides the
   v2 primary-packet manufacturer payload (`0xFFFF`/`PX 02`); browsing
   students background-probe hinted hosts and list answerers with zero taps
