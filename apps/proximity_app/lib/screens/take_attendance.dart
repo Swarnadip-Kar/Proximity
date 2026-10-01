@@ -541,13 +541,15 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       // `features/live/manual_inbox.dart`).
       final waitingChanged = _logWaitingDelta();
       final manualChanged = _logManualDelta();
-      if (waitingChanged || manualChanged) setState(() {});
+      final tallyChanged = _logTallyDelta();
+      if (waitingChanged || manualChanged || tallyChanged) setState(() {});
     });
     if (widget.autoStart) _startNext();
   }
 
   Set<String> _prevWaiting = {};
   Set<String> _prevManual = {};
+  String _prevTallyFp = '';
 
   /// Logs waiting-room joins/leaves (student entered or backed out) so the
   /// count changes are visible in the system log, not just the list.
@@ -569,6 +571,25 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       BleLog.log(ProxLogTags.lan, 'waiting -$e left (${cur.length} waiting)');
     }
     return joined.isNotEmpty || left.isNotEmpty;
+  }
+
+  /// Tally-content delta (roster live-update fix, rebuild trigger only):
+  /// the window tick previously watched present/waiting counts alone, so
+  /// in-place row flips (unverified→verified clears faceFlag with no
+  /// count move) never refreshed the pill until a manual refresh.
+  /// Compares [TallyStore.contentFingerprint] (wins, flags, names) and
+  /// stays silent — arrivals render, decided rows still clear via the
+  /// existing decide paths. Orchestration untouched.
+  bool _logTallyDelta() {
+    String cur = '';
+    try {
+      cur = tally.contentFingerprint;
+    } catch (_) {
+      return false;
+    }
+    final changed = cur != _prevTallyFp;
+    _prevTallyFp = cur;
+    return changed;
   }
 
   /// Manual-arrival delta (inbox live-update fix, rebuild trigger only):
@@ -1034,9 +1055,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       // Elapsed-up only: nothing auto-closes. Stop ends acceptance
       // (after a short grace for proofs already on the wire). The timer
       // label updates via _elapsedN (no full rebuild); the roster
-      // rebuilds only when present/waiting actually moved.
+      // rebuilds when present/waiting moved OR any row's content did
+      // (tally fingerprint — unverified→verified flips no count).
       _setElapsed(elapsed + const Duration(seconds: 1));
       final waitingChanged = _logWaitingDelta();
+      final tallyChanged = _logTallyDelta();
       int presentNow = 0;
       int waitingNow = 0;
       try {
@@ -1044,6 +1067,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         waitingNow = _driver?.waitingCount ?? 0;
       } catch (_) {}
       if (waitingChanged ||
+          tallyChanged ||
           presentNow != _lastPresent ||
           waitingNow != _lastWaitingN) {
         _lastPresent = presentNow;

@@ -211,6 +211,25 @@ void main() {
       final m = rec.toJson()..remove('faceFlags');
       expect(ClassRecord.fromJson(m).faceFlags, isEmpty);
     });
+
+    test('contentFingerprint moves on in-place flips, still on repeats',
+        () {
+      // The live-update contract: unverified→verified clears faceFlag
+      // with NO count move — the fingerprint must still differ, or the
+      // prof tick has nothing to rebuild on.
+      final t = TallyStore();
+      t.mark('a@x.in', 'A', 1, faceFlag: true);
+      final flagged = t.contentFingerprint;
+      expect(t.confirmedCount, 1);
+      t.clearFaceFlag('a@x.in');
+      expect(t.confirmedCount, 1); // counts blind to the flip
+      expect(t.contentFingerprint, isNot(flagged));
+      final settled = t.contentFingerprint;
+      t.clearFaceFlag('a@x.in'); // repeat: no phantom change
+      expect(t.contentFingerprint, settled);
+      t.mark('b@x.in', 'B', 1); // new mark: moves too
+      expect(t.contentFingerprint, isNot(settled));
+    });
   });
 
   group('csvCell quoting + formula-injection guard', () {

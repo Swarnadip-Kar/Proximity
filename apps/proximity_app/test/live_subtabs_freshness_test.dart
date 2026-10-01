@@ -467,6 +467,43 @@ void main() {
     expect(t.takeException(), isNull);
   });
 
+  testWidgets('face-flag flip repaints live, no manual refresh',
+      (t) async {
+    // Unverified→verified clears faceFlag with NO count move (stays
+    // present in every round) — the old count-only tick never rebuilt,
+    // so the pill needed a manual refresh. The tally-fingerprint delta
+    // rebuilds on the idle poll instead. Bounded pumps only.
+    final store = InMemoryDeviceStore();
+    await store.addCourse('CS201');
+    final host = FakeHostDriver();
+    await host.startHosting(classLabel: 'CS201');
+    host.tally.noteWindow(1);
+    host.tally.mark('a@x.in', 'A', 1, roll: '1', faceFlag: true);
+    await t.pumpWidget(helpers.testScope(
+        store: store,
+        hostDriver: host,
+        cloud: FakeCloudSync(online: false),
+        home: MaterialApp(
+            theme: proxLightTheme(),
+            home: const TakeAttendanceScreen(courseName: 'CS201'))));
+    await t.pump();
+    for (var i = 0; i < 4; i++) {
+      await t.pump(const Duration(milliseconds: 500));
+    }
+    expect(find.text('Present 1'), findsOneWidget);
+    expect(find.text('Unverified'), findsOneWidget);
+    // Server-side verify lands mid-lecture: flag clears, counts still.
+    host.tally.clearFaceFlag('a@x.in');
+    expect(host.tally.confirmedCount, 1);
+    for (var i = 0; i < 6; i++) {
+      await t.pump(const Duration(milliseconds: 500));
+    }
+    expect(find.text('Verified'), findsOneWidget);
+    expect(find.text('Unverified'), findsNothing);
+    expect(find.text('Present 1'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
+
   testWidgets('course overview re-reads on the history-refresh tick',
       (t) async {
     final store = InMemoryDeviceStore();

@@ -208,6 +208,23 @@ class TallyStore {
     return out;
   }
 
+  /// Content fingerprint for live-update deltas (prof roster tick): every
+  /// visible row field (wins, faceFlag, late, name, roll) folded into one
+  /// comparable string. Count-only ticks miss in-place flips
+  /// (unverified→verified clears faceFlag with no count move), so the
+  /// host compares this instead. Pure, O(rows).
+  String get contentFingerprint {
+    final keys = _rows.keys.toList()..sort();
+    final sb = StringBuffer();
+    for (final k in keys) {
+      final r = _rows[k]!;
+      final wins = r.wins.toList()..sort();
+      sb.write('$k|${wins.join(',')}|${r.faceFlag ? 1 : 0}|'
+          '${r.late ? 1 : 0}|${r.name}|${r.roll};');
+    }
+    return sb.toString();
+  }
+
   List<AttendanceRecord> search(String query) {
     final q = query.toLowerCase();
     return _rows.values
