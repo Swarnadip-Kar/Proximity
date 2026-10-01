@@ -335,14 +335,17 @@ void main() {
       expect(container.read(linkedIdentityProvider), isNull);
     });
 
-    testWidgets('non-cancel throw degrades to empty (setup owns it)',
+    testWidgets('non-cancel throw aborts (unknown, never unenrolled)',
         (t) async {
+      // Fail-safe direction: a transient read failure is not a proven
+      // absence — the shell aborts the resolve (no push, retry later)
+      // instead of pushing setup over possibly-existing data.
       final store = _ThrowingStore(StateError('disk full'));
       final container = _container(store: store, account: acct);
       addTearDown(container.dispose);
       final ref = await _pumpRef(t, container);
 
-      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.empty);
+      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.error);
       expect(container.read(linkedIdentityProvider), isNull);
     });
   });

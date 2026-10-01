@@ -136,12 +136,16 @@ Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
 /// `dismissed` means the user cancelled the biometric prompt — stay
 /// locked on Accounts with retry (locked-tab taps re-resolve), never
 /// auto-push setup for an enrolled user who just declined to unlock.
-enum UnlockOutcome { linked, empty, dismissed }
+/// `error` means the store read itself failed (transient I/O, unknown
+/// platform error — NOT a proven absence): the caller must abort the
+/// resolve (no push, no park change) and retry later. Unknown is never
+/// unenrolled.
+enum UnlockOutcome { linked, empty, dismissed, error }
 
 /// Best-effort prompt-dismissal detector (Android BiometricPrompt
 /// cancel/back, iOS LAErrorUserCancel): message-based like every other
-/// platform-error matcher here. A missed cancel degrades to `empty`
-/// (setup push), never to a false link — fail-safe direction.
+/// platform-error matcher here. A missed cancel degrades to `error`
+/// (abort + retry), never to a false link — fail-safe direction.
 bool isUnlockDismissal(Object e) {
   final s = '$e'.toLowerCase();
   return s.contains('canceled') ||
@@ -179,7 +183,11 @@ Future<UnlockOutcome> attemptUnlockIdentity(
       return UnlockOutcome.dismissed;
     } catch (e) {
       if (isUnlockDismissal(e)) return UnlockOutcome.dismissed;
-      stored = null;
+      // Transient/unknown read failure: NOT a proven absence — the
+      // caller aborts instead of pushing setup over possibly-existing
+      // data (fail-safe direction: retry, never enroll).
+      BleLog.log('STATE', 'entry relink read failed (retry later)');
+      return UnlockOutcome.error;
     }
     if (stored == null) return UnlockOutcome.empty;
     final want = acct.email.toLowerCase();
@@ -196,7 +204,7 @@ Future<UnlockOutcome> attemptUnlockIdentity(
     BleLog.log('STATE', 'entry relink $want');
     return UnlockOutcome.linked;
   } catch (_) {
-    return UnlockOutcome.empty;
+    return UnlockOutcome.error;
   }
 }
 

@@ -801,7 +801,14 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     try {
       outcome = await attemptUnlockIdentity(ref, acct);
     } catch (_) {
-      outcome = UnlockOutcome.empty;
+      outcome = UnlockOutcome.error;
+    }
+    // A transient store failure is unknown, never unenrolled: abort the
+    // resolve (no push, no park change) — the account listener and
+    // locked-tab taps retry.
+    if (outcome == UnlockOutcome.error) {
+      _unlockDismissed = false;
+      return null;
     }
     if (!mounted || gen != _gateGen) return null;
     final freshAcct = _readCurrentAccount();
@@ -1036,9 +1043,35 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         // classic inset layout unchanged.
         extendBody: isMobile,
         body: _ShellEdgeBody(
-          child: Stack(
+          // Dismissed-unlock nudge rides IN FLOW above the tabs (never
+          // overlaid on content): the enrollment exists behind the phone
+          // prompt the user just declined — this names the remedy (unlock,
+          // never re-enroll) with an explicit retry. Locked-tab taps/swipes
+          // re-resolve too. Hidden once unlocked, dismissed via X, or
+          // superseded by a non-dismissed resolve.
+          child: Column(
             children: [
-              PageView(
+              if (_unlockDismissed &&
+                  !_unlockNudgeHidden &&
+                  _tabsLocked)
+                SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm,
+                        ProxSpacing.screenMargin,
+                        ProxSpacing.sm),
+                    child: _UnlockNudge(
+                      onRetry: () =>
+                          unawaited(_refreshEnrollmentState()),
+                      onDismiss: () =>
+                          setState(() => _unlockNudgeHidden = true),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: PageView(
                 // Finger-locked paging (WhatsApp pattern): the page tracks the
                 // finger 1:1 and snaps on release — every tab, centre included
                 // (no gesture-arena fling to lose). [_KeepAlivePage] preserves
@@ -1070,35 +1103,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
                     ),
                 ],
               ),
-              // Dismissed-unlock nudge: the enrollment exists behind the
-              // phone prompt the user just declined — this names the remedy
-              // (unlock, never re-enroll) with an explicit retry. Locked-tab
-              // taps/swipes re-resolve too. Hidden once unlocked, dismissed
-              // via X, or superseded by a non-dismissed resolve.
-              if (_unlockDismissed &&
-                  !_unlockNudgeHidden &&
-                  _tabsLocked)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    bottom: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                          ProxSpacing.screenMargin,
-                          ProxSpacing.sm,
-                          ProxSpacing.screenMargin,
-                          0),
-                      child: _UnlockNudge(
-                        onRetry: () =>
-                            unawaited(_refreshEnrollmentState()),
-                        onDismiss: () => setState(
-                            () => _unlockNudgeHidden = true),
-                      ),
-                    ),
-                  ),
-                ),
+              ),
             ],
           ),
         ),
@@ -1153,6 +1158,10 @@ class _UnlockNudge extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
             ProxSpacing.md, ProxSpacing.sm, ProxSpacing.xs, ProxSpacing.sm),
+        // Uncrowded row: the message wraps to 3 lines instead of
+        // ellipsizing colleagues out, Retry is compact, and the dismiss
+        // X keeps its tap target with zero extra padding — nothing clips
+        // on 360dp screens.
         child: Row(
           children: [
             Icon(Icons.lock_outline,
@@ -1162,17 +1171,23 @@ class _UnlockNudge extends StatelessWidget {
               child: Text(
                 'Unlock to continue — approve the phone prompt.',
                 style: ProxType.body(color: c.contentPrimary),
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             TextButton(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: ProxSpacing.sm),
+              ),
               onPressed: onRetry,
               child: const Text('Retry'),
             ),
             IconButton(
               tooltip: 'Dismiss',
               iconSize: 20,
+              padding: EdgeInsets.zero,
               constraints: const BoxConstraints(
                 minWidth: ProxSpacing.minTap,
                 minHeight: ProxSpacing.minTap,
