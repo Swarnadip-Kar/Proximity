@@ -25,6 +25,8 @@ import 'package:permission_handler/permission_handler.dart';
 import '../core/platformx.dart';
 import '../design/tokens.dart';
 import '../features/face_identity/face_blocked.dart';
+import '../features/face_identity/face_verifier.dart';
+import '../features/face_identity/liveness_gate.dart';
 import '../features/setup/enroll_capture_sections.dart'
     show displayedPreviewAspect;
 import '../routes.dart';
@@ -317,6 +319,17 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
   }
 
   Future<void> _startInner() async {
+    // Prewarm the face + liveness models while the permission sheet,
+    // camera init, and holder positioning run (idempotent singleton
+    // loads; failures retry on first use — never throws out of open).
+    unawaited(Future(() async {
+      try {
+        await ref.read(faceVerifierProvider).init();
+      } catch (_) {}
+      try {
+        HeuristicLivenessGate.prewarm();
+      } catch (_) {}
+    }));
     final perm = await Permission.camera.request();
     if (_done) return;
     if (!perm.isGranted) {
