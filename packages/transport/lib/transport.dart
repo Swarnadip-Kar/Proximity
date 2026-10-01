@@ -12,3 +12,4 @@ export 'src/server.dart' if (dart.library.html) 'src/server_stub.dart';
 export 'src/client.dart' if (dart.library.html) 'src/client_stub.dart';
 export 'src/discovery.dart' if (dart.library.html) 'src/discovery_stub.dart';
 export 'src/transport_core.dart';
+export 'src/verify_worker.dart';

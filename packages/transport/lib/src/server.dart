@@ -46,6 +46,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import 'live_room.dart';
 import 'tls.dart';
+import 'verify_worker.dart';
 
 export 'live_room.dart';
 
@@ -176,6 +177,12 @@ class ProxServer {
   }
   final RateLimiter _proveLimits = proveLimiter();
   final RateLimiter _windowLimits = windowLimiter();
+
+  /// Warm crypto worker for the verify burst: Ed25519 + P-256 math leaves
+  /// the UI isolate on low-end professor phones. Lazy-spawned on the
+  /// first prove, reused per session; every failure falls back to the
+  /// synchronous path below (same verdicts). Killed in [stop].
+  final VerifyWorker _verifyWorker = VerifyWorker();
 
   /// C1 TOFU pins (professor pre-fetch at online setup): emailLower →
   /// lowercased pkS hex first seen while online. Empty = pure TOFU (no
@@ -421,6 +428,7 @@ class ProxServer {
   Future<void> stop() async {
     await _http?.close(force: true);
     _http = null;
+    _verifyWorker.dispose();
   }
 
   /// M5 per-ID+IP limiter (10/10s per email+IP): bounds one device
@@ -685,6 +693,74 @@ class ProxServer {
       if (prev2 != null) ...prev2,
       if (prev3 != null) ...prev3,
     });
+  }
+
+  /// Off-thread dSig gate + verifyProve via [_verifyWorker], mirroring
+  /// [runVerify]'s inputs exactly (same scalars the closure assembles).
+  /// Throws on any worker failure so the caller falls back to sync.
+  Future<VerifyOutcome> _proveCryptoWorker({
+    required String id,
+    required Uint8List wid,
+    required int j,
+    required Uint8List cClaimed,
+    required Uint8List sigS,
+    required bool bound,
+    required Uint8List ticket,
+    required double ticketScore,
+    required int ticketStampMs,
+    required double faceScore,
+    required Uint8List peerW,
+    required RadioSighting? sight,
+    required DateTime now,
+    required String verifierVer,
+    required Uint8List pkD,
+    required Uint8List dSig,
+    required String integrityHash,
+    required double livenessScore,
+    required String livenessVer,
+    required String attLevelRaw,
+    required DateTime attUntil,
+    required Uint8List presentedPk,
+    required Uint8List expectedCj,
+    required WindowParams w,
+    required bool singleUseOk,
+  }) async {
+    final res = await _verifyWorker.proveCrypto(<String, Object?>{
+      'id': id,
+      'windowId': wid,
+      'j': j,
+      'cClaimed': cClaimed,
+      'sigS': sigS,
+      'bound': bound,
+      'ticket': ticket,
+      'ticketScore': ticketScore,
+      'ticketStampMs': ticketStampMs,
+      'faceScore': faceScore,
+      'peerW': peerW,
+      'rssiDbm': sight?.rssiDbm ?? -127,
+      'relayHop': sight?.hop ?? 99,
+      'nowMillis': now.millisecondsSinceEpoch,
+      'verifierVer': verifierVer,
+      'pkD': pkD,
+      'dSig': dSig,
+      'integrityHash': integrityHash,
+      'livenessScore': livenessScore,
+      'livenessVer': livenessVer,
+      'attLevel': attLevelRaw,
+      'attUntilMillis': attUntil.millisecondsSinceEpoch,
+      'presentedPk': presentedPk,
+      'expectedCj': expectedCj,
+      'sessionId': w.sessionId,
+      'windowIdExpected': w.windowId,
+      'freshWindow': w.isFresh(j, now),
+      'singleUseOk': singleUseOk,
+      'priorScores': List<double>.of(_recentScores),
+      'lastVerifierVer': _lastVerifierVer,
+    });
+    final decision = ProveDecision.values[res['decision'] as int];
+    final reason = res['reason'] as String;
+    final flags = (res['flags'] as List).map((e) => '$e').toList();
+    return VerifyOutcome(decision, reason, flags);
   }
 
   Future<Response> _postProve(Request req) async {
@@ -1002,9 +1078,42 @@ class ProxServer {
       // (ID, j) key would false-reject a new window's same-j prove after a
       // retake (or burn the slot on a stale-window POST that fails
       // window-mismatch below). The clear() in openWindow stays as a belt
-      // over the same-window suspenders.
+      // over the same-window suspenders. Claimed once here (not inside the
+      // worker) so a worker-then-sync fallback can never double-claim.
       final useScope = '$id#${hexEncode(wid)}';
-      var outcome = runVerify(sight, now, singleUse: _once.claim(useScope, j));
+      final singleUse = _once.claim(useScope, j);
+      VerifyOutcome outcome;
+      try {
+        outcome = await _proveCryptoWorker(
+          id: id,
+          wid: wid,
+          j: j,
+          cClaimed: cClaimed,
+          sigS: sigS,
+          bound: bound,
+          ticket: ticket,
+          ticketScore: ticketScore,
+          ticketStampMs: ticketStampMs,
+          faceScore: faceScore,
+          peerW: peerW,
+          sight: sight,
+          now: now,
+          verifierVer: verifierVer,
+          pkD: pkD,
+          dSig: dSig,
+          integrityHash: integrityHash,
+          livenessScore: livenessScore,
+          livenessVer: livenessVer,
+          attLevelRaw: (attMap?['level'] as String? ?? 'NONE'),
+          attUntil: attUntil,
+          presentedPk: presentedPk,
+          expectedCj: expectedCj,
+          w: w,
+          singleUseOk: singleUse,
+        );
+      } catch (_) {
+        outcome = runVerify(sight, now, singleUse: singleUse);
+      }
       // The sighting that actually verified (drives the verify-rule log).
       RadioSighting? verifiedSight = sight;
 
