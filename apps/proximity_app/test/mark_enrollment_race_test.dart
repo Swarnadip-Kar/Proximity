@@ -434,18 +434,18 @@ void main() {
       expect(onstageOf(StudentHomeScreen), findsOneWidget);
 
       // Sign-out (linked cleared by entrySignOut ordering): the shell
-      // parks on Accounts and auto-pushes one flow — no crash, never
-      // bare Mark.
+      // parks on Accounts and pushes NOTHING — an unknown account is
+      // unknown, never unenrolled (auto-pushing here was the phantom
+      // enrollment class: a slow auth restore read as unenrolled). No
+      // crash, never bare Mark; signing back in re-resolves from the
+      // account/identity listeners.
       container.read(linkedIdentityProvider.notifier).state = null;
       auth.switchTo(null);
       await _settle(t, 12);
 
-      expect(find.byType(SetupFlowScreen), findsOneWidget);
-      expect(onstageOf(StudentHomeScreen), findsNothing);
-      await _dismissFlow(t);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      expect(onstageOf(StudentAccountScreen), findsOneWidget);
       expect(onstageOf(StudentHomeScreen), findsNothing);
+      expect(onstageOf(StudentAccountScreen), findsOneWidget);
       expect(t.takeException(), isNull);
     });
   });

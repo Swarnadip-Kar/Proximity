@@ -527,6 +527,14 @@ Future<void> _shellBack(
   ));
 }
 
+/// Shell gate resolve outcome (student shell only): `enrolled` unlocks
+/// and advances, `unenrolled` parks locked and pushes ONE setup flow,
+/// `signedOut` parks locked WITHOUT pushing (account vanished after an
+/// enrolled session — e.g. sign-out), `unknown` aborts silently (stale
+/// generation, transient store failure, or account not known yet —
+/// never push, never park; listeners and locked-tab taps retry).
+enum _GateResolve { enrolled, unenrolled, signedOut, unknown }
+
 /// Student shell: Mark · Courses · Account (§3.1).
 class StudentShell extends ConsumerStatefulWidget {
   const StudentShell({super.key});
@@ -579,6 +587,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// every non-dismissed resolve; locked-tab taps still re-resolve
   /// (re-prompt) as the retry path.
   var _unlockNudgeHidden = false;
+
+  /// Latched on any enrolled resolve: distinguishes sign-out (account
+  /// gone AFTER enrollment — park locked, never push) from a cold-start
+  /// account gap (unknown — do nothing and wait for arrival). Never
+  /// gates the signed-in paths.
+  var _wasEnrolled = false;
 
   @override
   void dispose() {
@@ -774,7 +788,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
   }
 
-  Future<bool?> _resolveCurrentEnrollment(int gen) async {
+  /// Gate resolve outcome: `enrolled` unlocks, `unenrolled` parks +
+  /// pushes setup, `signedOut` parks locked WITHOUT pushing (account
+  /// vanished after enrollment), `unknown` aborts silently (stale
+  /// generation, transient store failure, or account not known yet —
+  /// never push, never park).
+  Future<_GateResolve> _resolveCurrentEnrollment(int gen) async {
     var acct = _readCurrentAccount();
     LinkedIdentity? linked;
     try {
@@ -784,11 +803,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     if (_linkedMatchesAccount(acct, linked)) {
       _unlockDismissed = false;
-      return true;
+      return _GateResolve.enrolled;
     }
     if (acct == null) {
       _unlockDismissed = false;
-      return null;
+      // Signed-out after enrollment parks (never pushes); a cold-start
+      // gap with no history yet simply waits for the account listener.
+      return _wasEnrolled
+          ? _GateResolve.signedOut
+          : _GateResolve.unknown;
     }
     final want = acct.email.trim().toLowerCase();
     // Async gap: the store read + provider touch below may outlive a
@@ -808,9 +831,9 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // locked-tab taps retry.
     if (outcome == UnlockOutcome.error) {
       _unlockDismissed = false;
-      return null;
+      return _GateResolve.unknown;
     }
-    if (!mounted || gen != _gateGen) return null;
+    if (!mounted || gen != _gateGen) return _GateResolve.unknown;
     final freshAcct = _readCurrentAccount();
     LinkedIdentity? freshLinked;
     try {
@@ -819,39 +842,43 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       freshLinked = null;
     }
     final freshWant = freshAcct?.email.trim().toLowerCase() ?? '';
-    if (freshWant != want) return null;
+    if (freshWant != want) return _GateResolve.unknown;
     final matched = _linkedMatchesAccount(freshAcct, freshLinked);
     _unlockDismissed = !matched && outcome == UnlockOutcome.dismissed;
     if (!_unlockDismissed) _unlockNudgeHidden = false;
-    return matched;
+    return matched ? _GateResolve.enrolled : _GateResolve.unenrolled;
   }
 
   /// First-frame resolve: the shell mounts on Accounts (index 2). An
   /// enrolled current account advances to Mark once proven; anything else
   /// stays on Accounts with Mark/Courses locked and auto-pushes the setup
-  /// flow (single-flight). Generation-guarded so a switch racing mount
-  /// cannot land the wrong tab or push a stale flow.
+  /// flow (single-flight) — except sign-out (park, no push) and unknown
+  /// (do nothing). Generation-guarded so a switch racing mount cannot
+  /// land the wrong tab or push a stale flow.
   Future<void> _initialResolve() async {
     if (!mounted) return;
     final gen = ++_gateGen;
     final resolved = await _resolveCurrentEnrollment(gen);
     if (!mounted || gen != _gateGen) return;
-    if (resolved == null) return;
+    if (resolved == _GateResolve.unknown) return;
     _applyResolved(resolved, gen);
   }
 
   /// Applies a resolve result: unlocks + advances to Mark on enrolled,
-  /// locks + parks on Accounts and auto-pushes ONE SetupFlowScreen when
-  /// not. The Mark advance fires only on the locked → unlocked transition
-  /// (or the initial resolve) while sitting on Accounts — an enrolled user
-  /// browsing Accounts is never yanked away. The lock → Accounts move fires
-  /// whenever the current tab is unreachable, so sign-out / unenrolled
-  /// switches can never strand the UI on bare Mark/Courses. Enrolled never
-  /// pushes (the reported original bug stays fixed): the push lives only
-  /// on the unenrolled branch, behind the generation + single-flight
-  /// guards in [_maybePushFlow].
-  void _applyResolved(bool enrolled, int gen) {
+  /// locks + parks on Accounts and auto-pushes ONE SetupFlowScreen on
+  /// unenrolled; signedOut parks locked with NO push (sign-out is not
+  /// unenrollment). The Mark advance fires only on the locked → unlocked
+  /// transition (or the initial resolve) while sitting on Accounts — an
+  /// enrolled user browsing Accounts is never yanked away. The lock →
+  /// Accounts move fires whenever the current tab is unreachable, so
+  /// sign-out / unenrolled switches can never strand the UI on bare
+  /// Mark/Courses. Enrolled never pushes (the reported original bug stays
+  /// fixed): the push lives only on the unenrolled branch, behind the
+  /// generation + single-flight guards in [_maybePushFlow].
+  void _applyResolved(_GateResolve resolved, int gen) {
     if (!mounted || gen != _gateGen) return;
+    final enrolled = resolved == _GateResolve.enrolled;
+    if (enrolled) _wasEnrolled = true;
     if (enrolled) {
       // Advance to Mark only from the Account ROOT: while the auto-pushed
       // flow is open above the shell, the user stays in it to finish
@@ -903,8 +930,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     // Dismissed unlock parks here WITHOUT the setup push: the enrollment
     // exists, the user just declined the prompt — locked-tab taps/swipes
-    // re-resolve (re-prompt) as the retry path.
-    if (!_unlockDismissed) _maybePushFlow(gen);
+    // re-resolve (re-prompt) as the retry path. Signed-out parks the same
+    // way (lock, no push): sign-out is not unenrollment.
+    if (resolved == _GateResolve.unenrolled && !_unlockDismissed) {
+      _maybePushFlow(gen);
+    }
   }
 
   /// Auto-push ONE SetupFlowScreen on the shell ROOT navigator (covers all
@@ -979,7 +1009,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     final gen = ++_gateGen;
     final resolved = await _resolveCurrentEnrollment(gen);
     if (!mounted || gen != _gateGen) return;
-    if (resolved == null) return;
+    if (resolved == _GateResolve.unknown) return;
     _applyResolved(resolved, gen);
   }
 
