@@ -125,6 +125,12 @@ class EnrollCapturePreview extends StatelessWidget {
   /// clears the transparent overlay app bar (composer passes the app-bar
   final double overlayTopInset;
 
+  /// Live head-pose wheels (all null = hidden): the guided target slot +
+  /// latest holder-perspective angles, forwarded to the overlay.
+  final String? targetSlot;
+  final double? liveYaw;
+  final double? livePitch;
+
   const EnrollCapturePreview({
     super.key,
     required this.controller,
@@ -142,6 +148,9 @@ class EnrollCapturePreview extends StatelessWidget {
     this.previewAspectRatio,
     this.overlayTopInset = 0.0,
     this.promptVisible = true,
+    this.targetSlot,
+    this.liveYaw,
+    this.livePitch,
   });
 
   @override
@@ -213,6 +222,9 @@ class EnrollCapturePreview extends StatelessWidget {
           previewAspectRatio: previewAspect,
           topInset: overlayTopInset,
           showStatusLine: promptVisible,
+          poseYaw: liveYaw,
+          posePitch: livePitch,
+          poseTargetSlot: targetSlot,
           // Save-error banner takes the prompt slot inside the overlay
           // (same geometry, zero layout effect on the feed). SafeArea
           // ancestor pinned (notch-aware) with all sides off: the slot is

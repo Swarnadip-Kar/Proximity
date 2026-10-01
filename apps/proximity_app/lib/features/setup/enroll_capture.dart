@@ -223,6 +223,12 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               sweepAngle: reduced ? null : sweepValue,
               saveError: saveError,
               saveMessage: st.message,
+              // Live guidance wheels: the ordered target + latest head
+              // angles ride the overlay; capture verdicts stay in the
+              // driver (wheels never accept, the loop does).
+              targetSlot: targetSlot,
+              liveYaw: liveYaw,
+              livePitch: livePitch,
               // The toast owns the message on error — hide the rotating
               // prompt so the two never stack on small preview areas.
               promptVisible: !saveError,

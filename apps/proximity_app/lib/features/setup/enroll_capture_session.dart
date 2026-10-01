@@ -211,6 +211,22 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   late final List<String?> _paths =
       List<String?>.filled(faceEnrollSlots.length, null);
 
+  /// Guided walk position: index into [EnrollCaptureOrder.order]. Advances
+  /// only on accept (wasted stills never move it). Buckets stay indexed
+  /// by [faceEnrollSlots] — this drives the ask order only.
+  int _orderPos = 0;
+
+  /// Single-slot recapture target (set by [retrySlot] after a slot-naming
+  /// refusal): served before the walk order, cleared on fill. The other
+  /// buckets are kept — never a full rescan.
+  String? _recaptureTarget;
+
+  /// Latest live head angles (holder-perspective degrees) from the most
+  /// recent successful pose read — accepted or wasted. Drives the wheel
+  /// markers; null until the first read lands.
+  double? _liveYaw;
+  double? _livePitch;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -263,18 +279,45 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   EnrollLivenessPlan? _livenessPlan;
 
   int get _doneCount => _paths.where((p) => p != null).length;
-  Set<String> get _filled => {
-        for (var i = 0; i < _paths.length; i++)
-          if (_paths[i] != null) faceEnrollSlots[i],
-      };
 
-  /// Next unfilled slot index — the live head-position target for the small
-  /// oval. Falls back to the last slot once the set is complete (the save
+  /// Next unfilled slot index — the live head-position target for the
+  /// guided walk (recapture first, then walk order, then any straggler).
+  /// Falls back to the last slot once the set is complete (the save
   /// runs, so the overlay is gone a beat later). Pure wiring over the
-  /// driver's own buckets; the loop above never reads it.
+  /// driver's own buckets.
   int get _nextAngle {
-    final at = _paths.indexWhere((p) => p == null);
+    final at = faceEnrollSlots.indexOf(_currentTarget);
     return at == -1 ? _paths.length - 1 : at;
+  }
+
+  /// Slot the loop is currently asking for: an open recapture first,
+  /// then the walk position, then the first still-unfilled bucket as a
+  /// safety net (walk and buckets agree by construction — a recapture is
+  /// the only way they diverge).
+  String get _currentTarget {
+    final recapture = _recaptureTarget;
+    if (recapture != null) return recapture;
+    if (_orderPos < EnrollCaptureOrder.order.length) {
+      return EnrollCaptureOrder.order[_orderPos];
+    }
+    for (var i = 0; i < _paths.length; i++) {
+      if (_paths[i] == null) return faceEnrollSlots[i];
+    }
+    return faceEnrollSlots.last;
+  }
+
+  /// Advances past a filled [slot]: clears a matching recapture, else
+  /// steps the walk order (clamped — the straggler fallback covers any
+  /// overshoot without touching bucket state).
+  void _advanceTarget(String slot) {
+    if (_recaptureTarget == slot) {
+      _recaptureTarget = null;
+      return;
+    }
+    if (_orderPos < EnrollCaptureOrder.order.length &&
+        EnrollCaptureOrder.order[_orderPos] == slot) {
+      _orderPos++;
+    }
   }
 
   Future<void> _openCamera() async {
@@ -350,21 +393,24 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _sweepTimer = null;
   }
 
-  /// The no-tap driver: take a still, read its pose ONCE, opportunistically
-  /// fill ANY matching unfilled bucket — then score vitality on the
-  /// candidate BEFORE accepting it (same per-slot bar enrollFace enforces;
-  /// non-live candidates are discarded silently and the loop continues, so
-  /// the holder never taps Recapture mid-flow). Wasted stills (capture
-  /// errors, unreadable, matching nothing unfilled, failing vitality) are
-  /// SILENT in-UI — BleLog only — and the loop simply takes the next
-  /// still. No target, no eviction: with no dot to steer, every still is
-  /// either progress or a quiet retry. Stops on set-complete (save runs
-  /// once), failure, or dispose — every await re-checks
-  /// [_done]/[_finished].
+  /// The no-tap driver: take a still, read its pose ONCE, and fill the
+  /// CURRENT guided target when the still passes it — then score vitality
+  /// on the candidate BEFORE accepting it (same per-slot bar enrollFace
+  /// enforces; non-live candidates are discarded silently and the loop
+  /// continues, so the holder never taps Recapture mid-flow). Targets walk
+  /// [EnrollCaptureOrder.order] (bottom → centre → top → left → right),
+  /// one angle at a time — never opportunistic: an off-target still is a
+  /// quiet retry, and every successful pose read moves the wheel markers
+  /// (accepted or not) so the holder steers live. Wasted stills (capture
+  /// errors, unreadable, off-target, failing vitality) are SILENT in-UI —
+  /// BleLog only — and the loop simply takes the next still. Stops on
+  /// set-complete (save runs once), failure, or dispose — every await
+  /// re-checks [_done]/[_finished].
   Future<void> _autoLoop() async {
     await Future.delayed(_initialBeat);
     while (!_done && !_finished && !_failed) {
       if (_doneCount == _paths.length) break;
+      final target = _currentTarget;
       final still = await _captureOne();
       if (_done || _finished || _failed) return;
       if (still != null) {
@@ -378,26 +424,34 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
           EnrollLog.face('pose read error (silent, continuing): $e');
         }
         if (_done || _finished) return;
-        final slot = reading == null
-            ? null
-            : EnrollBucketFill.classifyInto(
-                reading.yaw, reading.pitch, reading.roll, _filled);
-        // Fill is the ONLY setState in the loop: progress dots advance,
-        // nothing else on screen ever changes mid-flow (the prompt is
-        // static, the beacon is paint-driven).
-        if (slot != null) {
+        // Wheels ride every successful read (accepted or wasted): the
+        // marker tracks the holder's head live; the band marks the
+        // target. setState per beat is the loop's normal paint cost
+        // (the beacon already repaints far more often).
+        final r = reading;
+        if (r != null && mounted) {
+          setState(() {
+            _liveYaw = r.yaw;
+            _livePitch = r.pitch;
+          });
+        }
+        final pass = r != null &&
+            EnrollPoseWindows.check(
+                    target, r.yaw, r.pitch, r.roll)
+                .ok;
+        if (pass) {
           // Vitality pre-check (auto-magic, 2026-09-13): score liveness
           // BEFORE accepting the bucket, with the SAME per-slot bar the
           // terminal enrollFace enforces (Tl for centre,
           // kEnrollSideLivenessThreshold for the diversity slots). A
           // pose-good but non-live still is discarded silently (file
           // deleted best-effort) and the loop simply takes the next still —
-          // the holder keeps following the prompts, never taps Recapture.
+          // the holder keeps following the wheels, never taps Recapture.
           // Runs only on pose-accepted candidates (never on wasted stills)
           // so the scorer cost lands on ~5 stills per session, not every
           // beat. enrollFace re-scores everything at save anyway (defense
           // in depth — the loop can only ever reject early, never accept).
-          final bar = slot == 'centre'
+          final bar = target == 'centre'
               ? kLivenessThreshold
               : kEnrollSideLivenessThreshold;
           double vitality = -1;
@@ -408,11 +462,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
                 .score;
           } catch (e) {
             EnrollLog.face(
-                'slot $slot vitality unreadable (silent, continuing): $e');
+                'slot $target vitality unreadable (silent, continuing): $e');
           }
           if (_done || _finished) return;
           if (vitality < bar) {
-            EnrollLog.face('slot $slot vitality '
+            EnrollLog.face('slot $target vitality '
                 '${vitality < 0 ? 'unreadable' : vitality.toStringAsFixed(2)} '
                 '< ${bar.toStringAsFixed(2)} (silent, continuing)');
             // Fire-and-forget (never awaited): async dart:io never
@@ -426,16 +480,17 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             // the record names the acknowledged challenge, not the next).
             final walked = _livenessPlan?.current;
             setState(() {
-              _paths[faceEnrollSlots.indexOf(slot)] = still;
+              _paths[faceEnrollSlots.indexOf(target)] = still;
             });
+            _advanceTarget(target);
             _livenessPlan?.acknowledgeFill();
             EnrollLog.face(
-                'bucket $slot filled ($_doneCount/${_paths.length})'
+                'bucket $target filled ($_doneCount/${_paths.length})'
                 ' vitality=${vitality.toStringAsFixed(2)}'
                 '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
           }
         } else {
-          EnrollLog.face('still classified nowhere (silent, continuing)');
+          EnrollLog.face('still off-target $target (silent, continuing)');
         }
       }
       // The save latches [_finished] synchronously at start, so an
@@ -543,6 +598,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// Next unfilled slot index (overlay head-position target).
   int get nextAngle => _nextAngle;
 
+  /// Guided-walk target slot for the wheels overlay (recapture-aware).
+  /// Null-safe by construction — always names a real slot.
+  String get targetSlot => _currentTarget;
+
+  /// Latest live head angles for the wheel markers (null until the first
+  /// successful pose read lands).
+  double? get liveYaw => _liveYaw;
+  double? get livePitch => _livePitch;
+
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
   int get slotTotal => _paths.length;
 
@@ -588,10 +652,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// names the failed slot via [EnrollmentController.lastFailedSlot] and
   /// the message copy already says "recapture just that angle" — this is
   /// the action behind that copy). Clears the refused still (file deleted
-  /// best-effort), unlatches the save, restarts the classify loop; the set
-  /// re-completes and saves again with the fresh still. The other four
-  /// buckets are kept — never a full rescan. No-op for unknown slots,
-  /// mid-save calls, or torn-down sessions.
+  /// best-effort) and parks the slot as the loop's next target (served
+  /// before the walk order); unlatches the save and restarts the classify
+  /// loop. The set re-completes and saves again with the fresh still. The
+  /// other four buckets are kept — never a full rescan. No-op for unknown
+  /// slots, mid-save calls, or torn-down sessions.
   Future<void> retrySlot(String slot) async {
     final i = faceEnrollSlots.indexOf(slot);
     if (i == -1 || _done || _saving) return;
@@ -605,6 +670,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
     EnrollLog.face('slot recapture reopened: $slot (kept $_doneCount/'
         '${_paths.length} buckets)');
+    _recaptureTarget = slot;
     _finished = false;
     if (mounted) setState(() => _saving = false);
     _loopStarted = false;

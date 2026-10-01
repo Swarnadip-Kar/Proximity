@@ -111,8 +111,20 @@ void main() {
       final overlay = _codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       expect(overlay.contains('drawOval('), isTrue);
-      expect(overlay.contains('drawRRect('), isFalse);
-      expect(overlay.contains('RRect.'), isFalse);
+      // RRect exists only inside the guidance wheels (1D yaw/pitch
+      // tracks): the face guide itself stays drawOval — any RRect above
+      // the wheels painter means the oval regressed to a rounded rect.
+      final wheelsAt = overlay.indexOf('void _paintWheelTrack');
+      expect(wheelsAt, isNot(-1));
+      var idx = 0;
+      while (true) {
+        idx = overlay.indexOf('drawRRect(', idx);
+        if (idx == -1) break;
+        expect(idx, greaterThan(wheelsAt),
+            reason: 'RRect outside the wheels painter');
+        idx++;
+      }
+      expect(overlay.contains('RRect.'), isTrue); // wheels rails only
       final still = _codeOf(
           File('lib/screens/face_capture.dart').readAsStringSync());
       expect(still.contains('drawOval('), isTrue);

@@ -49,6 +49,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
+import '../features/face_identity/pose_gate.dart';
 
 /// shown when the caller passes no explicit [CaptureOverlay.statusLine]
 /// (e.g. mark/face at rest). Enroll passes its own frozen prompt
@@ -134,6 +135,19 @@ class CaptureOverlay extends StatefulWidget {
   /// leave null. Generic widget — the overlay never names enroll copy.
   final Widget? errorBanner;
 
+  /// Live head-pose guidance wheels (enroll only — all three default to
+  /// null = hidden, zero change for mark/face and existing tests): when
+  /// [poseTargetSlot] is non-null the painter adds two 1D tracks — a
+  /// vertical pitch rail on the right edge and a horizontal yaw rail
+  /// along the bottom — with the target slot's band highlighted and a
+  /// marker riding the live [poseYaw]/[posePitch] (holder-perspective
+  /// degrees, same convention as the pose windows). Null live values
+  /// hide the marker but keep the band. Pure feedback: capture verdicts
+  /// live in the session driver, never here.
+  final double? poseYaw;
+  final double? posePitch;
+  final String? poseTargetSlot;
+
   const CaptureOverlay({
     super.key,
     required this.progress,
@@ -149,6 +163,9 @@ class CaptureOverlay extends StatefulWidget {
     this.topInset = 0.0,
     this.showStatusLine = true,
     this.errorBanner,
+    this.poseYaw,
+    this.posePitch,
+    this.poseTargetSlot,
   });
 
   /// Default target direction for angle [index] of [total]: spread around
@@ -255,6 +272,24 @@ class CaptureOverlay extends StatefulWidget {
     if (direction == Offset.zero) return -math.pi / 2;
     return math.atan2(direction.dy, direction.dx);
   }
+
+  /// Maps a wheel axis value in [-range, +range] to a 0..1 track fraction
+  /// (clamped). Null/non-finite/range<=0 → null (marker hidden). Pure for
+  /// unit tests.
+  static double? wheelFraction(double? value, double range) {
+    if (value == null || !value.isFinite || range <= 0) return null;
+    return (value / range * 0.5 + 0.5).clamp(0.0, 1.0);
+  }
+
+  /// True when the live axis value sits inside the target band (the
+  /// "aligned" glow state). Nulls never align. Pure for unit tests.
+  static bool wheelInBand(
+          double? live, ({double min, double max})? band) =>
+      live != null &&
+      live.isFinite &&
+      band != null &&
+      live >= band.min &&
+      live <= band.max;
 
   /// Large (progress) oval framing rect: fractions of the preview size.
   /// Kept for test compatibility (geometry helpers stay pure); the painter
@@ -432,6 +467,9 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   tailSpan: tailSpan,
                   dim: _dim,
                   showBeacon: widget.showBeacon,
+                  poseYaw: widget.poseYaw,
+                  posePitch: widget.posePitch,
+                  poseTargetSlot: widget.poseTargetSlot,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -538,6 +576,11 @@ class _CaptureOverlayPainter extends CustomPainter {
   /// Single-shot mode: false hides the comet entirely (static framing oval
   final bool showBeacon;
 
+  /// Live pose wheels (all null = hidden). See [CaptureOverlay.poseYaw].
+  final double? poseYaw;
+  final double? posePitch;
+  final String? poseTargetSlot;
+
   _CaptureOverlayPainter({
     required this.scrim,
     required this.guideRing,
@@ -549,6 +592,9 @@ class _CaptureOverlayPainter extends CustomPainter {
     required this.tailSpan,
     required this.dim,
     this.showBeacon = true,
+    this.poseYaw,
+    this.posePitch,
+    this.poseTargetSlot,
   });
 
   @override
@@ -582,6 +628,14 @@ class _CaptureOverlayPainter extends CustomPainter {
           ),
       );
     }
+    // (2c) Live pose wheels (enroll guided capture only): a vertical
+    // pitch rail on the right edge + a horizontal yaw rail along the
+    // bottom, each with the target slot's band highlighted and a marker
+    // riding the live head angle. Painted under the beacon/prompts (same
+    // CustomPaint, before the comet) and skipped entirely unless a target
+    // slot is set. Direct paint per frame — no animation state, so
+    // reduce-motion is unaffected.
+    _paintWheels(canvas, size, alpha);
     // (2b) ONE glowing COMET travelling on the oval (static at the target
     // under reduce-motion — the angle is resolved in build): bright head
     // dot + halo, with a short fading tail streaming behind it, opposite
@@ -634,5 +688,120 @@ class _CaptureOverlayPainter extends CustomPainter {
       old.beaconColor != beaconColor ||
       old.showBeacon != showBeacon ||
       old.guideRing != guideRing ||
-      old.guideHalo != guideHalo;
+      old.guideHalo != guideHalo ||
+      old.poseYaw != poseYaw ||
+      old.posePitch != posePitch ||
+      old.poseTargetSlot != poseTargetSlot;
+
+  /// Guidance wheels: pitch rail (right edge, +up) + yaw rail (bottom,
+  /// +right). Each draws its track, the target band (when the slot is
+  /// driven by that axis), and the live marker (when a reading exists).
+  /// Aligned bands/markers glow in the signal tone; idle chrome stays
+  /// white-translucent so the video keeps priority.
+  void _paintWheels(Canvas canvas, Size size, double alpha) {
+    final slot = poseTargetSlot;
+    if (slot == null || size.isEmpty) return;
+    final yawBand = EnrollCaptureOrder.yawBand(slot);
+    final pitchBand = EnrollCaptureOrder.pitchBand(slot);
+    final yawLive = poseYaw;
+    final pitchLive = posePitch;
+    final yawAligned =
+        CaptureOverlay.wheelInBand(yawLive, yawBand);
+    final pitchAligned =
+        CaptureOverlay.wheelInBand(pitchLive, pitchBand);
+
+    // Yaw rail: bottom strip, -range left → +range right.
+    final yawRect = Rect.fromLTRB(size.width * 0.15, size.height - 30,
+        size.width * 0.85, size.height - 20);
+    _paintWheelTrack(
+      canvas,
+      yawRect,
+      horizontal: true,
+      range: EnrollCaptureOrder.yawRange,
+      band: yawBand,
+      live: yawLive,
+      aligned: yawAligned,
+      active: yawBand != null,
+      alpha: alpha,
+    );
+    // Pitch rail: right edge, +range top → -range bottom.
+    final pitchRect = Rect.fromLTRB(size.width - 26, size.height * 0.18,
+        size.width - 16, size.height * 0.70);
+    _paintWheelTrack(
+      canvas,
+      pitchRect,
+      horizontal: false,
+      range: EnrollCaptureOrder.pitchRange,
+      band: pitchBand,
+      live: pitchLive,
+      aligned: pitchAligned,
+      active: pitchBand != null,
+      alpha: alpha,
+    );
+  }
+
+  void _paintWheelTrack(
+    Canvas canvas,
+    Rect rail, {
+    required bool horizontal,
+    required double range,
+    required ({double min, double max})? band,
+    required double? live,
+    required bool aligned,
+    required bool active,
+    required double alpha,
+  }) {
+    // Track.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rail, const Radius.circular(5)),
+      Paint()..color = Colors.white.withValues(alpha: 0.28 * alpha),
+    );
+    // Target band (axis-driven slots only).
+    if (band != null) {
+      final a = CaptureOverlay.wheelFraction(band.min, range) ?? 0.0;
+      final b = CaptureOverlay.wheelFraction(band.max, range) ?? 1.0;
+      final Rect bandRect;
+      if (horizontal) {
+        final x0 = rail.left + rail.width * a;
+        final x1 = rail.left + rail.width * b;
+        bandRect = Rect.fromLTRB(x0, rail.top, x1, rail.bottom);
+      } else {
+        // Vertical rails run +range at the top: invert the fractions.
+        final y0 = rail.bottom - rail.height * b;
+        final y1 = rail.bottom - rail.height * a;
+        bandRect = Rect.fromLTRB(rail.left, y0, rail.right, y1);
+      }
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(bandRect, const Radius.circular(5)),
+        Paint()
+          ..color = (aligned ? beaconColor : Colors.white)
+              .withValues(alpha: (aligned ? 0.95 : 0.55) * alpha),
+      );
+    }
+    // Live marker.
+    final f = CaptureOverlay.wheelFraction(live, range);
+    if (f == null) return;
+    final Offset at;
+    if (horizontal) {
+      at = Offset(rail.left + rail.width * f, rail.center.dy);
+    } else {
+      at = Offset(rail.center.dx, rail.bottom - rail.height * f);
+    }
+    if (aligned) {
+      canvas.drawCircle(
+        at,
+        10,
+        Paint()
+          ..color = beaconColor.withValues(alpha: 0.35 * alpha)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+      );
+    }
+    canvas.drawCircle(
+      at,
+      6,
+      Paint()
+        ..color = (aligned ? beaconColor : Colors.white)
+            .withValues(alpha: (active ? 0.95 : 0.60) * alpha),
+    );
+  }
 }

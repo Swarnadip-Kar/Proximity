@@ -293,6 +293,54 @@ void main() {
     });
   });
 
+  group('guided walk order + wheel bands (pure, no native calls)', () {
+    test('walk order is bottom, centre, top, left, right', () {
+      expect(EnrollCaptureOrder.order,
+          ['down', 'centre', 'up', 'left', 'right']);
+      expect(EnrollCaptureOrder.order.toSet(), faceEnrollSlots.toSet());
+    });
+
+    test('bands match the pose windows per axis', () {
+      // Centre: symmetric tight window on both axes.
+      expect(EnrollCaptureOrder.pitchBand('centre')?.min, -12.0);
+      expect(EnrollCaptureOrder.pitchBand('centre')?.max, 12.0);
+      expect(EnrollCaptureOrder.yawBand('centre')?.min, -12.0);
+      expect(EnrollCaptureOrder.yawBand('centre')?.max, 12.0);
+      // Sides: yaw-only (pitch wheel shows the marker, no band).
+      expect(EnrollCaptureOrder.yawBand('left')?.min, -35.0);
+      expect(EnrollCaptureOrder.yawBand('left')?.max, -8.0);
+      expect(EnrollCaptureOrder.yawBand('right')?.min, 8.0);
+      expect(EnrollCaptureOrder.yawBand('right')?.max, 35.0);
+      expect(EnrollCaptureOrder.pitchBand('left'), isNull);
+      expect(EnrollCaptureOrder.pitchBand('right'), isNull);
+      // Tilts: pitch-only.
+      expect(EnrollCaptureOrder.pitchBand('up')?.min, 8.0);
+      expect(EnrollCaptureOrder.pitchBand('up')?.max, 30.0);
+      expect(EnrollCaptureOrder.pitchBand('down')?.min, -30.0);
+      expect(EnrollCaptureOrder.pitchBand('down')?.max, -8.0);
+      expect(EnrollCaptureOrder.yawBand('up'), isNull);
+      expect(EnrollCaptureOrder.yawBand('down'), isNull);
+      expect(EnrollCaptureOrder.pitchBand('nope'), isNull);
+    });
+
+    test('wheel fraction maps and clamps; in-band is exact', () {
+      expect(CaptureOverlay.wheelFraction(null, 35), isNull);
+      expect(CaptureOverlay.wheelFraction(double.nan, 35), isNull);
+      expect(CaptureOverlay.wheelFraction(0, 35), 0.5);
+      expect(CaptureOverlay.wheelFraction(-35, 35), 0.0);
+      expect(CaptureOverlay.wheelFraction(35, 35), 1.0);
+      expect(CaptureOverlay.wheelFraction(-99, 35), 0.0);
+      expect(CaptureOverlay.wheelFraction(99, 35), 1.0);
+      final down = EnrollCaptureOrder.pitchBand('down')!;
+      expect(CaptureOverlay.wheelInBand(-15, down), isTrue);
+      expect(CaptureOverlay.wheelInBand(-8, down), isTrue);
+      expect(CaptureOverlay.wheelInBand(-30, down), isTrue);
+      expect(CaptureOverlay.wheelInBand(0, down), isFalse);
+      expect(CaptureOverlay.wheelInBand(null, down), isFalse);
+      expect(CaptureOverlay.wheelInBand(-15, null), isFalse);
+    });
+  });
+
   group('preview parity with the 5186c65 original', () {
     // BREAKUP 2026-09-10 (see INTEGRATION_LOG.md `## Enroll capture
     // breakup`, hardened in `## Capture preview fidelity`): the monolith
@@ -675,10 +723,19 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('no taps: buckets fill in gate order, one camera open',
+    testWidgets('no taps: buckets fill in walk order, one camera open',
         (t) async {
       final camera = FakeEnrollSessionCamera();
-      final gate = FakePoseGate();
+      // Guided walk order (bottom → centre → top → left → right): script
+      // the gate to serve exactly the asked angle per beat, so each of
+      // the 5 reads fills one bucket with zero wasted stills.
+      final gate = FakePoseGate(readings: const [
+        PoseReading(yaw: 0, pitch: -15, roll: 0), // down
+        PoseReading(yaw: 0, pitch: 0, roll: 0), // centre
+        PoseReading(yaw: 0, pitch: 15, roll: 0), // up
+        PoseReading(yaw: -20, pitch: 0, roll: 0), // left
+        PoseReading(yaw: 20, pitch: 0, roll: 0), // right
+      ]);
       final ctl = await _keyReady();
       await t.pumpWidget(
           _captureHarness(ctl: ctl, camera: camera, gate: gate));
@@ -689,7 +746,7 @@ void main() {
       await t.pumpAndSettle();
       expect(camera.openCount, 1);
       expect(camera.closeCount, 0);
-      // One pose read per still, nothing else touched the gate.
+      // One pose read per still in walk order, nothing else touched.
       expect(gate.readCalls, hasLength(5));
       expect(t.takeException(), isNull);
     });
@@ -839,10 +896,10 @@ void main() {
 
     testWidgets('alternating classifications keep one static prompt',
         (t) async {
-      // Stills arrive left/right while centre is missing: buckets fill
-      // opportunistically, but the single prompt never changes and no
-      // other instructional text ever appears — per-frame output steers
-      // nothing user-facing.
+      // Stills arrive left/right while the walk asks bottom first: the
+      // off-target stills are quiet retries, but the single prompt never
+      // changes and no other instructional text ever appears — per-frame
+      // output steers nothing user-facing.
       const left = PoseReading(yaw: -20, pitch: 0, roll: 0);
       const right = PoseReading(yaw: 20, pitch: 0, roll: 0);
       final gate = FakePoseGate(readings: [left, right]);
@@ -852,19 +909,20 @@ void main() {
       await t.pumpWidget(_captureHarness(
           ctl: ctl, gate: gate, camera: camera));
       await _openSession(t);
-      // Two buckets filled by "wrong"-order stills — prompt unchanged,
-      // gallery untouched until the terminal write. Fixed pump past the
-      // first beats (progress now rides the large oval arc, which carries
-      // no semantics label — any partial state proves the mid-flow point).
+      // Off-target stills fill nothing — prompt unchanged, gallery
+      // untouched until the terminal write. Fixed pump past the first
+      // beats (progress now rides the large oval arc, which carries no
+      // semantics label — any partial state proves the mid-flow point).
       await t.pump(const Duration(milliseconds: 1500));
       expect(find.text(enrollCapturePrompt), findsOneWidget);
       expect(find.textContaining('Turn'), findsNothing);
       expect(find.textContaining('Look straight'), findsNothing);
       expect(verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
-      // The session still completes (centre fills from the cycle next).
+      // The session still completes once the walk's angles arrive (the
+      // default gate cycles the canonical views after the script).
       await _pumpUntil(t, find.text('Save enrollment'));
       await t.pumpAndSettle();
-      expect(camera.captures, 7);
+      expect(camera.captures, 15);
       expect(t.takeException(), isNull);
     });
 
@@ -879,10 +937,12 @@ void main() {
       await t.pump(const Duration(milliseconds: 800));
       expect(find.textContaining('blank'), findsNothing);
       expect(find.byType(EnrollNotice), findsNothing);
-      // One wasted still, then the session completes on its own.
+      // One wasted still, then the session completes on its own (the
+      // guided walk takes 13 reads against the cycling default gate:
+      // down needs the 5th view, then centre, up, left, right land).
       await _pumpUntil(t, find.text('Save enrollment'));
       await t.pumpAndSettle();
-      expect(camera.captures, 6);
+      expect(camera.captures, 14);
       expect(t.takeException(), isNull);
     });
 

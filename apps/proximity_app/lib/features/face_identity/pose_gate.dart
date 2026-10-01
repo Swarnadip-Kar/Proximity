@@ -196,6 +196,75 @@ abstract final class EnrollBucketFill {
   }
 }
 
+/// Fixed capture order + live guidance bands for the guided enrollment
+/// session (pure, no native calls).
+///
+/// The session walks [order] — bottom → centre → top → left → right —
+/// asking for exactly one angle at a time (never opportunistic):
+/// a still fills its bucket only when it passes the target slot's
+/// [EnrollPoseWindows] check. Buckets stay keyed by [faceEnrollSlots]
+/// for the terminal gallery write; this only drives the ask order.
+///
+/// The wheels UI reads the bands below: the pitch wheel highlights
+/// [pitchBand] for pitch-driven slots (centre/up/down), the yaw wheel
+/// highlights [yawBand] for yaw-driven slots (centre/left/right), and
+/// the live marker rides the current head angle on both. Null band =
+/// that wheel shows the marker only (dimmed, no target).
+abstract final class EnrollCaptureOrder {
+  /// Guided walk order (slot names from [faceEnrollSlots]).
+  static const List<String> order = ['down', 'centre', 'up', 'left', 'right'];
+
+  /// Full wheel-track ranges (degrees, symmetric).
+  static const double pitchRange = 30.0;
+  static const double yawRange = 35.0;
+
+  /// Live pitch band the holder must sit inside for [slot].
+  static ({double min, double max})? pitchBand(String slot) {
+    switch (slot) {
+      case 'centre':
+        return (
+          min: -EnrollPoseWindows.centreDeg,
+          max: EnrollPoseWindows.centreDeg
+        );
+      case 'up':
+        return (
+          min: EnrollPoseWindows.tiltMinDeg,
+          max: EnrollPoseWindows.tiltMaxDeg
+        );
+      case 'down':
+        return (
+          min: -EnrollPoseWindows.tiltMaxDeg,
+          max: -EnrollPoseWindows.tiltMinDeg
+        );
+      default:
+        return null;
+    }
+  }
+
+  /// Live yaw band the holder must sit inside for [slot].
+  static ({double min, double max})? yawBand(String slot) {
+    switch (slot) {
+      case 'centre':
+        return (
+          min: -EnrollPoseWindows.centreDeg,
+          max: EnrollPoseWindows.centreDeg
+        );
+      case 'left':
+        return (
+          min: -EnrollPoseWindows.sideMaxDeg,
+          max: -EnrollPoseWindows.sideMinDeg
+        );
+      case 'right':
+        return (
+          min: EnrollPoseWindows.sideMinDeg,
+          max: EnrollPoseWindows.sideMaxDeg
+        );
+      default:
+        return null;
+    }
+  }
+}
+
 /// Test-only fake: scripted raw pose readings (shifted in order); when
 /// exhausted it cycles the five canonical bucket views, so an unscripted
 /// fake still drives a full session to completion deterministically.
