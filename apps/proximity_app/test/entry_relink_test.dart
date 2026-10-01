@@ -320,6 +320,21 @@ void main() {
       expect(container.read(linkedIdentityProvider), isNull);
     });
 
+    testWidgets('typed dismissal (locked store, data unknown) parks',
+        (t) async {
+      // Secure-backend contract: back-press with nothing proven throws
+      // SecureStoreDismissed (NOT null) so a dismissal can never read as
+      // "unenrolled" and push the enrollment flow.
+      final store = _DismissingStore();
+      final container = _container(store: store, account: acct);
+      addTearDown(container.dispose);
+      final ref = await _pumpRef(t, container);
+
+      expect(
+          await attemptUnlockIdentity(ref, acct), UnlockOutcome.dismissed);
+      expect(container.read(linkedIdentityProvider), isNull);
+    });
+
     testWidgets('non-cancel throw degrades to empty (setup owns it)',
         (t) async {
       final store = _ThrowingStore(StateError('disk full'));
@@ -510,4 +525,12 @@ class _ThrowingStore extends InMemoryDeviceStore {
 
   @override
   Future<StoredEnrollment?> readEnrollment() async => throw error;
+}
+
+/// Secure-backend dismissal: back-press with nothing proven throws the
+/// typed dismissal (never null) — the shell must park, not push enroll.
+class _DismissingStore extends InMemoryDeviceStore {
+  @override
+  Future<StoredEnrollment?> readEnrollment() async =>
+      throw const SecureStoreDismissed();
 }

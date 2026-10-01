@@ -196,7 +196,15 @@ class SecureDeviceStore implements DeviceStore {
   Future<StoredEnrollment?> readEnrollment() async {
     if (_enrollmentLoaded) return _enrollmentCache;
     final now = DateTime.now().toUtc();
-    if (_inSecureCooldown(now)) return _enrollmentCache;
+    // Recent auth failure with nothing proven: stay dismissed WITHOUT
+    // re-prompting (anti-hammer) and WITHOUT misreporting empty — the
+    // caller (unlock resolve) parks locked with retry instead of pushing
+    // the enrollment flow for data that may still exist behind the lock.
+    if (_inSecureCooldown(now)) {
+      if (_enrollmentCache != null) return _enrollmentCache;
+      _lastSecureFailAt = now;
+      throw const SecureStoreDismissed();
+    }
     await _ensureTierLoaded();
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
     // a missing enrollment just means "enroll".
@@ -224,8 +232,12 @@ class SecureDeviceStore implements DeviceStore {
       break;
     }
     if (raw == null && sawAuthFailure) {
+      // Both slots refused behind the prompt gate and no proven value can
+      // be served: throw dismissed (data may exist behind the lock — never
+      // report empty here, or the shell pushes enrollment for an enrolled
+      // user who just pressed back). Coolstamp first (anti-hammer).
       _lastSecureFailAt = now;
-      return _enrollmentCache;
+      throw const SecureStoreDismissed();
     }
     if (raw == null) {
       _enrollmentCache = null;
@@ -651,7 +663,16 @@ class SecureDeviceStore implements DeviceStore {
   Future<String?> readInstallId() async {
     if (_installIdLoaded) return _installIdCache;
     final now = DateTime.now().toUtc();
-    if (_inSecureCooldown(now)) return _installIdCache;
+    // Same dismissal law as readEnrollment: a recent auth failure with
+    // nothing proven stays dismissed without re-prompting — and crucially
+    // must NOT resolve to null here, or getOrCreateInstallId mints a
+    // FRESH install over existing data (identity fork: orphaned faceId,
+    // phantom device move).
+    if (_inSecureCooldown(now)) {
+      if (_installIdCache != null) return _installIdCache;
+      _lastSecureFailAt = now;
+      throw const SecureStoreDismissed();
+    }
     await _ensureTierLoaded();
     String? v;
     var sawAuthFailure = false;
@@ -673,7 +694,7 @@ class SecureDeviceStore implements DeviceStore {
     }
     if (v == null && sawAuthFailure) {
       _lastSecureFailAt = now;
-      return _installIdCache;
+      throw const SecureStoreDismissed();
     }
     _installIdCache = v;
     _installIdLoaded = true;

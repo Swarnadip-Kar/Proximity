@@ -352,7 +352,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
 
   Future<void> _tryRestore(SignedAccount acct) async {
     final email = acct.email.toLowerCase();
-    final stored = await _store.readEnrollment();
+    StoredEnrollment? stored;
+    try {
+      stored = await _store.readEnrollment();
+    } on SecureStoreDismissed {
+      // Dismissed prompt: proceed as if nothing was found (today's null
+      // path) — the unlock-owning callers (shell resolve, entry gate)
+      // observe the dismissal separately and park with retry.
+      return;
+    } catch (_) {
+      stored = null;
+    }
     if (stored == null || stored.email.toLowerCase() != email) return;
     try {
       // Sealed path (production): unwrap needs THIS device's DKey — a

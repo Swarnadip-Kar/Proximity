@@ -676,6 +676,11 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
       _cachedInstallId = existing;
       return existing;
     }
+  } on SecureStoreDismissed {
+    // Dismissed prompt: the id may exist behind the lock — minting a fresh
+    // one here would fork the device identity (phantom move, orphaned
+    // faceId). Propagate so callers park instead.
+    rethrow;
   } catch (_) {}
   final id = newInstallId();
   // Durability gate: an id that never persisted must never be cached or

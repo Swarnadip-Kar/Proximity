@@ -172,6 +172,11 @@ Future<UnlockOutcome> attemptUnlockIdentity(
     StoredEnrollment? stored;
     try {
       stored = await ref.read(deviceStoreProvider).readEnrollment();
+    } on SecureStoreDismissed {
+      // Prompt dismissed with nothing proven: park locked with retry —
+      // never misread as unenrolled (that pushes enrollment for data that
+      // exists behind the lock).
+      return UnlockOutcome.dismissed;
     } catch (e) {
       if (isUnlockDismissal(e)) return UnlockOutcome.dismissed;
       stored = null;

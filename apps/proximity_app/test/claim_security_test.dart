@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
+import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/features/face_identity/liveness_gate.dart'
     show kLivenessVer;
 import 'package:proximity_protocol/protocol.dart';
@@ -41,6 +42,21 @@ StudentDeviceDoc dev(
     integrityFlag: integrityFlag,
     deviceId: deviceId,
   );
+}
+
+/// Install store whose biometric gate dismisses: reads throw the typed
+/// dismissal instead of resolving null, so identity minting must abort.
+class _DismissingInstallStore extends InMemoryDeviceStore {
+  bool minted = false;
+
+  @override
+  Future<String?> readInstallId() async =>
+      throw const SecureStoreDismissed();
+
+  @override
+  Future<void> writeInstallId(String id) async {
+    minted = true;
+  }
 }
 
 void main() {
@@ -299,6 +315,21 @@ void main() {
     expect(blob.contains('embedding'), isFalse);
     expect(blob.contains('faceScore'), isFalse);
     expect(doc['faceFlags'], isA<List>());
+  });
+
+  test('dismissed install-id read never mints a forked identity', () async {
+    // Back-press on the biometric prompt must propagate (park with
+    // retry), never mint a fresh installId over data that exists behind
+    // the lock (phantom device move + orphaned faceId).
+    clearInstallIdCacheForTest();
+    final store = _DismissingInstallStore();
+    await expectLater(
+      getOrCreateInstallId(store),
+      throwsA(isA<SecureStoreDismissed>()),
+    );
+    expect(store.minted, isFalse,
+        reason: 'no writeInstallId on a dismissed read');
+    clearInstallIdCacheForTest();
   });
 
   test('evidence helper threads device id (the pre-claim cooldown bug)',

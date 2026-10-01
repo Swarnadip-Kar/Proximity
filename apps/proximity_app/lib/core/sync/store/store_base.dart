@@ -160,7 +160,33 @@ class StoredEnrollment {
   }
 }
 
+/// Thrown by [DeviceStore.readEnrollment] (secure backend only) when the
+/// biometric/prompt gate refused and nothing proven can be served: the
+/// user dismissed the prompt (back/cancel), or the key blob died with a
+/// lock-set change. Distinct from "no enrollment" (null): data may exist
+/// behind the lock, so callers must park/retry — never treat this as
+/// empty and never mint a fresh identity over it.
+///
+/// The message stays user-readable (it surfaces on explicit-action
+/// surfaces like ID edit) and carries the `user_cancel` marker so the
+/// legacy message-based dismissal matchers ([isUnlockDismissal]) catch it
+/// too. Prefer `is SecureStoreDismissed` type checks for new code.
+class SecureStoreDismissed implements Exception {
+  final String message;
+  const SecureStoreDismissed(
+      [this.message =
+          'Secure storage needs unlocking — the fingerprint prompt was dismissed (user_cancel). Unlock and try again.']);
+  @override
+  String toString() => 'SecureStoreDismissed: $message';
+}
+
 abstract class DeviceStore {
+  /// Reads the enrollment doc, or null when none is on file. The secure
+  /// backend may instead throw [SecureStoreDismissed] when the prompt was
+  /// dismissed and no proven value can be served (data may still exist
+  /// behind the lock — NOT the same as empty). Callers that only render
+  /// state treat it like null; callers that decide navigation/identity
+  /// (unlock, install-id minting) must catch it explicitly and park.
   Future<StoredEnrollment?> readEnrollment();
   Future<void> writeEnrollment(StoredEnrollment e);
   Future<void> clearEnrollment();

@@ -567,7 +567,14 @@ class RealHostDriver implements HostDriver {
     _crlRefresh?.cancel();
     _crlRefresh = RevocationCache.schedulePeriodicRefresh(
         hashStore: _store.revocationHashStore);
-    final stored = await _store.readEnrollment();
+    // Advisory-only read (see below): a dismissed prompt must not break
+    // hosting start — degrade to no-chain, exactly like a missing doc.
+    StoredEnrollment? stored;
+    try {
+      stored = await _store.readEnrollment();
+    } catch (_) {
+      stored = null;
+    }
     // Advisory revocation review for the host binding's chain (security §2
     // residual): offline serial-vs-CRL flags, log only — hosting stays
     // offline-capable (fail-open; missing/empty chains keep the existing
