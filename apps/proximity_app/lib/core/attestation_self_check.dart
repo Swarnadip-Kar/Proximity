@@ -18,8 +18,7 @@
 // at marking time.
 library;
 
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:proximity_protocol/protocol.dart';
 
 /// Validity-engine fingerprint, bumped on every change to the date logic
@@ -279,5 +278,75 @@ String attestationSelfCheckCopy(AttestationSelfCheck r) {
     default:
       return 'This phone\u2019s hardware proof doesn\u2019t verify '
           '(${r.reason}). Re-enroll this device, then mark again.';
+  }
+}
+
+/// Isolate entry for [checkAttestationChainIsolate]: single List message
+/// in (isolate-safe primitives only), Map out. Top-level for `compute`.
+Map<String, Object?> _chainCheckMessage(List<Object?> m) {
+  final out = checkAttestationChain(
+    chainHex: (m[0] as List).cast<String>(),
+    attestationLevel: m[1] as String,
+    emailLower: m[2] as String,
+    installId: m[3] as String,
+    pkSHex: m[4] as String,
+    pkDHex: m[5] as String,
+    iosBranch: m[6] as bool,
+  );
+  return <String, Object?>{
+    'ok': out.ok,
+    'reason': out.reason,
+    'flags': out.flags,
+    'rootPrefix': out.rootPrefix,
+    'chainLen': out.chainLen,
+    'debugDetail': out.debugDetail,
+  };
+}
+
+AttestationSelfCheck _checkFromMap(Map<String, Object?> m) =>
+    AttestationSelfCheck(
+      ok: m['ok'] as bool,
+      reason: m['reason'] as String,
+      flags: (m['flags'] as List).cast<String>(),
+      rootPrefix: m['rootPrefix'] as String,
+      chainLen: m['chainLen'] as int,
+      debugDetail: m['debugDetail'] as String,
+    );
+
+/// Off-main-thread [checkAttestationChain] for the prove/enroll hot paths:
+/// the X.509 BigInt math costs hundreds of ms on low-end ARM, and this
+/// check runs on EVERY rotation. Falls back to the synchronous check when
+/// the isolate cannot run (tests, restricted runtimes) — same verdict
+/// either way, never a throw.
+Future<AttestationSelfCheck> checkAttestationChainIsolate({
+  required List<String> chainHex,
+  required String attestationLevel,
+  required String emailLower,
+  required String installId,
+  required String pkSHex,
+  required String pkDHex,
+  bool iosBranch = false,
+}) async {
+  final msg = <Object?>[
+    chainHex,
+    attestationLevel,
+    emailLower,
+    installId,
+    pkSHex,
+    pkDHex,
+    iosBranch,
+  ];
+  try {
+    return _checkFromMap(await compute(_chainCheckMessage, msg));
+  } catch (_) {
+    return checkAttestationChain(
+      chainHex: chainHex,
+      attestationLevel: attestationLevel,
+      emailLower: emailLower,
+      installId: installId,
+      pkSHex: pkSHex,
+      pkDHex: pkDHex,
+      iosBranch: iosBranch,
+    );
   }
 }

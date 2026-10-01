@@ -1150,9 +1150,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // server verdict stays final; this mirrors its gate exactly.
         // HW keys only: Fake/Software keys carry synthetic chains with no
         // verifiable HW attestation (tests + blocked paths) — the server
-        // stays the authority there.
+        // stays the authority there. Off-main-thread (BigInt math).
         if (_deviceKey is HwDeviceKey) {
-          final chainCheck = checkAttestationChain(
+          final chainCheck = await checkAttestationChainIsolate(
             chainHex: chainDERHex,
             attestationLevel: attestationLevelName(_deviceKey.level),
             emailLower: email,

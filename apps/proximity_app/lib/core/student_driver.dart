@@ -1518,8 +1518,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       // The server verdict stays final; this mirrors its gate exactly.
       // HW keys only (see enrollment upload): test/Software keys carry
       // synthetic chains the production gate cannot parse.
+      // Off-main-thread: X.509 BigInt math costs hundreds of ms on
+      // low-end ARM and this runs every rotation.
       if (_deviceKey is HwDeviceKey) {
-        final chainCheck = checkAttestationChain(
+        final chainCheck = await checkAttestationChainIsolate(
           chainHex: chainForProve,
           attestationLevel: stored.attestationLevel,
           emailLower: identity.gmail.toLowerCase(),
