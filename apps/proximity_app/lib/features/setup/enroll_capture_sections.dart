@@ -205,28 +205,45 @@ class EnrollCapturePreview extends StatelessWidget {
     // from a bar box would shrink the guide off the visible feed. The
     // explicit test-seam value is accepted for signature compat and
     // ignored (the seam renders bare, same as the placeholder).
-    // NOTE: [displayedPreviewAspect] stays as the documented helper for
-    // the raw sensor ratio (unit-tested directly); the live path no
-    // longer needs it because cover needs no aspect assumption.
-    // ZERO treatment, full-bleed edition: the live sensor frame COVERS
-    // the Stack (center-cropped at a uniform scale — never squished, no
-    // color treatment, raw feed as the background) instead of letterboxing
+    // Full-bleed raw feed (user-directed edge-to-edge): the sensor frame
+    // COVERS the Stack (center-cropped — never squished, no color
+    // treatment, raw feed as the background) instead of letterboxing
     // with pillar/letter bars. No bars means no gap widths that can ever
     // differ between entries; the overlay derives from the full Stack
     // (aspect null below) so guide/wheels stay aligned with the visible
     // feed by construction. Capture stills are unaffected (takePicture
-    // returns the full sensor frame, never the crop). Null controller
-    // (test fake only, never on-device) renders an undecorated spacer of
-    // the same place in the tree.
-    final surface = preview ??
-        (ctl != null
-            ? _CoverFeed(child: CameraPreview(ctl))
-            : const SizedBox.expand());
+    // returns the full sensor frame, never the crop). Cover uses
+    // explicit box math + OverflowBox centering (see [_CoverFeed]) —
+    // deliberately NO transform anywhere (no FittedBox/Transform): the
+    // platform texture paints exactly as the proven bare path did, only
+    // larger. Null controller (test fake only, never on-device) renders
+    // an undecorated spacer of the same place in the tree.
+    Widget surface;
+    final seam = preview;
+    if (seam != null) {
+      surface = seam;
+    } else if (ctl == null) {
+      surface = const SizedBox.expand();
+    } else {
+      double? ar;
+      try {
+        if (ctl.value.isInitialized) {
+          final a = displayedPreviewAspect(ctl.value);
+          if (a.isFinite && a > 0) ar = a;
+        }
+      } catch (_) {
+        ar = null;
+      }
+      // Unknown ratio (should not happen — the controller gate above
+      // requires initialized): proven bare path, never a garbage box.
+      surface = ar == null
+          ? CameraPreview(ctl)
+          : _CoverFeed(aspectRatio: ar, child: CameraPreview(ctl));
+    }
     // Below-app-bar layout: the Stack starts directly under the opaque
     // bar (no top offset — the old "rides low" Padding died with the
-    // transparent overlay bar). Padding is layout-neutral for the path
-    // pins — no SafeArea, aspect, fit, constraint, or container in the
-    // preview chain.
+    // transparent overlay bar). The preview chain carries no SafeArea,
+    // no fit transform, and no color filter — explicit cover math only.
     return Stack(
       alignment: Alignment.center,
       fit: StackFit.loose,
@@ -279,26 +296,42 @@ class EnrollCapturePreview extends StatelessWidget {
   }
 }
 
-/// Full-bleed camera surface: the native preview COVERS its box
-/// (center-cropped) instead of letterboxing. No aspect assumption
-/// anywhere: the child sizes itself naturally and [BoxFit.cover] applies
-/// a uniform scale — squish is impossible by construction (non-uniform
-/// scales never occur), and no color filter touches the feed. [ClipRect]
-/// crops the bleed (FittedBox never clips by itself).
+/// Full-bleed camera surface: explicit cover box, zero transforms.
+/// [aspectRatio] is the orientation-adjusted sensor ratio
+/// ([displayedPreviewAspect] — the exact size CameraPreview sizes itself
+/// to), so the inner box matches the native frame pixel-for-pixel (no
+/// squish); the outer box is the Stack area; [OverflowBox] centers the
+/// oversized inner box and [ClipRect] crops the bleed. The texture
+/// paints untransformed, exactly as the proven bare path — only larger.
 class _CoverFeed extends StatelessWidget {
+  final double aspectRatio;
   final Widget child;
-  const _CoverFeed({required this.child});
+  const _CoverFeed({required this.aspectRatio, required this.child});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: child,
+    return LayoutBuilder(builder: (context, constraints) {
+      final size = constraints.biggest;
+      // Unbounded (should not happen — the Stack lives in an Expanded):
+      // proven bare path, never a garbage box.
+      if (!size.isFinite) return child;
+      var w = size.width;
+      var h = w / aspectRatio;
+      if (h < size.height) {
+        h = size.height;
+        w = h * aspectRatio;
+      }
+      return ClipRect(
+        child: SizedBox.fromSize(
+          size: size,
+          child: OverflowBox(
+            maxWidth: w,
+            maxHeight: h,
+            child: SizedBox(width: w, height: h, child: child),
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
 

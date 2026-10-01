@@ -269,13 +269,13 @@ void main() {
       final overlay = _codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final combined = sections + face + overlay;
-      // The live frame renders full-bleed raw: uniform-scale cover inside
-      // a ClipRect (squish impossible, no color treatment), no
-      // letterbox/pillar bars and no outer ratio box anywhere on the
-      // preview paths.
-      expect(combined.contains('FittedBox('), isTrue);
-      expect(combined.contains('BoxFit.cover'), isTrue);
+      // The live frame renders full-bleed raw: explicit cover math
+      // (OverflowBox centering inside a ClipRect — uniform scale, zero
+      // transforms, no color treatment), no letterbox/pillar bars and no
+      // outer ratio box anywhere on the preview paths.
+      expect(combined.contains('OverflowBox('), isTrue);
       expect(combined.contains('ClipRect('), isTrue);
+      expect(combined.contains('FittedBox('), isFalse);
       for (final ban in [
         'BoxFit.fill',
         'BoxFit.contain',

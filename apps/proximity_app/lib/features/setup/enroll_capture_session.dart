@@ -364,22 +364,6 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   Future<void> _openCamera() async {
     final cam = _camera;
     if (cam == null) return;
-    // Rescan-after-restart (and the Accounts Re-scan entry): a fresh
-    // controller holds no key (`_keys` null, `pkHex` empty) even though
-    // this device stores one. Restore BEFORE the camera permission prompt
-    // and the key gate below — same-account with loaded keys is a cheap
-    // no-op, a stored key restores here, and a genuinely keyless draft
-    // still refuses honestly. Deferred past initState via an event-queue
-    // hop (Riverpod forbids provider modification inside widget
-    // lifecycles): awaited, so the gate below always reads settled
-    // state. Never throws out of open (fail-soft: the gate below
-    // decides).
-    try {
-      await Future(() => ref
-          .read(enrollmentControllerProvider.notifier)
-          .refreshFromAuth());
-    } catch (_) {}
-    if (_done) return;
     try {
       await cam.open();
     } catch (e) {
@@ -393,6 +377,23 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
       EnrollLog.face('session camera failed to open: $e');
       return;
     }
+    if (_done) return;
+    // Rescan-after-restart (and the Accounts Re-scan entry): a fresh
+    // controller holds no key (`_keys` null, `pkHex` empty) even though
+    // this device stores one. Restore AFTER the camera is up (never
+    // before): a slow secure store — biometric prompt, blackholed token
+    // refresh — must never hold the preview hostage behind the opening
+    // spinner. Same-account with loaded keys is a cheap no-op, a stored
+    // key restores here, and a genuinely keyless draft still refuses
+    // honestly below. Deferred past initState via an event-queue hop
+    // (Riverpod forbids provider modification inside widget lifecycles):
+    // awaited, so the key gate below always reads settled state. Never
+    // throws out of open (fail-soft: the gate below decides).
+    try {
+      await Future(() => ref
+          .read(enrollmentControllerProvider.notifier)
+          .refreshFromAuth());
+    } catch (_) {}
     if (_done) return;
     final ctl = ref.read(enrollmentControllerProvider);
     final locked = ref

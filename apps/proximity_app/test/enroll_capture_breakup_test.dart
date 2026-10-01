@@ -217,17 +217,18 @@ void main() {
           .join('\n');
       final combined = codeOf(sections) + codeOf(screen);
       // Full-bleed raw feed (user-directed edge-to-edge): the sensor frame
-      // COVERS the Stack via FittedBox+cover inside a ClipRect — a uniform
-      // scale by construction, so squish is impossible (non-uniform scales
-      // never occur). No letterbox AspectRatio boxes, no color filter on
-      // the feed, no other fit anywhere.
+      // COVERS the Stack via explicit cover math (OverflowBox centering
+      // inside a ClipRect — uniform scale, zero transforms, no color
+      // filter). No letterbox AspectRatio boxes anywhere.
       expect(combined.contains('LetterboxedPreview'), isFalse);
       expect(combined.contains('AspectRatio('), isFalse);
       expect(combined.contains('CameraPreview('), isTrue);
       expect(combined.contains('StackFit.loose'), isTrue);
-      expect(combined.contains('FittedBox('), isTrue);
-      expect(combined.contains('BoxFit.cover'), isTrue);
+      expect(combined.contains('OverflowBox('), isTrue);
       expect(combined.contains('ClipRect('), isTrue);
+      expect(combined.contains('FittedBox('), isFalse);
+      expect(combined.contains('BoxFit.cover'), isFalse);
+      expect(combined.contains('Transform('), isFalse);
       for (final banned in [
         'BoxFit.fill',
         'BoxFit.contain',
