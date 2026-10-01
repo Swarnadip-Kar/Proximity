@@ -531,7 +531,7 @@ Back rows cannot hear the professor directly. Front-row phones re-advertise what
 - Implementation: Android students relay while browsing/waiting/capturing/
   listening (bitchat-style flood control above), with a 10 s linger after
   first hear; iPhones listen passively (CoreBluetooth limits), as do
-  Android phones under 3 GiB RAM or flagged low-RAM by the OS (one cached
+  Android phones under 4 GiB RAM or flagged low-RAM by the OS (one cached
   `getMemoryInfo` channel read, fail-open to active) — passive devices
   prove over WiFi and never re-air; professors originate only and their
   disarmed steady state logs nothing. The air packet

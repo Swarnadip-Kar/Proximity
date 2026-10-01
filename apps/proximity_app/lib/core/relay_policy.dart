@@ -13,10 +13,10 @@ import 'package:flutter/services.dart';
 import 'platformx.dart';
 
 /// Below this much total RAM an Android phone listens passively instead
-/// of relaying (old-phone storm shelter). 3 GiB: 2 GB devices and the
-/// OS low-RAM tier stay out of the flood; 4 GB+ flagships keep covering
+/// of relaying (old-phone storm shelter). 4 GiB: 2–3 GB devices and the
+/// OS low-RAM tier stay out of the flood; 6 GB+ phones keep covering
 /// back rows. Tunable without a wire change.
-const int kLowRamPassiveBytes = 3 * 1024 * 1024 * 1024;
+const int kLowRamPassiveBytes = 4 * 1024 * 1024 * 1024;
 
 /// Native memory channel (same channel as the hardware-id read — no new
 /// permission, no new plugin). Returns `{totalMemBytes, lowRamDevice}` on
@@ -41,7 +41,7 @@ Future<bool>? _flight;
 /// iOS always (CoreBluetooth foreground-only + displaced mfg data + OS
 /// scan throttling make iPhones poor relays; Android front rows cover —
 /// no native call needed). Android reads one cached channel value:
-/// OS low-RAM flag OR <3 GiB total RAM. Bounded (2 s) and fail-open
+/// OS low-RAM flag OR <4 GiB total RAM. Bounded (2 s) and fail-open
 /// (unreadable → active), resolved once per process.
 Future<bool> shouldRelayPassively() {
   if (isIOS) return Future.value(true);

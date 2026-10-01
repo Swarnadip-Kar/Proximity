@@ -21,15 +21,15 @@ void main() {
           isTrue);
     });
 
-    test('under 3 GiB is passive', () {
+    test('under 4 GiB is passive', () {
       expect(
           passiveForMemory(
               lowRamDevice: false,
-              totalMemBytes: 2 * 1024 * 1024 * 1024),
+              totalMemBytes: 3 * 1024 * 1024 * 1024),
           isTrue);
     });
 
-    test('3 GiB boundary stays active', () {
+    test('4 GiB boundary stays active', () {
       expect(
           passiveForMemory(
               lowRamDevice: false,
