@@ -11,6 +11,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:proximity_storage/storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../features/records/records_isolate.dart'
+    show decodeJsonListIsolate, encodeJsonIsolate;
 import '../../security/revocation_cache.dart' show RevocationHashStore;
 import '../../security/secure_store_options.dart';
 import 'record_helpers.dart';
@@ -311,20 +313,21 @@ class SecureDeviceStore implements DeviceStore {
     final prefs = await _prefs();
     final raw = prefs.getString(_kHistory);
     if (raw == null) return [];
+    // Bulk JSON decode off the main thread (this blob grows unboundedly);
+    // typed mapping stays here with the same corrupt-row skipping.
+    List<Map<String, Object?>> list;
     try {
-      final list = jsonDecode(raw) as List;
-      final out = <ClassRecord>[];
-      for (final e in list) {
-        try {
-          if (e is Map) {
-            out.add(ClassRecord.fromJson(Map<String, dynamic>.from(e)));
-          }
-        } catch (_) {}
-      }
-      return out;
+      list = await decodeJsonListIsolate(raw);
     } catch (_) {
       return [];
     }
+    final out = <ClassRecord>[];
+    for (final e in list) {
+      try {
+        out.add(ClassRecord.fromJson(Map<String, dynamic>.from(e)));
+      } catch (_) {}
+    }
+    return out;
   }
 
   @override
@@ -333,7 +336,7 @@ class SecureDeviceStore implements DeviceStore {
     final cur = await readHistory();
     cur.add(record);
     await prefs.setString(
-        _kHistory, jsonEncode(cur.map((e) => e.toJson()).toList()));
+        _kHistory, await encodeJsonIsolate(cur.map((e) => e.toJson()).toList()));
   }
 
   @override
@@ -432,7 +435,7 @@ class SecureDeviceStore implements DeviceStore {
     ];
     if (touched) {
       await prefs.setString(_kHistory,
-          jsonEncode(migrated.map((e) => e.toJson()).toList()));
+          await encodeJsonIsolate(migrated.map((e) => e.toJson()).toList()));
     }
     final catalog = await readCatalog();
     final ci = catalog.indexOf(oldName);
@@ -572,8 +575,8 @@ class SecureDeviceStore implements DeviceStore {
   @override
   Future<void> writeHistory(List<ClassRecord> records) async {
     final prefs = await _prefs();
-    await prefs.setString(
-        _kHistory, jsonEncode(records.map((e) => e.toJson()).toList()));
+    await prefs.setString(_kHistory,
+        await encodeJsonIsolate(records.map((e) => e.toJson()).toList()));
   }
 
   @override

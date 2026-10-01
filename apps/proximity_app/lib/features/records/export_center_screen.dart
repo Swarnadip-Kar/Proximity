@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+import 'records_isolate.dart' show buildMatrixCsvIsolate;
 
 import '../../core/auth.dart';
 import '../../core/device_store.dart';
@@ -152,7 +153,7 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     if (sel.isEmpty || !mounted) return;
     final acct = ref.read(accountProvider).valueOrNull;
     final csv = withExportHeader(
-      buildDateRangeMatrix(sel),
+      await buildMatrixCsvIsolate(sel),
       profName: (acct?.displayName ?? '').trim(),
       className: widget.courseName,
       profEmail: (acct?.email ?? '').trim(),
@@ -160,6 +161,7 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     final label =
         sel.length == 1 ? _sessionLabel(sel.first) : '${sel.length} sessions';
     BleLog.log('NAV', 'export ${widget.courseName} → selected $label');
+    if (!mounted) return;
     await showCsvPreviewDialog(
       context,
       title: '${widget.courseName} · $label',
@@ -194,7 +196,7 @@ class _ExportCenterScreenState extends ConsumerState<ExportCenterScreen> {
     setState(() => _rangeError = null);
     final acct = ref.read(accountProvider).valueOrNull;
     final csv = withExportHeader(
-      buildDateRangeMatrix(inRange),
+      await buildMatrixCsvIsolate(inRange),
       profName: (acct?.displayName ?? '').trim(),
       className: widget.courseName,
       profEmail: (acct?.email ?? '').trim(),

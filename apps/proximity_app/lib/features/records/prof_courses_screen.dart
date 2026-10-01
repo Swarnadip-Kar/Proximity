@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:archive/archive.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_storage/storage.dart';
+import 'records_isolate.dart' show buildMatrixCsvManyIsolate;
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/auth.dart';
@@ -195,6 +196,9 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
     final profEmail = (acct?.email ?? '').trim();
     final archive = Archive();
     var count = 0;
+    // Session filtering stays here (cheap); every matrix builds in one
+    // isolate hop instead of one spawn per course on the UI thread.
+    final byCourse = <String, List<ClassRecord>>{};
     for (final row in rows) {
       final sessions = history
           .where((r) =>
@@ -203,13 +207,18 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
           .toList()
         ..sort((a, b) => b.timestampIso.compareTo(a.timestampIso));
       if (sessions.isEmpty) continue;
+      byCourse[row.name] = sessions;
+    }
+    if (byCourse.isEmpty || !mounted) return;
+    final matrices = await buildMatrixCsvManyIsolate(byCourse);
+    for (final entry in matrices.entries) {
       final csv = exportHeader(
-        buildDateRangeMatrix(sessions),
+        entry.value,
         profName: profName,
-        className: row.name,
+        className: entry.key,
         profEmail: profEmail,
       );
-      final entryName = exportAllEntryName(row.name);
+      final entryName = exportAllEntryName(entry.key);
       final csvBytes = utf8.encode(csv);
       archive.addFile(ArchiveFile(entryName, csvBytes.length, csvBytes));
       count++;
