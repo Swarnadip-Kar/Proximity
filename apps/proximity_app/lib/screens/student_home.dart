@@ -183,7 +183,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   final Map<String, String> _profVerifyEmailByHost = {};
   // Live round numbers by `host:port` (same gated /window unicast —
   // browse tiles render the under-disc ordinal from these; 0/absent
-  // hides it). Refreshed on every backfill while reachable.
+  // hides it). Holds the CUMULATIVE Class N (prior sessions + in-visit
+  // round — the same number the prof roster header shows), not the raw
+  // round: the server sends `classNo` on open AND idle windows (legacy
+  // hosts fall back to `windowNo`). Refreshed on every backfill while
+  // reachable, even when the host serves no identity (anonymous) — the
+  // round number never depends on the email.
   final Map<String, int> _windowNoByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
@@ -625,13 +630,26 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (!mounted || !probe.reachable) return;
       final email = probe.profEmail.trim().toLowerCase();
       final photo = probe.profPhoto.trim();
+      // Cumulative Class N both sides render (server `classNo` on open +
+      // idle; legacy hosts omit it → raw round). 0 = unknown/fresh with no
+      // history → ordinal hides, exactly like the prof header.
+      final classNo =
+          probe.classNo > 0 ? probe.classNo : probe.windowNo;
       var changed = false;
+      // The round number never depends on identity: update it even when
+      // the host serves NO email (anonymous/legacy) so the ordinal matches
+      // the prof header instead of vanishing.
+      if (_windowNoByHost[key] != classNo) {
+        _windowNoByHost[key] = classNo;
+        changed = true;
+      }
       if (email.isEmpty) {
         // Reachable host serving NO identity (signed-out/anonymous host —
         // sign-out ends hosting, but a lingering server may answer one
         // more poll first): drop any cached identity so tiles stop
         // showing the previous professor's email/photo/verified tag.
-        // Legacy hosts never populate these maps — no-op for them.
+        // Legacy hosts never populate these maps — no-op for them. The
+        // class number above is KEPT (it still identifies the round).
         if (_gatedEmailByHost.remove(key) != null) {
           changed = true;
           BleLog.log(ProxLogTags.lan,
@@ -640,12 +658,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         if (_gatedPhotoByHost.remove(key) != null) changed = true;
         if (_profVerifyByHost.remove(key) != null) changed = true;
         _profVerifyEmailByHost.remove(key);
-        if (_windowNoByHost.remove(key) != null) changed = true;
       } else {
-        if (_windowNoByHost[key] != probe.windowNo) {
-          _windowNoByHost[key] = probe.windowNo;
-          changed = true;
-        }
         if (_gatedEmailByHost[key] != email) {
           _gatedEmailByHost[key] = email;
           changed = true;

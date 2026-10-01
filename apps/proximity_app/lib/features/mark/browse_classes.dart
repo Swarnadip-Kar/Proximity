@@ -89,8 +89,9 @@ class BrowseClassesView extends StatefulWidget {
   /// Absent/'' renders exactly as before.
   final Map<String, String> profVerifyByHost;
 
-  /// Live round numbers by `host:port` (gated /window unicast). Absent/0
-  /// hides the under-disc ordinal (see BrowseTile.classNo).
+  /// Cumulative class numbers by `host:port` (gated /window unicast —
+  /// prior sessions + in-visit round, the same N the prof roster header
+  /// shows). Absent/0 hides the under-disc ordinal (see BrowseTile.classNo).
   final Map<String, int> windowNoByHost;
 
   const BrowseClassesView({

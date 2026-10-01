@@ -102,6 +102,13 @@ class ProxServer {
   /// Mirror of server.dart: gated unicast prof display name, '' = unknown.
   String sessionProfName = '';
 
+  /// Mirror of server.dart: prior-session base for the cumulative Class N
+  /// (web never hosts).
+  int sessionClassBase = 0;
+
+  /// Mirror of server.dart: cumulative class number (web never hosts).
+  int get classNo => _web();
+
   /// Mirror of server.dart: professor eject (web never hosts).
   bool removeStudent(String email) => _web();
 
@@ -135,6 +142,8 @@ class ProxServer {
   Future<void> start({String host = '0.0.0.0', int port = 8443}) => _web();
 
   void openWindow(WindowParams window, int windowNo) => _web();
+
+  void syncWindowNo(int n) => _web();
 
   void closeWindow() => _web();
 

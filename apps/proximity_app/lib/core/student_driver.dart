@@ -130,6 +130,11 @@ class WindowProbe {
   /// same gated /window unicast (the server already sends it on open
   /// windows) — browse tiles render it as the 1st/2nd/… class ordinal.
   final int windowNo;
+  /// Cumulative class number both sides render (prior sessions + in-visit
+  /// round — the prof `Class N` header). The server sends it on open AND
+  /// idle windows; legacy hosts omit it (0 → fall back to [windowNo]).
+  /// Browse tiles render this (not the raw round) so they match the roster.
+  final int classNo;
   final String org; // prof org from gated /window, '' = unstamped host
   /// Hosting professor's Gmail from the GATED /window unicast (matching
   /// or legacy org only; '' = unknown/legacy or gated silence). NEVER from
@@ -159,6 +164,7 @@ class WindowProbe {
       this.waiting = 0,
       this.display = '',
       this.windowNo = 0,
+      this.classNo = 0,
       this.org = '',
       this.profEmail = '',
       this.profPhoto = '',
@@ -640,6 +646,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
           waiting: r.waiting,
           display: r.display,
           windowNo: r.windowNo,
+          classNo: r.classNo,
           org: r.org,
           profEmail: r.profEmail,
           profPhoto: r.profPhoto,

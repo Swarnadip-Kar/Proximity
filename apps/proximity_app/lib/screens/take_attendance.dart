@@ -353,6 +353,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         _historyRoster = roster;
         _priorSessionCount = prior;
       });
+      // Push the cumulative-class base to the live server so the gated
+      // `classNo` students render matches this screen's `Class N` header
+      // (in-visit round + base). Without this the student tile reads the
+      // raw round (R1) while the roster reads R1+base.
+      try {
+        unawaited(ref.read(hostDriverProvider).setClassBase(prior));
+      } catch (_) {}
     } catch (_) {}
   }
 
@@ -694,6 +701,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _bankedElapsed = null;
       _setElapsed(Duration.zero);
     });
+    // The fresh server starts at round 0 while the draft resumes at N —
+    // sync it (restoreTally already syncs the tally max, this covers the
+    // _windowNo rewind) and recount the base with the restored record id
+    // excluded so the gated `classNo` matches the header at once.
+    try {
+      unawaited(ref.read(hostDriverProvider).syncWindowNo(windowNo));
+    } catch (_) {}
+    unawaited(_loadUnion());
     _maybeAutosave();
   }
 
@@ -811,6 +826,9 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     } catch (_) {}
     try {
       ref.read(hostDriverProvider).tally.clear();
+    } catch (_) {}
+    try {
+      unawaited(ref.read(hostDriverProvider).syncWindowNo(0));
     } catch (_) {}
     if (!mounted) return;
     setState(() {
@@ -1122,6 +1140,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         // ensures the dock shows Start (windowNo==0 + !live + hosting).
         live = false;
       });
+      // Rewind the live server too — or idle gated `classNo` keeps reading
+      // the discarded round while the header returns to Start.
+      try {
+        unawaited(ref.read(hostDriverProvider).syncWindowNo(0));
+      } catch (_) {}
+      unawaited(_loadUnion());
       bumpLiveHistoryTick();
       return;
     }
@@ -1135,6 +1159,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // next fresh Start begins at zero.
     _bankedElapsed = null;
     _setElapsed(Duration.zero);
+    // Keep the gated `classNo` in step with the rewind above.
+    try {
+      unawaited(ref.read(hostDriverProvider).syncWindowNo(_windowNo));
+    } catch (_) {}
     await _saveDraft();
     await _saveSnapshot();
     if (mounted) setState(() {});

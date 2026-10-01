@@ -126,6 +126,7 @@ class ProxClient {
         int waiting,
         String display,
         int windowNo,
+        int classNo,
         String org,
         String profEmail,
         String profPhoto,
@@ -153,6 +154,7 @@ class ProxClient {
           waiting: 0,
           display: '',
           windowNo: 0,
+          classNo: 0,
           org: '',
           profEmail: '',
           profPhoto: '',
@@ -168,6 +170,7 @@ class ProxClient {
           waiting: 0,
           display: '',
           windowNo: 0,
+          classNo: 0,
           org: '',
           profEmail: '',
           profPhoto: '',
@@ -175,13 +178,18 @@ class ProxClient {
         );
       }
       final m = jsonDecode(body) as Map<String, dynamic>;
+      final rawWindowNo = (m['windowNo'] as num?)?.toInt() ?? 0;
       return (
         reachable: true,
         windowOpen: (m['windowOpen'] as bool?) ?? false,
         classLabel: (m['class'] as String?) ?? '',
         waiting: (m['waiting'] as num?)?.toInt() ?? 0,
         display: (m['display'] as String?) ?? '',
-        windowNo: (m['windowNo'] as num?)?.toInt() ?? 0,
+        windowNo: rawWindowNo,
+        // Cumulative Class N both sides render (prior sessions + in-visit
+        // round). Legacy hosts omit it → fall back to the raw round so old
+        // tiles read exactly as before.
+        classNo: (m['classNo'] as num?)?.toInt() ?? rawWindowNo,
         org: (m['org'] as String?) ?? '',
         profEmail: ((m['profEmail'] as String?) ?? '').trim().toLowerCase(),
         profPhoto: ((m['profPhoto'] as String?) ?? '').trim(),
@@ -196,6 +204,7 @@ class ProxClient {
         waiting: 0,
         display: '',
         windowNo: 0,
+        classNo: 0,
         org: '',
         profEmail: '',
         profPhoto: '',

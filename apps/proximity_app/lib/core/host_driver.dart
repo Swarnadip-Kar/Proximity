@@ -110,6 +110,18 @@ abstract class HostDriver {
     List<int>? windowNos,
   });
 
+  /// Pushes the cumulative-class base (completed sessions before this
+  /// visit) to the live server so the gated `classNo` students render
+  /// matches the prof `Class N` header (in-visit round + base). 0 keeps
+  /// legacy in-visit numbering. Best-effort when not hosting.
+  Future<void> setClassBase(int base);
+
+  /// Rewinds the server's in-visit round number without touching the tally
+  /// (discard / draft-resume path — the Take host owns both sides, so the
+  /// gated `classNo` must rewind with it or idle students keep reading the
+  /// discarded round). Best-effort when not hosting.
+  Future<void> syncWindowNo(int n);
+
   /// Switches the announced/advertised IP (professor picks the right NIC
   /// when several show up, e.g. VPN vs WiFi). Next beacons use it.
   Future<void> setAnnounceHost(String ip);
@@ -1205,8 +1217,32 @@ class RealHostDriver implements HostDriver {
   }) async {
     _tally.restore(
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
+    // The fresh server starts at round 0 while the draft resumes at N —
+    // sync it so idle gated `classNo` matches the prof header at once
+    // instead of lagging until the next Take-another.
+    try {
+      final nos = _tally.windowNos;
+      if (_server != null && nos.isNotEmpty) {
+        _server!.syncWindowNo(nos.last);
+      }
+    } catch (_) {}
     BleLog.log('SESSION',
         'tally restored: windows ${_tally.windowNos} (${_tally.size} records)');
+  }
+
+  @override
+  Future<void> setClassBase(int base) async {
+    try {
+      final s = _server;
+      if (s != null) s.sessionClassBase = base < 0 ? 0 : base;
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> syncWindowNo(int n) async {
+    try {
+      _server?.syncWindowNo(n);
+    } catch (_) {}
   }
 
   @override
@@ -1489,6 +1525,12 @@ class FakeHostDriver implements HostDriver {
     _tally.restore(
         windows: windows, names: names, rolls: rolls, windowNos: windowNos);
   }
+
+  @override
+  Future<void> setClassBase(int base) async {}
+
+  @override
+  Future<void> syncWindowNo(int n) async {}
 
   /// Test helper: seed manual queue.
   void seedManual(List<ManualRow> rows) {

@@ -88,6 +88,7 @@ class ProxClient {
         int waiting,
         String display,
         int windowNo,
+        int classNo,
         String org,
         String profEmail,
         String profPhoto,

@@ -99,8 +99,10 @@ class BrowseTile extends StatelessWidget {
 
   final VoidCallback onTap;
 
-  /// Live round number for the ordinal under the course disc (0/negative
-  /// = unknown/closed → disc renders exactly as before, no caption).
+  /// Cumulative class number for the ordinal under the course disc
+  /// (prior sessions + in-visit round — the same N the prof roster shows
+  /// as `Class N`). 0/negative = unknown/fresh with no history → disc
+  /// renders exactly as before, no caption.
   final int classNo;
 
   const BrowseTile({

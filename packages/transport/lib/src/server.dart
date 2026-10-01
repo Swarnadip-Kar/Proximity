@@ -277,7 +277,20 @@ class ProxServer {
 
   HttpServer? _http;
   WindowParams? _window;
-  int _windowNo = 1;
+  int _windowNo = 0;
+
+  /// Completed sessions of this course BEFORE this visit (history count,
+  /// pushed by the Take host via [HostDriver.setClassBase]). Added to the
+  /// in-visit round for the cumulative `Class N` header AND the gated
+  /// `classNo` students render under the disc — one number both sides.
+  /// 0 = legacy in-visit numbering (byte-for-byte).
+  int sessionClassBase = 0;
+
+  /// Cumulative class number both sides render: in-visit round + prior
+  /// sessions. Idle fresh (no rounds, no history) is 0 → both sides hide
+  /// the slot; idle after R1 with 9 priors is 10 on both sides.
+  int get classNo =>
+      _windowNo > 0 ? _windowNo + sessionClassBase : sessionClassBase;
   late final WindowTls tls;
   String _bearer = '';
   late final LiveRoom room;
@@ -358,6 +371,14 @@ class ProxServer {
     _seenFaceTickets.clear();
   }
   int get windowNo => _windowNo;
+
+  /// Rewinds the in-visit round number without touching the tally (discard
+  /// / draft-resume path — the Take host owns both sides of the number, so
+  /// the gated `classNo` must rewind with it or idle students keep reading
+  /// the discarded round).
+  void syncWindowNo(int n) {
+    _windowNo = n;
+  }
 
   /// Drops all session vectors from RAM NOW (hosting teardown calls this
   /// explicitly before dropping the server — audit both paths).
@@ -587,6 +608,8 @@ class ProxServer {
         'class': classLabel,
         'windowOpen': false,
         'waiting': waitingCount,
+        'windowNo': _windowNo,
+        'classNo': classNo,
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
@@ -604,6 +627,8 @@ class ProxServer {
         'class': classLabel,
         'windowOpen': false,
         'waiting': waitingCount,
+        'windowNo': _windowNo,
+        'classNo': classNo,
         'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
         'tlsFp': hexEncode(tls.fingerprint),
         'org': sessionOrg,
@@ -680,6 +705,7 @@ class ProxServer {
       'windowID': hexEncode(w.windowId),
       'j_now': j,
       'windowNo': _windowNo,
+      'classNo': classNo,
       'waiting': waitingCount,
       'pkP': hexEncode(profPk.bytes.sublist(0, 32)),
       'sigP': hexEncode(sigP),
