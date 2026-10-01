@@ -138,24 +138,29 @@ Future<void> main() async {
     } catch (_) {}
     firebaseReady = true;
   }
-  // §5 integrity (2C): App Check before the first Firestore read, then the
-  // startup integrity snapshot (cached for the entry gates; sensitive ops
-  // re-probe fresh). Both fail-soft — offline marking never depends on them.
-  if (firebaseReady && !(_useEmulator && kDebugMode)) {
-    try {
-      await IntegrityAppCheck.ensureActivated();
-    } catch (_) {}
-  }
-  try {
-    await IntegrityGate.performCheck();
-  } catch (_) {}
-  // §6 force-update (H6): hydrate the disk-backed version floor BEFORE any
-  // gate runs, so a restart can never forget a floor it already saw (the
-  // pinned-APK restart bypass stays closed even when this launch is fully
-  // offline). Best-effort — a prefs failure degrades to memory-only.
-  try {
-    await ForceUpdate.hydrateCachedFloor();
-  } catch (_) {}
+  // §5 integrity (2C) + §6 floor hydrate in PARALLEL (was sequential:
+  // AppCheck 8s + probe 8s = 16s black screen on slow phones). All
+  // fail-soft — offline marking never depends on them. Worst case now
+  // max(8s) instead of sum.
+  final skipAppCheck = !firebaseReady || (_useEmulator && kDebugMode);
+  await Future.wait([
+    if (!skipAppCheck)
+      (() async {
+        try {
+          await IntegrityAppCheck.ensureActivated();
+        } catch (_) {}
+      })(),
+    (() async {
+      try {
+        await IntegrityGate.performCheck();
+      } catch (_) {}
+    })(),
+    (() async {
+      try {
+        await ForceUpdate.hydrateCachedFloor();
+      } catch (_) {}
+    })(),
+  ]);
   // Linked identity is NOT read here: the enrollment doc lives behind the
   // biometric-gated store, and reading it would pop a system prompt over
   // the splash on every cold start (dismissable, so it never worked as a
@@ -176,12 +181,15 @@ Future<void> main() async {
   // mode's role — never locks the user to a single mode. Offline professors
   // (skipped sign-in) restore by mode.
   String? savedMode;
-  try {
-    savedMode = await store.readMode();
-  } catch (_) {}
   Map<String, String>? cachedRole;
+  // Prefs reads in parallel (was two sequential disk hits on cold start).
   try {
-    cachedRole = await store.readRole();
+    final results = await Future.wait([
+      store.readMode().then((v) => v as Object?).catchError((_) => null),
+      store.readRole().then((v) => v as Object?).catchError((_) => null),
+    ]);
+    savedMode = results[0] as String?;
+    cachedRole = (results[1] as Map?)?.cast<String, String>();
   } catch (_) {}
   final authService = FirebaseAuthService(available: firebaseReady);
   SignedAccount? currentAcct;

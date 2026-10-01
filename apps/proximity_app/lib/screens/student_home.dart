@@ -12,6 +12,7 @@
 // info dumps). Behavior is unchanged from the pre-split screen; only the
 // rendering moved.
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -529,6 +530,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     _bleHintThrottle[key] = now;
     BleLog.log(ProxLogTags.ble, 'IP hint $key — gated probe…');
+    // Herd de-sync: 500 phones hearing the same relayed hint would
+    // otherwise probe the professor HTTPS in lockstep (self-inflicted
+    // 429s + SYN burst on isolating APs). 0-800ms jitter spreads it.
+    try {
+      await Future.delayed(
+          Duration(milliseconds: Random.secure().nextInt(801)));
+    } catch (_) {}
+    if (!mounted) return;
     String missReason = 'unreachable';
     final hit = await probeHost(host, port,
         verboseMisses: true, onMiss: (r) => missReason = r, org: _myOrg());
@@ -1232,15 +1241,25 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       {String? profName, String? org}) async {
     if (!await _checkJoinGates()) return;
     if (!mounted) return;
+    // Optimistic advance: face check paints at once (old path awaited
+    // prewarmRadio before setState, freezing the tap). Prewarm continues
+    // in background and overlaps the camera open.
+    setState(() {
+      joinError = '';
+      phase = StudentPhase.faceCheck;
+      _faceAttempts = 0;
+      _faceMismatchLiveness = false;
+      _resetFaceRetryBudget();
+      if (profName != null) _roomProf = profName.trim();
+      if (org != null) _roomOrg = org.trim();
+    });
+    // First back press from here returns to the class list (entry held
+    // once per join; re-entry from waiting is a null-guarded no-op).
+    _pushInnerBackEntry();
+    unawaited(ref.read(studentDriverProvider).prewarmRadio().catchError((_) {}));
+    if (!mounted) return;
     // NOTE: unknown/unavailable stacks proceed; real radio errors surface
     // from the scan/prove operations themselves (Bug 1).
-    // Pre-warm scanning only (no challenge wait yet — it is armed after
-    // the face passes, so tests ending at faceCheck stay timer-clean and a
-    // pre-face token can never leak into the proof).
-    try {
-      await ref.read(studentDriverProvider).prewarmRadio();
-    } catch (_) {}
-    if (!mounted) return;
     // The prewarm gap may have outlived an account switch/sign-out: resolve
     // the CURRENT identity again and refuse rather than entering face check
     // with a stale/missing identity.
@@ -1254,18 +1273,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     BleLog.log(ProxLogTags.nav,
         'live window for ${target.host}:${target.port} → face check');
-    setState(() {
-      joinError = '';
-      phase = StudentPhase.faceCheck;
-      _faceAttempts = 0;
-      _faceMismatchLiveness = false;
-      _resetFaceRetryBudget();
-      if (profName != null) _roomProf = profName.trim();
-      if (org != null) _roomOrg = org.trim();
-    });
-    // First back press from here returns to the class list (entry held
-    // once per join; re-entry from waiting is a null-guarded no-op).
-    _pushInnerBackEntry();
     final linked = _readLinked();
     final acct = _readAccount();
     if (linked != null && _identityMatchesCurrent(acct, linked)) {
@@ -1308,27 +1315,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           () => joinError = 'Enroll this device first — identity is required.');
       return;
     }
-    try {
-      await ref.read(studentDriverProvider).prewarmRadio();
-    } catch (_) {}
-    if (!mounted) return;
-    // Prewarm gap may have outlived a switch: re-resolve before opening the
-    // room so presence never files as a stale identity.
-    linked = _readLinked();
-    acct = _readAccount();
-    if (linked == null || !_identityMatchesCurrent(acct, linked)) {
-      if (!mounted) return;
-      setState(
-          () => joinError = 'Enroll this device first — identity is required.');
-      return;
-    }
+    // Optimistic waiting room: paint Connected-waiting at once (old path
+    // awaited prewarmRadio before setState, freezing the tap). Prewarm
+    // runs in background; presence follows.
     _stopRoomTimers();
-    // New room generation: any probe still in flight from a previous room
-    // (rewaits re-enter here without leaving the flow) carries the old run
-    // and its result is dropped in _pollRoomOnce — stale results must not
-    // clobber the fresh room's Connected state. Also releases the previous
-    // generation's poll guard (its finally is run-checked and won't clear
-    // the new room's flag).
     final run = ++_runId;
     _roomPollBusy = false;
     BleLog.log(ProxLogTags.nav, 'waiting room ${target.host}:${target.port}');
@@ -1342,16 +1332,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _roomProfPhoto = '';
       _roomWindowOpen = false;
       _roomClass = target.classLabel;
-      // Empty-vs-null: rewait passes the current (possibly stale '')
-      // values back — a blank must fall through to the live fallbacks
-      // (gated email cache / beacon target org) instead of pinning blank
-      // over them. Fresh typed-IP joins pass null and clear as before.
       _roomProf = profName?.trim() ?? '';
       _roomProfEmail = (profEmail == null || profEmail.trim().isEmpty)
           ? cachedEmail
           : profEmail;
-      _roomOrg =
-          (org == null || org.trim().isEmpty) ? target.org : org;
+      _roomOrg = (org == null || org.trim().isEmpty) ? target.org : org;
       phase = StudentPhase.waiting;
       _faceAttempts = 0;
       _faceMismatchLiveness = false;
@@ -1359,9 +1344,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       _waitingCacheVerdict = null;
       _waitingCacheEmail = '';
     });
-    // First back press from here returns to the class list (entry held
-    // once per join; round rewaits re-enter safely via the null guard).
     _pushInnerBackEntry();
+    unawaited(ref.read(studentDriverProvider).prewarmRadio().catchError((_) {}));
+    if (!mounted) return;
+    // Prewarm gap may have outlived a switch: re-resolve before presence
+    // so presence never files as a stale identity.
+    linked = _readLinked();
+    acct = _readAccount();
+    if (linked == null || !_identityMatchesCurrent(acct, linked)) {
+      if (!mounted) return;
+      setState(
+          () => joinError = 'Enroll this device first — identity is required.');
+      return;
+    }
     // Instant provisional banner when the gated email is already cached
     // for this host (the 2s poll re-lands it anyway — this just skips the
     // first-tick delay).
