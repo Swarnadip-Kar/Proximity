@@ -196,12 +196,12 @@ class SecureDeviceStore implements DeviceStore {
   Future<StoredEnrollment?> readEnrollment() async {
     if (_enrollmentLoaded) return _enrollmentCache;
     final now = DateTime.now().toUtc();
-    // Recent auth failure with nothing proven: stay dismissed WITHOUT
+    // Recent failure with nothing proven (the cache is necessarily null
+    // here — every write pairs it with loaded): stay dismissed WITHOUT
     // re-prompting (anti-hammer) and WITHOUT misreporting empty — the
     // caller (unlock resolve) parks locked with retry instead of pushing
     // the enrollment flow for data that may still exist behind the lock.
     if (_inSecureCooldown(now)) {
-      if (_enrollmentCache != null) return _enrollmentCache;
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
     }
@@ -215,8 +215,10 @@ class SecureDeviceStore implements DeviceStore {
         raw = await slot.read(key: _kEnroll);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
+          // Non-auth failure (I/O, programming bug): never a slot signal.
+          // Cache is necessarily null here (see above) — report empty.
           _lastSecureFailAt = now;
-          return _enrollmentCache;
+          return null;
         }
         sawAuthFailure = true;
         continue;
@@ -663,13 +665,13 @@ class SecureDeviceStore implements DeviceStore {
   Future<String?> readInstallId() async {
     if (_installIdLoaded) return _installIdCache;
     final now = DateTime.now().toUtc();
-    // Same dismissal law as readEnrollment: a recent auth failure with
-    // nothing proven stays dismissed without re-prompting — and crucially
-    // must NOT resolve to null here, or getOrCreateInstallId mints a
-    // FRESH install over existing data (identity fork: orphaned faceId,
-    // phantom device move).
+    // Same dismissal law as readEnrollment: the cache is necessarily null
+    // here (every write pairs it with loaded), so a cooldown hit means a
+    // recent failure with nothing proven — stay dismissed without
+    // re-prompting, and crucially must NOT resolve to null here, or
+    // getOrCreateInstallId mints a FRESH install over existing data
+    // (identity fork: orphaned faceId, phantom device move).
     if (_inSecureCooldown(now)) {
-      if (_installIdCache != null) return _installIdCache;
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
     }
@@ -681,8 +683,10 @@ class SecureDeviceStore implements DeviceStore {
         v = await slot.read(key: _kInstall);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
+          // Non-auth failure: never a slot signal. Cache is necessarily
+          // null here — report empty.
           _lastSecureFailAt = now;
-          return _installIdCache;
+          return null;
         }
         sawAuthFailure = true;
         continue;
