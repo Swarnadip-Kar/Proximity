@@ -50,6 +50,7 @@ abstract class StillCapturer {
       required bool autoFire,
       String? prompt,
       Future<bool> Function(List<String> paths)? accept,
+      Future<bool> Function(String path)? acceptStill,
       Duration acceptWindow = const Duration(seconds: 10),
       Duration acceptGap = const Duration(seconds: 1)});
 }
@@ -62,6 +63,7 @@ class RealStillCapturer implements StillCapturer {
           required bool autoFire,
           String? prompt,
           Future<bool> Function(List<String> paths)? accept,
+          Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
           Duration acceptGap = const Duration(seconds: 1)}) =>
       Navigator.of(context).push<List<String>>(MaterialPageRoute(
@@ -71,6 +73,7 @@ class RealStillCapturer implements StillCapturer {
               autoFire: autoFire,
               prompt: prompt,
               accept: accept,
+              acceptStill: acceptStill,
               acceptWindow: acceptWindow,
               acceptGap: acceptGap)));
 }
@@ -88,6 +91,7 @@ class FakeStillCapturer implements StillCapturer {
           required bool autoFire,
           String? prompt,
           Future<bool> Function(List<String> paths)? accept,
+          Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
           Duration acceptGap = const Duration(seconds: 1)}) async =>
       result?.call(captures) ??
@@ -223,6 +227,16 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
   /// Null keeps the legacy single-burst pop.
   final Future<bool> Function(List<String> paths)? accept;
 
+  /// Per-still early exit (optional): after each capture the sheet scores
+  /// the still WITHOUT awaiting (overlapping the next capture) and settles
+  /// the previous still's verdict first — at most one scoring call is ever
+  /// in flight (the serial plugin gate). True pops immediately with the
+  /// paths so far; false keeps capturing to the burst budget, where the
+  /// whole-burst [accept] resolves terminally as before. Null disables
+  /// (legacy burst-then-verify). Scoring errors never pop and never trap:
+  /// they read as "keep capturing".
+  final Future<bool> Function(String path)? acceptStill;
+
   /// Total budget for in-preview retries from the first burst.
   final Duration acceptWindow;
 
@@ -235,6 +249,7 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
       this.autoFire = true,
       this.prompt,
       this.accept,
+      this.acceptStill,
       this.acceptWindow = const Duration(seconds: 10),
       this.acceptGap = const Duration(seconds: 1)});
 
@@ -399,12 +414,17 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     // preview never tears down), so holder auto-retries never flash the
     // camera. Legacy single-burst callers (accept == null) pop at once.
     final accept = widget.accept;
+    final acceptStill = widget.acceptStill;
     final deadline =
         accept == null ? null : DateTime.now().add(widget.acceptWindow);
     try {
       while (true) {
         if (_done) return;
         final paths = <String>[];
+        // In-flight per-still verdict (see [FaceCaptureScreen.acceptStill]:
+        // at most one scoring call runs at a time — the serial plugin
+        // gate — while the next capture overlaps it).
+        Future<bool>? scoring;
         for (var i = 0; i < widget.captures; i++) {
           if (_done) return;
           final shot = await ctl.takePicture();
@@ -416,9 +436,45 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
           }
           paths.add(shot.path);
           if (_done) return;
+          // Settle the previous still first (serial scoring gate), then
+          // score this still while the next capture runs. A settled pass
+          // pops immediately with the paths so far — the common genuine
+          // case leaves after 1–2 stills instead of the whole burst.
+          if (scoring != null) {
+            var done = false;
+            try {
+              done = await scoring;
+            } catch (_) {}
+            scoring = null;
+            if (_done) return;
+            if (done) {
+              if (!mounted) return;
+              Navigator.of(context).pop(paths);
+              return;
+            }
+          }
+          if (acceptStill != null) {
+            final path = shot.path;
+            scoring = acceptStill(path);
+          }
           setState(() => _taken = i + 1);
           if (i + 1 < widget.captures) {
             await Future.delayed(const Duration(milliseconds: 350));
+          }
+        }
+        if (_done) return;
+        // Drain the last still's verdict before the whole-burst accept.
+        if (scoring != null) {
+          var done = false;
+          try {
+            done = await scoring;
+          } catch (_) {}
+          scoring = null;
+          if (_done) return;
+          if (done) {
+            if (!mounted) return;
+            Navigator.of(context).pop(paths);
+            return;
           }
         }
         if (_done) return;

@@ -412,4 +412,30 @@ void main() {
       expect(t.takeException(), isNull);
     });
   });
+
+  group('per-still early exit (pipelined acceptStill contract)', () {
+    test('sheet scores serially and pops on pass (source pin)', () {
+      final src =
+          File('lib/screens/face_capture.dart').readAsStringSync();
+      // Seam: optional per-still hook on the capturer + screen.
+      expect(
+          src.contains('Future<bool> Function(String path)? acceptStill'),
+          isTrue);
+      // Serial scoring gate: the previous still settles before the next
+      // starts (at most one plugin call in flight, ever), while its
+      // capture overlaps. A settled pass pops with the paths so far.
+      expect(src.contains('Future<bool>? scoring'), isTrue);
+      expect(src.contains('scoring = acceptStill(path)'), isTrue);
+      // Drain before the whole-burst accept; errors read as keep-going.
+      expect(src.contains('Drain the last still'), isTrue);
+    });
+
+    test('marking exits on pass only, stores the verdict (source pin)', () {
+      final home =
+          File('lib/screens/student_home.dart').readAsStringSync();
+      expect(home.contains('acceptStill: (path) async'), isTrue);
+      expect(home.contains('checkFaceAny([path])'), isTrue);
+      expect(home.contains('_modalResult = res'), isTrue);
+    });
+  });
 }

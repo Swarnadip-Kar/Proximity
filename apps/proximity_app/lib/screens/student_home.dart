@@ -1732,6 +1732,44 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       context,
       captures: kMarkingLivenessCaptures,
       autoFire: true,
+      // Per-still early exit: each still is liveness-probed + verified
+      // while the next capture runs (serial scoring gate in the sheet —
+      // at most one plugin call in flight, ever). A full pass pops after
+      // ~1–2 stills instead of the whole burst; anything else (spoof,
+      // near-miss, mismatch, unreadable) keeps capturing to the burst
+      // budget, where the whole-burst [accept] below resolves terminally
+      // exactly as before — same verdicts, same single attempt burn.
+      acceptStill: (path) async {
+        if (!mounted || phase != StudentPhase.faceCheck) return false;
+        var inModal = _readLinked();
+        var inModalAcct = _readAccount();
+        if (inModal == null ||
+            inModal.gmail.trim().toLowerCase() != scanEmail ||
+            !_identityMatchesCurrent(inModalAcct, inModal)) {
+          return false;
+        }
+        FaceCheckResult res;
+        try {
+          res =
+              await ref.read(studentDriverProvider).checkFaceAny([path]);
+        } on StateError {
+          _modalResult = const FaceCheckResult(FaceMatch.blocked);
+          return true;
+        }
+        if (!mounted || phase != StudentPhase.faceCheck) return false;
+        inModal = _readLinked();
+        inModalAcct = _readAccount();
+        if (inModal == null ||
+            inModal.gmail.trim().toLowerCase() != scanEmail ||
+            !_identityMatchesCurrent(inModalAcct, inModal)) {
+          return false;
+        }
+        if (res.match == FaceMatch.pass) {
+          _modalResult = res;
+          return true;
+        }
+        return false;
+      },
       accept: (burst) async {
         if (!mounted || phase != StudentPhase.faceCheck) return true;
         var inModal = _readLinked();
