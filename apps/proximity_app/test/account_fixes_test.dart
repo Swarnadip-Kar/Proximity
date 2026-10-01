@@ -20,6 +20,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
@@ -159,6 +160,13 @@ Future<void> _drain(WidgetTester t, [int steps = 6]) async {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // Move-gate reads await native channels that never answer under
+    // FakeAsync — stub the hardware-id source (no reclaim in-harness).
+    HardwareDeviceIds.source = () async => '';
+  });
+
+  tearDown(() {
+    HardwareDeviceIds.source = getStableHardwareDeviceId;
   });
 
   group('fix 1: no enroll CTA while enrolled for the signed-in account', () {

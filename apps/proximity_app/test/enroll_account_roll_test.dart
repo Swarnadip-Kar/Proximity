@@ -143,12 +143,13 @@ void main() {
       expect(await store.readEnrollment(), isNull);
     });
 
-    test('re-enroll purges the previous gallery template (replace, not pile)',
+    test('re-key preserves gallery; enroll replaces (no pile, no pre-wipe)',
         () async {
-      // Old keys purge on re-enroll: the HW key replaces under the same
-      // alias (plugin deletes first), the SKey swaps in memory + sealed doc
-      // overwrites at upload, and generateKey drops the previous gallery
-      // template so a stale face never survives a key rotation.
+      // Bail-out safety: rotating keys must not delete the working gallery
+      // template — replacement happens inside enroll (the plugin backend
+      // deletes-then-writes per faceId), so a rotation without a follow-up
+      // capture leaves the old template working instead of an empty
+      // gallery. A stale face still cannot pile: enroll overwrites the id.
       final auth = FakeAuthService(_a);
       final store = InMemoryDeviceStore();
       final verifier = FakeFaceVerifier();
@@ -165,12 +166,19 @@ void main() {
       expect(ctl.state.phase, EnrollPhase.keyReady);
       final installId = await getOrCreateInstallId(store);
       final faceId = faceIdOf('a@gmail.com', installId);
-      expect(verifier.calls, contains('remove:$faceId'));
-      // Second rotation purges again (idempotent, never piles templates).
+      expect(
+          verifier.calls.where((c) => c.startsWith('remove:')), isEmpty,
+          reason: 'generateKey must not pre-wipe the gallery');
+      // Second rotation likewise preserves (idempotent, never piles).
       verifier.calls.clear();
       await ctl.generateKey();
       expect(ctl.state.phase, EnrollPhase.keyReady);
-      expect(verifier.calls, contains('remove:$faceId'));
+      expect(
+          verifier.calls.where((c) => c.startsWith('remove:')), isEmpty);
+      // A follow-up capture still enrolls cleanly after rotations.
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(verifier.calls, contains('enroll:$faceId:5'));
     });
 
     test('sign-out clears the whole draft', () async {
