@@ -539,6 +539,16 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
   carry one-line partials (big section removed); legacy pk-only binding
   helper deleted; `dart:io Platform` replaced by `platformx`; CSV saving
   and interface enumeration are conditional shims.
+- Main-thread policy (old-phone jank): all Dart runs on one isolate, so
+  CPU-bound pure work leaves it — attestation chain math via `compute`
+  (prove + enroll), history JSON codec + matrix/export via `compute`
+  (spawn-tax thresholds: 8 sessions / 256 KB / 40 records stay sync),
+  professor dSig + Ed25519 via one warm persistent isolate with sync
+  fallback and parity tests. Face/ML stay on main by platform constraint
+  (plugin isolate SIGABRTs, channel replies are main-bound) and are
+  minimized instead (medium stills, 5-capture burst). UI: radar/elapsed
+  ticks isolated from list rebuilds, avatars decode at ~2× display size,
+  glass blur off on low-end, optimistic join paints before network.
 
 ## Real-class test checklist
 

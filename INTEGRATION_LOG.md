@@ -3274,6 +3274,22 @@ Field report: `skipped 84 frames`, black screen/lag on older phones, tap-a-class
 - perf(records+radio) — export-center union hoisted (was O(N²)/row), single `utf8.encode`, watchdogs jittered (browse `30s+0–5s`, listen `0–1.5s` on production budgets only — shrunk-budget tests keep their injection schedule).
 - perf(mesh) — TTL on air: v3 flags `b0 relayed / b1 dense / b2..b3 hop / b4..b7 reserved`, originate hop=0, relay hop+1 enforced at `kMaxRelayHop=2`, host `relayed-hopN` rule. Restart-jitter hang caught by `student_driver_test` (jitter shifted the challenge schedule past the injected sighting) → gated on production budgets.
 - perf(air) — single 19B mfg format (`PX 03`) + v1 UUID ticks for CoreBluetooth-displaced stacks only; `v3Tx`/`packAirV3`/18B v2 deleted (testing phase, no compat needed). Net −34 lines.
-- fix(unlock) — dismissed phone prompt now reads unlock-to-continue everywhere (prove receipt, join gates, shell nudge banner + Retry); genuine unseal failures keep `restore detected — re-enroll`. First-open "restore" on biometric-poor phones was dismissal parking + installId mint refusal, not a real restore.
+- fix(unlock) — dismissed phone prompt now reads unlock-to-continue everywhere (prove receipt, join gates, shell nudge banner + Retry); genuine unseal failures keep `restore detected — re-enroll`.
+- Threading follow-ups (single main isolate is the jank core): attestation X.509 via `compute` (prove+enroll); history codec + matrix/export via `compute` with spawn-tax thresholds (8 sessions / 256 KB / 40 records stay sync — a records test proved spawning for a 2-session export costs more than the work); professor burst via warm `VerifyWorker` isolate (single-use claimed on main first; the retake test caught a claimed-vs-expected window mirror bug pre-commit); avatars decode at ~2× display size; glass blur off on warmed low-end signal. Face/ML stay on main by platform constraint (plugin isolate SIGABRTs) — minimized, not moved. First-open "restore" on biometric-poor phones was dismissal parking + installId mint refusal, not a real restore.
 
 Verify: protocol 225/225; ble 37/37; transport 73/73 (incl. 5 worker parity tests); storage 19/19; app 1238/1238 (incl. 9 relay-policy + 5 records-isolate tests); `flutter analyze` clean on all touched files (one pre-existing info in `host_driver.dart`); `flutter build web` green. Follow-up `fix(tests)`: the 9 app failures root-caused (FakeAsync-hung hardware-id reads ×8 + stale exact CTA finder ×1) and fixed; my own policy-timeout Timer stalled 2 shell suites the same way — injectable reader added.
+
+
+## Perf follow-up: overlap + prewarm + scan duty (2026-10-01)
+
+Five small reviewable commits on top of the session above (all verdict-preserving; no wire/format change):
+
+- perf(enroll) `0f9f2be` — `enrollFace` starts the pose read + liveness probe before the first await (was serial); pose evaluated first, fail-closed; a pose refusal abandons the in-flight probe. Capture loop untouched (its pose-first filter intentionally skips the scorer on wasted stills).
+- perf(enroll) `1b6fe97` — prewarm FaceNet `init()` + new `HeuristicLivenessGate.prewarm()` (no-op web stub) fire-and-forget at session camera open; failures retry on first use.
+- perf(ble) `9e76af5` — `lowDuty` through `BlePlatformDelegate.startScanning` (default false): browse scans `balanced`, listen/prove keeps `lowLatency/allMatches/aggressive/max`; duty is sticky across watchdog + BT-back-on restarts. Pinned by `FakeBleRadio.lastLowDuty` engine test (ble 37/37 → 38/38).
+- perf(marking) `c416124` — `checkFaceAny` scores the liveness burst via one order-preserving `Future.wait` (ties keep first, unreadable skips); matcher still runs once on the winner.
+- perf(marking) `d7e7720` — same prewarm at `FaceCaptureScreen` open for the marking burst.
+
+Deliberately deferred (see discussion): VerifyWorker pool (single-isolate pinned by test, no saturation measured — run `load_test.dart` first), parallel plugin calls (SIGABRT class, serial is load-bearing), decode-once sharing (plugin takes paths, not bytes; input pipelines are accuracy-load-bearing), timer coalescing (behavior-sensitive).
+
+Verify: `dart test` ble 38/38; app targeted suites green (enrollment+liveness+face 99, browse 5, capture 39, marking/crash 38); `flutter analyze` clean on touched files. Full `flutter test` not re-run.

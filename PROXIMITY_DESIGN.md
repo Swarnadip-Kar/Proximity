@@ -779,6 +779,20 @@ during live windows on all OS (`wakelock_plus`, not `idleTimerDisabled`);
 no privacy manifest / foreground-service / snap plug yet. Foreground is
 mandatory during windows on all OS (keep-open banner).
 
+Main-thread policy (old-phone jank — all Dart runs on one isolate, zero
+`Isolate` in the pre-perf build): CPU-bound pure work leaves it —
+attestation X.509 math via `compute` (prove + enroll, every rotation),
+history JSON codec + date-range matrix/export via `compute` (spawn-tax
+thresholds: ≤8 sessions / ≤256 KB / ≤40 records stay synchronous),
+professor dSig + Ed25519 via one warm persistent isolate
+(`VerifyWorker`, lazy spawn, single-use claimed on main first, sync
+fallback, parity-tested). Face/ML stay on main by platform constraint
+(plugin isolate entry SIGABRTs; MethodChannel replies are main-bound)
+and are minimized instead (medium stills, 5-capture burst). Render:
+radar/elapsed ticks isolated from list rebuilds (`RepaintBoundary` +
+`ValueKey` rows), avatars decode at ~2× display size, glass blur off on
+warmed low-end signal, join paints before network.
+
 ---
 
 ## 9. Scale, robustness, testing
