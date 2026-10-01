@@ -563,17 +563,13 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                 'Software-no-enroll: software device keys cannot enroll — use a mobile device with StrongBox/TEE or Secure Enclave.');
         return;
       }
-      // Re-enroll purge: the new HW key already replaced the old under the
-      // same alias (the plugin deletes first — Android deleteEntry, iOS
-      // deleteBlob), the SKey below replaces `_keys`, and the sealed doc is
-      // overwritten at upload. Drop the previous gallery template for this
-      // faceId too, so an aborted re-enroll never leaves a stale template
-      // behind. Best-effort (a missing entry is a no-op), after the bind
-      // so a bind failure keeps the old working set intact.
-      try {
-        await _verifier.remove(
-            faceIdOf(acct.email.toLowerCase(), installId));
-      } catch (_) {}
+      // Gallery is deliberately NOT wiped here: the next successful
+      // enrollFace replaces this faceId's rows anyway (the plugin backend
+      // deletes-then-writes per id), so pre-deleting only destroys a
+      // working template when the user bails before capturing (the
+      // every-run re-scan loop: sameDevice binding, empty gallery). A
+      // failed enroll still cleans its partial rows (see enrollFace), so
+      // no mixed old/new template can survive.
       _keys = kp;
       _faceId = null;
       _restoredRoll = null;
@@ -1378,19 +1374,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   }
 
   /// Explicit re-scan (restored users, changed appearance): keeps the
-  /// device key, clears the in-memory face. The stored faceId on disk is
-  /// untouched (attendance still works via the linked identity until the
-  /// new capture validates), but this screen cannot save the OLD face
-  /// after a rescan starts — Save stays blocked until the new capture
-  /// validates.
+  /// device key, clears the in-memory face. Gallery + stored doc are
+  /// untouched until the new capture validates (the next successful
+  /// enrollFace replaces this faceId's rows), so backing out keeps
+  /// attendance working — but this screen cannot save the OLD face after
+  /// a rescan starts: Save stays blocked until the new capture validates.
+  /// A failed enroll still cleans its partial rows (see enrollFace), so no
+  /// mixed old/new template can survive.
   Future<void> restartFace() async {
-    final old = _faceId;
     _faceId = null;
-    if (old != null) {
-      try {
-        await _verifier.remove(old);
-      } catch (_) {}
-    }
     state = state.copyWith(
         phase: EnrollPhase.keyReady,
         faceScore: 0,

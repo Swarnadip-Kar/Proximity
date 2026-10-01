@@ -316,4 +316,66 @@ void main() {
       expect((await store.readEnrollment())!.lastFaceRescanAtMillis, 0);
     });
   });
+
+  group('gallery preservation (no pre-wipe)', () {
+    // Regression for the every-run re-scan loop: tapping Generate device
+    // key or Re-scan face used to delete the working gallery template
+    // BEFORE any new capture validated, so bailing out left sameDevice
+    // bindings with an empty gallery (face scan demanded forever).
+    // Replacement now happens inside enroll (delete-then-write per id);
+    // a failed enroll still cleans its partial rows.
+    EnrollmentController ctlWithFake(FakeAuthService auth,
+            InMemoryDeviceStore store, FakeFaceVerifier verifier) =>
+        EnrollmentController(
+          auth: auth,
+          store: store,
+          verifier: verifier,
+          deviceKey: FakeDeviceKey(),
+          livenessGate: FakeLivenessGate(),
+        );
+
+    test('generateKey keeps the working gallery template', () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final verifier = FakeFaceVerifier();
+      final ctl = ctlWithFake(auth, store, verifier);
+      await ctl.signIn();
+      ctl.setRoll('B-ROLL');
+      await ctl.generateKey();
+      await ctl.enrollFace(_stills);
+      expect(await ctl.upload(), isNotNull);
+      expect((await store.readEnrollment())!.faceId.isNotEmpty, isTrue);
+      verifier.calls.clear();
+
+      // Re-key without capturing: gallery must survive the ceremony.
+      await ctl.generateKey();
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(verifier.calls.where((c) => c.startsWith('remove:')), isEmpty,
+          reason: 'generateKey must not pre-wipe the gallery');
+      expect((await store.readEnrollment())!.faceId.isNotEmpty, isTrue);
+    });
+
+    test('restartFace keeps gallery + stored doc until a new capture lands',
+        () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final verifier = FakeFaceVerifier();
+      final ctl = ctlWithFake(auth, store, verifier);
+      await ctl.signIn();
+      ctl.setRoll('B-ROLL');
+      await ctl.generateKey();
+      await ctl.enrollFace(_stills);
+      expect(await ctl.upload(), isNotNull);
+      final faceBefore = (await store.readEnrollment())!.faceId;
+      expect(faceBefore.isNotEmpty, isTrue);
+      verifier.calls.clear();
+
+      // Backing out of a re-scan must leave attendance working.
+      await ctl.restartFace();
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(verifier.calls.where((c) => c.startsWith('remove:')), isEmpty,
+          reason: 'restartFace must not pre-wipe the gallery');
+      expect((await store.readEnrollment())!.faceId, faceBefore);
+    });
+  });
 }
