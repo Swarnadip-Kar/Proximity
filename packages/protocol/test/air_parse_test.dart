@@ -1,5 +1,5 @@
 // Covers the pure AirParser extracted from the app's ble_radio.dart:
-// v2 mfg/service-data paths, legacy v1 UUID paths, and the three probe
+// single mfg format, legacy v1 UUID paths, and the three probe
 // log lines verbatim.
 import 'dart:typed_data';
 
@@ -8,17 +8,17 @@ import 'package:test/test.dart';
 
 void main() {
   setUp(AirDrops.reset);
-  Uint8List v2Payload() => packAir(
+  Uint8List mfgPayload() => packAir(
         type: kAirTypeChallenge,
         token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
         host: '10.50.19.107',
         port: 8443,
       )!;
 
-  test('v2 manufacturer payload parses', () {
+  test('mfg manufacturer payload parses', () {
     final s = const AirParser().map(AirScan(
       services: [kAirSvc],
-      manufacturerData: [AirMfg(kAirCompanyId, v2Payload())],
+      manufacturerData: [AirMfg(kAirCompanyId, mfgPayload())],
       rssi: -60,
     ))!;
     expect(s.type, kAirTypeChallenge);
@@ -29,11 +29,11 @@ void main() {
     expect(s.rssiDbm, -60);
   });
 
-  test('v2 service-data payload parses (short + canonical key)', () {
+  test('service-data payload parses (short + canonical key)', () {
     for (final key in ['fcd2', kAirSvc]) {
       final s = const AirParser().map(AirScan(
         services: [kAirSvc],
-        serviceData: {key: v2Payload()},
+        serviceData: {key: mfgPayload()},
         rssi: -70,
       ))!;
       expect(s.ipHost, '10.50.19.107');
@@ -41,7 +41,7 @@ void main() {
     }
   });
 
-  test('v2 probe logs verbatim, null sighting', () {
+  test('probe logs verbatim, null sighting', () {
     final lines = <String>[];
     void log(String tag, String msg) => lines.add('[$tag] $msg');
     // Unparseable candidate is skipped with its length logged.
@@ -51,14 +51,14 @@ void main() {
             services: [kAirSvc],
             manufacturerData: [
               AirMfg(kAirCompanyId, Uint8List.fromList([9, 9, 9])),
-              AirMfg(kAirCompanyId, v2Payload()),
+              AirMfg(kAirCompanyId, mfgPayload()),
             ],
           ),
           log: log,
         )!.ipHost,
         '10.50.19.107');
     expect(lines.first, '[BLE] air drop short:3 len=3 (n=1)');
-    // FCD2 service with no v2 payload at all.
+    // FCD2 service with no payload at all.
     lines.clear();
     expect(
         const AirParser().map(
@@ -66,7 +66,7 @@ void main() {
           log: log,
         ),
         isNull);
-    expect(lines, ['[BLE] air FCD2 without v2 payload']);
+    expect(lines, ['[BLE] air FCD2 without payload']);
     // Split-packet probe: FFFF mfg without the FCD2 service.
     lines.clear();
     expect(
@@ -87,9 +87,9 @@ void main() {
   test('unknown ver/type drop with counted visible log', () {
     final lines = <String>[];
     void log(String tag, String msg) => lines.add('[$tag] $msg');
-    // Unknown version 0x04 (same 18B shape): dropped, counted, visible.
+    // Unknown version 0x04 (same 19B shape): dropped, counted, visible.
     final badVer = Uint8List.fromList(
-        [0x50, 0x58, 0x04, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB]);
+        [0x50, 0x58, 0x04, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB, 0x00]);
     expect(
         const AirParser().map(
           AirScan(
@@ -100,8 +100,8 @@ void main() {
         ),
         isNull);
     expect(lines, [
-      '[BLE] air drop unknown-ver:4 len=18 (n=1)',
-      '[BLE] air FCD2 without v2 payload',
+      '[BLE] air drop unknown-ver:4 len=19 (n=1)',
+      '[BLE] air FCD2 without payload',
     ]);
     expect(AirDrops.count('unknown-ver:4'), 1);
     // Second identical drop bumps the running count on the line.
@@ -116,13 +116,13 @@ void main() {
         ),
         isNull);
     expect(lines, [
-      '[BLE] air drop unknown-ver:4 len=18 (n=2)',
-      '[BLE] air FCD2 without v2 payload',
+      '[BLE] air drop unknown-ver:4 len=19 (n=2)',
+      '[BLE] air FCD2 without payload',
     ]);
-    // Unknown type 0x09 with good v2 framing: dropped, not parsed.
+    // Unknown type 0x09 with good framing: dropped, not parsed.
     lines.clear();
     final badType = Uint8List.fromList(
-        [0x50, 0x58, 0x02, 0x09, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB]);
+        [0x50, 0x58, 0x03, 0x09, 1, 2, 3, 4, 5, 6, 7, 8, 10, 0, 0, 1, 0x20, 0xFB, 0x00]);
     expect(
         const AirParser().map(
           AirScan(
@@ -133,13 +133,13 @@ void main() {
         ),
         isNull);
     expect(lines, [
-      '[BLE] air drop unknown-type:9 len=18 (n=1)',
-      '[BLE] air FCD2 without v2 payload',
+      '[BLE] air drop unknown-type:9 len=19 (n=1)',
+      '[BLE] air FCD2 without payload',
     ]);
   });
 
-  test('v3 payload parses with flags; strict lengths enforced', () {
-    final v3 = packAirV3(
+  test('flags + hop parse; token identity ignores flags', () {
+    final flagged = packAir(
       type: kAirTypeChallenge,
       token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
       host: '10.50.19.107',
@@ -147,13 +147,13 @@ void main() {
       relayed: true,
       denseHint: true,
     )!;
-    expect(v3.length, kAirV3PayloadLen);
+    expect(flagged.length, kAirPayloadLen);
     final s = const AirParser().map(AirScan(
       services: [kAirSvc],
-      manufacturerData: [AirMfg(kAirCompanyId, v3)],
+      manufacturerData: [AirMfg(kAirCompanyId, flagged)],
       rssi: -60,
     ))!;
-    expect(s.version, kAirVerV3);
+    expect(s.version, kAirVer);
     expect(s.type, kAirTypeChallenge);
     expect(s.token8, [1, 2, 3, 4, 5, 6, 7, 8]);
     expect(s.ipHost, '10.50.19.107');
@@ -161,7 +161,7 @@ void main() {
     expect(s.denseHint, isTrue);
     expect(s.hop, 0);
     // Hop rides the parser too.
-    final hopped = packAirV3(
+    final hopped = packAir(
       type: kAirTypeChallenge,
       token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
       host: '10.50.19.107',
@@ -177,17 +177,17 @@ void main() {
     expect(sh.hop, 2);
     expect(sh.relayed, isTrue);
     // Token-keyed identity ignores version/flags: same rotation token heard
-    // as v2-direct and v3-relayed is ONE packet for relay dedup.
-    expect(unpackAir(v2Payload())!.key, unpackAir(v3)!.key);
+    // direct and relayed is ONE packet for relay dedup.
+    expect(unpackAir(mfgPayload())!.key, unpackAir(flagged)!.key);
   });
 
   test('cross-platform: each originator parses on the other path', () {
-    // Android/Linux-originated v2 (packAir) and Apple-originated v1
+    // Android/Linux-originated mfg (packAir) and Apple-originated v1
     // (packChallenge) cross-parse through the SAME platform-free parser —
     // the wire stays identical bytes/preimages on all OS, scan unfiltered,
     // parse in-app. Both directions, one test.
     final tok = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
-    final v2sight = const AirParser().map(AirScan(
+    final mfgSight = const AirParser().map(AirScan(
       services: [kAirSvc],
       manufacturerData: [
         AirMfg(
@@ -204,10 +204,10 @@ void main() {
       services: [UuidCodec.packChallenge(tok)],
       rssi: -61,
     ))!;
-    expect(v2sight.legacy, isFalse);
+    expect(mfgSight.legacy, isFalse);
     expect(v1sight.legacy, isTrue);
-    expect(v2sight.token8, v1sight.token8); // same preimage both ways
-    expect(v2sight.type, kAirTypeChallenge);
+    expect(mfgSight.token8, v1sight.token8); // same preimage both ways
+    expect(mfgSight.type, kAirTypeChallenge);
     expect(v1sight.type, kAirTypeChallenge);
   });
 

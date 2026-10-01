@@ -1,5 +1,6 @@
-// Observed air packet: v2 (FCD2 service + manufacturer payload) or
-// legacy v1 (single rotating 128-bit UUID, challenge in low bytes).
+// Observed air packet: single mfg format (FCD2 service + manufacturer
+// payload) or legacy v1 (single rotating 128-bit UUID, challenge in low
+// bytes — Apple-TX stacks only).
 //
 // Split from ble.dart (M4 radio slim): pure value type, no radio logic.
 library;
@@ -8,26 +9,25 @@ import 'dart:typed_data';
 
 import 'package:proximity_protocol/protocol.dart';
 
-/// Observed air packet: v2 (FCD2 service + manufacturer payload) or
-/// legacy v1 (single rotating 128-bit UUID, challenge in low bytes).
+/// Observed air packet: single mfg format or legacy v1 (Apple-TX only).
 class BleSighting {
-  final int version; // kAirVer | kAirVerV3 (v2 default; v1 UUIDs report v2)
+  final int version; // kAirVer (v1 UUIDs report kAirVer)
   final int type; // kAirTypeChallenge | kAirTypeResponse
   final Uint8List token8;
   final String ipHost; // HTTPS server ('' when unknown, e.g. v1 sightings)
   final int ipPort; // 0 when unknown
   final bool legacy; // true = v1 128-bit-UUID packet (Apple-TX compatible)
   final String? legacyUuid; // normalized UUID when [legacy]
-  final bool relayed; // v3 b0 heard on air (a relay re-aired this packet)
-  final bool denseHint; // v3 b1 heard on air (dense graph signal)
-  final int hop; // v3 b2..b3 hop count (0 = direct; 0 on v2/v1)
+  final bool relayed; // b0 heard on air (a relay re-aired this packet)
+  final bool denseHint; // b1 heard on air (dense graph signal)
+  final int hop; // b2..b3 hop count (0 = direct; 0 on v1)
   final Uint8List? peerW; // 8B alias when present (response path)
   final int rssiDbm;
   final DateTime at;
   /// Relay budget left, derived from the on-air hop count:
-  /// direct/v2/v1 sightings carry hop=0 → full budget; v3 re-airs carry
-  /// hop+1 per relay and stop at kMaxRelayHop. An explicit ttl=0 still
-  /// drops (defensive — the wire hop is authoritative).
+  /// hop=0 → full budget; re-airs carry hop+1 per relay and stop at
+  /// kMaxRelayHop. An explicit ttl=0 still drops (defensive — the wire
+  /// hop is authoritative).
   final int ttl;
   BleSighting({
     this.version = kAirVer,
@@ -52,7 +52,7 @@ class BleSighting {
   bool get hasServer => ipHost.isNotEmpty && ipPort > 0;
 
   /// Dedup / split-horizon key, format-aware for v1 UUIDs, token-keyed
-  /// for v2/v3 (version + relay flags EXCLUDED: the same rotation token
+  /// for mfg (version + relay flags EXCLUDED: the same rotation token
   /// heard direct and re-aired is ONE packet — otherwise each re-air would
   /// relay again. Sender-keyed [LruDedup] is the OTHER dedup domain: it
   /// keys mesh PDUs by sender+ts+type+digest for BitChat parity, while

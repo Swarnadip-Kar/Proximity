@@ -3,7 +3,7 @@
 // [UniversalBleRadio] (Android/iOS/macOS/Windows): scan filtered on the
 // fixed 16-bit [kAirSvc], advertise [kAirSvc + air manufacturer payload]
 // via universal_ble peripheral, GATT client fallback (MTU 517 where
-// exposed). v2 air bytes everywhere (protocol/air.dart) — identical
+// exposed). Single air format everywhere (protocol/air.dart) — identical
 // semantics all OS: everything fits the 31B primary packet, so no
 // platform depends on scan responses.
 // [LinuxBleRadio]: universal_ble scan + BlueZ D-Bus advertise shim
@@ -184,8 +184,8 @@ class UniversalBleRadio implements BlePlatformDelegate {
   @override
   Future<void> startAirPacket(String airServiceUuid, Uint8List airMfg,
       {List<int>? scanResponse}) async {
-    // v2 air packet (protocol/air.dart): fixed 16-bit [kAirSvc] + 18B
-    // manufacturer payload, 29B total in the PRIMARY advertisement —
+    // Single air format (protocol/air.dart): fixed 16-bit [kAirSvc] + 19B
+    // manufacturer payload, 30B total in the PRIMARY advertisement —
     // identical bytes on Android/Linux/macOS/Windows.
     BleLog.log('BLE', 'ADV start ${BleLog.shortUuid(airServiceUuid)}…');
     await UniversalBlePeripheral.stopAdvertising();
@@ -237,9 +237,9 @@ class UniversalBleRadio implements BlePlatformDelegate {
       // parser logs FCD2 halves so air visibility stays debuggable.
       if (s != null) _onSight?.call(s);
     };
-    // Unfiltered scan: v1 rotating UUIDs share no common service with v2,
-    // so hardware filtering would drop one format. Parsing in [AirParser]
-    // is the filter.
+    // Unfiltered scan: v1 rotating UUIDs share no common service with the
+    // mfg format, so hardware filtering would drop one side. Parsing in
+    // [AirParser] is the filter.
     // Uniform scan intent on all platforms: Android requests LOW_LATENCY
     // (allMatches, aggressive, max) so duty-cycled stacks do not miss the
     // student's ~1s response burst; other platforms ignore the android

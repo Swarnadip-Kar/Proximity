@@ -1,12 +1,12 @@
 // Front-row relay admission (controlled flood, §6.2).
 //
 // Part of engine.dart (M4 radio slim): shares the engine's private relay
-// state verbatim. Rules — TTL-on-air via the v3 b2..b3 hop count (0 =
-// direct, +1 per re-air, stop at kMaxRelayHop), strong signal, unseen
-// only ([tokenRelayGuard]: token-keyed, one relay per token per device),
-// jitter via [FloodController], halted abort,
-// split-horizon, challenge + IP-hint relay, responses never flooded,
-// busy-skip releases the key so the next hearing retries.
+// state verbatim. Rules — hop budget on air (0 = direct, +1 per re-air,
+// stop at kMaxRelayHop), strong signal, unseen only ([tokenRelayGuard]:
+// token-keyed, one relay per token per device), jitter via
+// [FloodController], halted abort, split-horizon, challenge + IP-hint
+// relay, responses never flooded, busy-skip releases the key so the next
+// hearing retries.
 part of 'engine.dart';
 
 extension ProxBleRelay on ProxBleEngine {
@@ -14,9 +14,8 @@ extension ProxBleRelay on ProxBleEngine {
   /// §6.2): unseen packet + hop budget left + strong signal + jitter,
   /// never what we already advertise (split horizon), never responses.
   /// Both challenge and IP-hint packets relay; responses travel direct
-  /// only. v2 hearings (hop=0, no flags byte) upgrade to v3 on re-air
-  /// with hop=1; v3 re-airs increment hop. v1 legacy UUIDs carry no
-  /// hop/IP and stay v1 (single-relay bound only).
+  /// only. Re-airs increment the b2..b3 hop count. v1 legacy UUIDs carry
+  /// no hop/IP and stay v1 (single-relay bound only).
   /// [log]: false silences the routine per-repeat lines (same packet heard
   /// every second) — the relay decision itself is unchanged.
   Future<void> _maybeRelay(BleSighting s, {bool log = true}) async {
@@ -68,11 +67,10 @@ extension ProxBleRelay on ProxBleEngine {
         aired = await _advGuard(
             () => radio.startLegacyUuid(s.legacyUuid!), 'relay ${s.label}');
       } else {
-        // Re-air as v3 with hop+1 (v2 hearings upgrade: v2 has no flags
-        // byte, so hop arrives 0 and leaves 1). Relayed bit set, dense
-        // hint preserved, token/IP/port bytes untouched.
+        // Re-air with hop+1 (relayed bit set, dense hint preserved,
+        // token/IP/port bytes untouched).
         final nextHop = (s.hop + 1).clamp(0, kAirHopMax);
-        final mfg = packAirV3(
+        final mfg = packAir(
             type: s.type,
             token8: s.token8,
             host: s.ipHost,

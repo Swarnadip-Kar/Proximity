@@ -4,11 +4,12 @@ import 'package:proximity_protocol/protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
-  Uint8List v2GoldenLike(Uint8List tok) => Uint8List.fromList([
-        0x50, 0x58, 0x02, 0x01, //
+  Uint8List goldenLike(Uint8List tok) => Uint8List.fromList([
+        0x50, 0x58, kAirVer, 0x01, //
         ...tok, //
         10, 50, 19, 107, //
-        0x20, 0xFB, //
+        0x20, 0xFB, // 8443 BE
+        0x00, // flags: direct, sparse, hop 0
       ]);
   test('roundtrip challenge with IP:port', () {
     final mfg = packAir(
@@ -25,6 +26,7 @@ void main() {
     expect(pdu.token8, [1, 2, 3, 4, 5, 6, 7, 8]);
     expect(pdu.host, '10.50.19.107');
     expect(pdu.port, 8443);
+    expect(pdu.hop, 0);
   });
 
   test('response type + port edges', () {
@@ -90,11 +92,11 @@ void main() {
     expect(unpackAir(const [0, 0, 0]), isNull);
     expect(
         unpackAir(
-            Uint8List.fromList([0x41, 0x42, 0x02, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0])),
+            Uint8List.fromList([0x41, 0x42, 0x03, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0, 0])),
         isNull); // bad magic
     expect(
         unpackAir(
-            Uint8List.fromList([0x50, 0x58, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0])),
+            Uint8List.fromList([0x50, 0x58, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0, 0])),
         isNull); // bad version
   });
 
@@ -103,13 +105,14 @@ void main() {
     expect(kAirSvc, contains('fcd2'));
   });
 
-  test('v2 18B layout frozen byte-for-byte', () {
-    // Golden vector: token 01..08, 10.50.19.107:8443.
+  test('19B layout frozen byte-for-byte', () {
+    // Golden vector: token 01..08, 10.50.19.107:8443, flags 0.
     final golden = Uint8List.fromList([
-      0x50, 0x58, 0x02, 0x01, //
+      0x50, 0x58, 0x03, 0x01, //
       0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, //
       10, 50, 19, 107, //
       0x20, 0xFB, // 8443 BE
+      0x00, // flags
     ]);
     final packed = packAir(
       type: kAirTypeChallenge,
@@ -126,6 +129,7 @@ void main() {
     expect(pdu.port, 8443);
     expect(pdu.relayed, isFalse);
     expect(pdu.denseHint, isFalse);
+    expect(pdu.hop, 0);
   });
 
   test('v1 UUID formats frozen byte-for-byte', () {
@@ -141,9 +145,9 @@ void main() {
     expect(kBaseP64 == kBaseS64, isFalse);
   });
 
-  test('v3 opt-in flags never steal token bytes', () {
+  test('flags never steal token bytes', () {
     final tok = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
-    final v3 = packAirV3(
+    final flagged = packAir(
       type: kAirTypeChallenge,
       token8: tok,
       host: '10.50.19.107',
@@ -151,19 +155,18 @@ void main() {
       relayed: true,
       denseHint: true,
     )!;
-    expect(v3.length, kAirV3PayloadLen);
-    // Same 18B field layout (only the version byte differs); the token,
-    // IP and port bytes are untouched — flags live in the appended byte.
-    expect(v3[2], kAirVerV3);
-    expect(v3.sublist(3, 18), v2GoldenLike(tok).sublist(3, 18));
-    expect(v3[18], kAirFlagRelayed | kAirFlagDenseHint);
-    final pdu = unpackAir(v3)!;
-    expect(pdu.version, kAirVerV3);
+    expect(flagged.length, kAirPayloadLen);
+    // Token, IP and port bytes are untouched — flags live in the last byte.
+    expect(flagged[2], kAirVer);
+    expect(flagged.sublist(3, 18), goldenLike(tok).sublist(3, 18));
+    expect(flagged[18], kAirFlagRelayed | kAirFlagDenseHint);
+    final pdu = unpackAir(flagged)!;
+    expect(pdu.version, kAirVer);
     expect(pdu.token8, tok);
     expect(pdu.relayed, isTrue);
     expect(pdu.denseHint, isTrue);
-    // Flag-off v3 still parses (flags byte zero).
-    final plain = packAirV3(
+    // Flag-off still parses (flags byte zero).
+    final plain = packAir(
       type: kAirTypeResponse,
       token8: tok,
       host: '192.168.1.2',
@@ -172,16 +175,17 @@ void main() {
     final pp = unpackAir(plain)!;
     expect(pp.relayed, isFalse);
     expect(pp.denseHint, isFalse);
+    expect(pp.hop, 0);
     // Non-zero reserved bits (b4..b7) drop (strict); b2..b3 carry hop.
     final reserved = Uint8List.fromList(plain)..[18] = 0x10;
     expect(unpackAir(reserved), isNull);
-    expect(airDropCause(reserved), 'v3-reserved:16');
+    expect(airDropCause(reserved), 'reserved:16');
   });
 
-  test('v3 hop count roundtrips in b2..b3 (TTL on air)', () {
+  test('hop count roundtrips in b2..b3 (TTL on air)', () {
     final tok = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
     for (var hop = 0; hop <= kAirHopMax; hop++) {
-      final mfg = packAirV3(
+      final mfg = packAir(
         type: kAirTypeChallenge,
         token8: tok,
         host: '10.50.19.107',
@@ -194,7 +198,7 @@ void main() {
     }
     // Out-of-range hop refuses to pack.
     expect(
-        packAirV3(
+        packAir(
           type: kAirTypeChallenge,
           token8: tok,
           host: '10.50.19.107',
@@ -203,7 +207,7 @@ void main() {
         ),
         isNull);
     // b2..b3 set without the helper still parses as hop (0x04 = hop 1).
-    final manual = Uint8List.fromList(packAirV3(
+    final manual = Uint8List.fromList(packAir(
       type: kAirTypeChallenge,
       token8: tok,
       host: '10.50.19.107',
@@ -220,14 +224,14 @@ void main() {
       host: '10.50.19.107',
       port: 8443,
     )!;
-    // Trailing garbage on a v2 payload drops (strict 18B).
+    // Trailing garbage drops (strict 19B).
     final trailed = Uint8List.fromList([...good, 0x00]);
     expect(unpackAir(trailed), isNull);
-    expect(airDropCause(trailed), 'bad-len:2:19');
-    // Truncated v3 (18B with ver 0x03) drops.
-    final truncV3 = Uint8List.fromList(good)..[2] = kAirVerV3;
-    expect(unpackAir(truncV3), isNull);
-    expect(airDropCause(truncV3), 'bad-len:3:18');
+    expect(airDropCause(trailed), 'bad-len:3:20');
+    // Truncated (18B) drops.
+    final trunc = Uint8List.fromList(good.sublist(0, 18));
+    expect(unpackAir(trunc), isNull);
+    expect(airDropCause(trunc), 'short:18');
     // Unknown version drops.
     final badVer = Uint8List.fromList(good)..[2] = 0x04;
     expect(unpackAir(badVer), isNull);
@@ -239,7 +243,7 @@ void main() {
     // Legacy bad-version fixture from the old suite still drops.
     expect(
         unpackAir(Uint8List.fromList(
-            [0x50, 0x58, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0])),
+            [0x50, 0x58, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 0x20, 0xFB, 0, 0])),
         isNull);
   });
 }

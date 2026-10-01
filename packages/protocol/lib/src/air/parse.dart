@@ -1,4 +1,4 @@
-// Pure-Dart over-the-air scan parser (v2 + legacy v1).
+// Pure-Dart over-the-air scan parser (single mfg format + legacy v1).
 //
 // manufacturer/service-data path, legacy v1 single-UUID path, and
 // split-packet probe logs — now operating on the platform-free [AirScan]
@@ -38,21 +38,21 @@ class AirScan {
   });
 }
 
-/// Parsed air sighting: v2 (FCD2 service + manufacturer payload) or legacy
+/// Parsed air sighting: single mfg format or legacy
 /// v1 (single rotating 128-bit UUID). Field-for-field mirrors the app's
 /// BleSighting so the adapter maps 1:1 (ttl defaults + peerW stay on the
 /// app side).
 class AirSighting {
-  final int version; // kAirVer | kAirVerV3
+  final int version; // kAirVer (v1 UUIDs report kAirVer)
   final int type; // kAirTypeChallenge | kAirTypeResponse | kAirTypeIpHint
   final Uint8List token8;
   final String ipHost; // HTTPS server ('' when unknown, e.g. v1 sightings)
   final int ipPort; // 0 when unknown
   final bool legacy; // true = v1 128-bit-UUID packet (Apple-TX compatible)
   final String? legacyUuid; // normalized UUID when [legacy]
-  final bool relayed; // v3 b0 (false on v2/v1 — no flags byte there)
-  final bool denseHint; // v3 b1
-  final int hop; // v3 b2..b3 (0 on v2/v1 — no flags byte there)
+  final bool relayed; // b0 (false on v1 — no flags byte there)
+  final bool denseHint; // b1
+  final int hop; // b2..b3 (0 on v1 — no flags byte there)
   final int rssiDbm;
   final DateTime at;
   const AirSighting({
@@ -101,7 +101,7 @@ class AirParser {
 
   AirSighting? map(AirScan d, {AirLogFn log = _silentLog, DateTime? now}) {
     final at = (now ?? DateTime.now()).toUtc();
-    // --- v2 path: FCD2 service + 18B payload in manufacturer data
+    // --- mfg path: FCD2 service + 19B payload in manufacturer data
     // (company FFFF) or service data under the air UUID.
     var hasAirSvc = false;
     for (final s in d.services) {
@@ -146,7 +146,7 @@ class AirParser {
           at: at,
         );
       }
-      log('BLE', 'air FCD2 without v2 payload');
+      log('BLE', 'air FCD2 without payload');
       return null;
     }
     // Split-packet probe (Samsung extended-scan may deliver ADV and

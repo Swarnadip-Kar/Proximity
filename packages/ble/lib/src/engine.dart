@@ -125,10 +125,8 @@ class ProxBleEngine {
     return true;
   }
 
-  /// v3 originate (flags byte appended — token bytes untouched).
-  /// Default ON (testing-phase wire bump): originators emit hop=0 in b2..b3
-  /// so relays can enforce kMaxRelayHop on air. [denseHintTx] sets v3 b1.
-  bool v3Tx = true;
+  /// Dense-hint transmit: sets b1 on originated packets when the hall
+  /// is dense (receivers widen their relay jitter).
   bool denseHintTx = false;
 
   /// Guards every radio advertise call: a hung peripheral stack must never
@@ -516,21 +514,14 @@ class ProxBleEngine {
       BleLog.log('BLE', 'ADV challenge j=$j SKIPPED (no server IP set)');
       return;
     }
-    // v3 originate with hop=0 in b2..b3 (wire-bump default; v2 kept
-    // only for tests that opt out via v3Tx=false).
-    final mfg = v3Tx
-        ? packAirV3(
-            type: kAirTypeChallenge,
-            token8: cj,
-            host: _serverHost,
-            port: _serverPort,
-            denseHint: denseHintTx,
-            hop: 0)
-        : packAir(
-            type: kAirTypeChallenge,
-            token8: cj,
-            host: _serverHost,
-            port: _serverPort);
+    // Single-format originate with hop=0 in b2..b3.
+    final mfg = packAir(
+        type: kAirTypeChallenge,
+        token8: cj,
+        host: _serverHost,
+        port: _serverPort,
+        denseHint: denseHintTx,
+        hop: 0);
     if (mfg == null) {
       BleLog.log('BLE', 'ADV challenge j=$j SKIPPED (packAir failed)');
       return;
