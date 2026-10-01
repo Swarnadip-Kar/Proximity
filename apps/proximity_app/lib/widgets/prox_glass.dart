@@ -15,6 +15,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../design/tokens.dart';
+import '../core/relay_policy.dart' show preferReducedOverhead;
 
 /// Frosted glass surface. Content renders on top of the blur + tint.
 class ProxGlassPane extends StatelessWidget {
@@ -34,6 +35,20 @@ class ProxGlassPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final glass = spec ?? ProxGlass.of(context);
+    // Low-end bypass: BackdropFilter re-blurs every frame for content
+    // scrolling behind it — old GPUs cannot hold 60fps under it. Solid
+    // tint keeps the depth cue with zero filter passes.
+    if (preferReducedOverhead) {
+      return Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: glass.tintColor.withValues(alpha: glass.tintOpacity),
+          borderRadius: borderRadius,
+          border: Border.all(color: glass.borderColor, width: 0.5),
+        ),
+        child: child,
+      );
+    }
 
     return ClipRRect(
       borderRadius: borderRadius,

@@ -20,6 +20,7 @@ import 'core/app_config/force_update.dart';
 import 'core/security/integrity.dart';
 import 'core/auth.dart';
 import 'core/ble_radio.dart';
+import 'core/relay_policy.dart' show warmRelayPolicyCache;
 import 'core/cloud_sync.dart';
 import 'core/device_store.dart';
 import 'core/enrollment.dart';
@@ -330,6 +331,10 @@ Future<void> main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     _reassertEdgeToEdge();
     unawaited(_forceUpdateEntryBarrier());
+    // Warm the relay-policy cache (one RAM channel read, background): by
+    // the time browse arms the relay, low-end phones are already decided
+    // — and glass/shimmer affordances read the warmed value.
+    unawaited(warmRelayPolicyCache());
   });
 }
 

@@ -37,6 +37,19 @@ bool passiveForMemory({required bool lowRamDevice, required int totalMemBytes}) 
 bool? _cachedPassive;
 Future<bool>? _flight;
 
+/// Sync read of the warmed policy cache for UI affordances (glass blur,
+/// shimmer). False until the first policy read resolves — builds must
+/// tolerate the flip (it only ever removes work).
+bool get preferReducedOverhead => _cachedPassive == true;
+
+/// Warm the policy cache (startup, fire-and-forget): one channel hop in
+/// the background so browse + UI affordances decide without stalling.
+Future<void> warmRelayPolicyCache() async {
+  try {
+    await shouldRelayPassively();
+  } catch (_) {}
+}
+
 /// True when this device should listen passively (no relay).
 /// iOS always (CoreBluetooth foreground-only + displaced mfg data + OS
 /// scan throttling make iPhones poor relays; Android front rows cover —

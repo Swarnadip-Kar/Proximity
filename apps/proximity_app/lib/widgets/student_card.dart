@@ -221,6 +221,12 @@ class ProxAvatar extends StatelessWidget {
               width: size,
               height: size,
               fit: BoxFit.cover,
+              // Decode at ~2x display size: full-res Gmail photos decoded
+              // per tile waste megabytes of GPU memory on long lists.
+              cacheWidth: (size * 2).ceil(),
+              cacheHeight: (size * 2).ceil(),
+              filterQuality: FilterQuality.low,
+              gaplessPlayback: true,
               errorBuilder: (_, __, ___) => initials(),
               frameBuilder: (context, child, frame, _) {
                 if (frame == null) return initials();
@@ -298,6 +304,10 @@ class AttendanceRingAvatar extends StatelessWidget {
               width: avatarSize,
               height: avatarSize,
               fit: BoxFit.cover,
+              cacheWidth: (avatarSize * 2).ceil(),
+              cacheHeight: (avatarSize * 2).ceil(),
+              filterQuality: FilterQuality.low,
+              gaplessPlayback: true,
               errorBuilder: (_, __, ___) =>
                   CourseLogo(course: course, size: avatarSize),
               frameBuilder: (context, child, frame, _) {
@@ -806,6 +816,11 @@ class _CardAvatar extends StatelessWidget {
       child: Image.network(
         url,
         fit: BoxFit.cover,
+        // Unbounded parent: cap decode at avatar scale (≤56dp @2x).
+        cacheWidth: 112,
+        cacheHeight: 112,
+        filterQuality: FilterQuality.low,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) => initials(),
         // While loading (or offline-starved), show initials beneath:
         // the frameBuilder fades the photo in over them.
