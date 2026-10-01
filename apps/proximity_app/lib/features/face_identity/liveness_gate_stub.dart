@@ -26,4 +26,8 @@ class HeuristicLivenessGate implements LivenessGate {
   @override
   Future<LivenessResult> detectPassive(String imagePath) async =>
       throw _blocked();
+
+  /// Web never warms (records-only, no native model): no-op so shared
+  /// session drivers compile unchanged.
+  static void prewarm() {}
 }

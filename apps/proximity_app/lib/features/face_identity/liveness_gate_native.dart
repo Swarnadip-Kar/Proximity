@@ -79,6 +79,15 @@ class HeuristicLivenessGate implements LivenessGate {
     }
   }
 
+  /// Fire-and-forget model prewarm for session open: starts the shared
+  /// interpreter load while the holder positions for the first still, so
+  /// the first vitality probe pays inference only, not asset load.
+  /// Fail-soft by design (a failed load clears the slot and the first
+  /// probe retries via [_interpreter] — never a throw out of warmup).
+  static void prewarm() {
+    unawaited(_interpreter().then<void>((_) {}, onError: (_) {}));
+  }
+
   static Future<Interpreter> _load() async {
     try {
       final it = await Interpreter.fromAsset(kLivenessModelAsset);

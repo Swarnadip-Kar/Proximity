@@ -301,6 +301,18 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
     setState(() => _opening = false);
     EnrollLog.face('session camera open — continuous to completion');
+    // Prewarm the face + liveness models while the holder positions for
+    // the first still (both loads are idempotent singletons; failures
+    // retry on first use). Fail-soft: never throws out of open, never
+    // touches the buckets or the save path.
+    unawaited(Future(() async {
+      try {
+        await ref.read(enrollmentControllerProvider.notifier).verifier.init();
+      } catch (_) {}
+      try {
+        HeuristicLivenessGate.prewarm();
+      } catch (_) {}
+    }));
     // Fresh active-challenge order per session (security §4): shuffled
     // before the first still, so no pre-recorded sequence can match it.
     _livenessPlan = EnrollLivenessPlan.fresh();
