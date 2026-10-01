@@ -897,6 +897,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// already ran). Mounted-checked throughout; Navigator lookup is
   /// fail-soft so a dead context never crashes. Rapid storms settle on
   /// exactly one flow: the first push wins, the rest no-op on [_flowOpen].
+  ///
+  /// Completion/back drive the pop from the ROOT navigator captured at
+  /// push time — never from this State's mounted flag or context. The
+  /// pushed route outlives the shell: a bare mode switch (mark-screen
+  /// Switch mode, in-flow sign-out) disposes this State while the flow
+  /// stays open, and a `!mounted` guard would turn every later Complete
+  /// into a silent no-op (stuck role hub). `popUntil` past every
+  /// `setupFlow` route (not a single pop) so a remount-stacked duplicate
+  /// can never leave its twin behind.
   void _maybePushFlow(int gen) {
     if (!mounted) return;
     if (gen != _gateGen) return;
@@ -917,17 +926,17 @@ class _StudentShellState extends ConsumerState<StudentShell> {
             name: ProxRoutes.setupFlow,
             child: SetupFlowScreen(
               onFirstBack: () async {
-                if (!mounted) return;
                 try {
-                  final n = Navigator.of(context, rootNavigator: true);
-                  if (n.canPop()) n.pop();
+                  root.popUntil((route) =>
+                      route.isFirst ||
+                      route.settings.name != ProxRoutes.setupFlow);
                 } catch (_) {}
               },
               onComplete: () async {
-                if (!mounted) return;
                 try {
-                  final n = Navigator.of(context, rootNavigator: true);
-                  if (n.canPop()) n.pop();
+                  root.popUntil((route) =>
+                      route.isFirst ||
+                      route.settings.name != ProxRoutes.setupFlow);
                 } catch (_) {}
               },
             ),
