@@ -88,18 +88,11 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
   @override
   void initState() {
     super.initState();
+    // Key restore happens inside the session open ([_openCamera] restores
+    // before the camera permission prompt and the key gate), so a rescan
+    // after restart — or the Accounts Re-scan entry — never meets a
+    // keyless draft. No second reconcile here: one owner, no race.
     initCaptureSession();
-    // Rescan-after-restart: a fresh controller holds no key (`_keys` null,
-    // `pkHex` empty) even though this device stores one, so Save would
-    // fail-closed with "Generate the device key first". Reconcile the
-    // current session here — same-account is a no-op when keys are already
-    // loaded, and a stored key restores before the user finishes scanning.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(ref
-          .read(enrollmentControllerProvider.notifier)
-          .refreshFromAuth());
-    });
   }
 
   @override

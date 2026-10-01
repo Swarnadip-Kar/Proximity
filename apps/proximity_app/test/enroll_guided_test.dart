@@ -534,15 +534,11 @@ void main() {
   });
 
   group('EnrollCaptureScreen continuous session', () {
-    testWidgets('mount restores the stored key (rescan after restart)',
-        (t) async {
-      // Rescan regression: key generated earlier (stored on device), then
-      // a fresh controller (restart) with an empty draft. Mounting the
-      // capture screen must reconcile (refreshFromAuth) so Save does not
-      // fail-closed with "Generate the device key first".
+    /// Stored-key fixture: enrollment sealed on device (security §2 —
+    /// DKey envelope, never a raw seed) with a FRESH controller holding
+    /// an empty draft (restart / Accounts Re-scan entry shape).
+    Future<EnrollmentController> storedKeyController() async {
       final store = InMemoryDeviceStore();
-      // Sealed-only fixture (security §2): the stored key is a DKey-sealed
-      // envelope, never a raw seed.
       final sealedFixture = hexEncode(await FakeDeviceKey()
           .seal(Uint8List.fromList(hexDecode('ab' * 32))));
       await store.writeEnrollment(StoredEnrollment(
@@ -566,8 +562,21 @@ void main() {
         store: store,
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        // enrollFace measures liveness on the fake stills: scripted pass
+        // (liveness itself is pinned in enroll_liveness_gate_test).
+        livenessGate: FakeLivenessGate(),
       );
       expect(ctl.state.pkHex, isEmpty);
+      return ctl;
+    }
+
+    testWidgets('mount restores the stored key (rescan after restart)',
+        (t) async {
+      // Rescan regression: key generated earlier (stored on device), then
+      // a fresh controller (restart) with an empty draft. Mounting the
+      // capture screen must reconcile (refreshFromAuth) so Save does not
+      // fail-closed with "Generate the device key first".
+      final ctl = await storedKeyController();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
       await t.pumpAndSettle();
@@ -576,6 +585,27 @@ void main() {
       // Drain: cancel the live loop (pops back to the launcher).
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('rescan entry scans without a key gate (stored key wins)',
+        (t) async {
+      // Accounts Re-scan shape: enrollment exists, controller draft is
+      // empty, restartFace() ran (key kept). The session must restore
+      // BEFORE the camera key gate — never strand on "Generate the device
+      // key on the previous screen first".
+      final ctl = await storedKeyController();
+      final camera = FakeEnrollSessionCamera();
+      await ctl.restartFace();
+      await t.pumpWidget(
+          _captureHarness(ctl: ctl, camera: camera));
+      await _openSession(t);
+      expect(find.textContaining('Generate the device key'), findsNothing);
+      // The walk completes on its own against the cycling default gate.
+      await _pumpUntil(t, find.text('Save enrollment'));
+      await t.pumpAndSettle();
+      expect(camera.openCount, 1);
+      expect(find.text('Save enrollment'), findsWidgets);
       expect(t.takeException(), isNull);
     });
 
