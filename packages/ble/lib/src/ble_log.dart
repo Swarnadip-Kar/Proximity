@@ -46,8 +46,12 @@ class BleLog {
   static void log(String tag, String msg) {
     final e = BleLogEntry(DateTime.now().toUtc(), tag, msg);
     _history.add(e);
-    while (_history.length > cap) {
-      _history.removeAt(0);
+    // O(1) amortized eviction: drop in batches instead of memmoving one
+    // entry per log (old `removeAt(0)` shifted 500 entries per packet —
+    // dominant cost during BLE bursts on low-end phones).
+    if (_history.length > cap) {
+      final overflow = _history.length - cap;
+      _history.removeRange(0, overflow);
     }
     try {
       _ctl.add(e);

@@ -28,6 +28,7 @@ import 'prof_pin_check.dart';
 import '../mode.dart';
 import 'device_store.dart';
 import 'platformx.dart';
+import 'relay_policy.dart';
 import 'sync/org.dart';
 
 enum StudentResult { marked, late, faceFailed, noSignal, error }
@@ -733,10 +734,14 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     } catch (e) {
       BleLog.log('BLE', 'prewarm scan FAILED: $e');
     }
-    // Front-row relay must be armed from the moment we start listening —
-    // the window can open while the camera UI is up (face capture), and
-    // back rows starve if we wait until listenAndProve to enable it.
-    // Professors never call prewarm (they originate), so this is student-only.
+    // Front-row relay armed here so the window opening under the camera
+    // UI still reaches back rows. Passive devices (old phones/iPhones)
+    // skip relay — they prove over WiFi, never re-air.
+    _engine.applyRelayPolicy(lowPower: shouldRelayPassively());
+    if (shouldRelayPassively()) {
+      BleLog.log('MESH', 'mesh passive (no relay on this device)');
+      return;
+    }
     _engine.relayEnabled = true;
     BleLog.log('MESH', 'mesh on (front-row relay armed, prewarm)');
   }
@@ -960,8 +965,13 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // later rotation instead of racing a countdown. Loop until a verdict.
     _engine.clearSightings();
     BleLog.log('BLE', 'stale sightings cleared (listen start)');
-    _engine.relayEnabled = true;
-    BleLog.log('MESH', 'mesh on (front-row relay armed)');
+    _engine.applyRelayPolicy(lowPower: shouldRelayPassively());
+    if (shouldRelayPassively()) {
+      BleLog.log('MESH', 'mesh passive (listen only, no relay)');
+    } else {
+      _engine.relayEnabled = true;
+      BleLog.log('MESH', 'mesh on (front-row relay armed)');
+    }
     BleLog.log('BLE', 'listening until marked (no round clock)…');
     Uint8List? lastTried;
     DateTime? firstHeardAt;
@@ -1111,19 +1121,21 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     }
   }
 
-  /// Keeps challenge relay alive until 20s after the token was first
-  /// received, then switches the mesh off. Single reschedulable timer:
-  /// a newer challenge extends the linger instead of an older timer
-  /// cutting the mesh early for back rows.
+  /// Keeps challenge relay alive briefly after the token was first heard,
+  /// then switches the mesh off. Single reschedulable timer: a newer
+  /// challenge extends the linger instead of an older timer cutting early.
+  /// 10s (one rotation) — the old 20s kept the whole hall meshing long
+  /// after marks landed. Passive devices never linger.
   Timer? _lingerTimer;
   void _lingerRelay20sAfter(DateTime firstHeardAt) {
-    const linger = Duration(seconds: 20);
+    if (shouldRelayPassively()) return;
+    const linger = Duration(seconds: 10);
     final elapsed = DateTime.now().toUtc().difference(firstHeardAt);
     if (elapsed >= linger) {
       _lingerTimer?.cancel();
       _lingerTimer = null;
       _engine.relayEnabled = false;
-      BleLog.log('MESH', 'mesh off (20s linger elapsed)');
+      BleLog.log('MESH', 'mesh off (linger elapsed)');
       return;
     }
     _lingerTimer?.cancel();
@@ -1131,7 +1143,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       _lingerTimer = null;
       try {
         _engine.relayEnabled = false;
-        BleLog.log('MESH', 'mesh off (20s linger done)');
+        BleLog.log('MESH', 'mesh off (linger done)');
       } catch (_) {}
     });
   }

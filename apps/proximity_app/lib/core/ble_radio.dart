@@ -222,6 +222,11 @@ class UniversalBleRadio implements BlePlatformDelegate {
   Future<void> startScanning(void Function(BleSighting s) onSight) async {
     _onSight = onSight;
     UniversalBle.onScanResult = (BleDevice d) {
+      // Pre-parse RSSI floor: sub-(-90) noise never pays Uuid normalize +
+      // AirParser + hex + DateTime work. Matches engine drop floor.
+      try {
+        if ((d.rssi) < -90) return;
+      } catch (_) {}
       final s = _parser.map(d);
       // Most neighbours parse to nothing and drop silently here; the
       // parser logs FCD2 halves so air visibility stays debuggable.

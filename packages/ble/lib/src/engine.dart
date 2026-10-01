@@ -35,6 +35,18 @@ class ProxBleEngine {
   void Function(String host, int port)? onIpHintHeard;
 
   final List<BleSighting> sightings = [];
+
+  /// Bound on retained sightings: browsing never cleared this list, so a
+  /// 30min browse at 20 ADV/s grew to ~36k entries (OOM/GC jank on old
+  /// phones). Cap keeps `byRssiDesc` sorts cheap; oldest evicted first.
+  /// Tests may shrink.
+  int sightingsCap = 200;
+
+  /// Sub-RSSI floor: packets weaker than this never enter the list,
+  /// callbacks, or relay — they are radio noise below any usable gate
+  /// (direct -75, relay -80). Saves Dart parse→dispatch→log work during
+  /// dense-hall bursts. Tests may adjust.
+  int dropBelowRssiDbm = -90;
   Timer? _rotTimer;
   int currentJ = 0;
   bool dense = false;
@@ -69,11 +81,46 @@ class ProxBleEngine {
   int relayDrops = 0;
   final List<DateTime> _relayStamps = [];
 
+  /// Rolling scan-density clock: recent challenge-channel arrivals drive
+  /// `dense` automatically (congestion sense). >20 sightings in 5s flips
+  /// dense on (wider jitter + tighter relay cap); quiet rooms flip it off.
+  final List<DateTime> _densityTimes = [];
+
+  /// Effective per-second relay budget: dense halls relay at most 1/s per
+  /// device (herd de-sync), sparse rooms keep [relayMaxPerSecond].
+  int get _effectiveRelayCap => dense ? 1 : relayMaxPerSecond;
+
+  /// Low-power / passive-listen policy for old phones + iPhones: they
+  /// prove over WiFi but never re-air (cuts ~1 ADV/10s/device from the
+  /// hall and saves scan→ADV churn). App layer calls this once per
+  /// session; professors are unaffected (they originate, never relay).
+  void applyRelayPolicy({required bool lowPower}) {
+    if (lowPower) {
+      relayEnabled = false;
+      relayMaxPerSecond = 1;
+    } else {
+      relayMaxPerSecond = 4;
+    }
+  }
+
+  void _noteDensity() {
+    final now = DateTime.now().toUtc();
+    _densityTimes.add(now);
+    _densityTimes
+        .removeWhere((t) => now.difference(t) > const Duration(seconds: 5));
+    // Hysteresis: enter dense above 20, leave below 10.
+    if (!dense && _densityTimes.length > 20) {
+      dense = true;
+    } else if (dense && _densityTimes.length < 10) {
+      dense = false;
+    }
+  }
+
   bool _relayCapAllow() {
     final now = DateTime.now().toUtc();
     _relayStamps
         .removeWhere((t) => now.difference(t) > const Duration(seconds: 1));
-    if (_relayStamps.length >= relayMaxPerSecond) return false;
+    if (_relayStamps.length >= _effectiveRelayCap) return false;
     _relayStamps.add(now);
     return true;
   }
@@ -526,7 +573,18 @@ class ProxBleEngine {
   }
 
   void handleSighting(BleSighting s) {
+    // Carrier-sense pre-gate: sub-floor noise never enters the list,
+    // callbacks, relay, or logs. Cheapest possible drop during storms.
+    if (s.rssiDbm < dropBelowRssiDbm) return;
+    // Junk types (non-challenge/hint/response) are radio noise: never
+    // stored, never relayed, never logged per packet (old path logged
+    // every junk line — per-packet string work during bursts).
+    if (!s.isChallenge && !s.isIpHint && !s.isResponse) return;
     sightings.add(s);
+    if (sightings.length > sightingsCap) {
+      sightings.removeRange(0, sightings.length - sightingsCap);
+    }
+    _noteDensity();
     _lastSightAt = DateTime.now().toUtc();
     if (s.isChallenge) {
       _lastChallengeAt = _lastSightAt;
@@ -575,9 +633,6 @@ class ProxBleEngine {
       try {
         onResponseHeard?.call(s);
       } catch (_) {}
-    } else {
-      BleLog.log('BLE',
-          'RX other type=${s.type} rssi=${s.rssiDbm} (ignored)');
     }
   }
 
@@ -596,6 +651,7 @@ class ProxBleEngine {
 
   void clearSightings() {
     sightings.clear();
+    _densityTimes.clear();
     // Round restart: the next token logs fresh even if its key matches.
     _lastLoudChallenge = '';
     _lastLoudHint = '';

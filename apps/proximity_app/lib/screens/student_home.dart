@@ -24,6 +24,7 @@ import '../core/ble_radio.dart';
 import '../core/cloud_sync.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
+import '../core/relay_policy.dart';
 import '../core/student_driver.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
@@ -373,8 +374,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     try {
       final engine = ref.read(bleEngineProvider);
       engine.onIpHintHeard = _onBleIpHint;
-      engine.relayEnabled = true;
-      BleLog.log(ProxLogTags.mesh, 'mesh on (student relay armed)');
+      engine.applyRelayPolicy(lowPower: shouldRelayPassively());
+      if (shouldRelayPassively()) {
+        BleLog.log(ProxLogTags.mesh, 'mesh passive (listen only, no relay)');
+      } else {
+        engine.relayEnabled = true;
+        BleLog.log(ProxLogTags.mesh, 'mesh on (student relay armed)');
+      }
       Future(() async {
         var ok = true;
         try {
