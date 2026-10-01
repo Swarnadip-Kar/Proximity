@@ -57,12 +57,19 @@ class DeviceConfirmStep extends ConsumerWidget {
         linked != null &&
         linked.gmail.trim().toLowerCase() ==
             acct.email.trim().toLowerCase();
+    // Root cause of the behind-nav-bar CTA: the app is edge-to-edge
+    // (transparent system bars + extendBody, see main + MainActivity) and
+    // AdaptiveScaffold bodies own their insets — this scroll had a fixed
+    // 16px bottom pad, so on tall content the Continue button scrolled to
+    // the viewport edge hiding behind the Android gesture/nav bar with no
+    // way to reveal it. The bottom pad absorbs the system inset instead.
+    final bottomPad = 16 + MediaQuery.viewPaddingOf(context).bottom;
     return AdaptiveScaffold(
       title: 'Confirm device',
       body: Center(
         child: SingleChildScrollView(
           key: const ValueKey('setup-device-scroll'),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          padding: EdgeInsets.fromLTRB(24, 16, 24, bottomPad),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 460),
             child: Column(
@@ -143,12 +150,16 @@ class AccountKeyStep extends ConsumerWidget {
     // The scan seals to the key AND files under the ID — both required
     // before leaving this step (fail-closed; Save re-checks too).
     final canContinue = hasKey && hasRoll;
+    // Same edge-to-edge bottom inset as DeviceConfirmStep above: without
+    // it the Continue button hides behind the Android nav bar on tall
+    // content with no way to scroll it clear.
+    final bottomPad = 16 + MediaQuery.viewPaddingOf(context).bottom;
     return AdaptiveScaffold(
       title: 'Account & key',
       body: Center(
         child: SingleChildScrollView(
           key: const ValueKey('setup-account-key-scroll'),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          padding: EdgeInsets.fromLTRB(24, 16, 24, bottomPad),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 460),
             child: ProxStaggered(
