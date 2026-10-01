@@ -329,16 +329,15 @@ void main() {
       await t.pump();
       expect(t.takeException(), isNull);
       final feedRect = t.getRect(find.byKey(const Key('feed')));
-      // Height-first letterbox: feed fills the Stack height (250 minus the
-      // preview top offset), bars on sides. Preview rides low by xxl.
-      expect(feedRect.top, moreOrLessEquals(ProxSpacing.xxl, epsilon: 1));
-      expect(feedRect.height,
-          moreOrLessEquals(250 - ProxSpacing.xxl, epsilon: 1));
+      // Height-first letterbox: feed fills the Stack height (full 250 —
+      // below-app-bar layout has no ride-low offset), bars on sides.
+      expect(feedRect.top, moreOrLessEquals(0, epsilon: 1));
+      expect(feedRect.height, moreOrLessEquals(250, epsilon: 1));
       expect(feedRect.width / feedRect.height,
           moreOrLessEquals(4 / 3, epsilon: 0.01));
       // Overlay oval tracks the video box (same fractions the overlay
       // derives via guideRectForAspect — no new aspect logic).
-      final box = Size(740, 250 - ProxSpacing.xxl);
+      final box = Size(740, 250);
       final video =
           CaptureOverlay.previewRectFor(box, 4 / 3);
       final oval = CaptureOverlay.guideRectForAspect(box, 4 / 3);

@@ -396,7 +396,7 @@ void main() {
       await _openSession(t);
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(find.text(faceCheckPrompt), findsNothing);
       expect(find.text(captureGuidePrompt), findsNothing);
       final overlay =

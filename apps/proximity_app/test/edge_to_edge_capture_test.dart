@@ -552,7 +552,7 @@ void main() {
       expect(overlay.showProgress, isTrue);
       expect(overlay.showBeacon, isTrue);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(find.text(faceCheckPrompt), findsNothing);
       expect(find.text(captureGuidePrompt), findsNothing);
       expect(t.takeException(), isNull);

@@ -272,6 +272,12 @@ class EnrollCaptureBottomBar extends StatelessWidget {
   final String? recaptureSlot;
   final Future<void> Function(String slot)? onRecapture;
 
+  /// Live vitality readout for the bottom bar (null = hidden): the latest
+  /// measured liveness score + guided target, rendered BELOW the button
+  /// slot in every state (mid-flow, saving, terminal) so the bar height
+  /// never moves between transitions. Test-only constructions leave null.
+  final String? liveReadout;
+
   const EnrollCaptureBottomBar({
     super.key,
     required this.validated,
@@ -281,6 +287,7 @@ class EnrollCaptureBottomBar extends StatelessWidget {
     required this.onRetry,
     this.recaptureSlot,
     this.onRecapture,
+    this.liveReadout,
   });
 
   @override
@@ -374,6 +381,25 @@ class EnrollCaptureBottomBar extends StatelessWidget {
                   children: terminalChrome,
                 ),
               ),
+            ],
+            // Live vitality readout (below the button slot, every state):
+            // latest measured liveness + guided target in tabular mono so
+            // digits never jitter the width. Always rendered when wired
+            // (never only-terminal) so the bar height is identical across
+            // mid-flow → saving → validated/error transitions.
+            if (liveReadout != null) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              Builder(builder: (context) {
+                final c = ProximityColors.of(context);
+                return Text(
+                  liveReadout!,
+                  style: ProxType.monoCaption(
+                      color: c.contentSecondary),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                );
+              }),
             ],
           ],
         ),

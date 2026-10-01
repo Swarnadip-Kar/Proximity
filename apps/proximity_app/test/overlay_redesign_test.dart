@@ -115,7 +115,7 @@ void main() {
   });
 
   group('CaptureOverlay three elements', () {
-    testWidgets('bar + oval + one prompt, bar pinned top', (t) async {
+    testWidgets('bar + oval + one prompt, bar above oval', (t) async {
       await t.pumpWidget(_app(const CaptureOverlay(
         progress: 0.4,
         currentAngle: 1,
@@ -125,12 +125,14 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.byType(CustomPaint), findsWidgets);
       expect(find.text(captureGuidePrompt), findsOneWidget);
-      // Placement: bar above the oval center, prompt below it.
+      // Placement: bar floats above the oval, prompt below it.
       final overlayBox =
           t.getRect(find.byType(CaptureOverlay).first);
       final barRect = t.getRect(find.byType(LinearProgressIndicator));
       final promptRect = t.getRect(find.text(captureGuidePrompt));
-      expect(barRect.top - overlayBox.top, lessThanOrEqualTo(24));
+      final oval = CaptureOverlay.guideRectForAspect(
+          overlayBox.size, null);
+      expect(barRect.bottom, lessThanOrEqualTo(oval.top + 1));
       expect(barRect.center.dy, lessThan(overlayBox.center.dy));
       expect(promptRect.center.dy, greaterThan(overlayBox.center.dy));
       // Slim bar.
@@ -260,7 +262,7 @@ void main() {
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       // Exactly one prompt instance (overlay-owned; bottom bar empty).
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       // Full-bleed: no Center wrapper between overlay and Expanded.
       expect(
           find.ancestor(

@@ -205,9 +205,10 @@ void main() {
       final ctl = await _keyReady();
       await t.pumpWidget(_captureHarness(ctl: ctl));
       await _openSession(t);
-      // Single static prompt (overlay-owned) + the single-oval overlay
-      // exactly (no dots, no per-angle labels — override 2026-09-10).
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      // Single guided prompt (overlay-owned, names the first walk
+      // target) + the single-oval overlay exactly (no dots, no per-angle
+      // labels — override 2026-09-10).
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       // Cover-fit removed visible mid-flow buttons; area parity is a
@@ -262,7 +263,7 @@ void main() {
       // Overlay-owned prompt persists in the terminal state (the overlay
       // is always mounted over the preview); the bare frame self-sizes
       // through the bottom-bar change, so no size pin here.
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(_previewStackFinder(), findsOneWidget);
       expect(t.takeException(), isNull);
       // Drain via cancel (disposes the session camera).
@@ -295,7 +296,7 @@ void main() {
               matching: find.byType(Positioned)),
           findsOneWidget);
       expect(_previewStackFinder(), findsOneWidget);
-      expect(find.text(enrollCapturePrompt), findsNothing);
+      expect(find.text(enrollTargetPrompt('down')), findsNothing);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -327,7 +328,7 @@ void main() {
       // Prompt is overlay chrome, never bottom-bar chrome mid-flow: a
       // Stack sits between the prompt text and the page Scaffold, and no
       // prompt copy lives in the Padding(16) bottom bar.
-      final promptEl = find.text(enrollCapturePrompt).evaluate().single;
+      final promptEl = find.text(enrollTargetPrompt('down')).evaluate().single;
       var stackBetween = false;
       promptEl.visitAncestorElements((a) {
         final w = a.widget;
@@ -340,7 +341,7 @@ void main() {
           find.descendant(
               of: find.byWidgetPredicate((w) =>
                   w is Padding && w.padding == const EdgeInsets.all(16)),
-              matching: find.text(enrollCapturePrompt)),
+              matching: find.text(enrollTargetPrompt('down'))),
           findsNothing);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -364,7 +365,7 @@ void main() {
         final w = e.widget as Text;
         texts.add(w.data ?? w.textSpan?.toPlainText() ?? '');
       }
-      expect(texts, [enrollCapturePrompt]);
+      expect(texts, [enrollTargetPrompt('down')]);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);

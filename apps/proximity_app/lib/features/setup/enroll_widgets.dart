@@ -30,6 +30,26 @@ abstract final class EnrollLog {
 /// flickered — guidance now comes from the rim sweep, silent).
 const enrollCapturePrompt = 'Rotate your face slowly, following the glow.';
 
+/// Guided-walk instruction per slot: the wheels show WHERE (live band +
+/// marker); this line names the move in a few words. Short by contract
+/// (single-line ellipsis in the overlay) — no jargon, no scores.
+String enrollTargetPrompt(String slot) {
+  switch (slot) {
+    case 'down':
+      return 'Tilt down into the glowing band';
+    case 'centre':
+      return 'Look straight at the lens';
+    case 'up':
+      return 'Tilt up into the glowing band';
+    case 'left':
+      return 'Turn left into the glowing band';
+    case 'right':
+      return 'Turn right into the glowing band';
+    default:
+      return enrollCapturePrompt;
+  }
+}
+
 /// THE single ID-number entry of the bundle (entered exactly once, on the
 /// account & key step; the result step shows it readonly). One entry, one
 /// validation (the controller's fail-closed roll check at Save) — never a

@@ -418,8 +418,9 @@ void main() {
       ]);
       expect(screenLib().contains('previewMessage'), isTrue);
       expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
-      // The composer wires the frozen prompt into the preview section.
-      expect(screenLib().contains('statusLine: enrollCapturePrompt'), isTrue);
+      // The composer wires the per-target guided prompt into the preview.
+      expect(screenLib().contains('statusLine: enrollTargetPrompt(targetSlot)'),
+          isTrue);
     });
 
     test('exactly the documented breakup deltas, nothing else', () {
@@ -451,7 +452,7 @@ void main() {
       // oval + dots are gone.
       expect(combined.contains('CaptureOverlay('), isTrue);
       expect(combined.contains('faceEnrollSlots.length'), isTrue);
-      expect(combined.contains('statusLine: enrollCapturePrompt'), isTrue);
+      expect(combined.contains('enrollTargetPrompt(targetSlot)'), isTrue);
       expect(combined.contains('FaceOval('), isFalse);
       expect(combined.contains('FaceCaptureOvalOverlay('), isFalse);
       expect(combined.contains('EnrollAngleDots('), isFalse);
@@ -489,10 +490,16 @@ void main() {
     });
   });
 
-  group('guided copy + dots (static contracts)', () {
-    test('exactly one prompt, pinned verbatim', () {
+  group('guided copy (per-target contracts)', () {
+    test('one prompt per walk slot, pinned verbatim', () {
       expect(enrollCapturePrompt,
           'Rotate your face slowly, following the glow.');
+      expect(enrollTargetPrompt('down'), 'Tilt down into the glowing band');
+      expect(enrollTargetPrompt('centre'), 'Look straight at the lens');
+      expect(enrollTargetPrompt('up'), 'Tilt up into the glowing band');
+      expect(enrollTargetPrompt('left'), 'Turn left into the glowing band');
+      expect(enrollTargetPrompt('right'), 'Turn right into the glowing band');
+      expect(enrollTargetPrompt('nope'), enrollCapturePrompt);
       expect(faceEnrollSlots, ['centre', 'left', 'right', 'up', 'down']);
     });
 
@@ -631,13 +638,11 @@ void main() {
           find.byWidgetPredicate(
               (w) => w is Visibility && !w.visible && w.maintainSize),
           findsWidgets);
-      // Exactly one instructional text during capture (overlay-owned)…
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
-      // …and no per-angle titles, hints, or status narration anywhere.
+      // Exactly one instructional text during capture (overlay-owned,
+      // guided to the current walk target)…
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
+      // …and no checker narration or status jargon anywhere.
       for (final banned in [
-        'Look straight',
-        'Turn slightly',
-        'Tilt slightly',
         'Hold still',
         'Checking',
         'Verifying',
@@ -736,13 +741,13 @@ void main() {
             reason: 'constraining wrapper in preview path: $ban');
       }
 
-      // Prompt path: the single prompt rides inside the overlay's own
+      // Prompt path: the guided prompt rides inside the overlay's own
       // Stack (below the oval) — exactly one instance, never in the
       // bottom bar mid-flow.
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(
           find.ancestor(
-              of: find.text(enrollCapturePrompt),
+              of: find.text(enrollTargetPrompt('down')),
               matching: find.byType(CaptureOverlay)),
           findsOneWidget);
       expect(t.takeException(), isNull);
@@ -924,12 +929,11 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('alternating classifications keep one static prompt',
+    testWidgets('alternating classifications keep one guided prompt',
         (t) async {
       // Stills arrive left/right while the walk asks bottom first: the
-      // off-target stills are quiet retries, but the single prompt never
-      // changes and no other instructional text ever appears — per-frame
-      // output steers nothing user-facing.
+      // off-target stills are quiet retries — the prompt names the
+      // current target only, and no checker narration ever appears.
       const left = PoseReading(yaw: -20, pitch: 0, roll: 0);
       const right = PoseReading(yaw: 20, pitch: 0, roll: 0);
       final gate = FakePoseGate(readings: [left, right]);
@@ -939,14 +943,14 @@ void main() {
       await t.pumpWidget(_captureHarness(
           ctl: ctl, gate: gate, camera: camera));
       await _openSession(t);
-      // Off-target stills fill nothing — prompt unchanged, gallery
-      // untouched until the terminal write. Fixed pump past the first
-      // beats (progress now rides the large oval arc, which carries no
-      // semantics label — any partial state proves the mid-flow point).
+      // Off-target stills fill nothing — prompt still names the bottom
+      // target, gallery untouched until the terminal write. Fixed pump
+      // past the first beats (any partial state proves the mid-flow
+      // point).
       await t.pump(const Duration(milliseconds: 1500));
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
-      expect(find.textContaining('Turn'), findsNothing);
-      expect(find.textContaining('Look straight'), findsNothing);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
+      expect(find.textContaining('Checking'), findsNothing);
+      expect(find.textContaining('Analyzing'), findsNothing);
       expect(verifier.calls.where((c) => c.startsWith('enroll:')), isEmpty);
       // The session still completes once the walk's angles arrive (the
       // default gate cycles the canonical views after the script).

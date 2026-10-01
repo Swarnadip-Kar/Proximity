@@ -115,11 +115,11 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   const FaceCaptureOvalOverlay({super.key, this.progress = 0});
 
   /// Framing oval fractions of the preview size. Same as the shared
-  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.80w x 0.60h)
+  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.70w x 0.62h)
   /// so the marking capture frames faces at the identical size —
   /// one face size everywhere, never a bigger oval here.
-  static const beaconWidthFraction = 0.80;
-  static const beaconHeightFraction = 0.60;
+  static const beaconWidthFraction = 0.70;
+  static const beaconHeightFraction = 0.62;
 
   /// Face width/height for the portrait clamp below (human-face
   /// proportion — width < height). Phone portrait previews already satisfy

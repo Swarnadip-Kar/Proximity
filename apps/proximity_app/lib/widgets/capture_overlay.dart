@@ -5,7 +5,7 @@
 // Full-bleed camera preview with exactly three overlay elements, nothing
 // else — shared by `mark/face` and `enroll/capture` (one overlay design,
 // not two):
-//  1. ONE slim progress bar pinned just BELOW the top app bar (angle
+//  1. ONE slim progress bar floating a little above the oval (angle
 //     completion 0..1).
 //  2. ONE static oval centered as the face guide with ONE glowing green
 //     COMET that travels along/around it indicating the current target
@@ -221,24 +221,24 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Face-guide oval derived from the ACTUAL preview box (see
-  /// [previewRectFor]): the same 0.80w x 0.60h fractions applied to the
+  /// [previewRectFor]): the same 0.70w x 0.62h fractions applied to the
   /// video rect, not the full Stack size. Null aspect == [guideRectFor]
   /// legacy behavior. Pure for unit tests.
   ///
   /// Portrait clamp (face-guiding oval): the guide is a TRUE oval via
-  /// `drawOval` (never a rounded rect) and stays taller than wide on every
-  /// viewport. Phone portrait previews already satisfy w < h, so their
-  /// pixels are byte-identical; wide/desktop preview boxes (landscape
-  /// sensor ratios) would otherwise compute w >= h — there the width is
-  /// narrowed to `h * faceWidthToHeight`, keeping the same center/height.
-  /// Paint, preview sizing, and thresholds are untouched (static shape, no
-  /// new animation — settle-safe).
+  /// `drawOval` (never a rounded rect) and stays clearly taller than wide
+  /// on every viewport — a face-shaped ellipse, not a near-circle. Phone
+  /// portrait previews already satisfy w < h; wide/desktop preview boxes
+  /// (landscape sensor ratios) would otherwise compute w >= h — there the
+  /// width is narrowed to `h * faceWidthToHeight`, keeping the same
+  /// center/height. Paint, preview sizing, and thresholds are untouched
+  /// (static shape, no new animation — settle-safe).
   static const faceWidthToHeight = 0.75;
 
   static Rect guideRectForAspect(Size size, double? aspectRatio) {
     final preview = previewRectFor(size, aspectRatio);
-    var w = preview.width * 0.80;
-    final h = preview.height * 0.60;
+    var w = preview.width * 0.70;
+    final h = preview.height * 0.62;
     if (w >= h) w = h * faceWidthToHeight;
     return Rect.fromCenter(
       center: preview.center,
@@ -473,14 +473,16 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 ),
                 child: const SizedBox.expand(),
               ),
-              // Below-app-bar layout: the video starts under an opaque bar
-              // (the notch/status area is consumed above), so the bar
-              // needs no top SafeArea — only the bottom/gesture clearance
-              // below. [topInset] stays additive for any future overlay-bar
-              // caller (clamped, never negative).
+              // (1) ONE slim progress bar, floating a little above the oval
+              // (screen-margin pill — full-bleed lines belong on opaque
+              // app-bar seams, not floating over video). Below-app-bar
+              // layout: no top inset math, the bar rides the oval
+              // (oval.top - gap, clamped into the Stack). [topInset] stays
+              // additive for any future overlay-bar caller (clamped, never
+              // negative). Hidden in single-shot mode (mark/face).
               if (widget.showProgress)
                 Positioned(
-                  top: (widget.topInset - ProxSpacing.xxl)
+                  top: (widget.topInset + oval.top - 30)
                       .clamp(0.0, double.infinity),
                   left: ProxSpacing.screenMargin,
                   right: ProxSpacing.screenMargin,
@@ -710,9 +712,10 @@ class _CaptureOverlayPainter extends CustomPainter {
     final pitchAligned =
         CaptureOverlay.wheelInBand(pitchLive, pitchBand);
 
-    // Yaw rail: bottom strip, -range left → +range right.
-    final yawRect = Rect.fromLTRB(size.width * 0.15, size.height - 30,
-        size.width * 0.85, size.height - 20);
+    // Yaw rail: bottom strip, -range left → +range right. Slim (6px)
+    // so the video keeps priority; the band + marker carry the signal.
+    final yawRect = Rect.fromLTRB(size.width * 0.15, size.height - 27,
+        size.width * 0.85, size.height - 21);
     _paintWheelTrack(
       canvas,
       yawRect,
@@ -725,7 +728,7 @@ class _CaptureOverlayPainter extends CustomPainter {
       alpha: alpha,
     );
     // Pitch rail: right edge, +range top → -range bottom.
-    final pitchRect = Rect.fromLTRB(size.width - 26, size.height * 0.18,
+    final pitchRect = Rect.fromLTRB(size.width - 22, size.height * 0.18,
         size.width - 16, size.height * 0.70);
     _paintWheelTrack(
       canvas,
@@ -753,7 +756,7 @@ class _CaptureOverlayPainter extends CustomPainter {
   }) {
     // Track.
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rail, const Radius.circular(5)),
+      RRect.fromRectAndRadius(rail, const Radius.circular(3)),
       Paint()..color = Colors.white.withValues(alpha: 0.28 * alpha),
     );
     // Target band (axis-driven slots only).
@@ -772,7 +775,7 @@ class _CaptureOverlayPainter extends CustomPainter {
         bandRect = Rect.fromLTRB(rail.left, y0, rail.right, y1);
       }
       canvas.drawRRect(
-        RRect.fromRectAndRadius(bandRect, const Radius.circular(5)),
+        RRect.fromRectAndRadius(bandRect, const Radius.circular(3)),
         Paint()
           ..color = (aligned ? beaconColor : Colors.white)
               .withValues(alpha: (aligned ? 0.95 : 0.55) * alpha),
@@ -790,7 +793,7 @@ class _CaptureOverlayPainter extends CustomPainter {
     if (aligned) {
       canvas.drawCircle(
         at,
-        10,
+        8,
         Paint()
           ..color = beaconColor.withValues(alpha: 0.35 * alpha)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
@@ -798,7 +801,7 @@ class _CaptureOverlayPainter extends CustomPainter {
     }
     canvas.drawCircle(
       at,
-      6,
+      5,
       Paint()
         ..color = (aligned ? beaconColor : Colors.white)
             .withValues(alpha: (active ? 0.95 : 0.60) * alpha),

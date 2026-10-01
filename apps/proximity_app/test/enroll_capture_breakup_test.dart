@@ -325,7 +325,7 @@ void main() {
       expect(find.byType(EnrollCapturePreview), findsOneWidget);
       expect(find.byType(EnrollCaptureBottomBar), findsOneWidget);
       expect(find.byType(CaptureOverlay), findsOneWidget);
-      expect(find.text(enrollCapturePrompt), findsOneWidget);
+      expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
       expect(find.text('open-capture'), findsOneWidget);

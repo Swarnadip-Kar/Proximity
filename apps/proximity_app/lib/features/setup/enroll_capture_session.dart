@@ -227,6 +227,23 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   double? _liveYaw;
   double? _livePitch;
 
+  /// Marker smoothing: previous angles + stamp of the latest update. The
+  /// overlay repaints on the beacon tick, so getters ease the marker from
+  /// the previous reading to the current one instead of jumping per beat
+  /// (no extra inference — same readings, presentation only). Disabled
+  /// under reduced motion (markers jump, like the static beacon).
+  double? _liveFromYaw;
+  double? _liveFromPitch;
+  DateTime? _liveStamp;
+  bool _smoothMarkers = true;
+  static const _markerEaseMs = 450.0;
+
+  /// Latest measured vitality (liveness) score from the loop's pre-check,
+  /// pass or fail (null until the first probe lands or when the last
+  /// probe was unreadable). Drives the bottom-bar readout — the holder
+  /// sees dim-light dips live instead of silent retries.
+  double? _lastVitality;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -383,6 +400,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   void _startLoop() {
     if (_loopStarted) return;
     _loopStarted = true;
+    // Marker easing follows the motion setting (the sweep timer that
+    // repaints between beats never starts under reduced motion, so eased
+    // getters would lag a full beat there — jump instead).
+    try {
+      _smoothMarkers = !ProxMotion.reduced(context);
+    } catch (_) {}
     // Beacon: calm clockwise travel while classifying. Never started
     // under reduced motion (steady soft full-rim glow instead) and always
     // cancelled on save/dispose — a live periodic timer past teardown
@@ -447,8 +470,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         final r = reading;
         if (r != null && mounted) {
           setState(() {
+            _liveFromYaw = _smoothMarkers ? _liveYaw : r.yaw;
+            _liveFromPitch = _smoothMarkers ? _livePitch : r.pitch;
             _liveYaw = r.yaw;
             _livePitch = r.pitch;
+            _liveStamp = DateTime.now();
           });
         }
         final pass = r != null &&
@@ -481,6 +507,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
                 'slot $target vitality unreadable (silent, continuing): $e');
           }
           if (_done || _finished) return;
+          if (mounted) {
+            // Readout tracks every measured probe (pass or fail); an
+            // unreadable probe clears it back to the placeholder.
+            final v = vitality;
+            setState(() => _lastVitality = v < 0 ? null : v);
+          }
           if (vitality < bar) {
             EnrollLog.face('slot $target vitality '
                 '${vitality < 0 ? 'unreadable' : vitality.toStringAsFixed(2)} '
@@ -619,9 +651,40 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   String get targetSlot => _currentTarget;
 
   /// Latest live head angles for the wheel markers (null until the first
-  /// successful pose read lands).
-  double? get liveYaw => _liveYaw;
-  double? get livePitch => _livePitch;
+  /// successful pose read lands). Eased from the previous reading over
+  /// [_markerEaseMs] so the marker glides between beats instead of
+  /// jumping (presentation only — verdicts use the raw reading).
+  /// Reduced-motion jumps (no intermediate repaints exist there anyway).
+  double? get liveYaw => _easedAxis(_liveFromYaw, _liveYaw);
+  double? get livePitch => _easedAxis(_liveFromPitch, _livePitch);
+
+  double? _easedAxis(double? from, double? to) {
+    if (to == null || !to.isFinite) return null;
+    final stamp = _liveStamp;
+    if (!_smoothMarkers ||
+        from == null ||
+        !from.isFinite ||
+        stamp == null) {
+      return to;
+    }
+    final t = (DateTime.now().difference(stamp).inMilliseconds /
+            _markerEaseMs)
+        .clamp(0.0, 1.0);
+    if (t >= 1.0) return to;
+    final e = 1 - (1 - t) * (1 - t); // ease-out quad
+    return from + (to - from) * e;
+  }
+
+  /// Bottom-bar live readout: latest measured vitality + guided target
+  /// (e.g. `LIVE 0.93 · DOWN`). Placeholders until the first probe/read
+  /// lands. No match score exists mid-walk (the matcher first runs at the
+  /// terminal self-check — its boundary score lands on the result
+  /// screen), so this line never invents one.
+  String get liveReadout {
+    final v = _lastVitality;
+    final score = v == null ? '—' : v.toStringAsFixed(2);
+    return 'LIVE $score · ${_currentTarget.toUpperCase()}';
+  }
 
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
   int get slotTotal => _paths.length;

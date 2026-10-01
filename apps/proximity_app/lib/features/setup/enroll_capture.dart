@@ -212,7 +212,7 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               nextAngle: nextAngle,
               // Verified 5 via faceEnrollSlots, never hardcoded.
               totalAngles: faceEnrollSlots.length,
-              statusLine: enrollCapturePrompt,
+              statusLine: enrollTargetPrompt(targetSlot),
               sweepAngle: reduced ? null : sweepValue,
               saveError: saveError,
               saveMessage: st.message,
@@ -238,6 +238,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
             saveError: saveError,
             saving: isSaving,
             recaptureSlot: recaptureSlot,
+            // Live vitality + target readout under the button slot.
+            liveReadout: liveReadout,
             onRecapture: recaptureSlot == null
                 ? null
                 : (slot) => retrySlot(slot),
