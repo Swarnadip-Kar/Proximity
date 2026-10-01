@@ -223,7 +223,8 @@ class UniversalBleRadio implements BlePlatformDelegate {
       UniversalBlePeripheral.stopAdvertising();
 
   @override
-  Future<void> startScanning(void Function(BleSighting s) onSight) async {
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+      {bool lowDuty = false}) async {
     _onSight = onSight;
     UniversalBle.onScanResult = (BleDevice d) {
       // Pre-parse RSSI floor: sub-(-90) noise never pays Uuid normalize +
@@ -240,18 +241,22 @@ class UniversalBleRadio implements BlePlatformDelegate {
     // Unfiltered scan: v1 rotating UUIDs share no common service with the
     // mfg format, so hardware filtering would drop one side. Parsing in
     // [AirParser] is the filter.
-    // Uniform scan intent on all platforms: Android requests LOW_LATENCY
-    // (allMatches, aggressive, max) so duty-cycled stacks do not miss the
-    // student's ~1s response burst; other platforms ignore the android
-    // block (CoreBluetooth/BlueZ manage duty-cycle themselves). No TX knob
-    // exists in universal_ble 2.2.0 peripheral options, so reliability on
-    // the advertise side comes from the Dart burst, not here.
-    BleLog.log('BLE', 'scan start (unfiltered, dual-format)');
+    // Duty split: browse/discovery scans pass lowDuty (balanced — cheaper
+    // duty cycle while waiting for a class to appear); listen/prove scans
+    // keep LOW_LATENCY (allMatches, aggressive, max) so duty-cycled stacks
+    // do not miss the student's ~1s response burst. Other platforms ignore
+    // the android block (CoreBluetooth/BlueZ manage duty-cycle themselves).
+    // No TX knob exists in universal_ble peripheral options, so reliability
+    // on the advertise side comes from the Dart burst, not here.
+    BleLog.log(
+        'BLE', 'scan start (unfiltered, dual-format${lowDuty ? ', low-duty' : ''})');
     try {
       await UniversalBle.startScan(
         platformConfig: PlatformConfig(
           android: AndroidOptions(
-            scanMode: AndroidScanMode.lowLatency,
+            scanMode: lowDuty
+                ? AndroidScanMode.balanced
+                : AndroidScanMode.lowLatency,
             callbackType: [AndroidScanCallbackType.allMatches],
             matchMode: AndroidScanMatchMode.aggressive,
             numOfMatches: AndroidScanNumOfMatches.max,

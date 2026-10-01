@@ -22,7 +22,8 @@ abstract class BlePlatformDelegate {
       {List<int>? scanResponse});
   Future<void> startLegacyUuid(String uuid128);
   Future<void> stopAdvertising();
-  Future<void> startScanning(void Function(BleSighting s) onSight);
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+      {bool lowDuty = false});
   Future<void> stopScanning();
   String get platformName;
 }
@@ -41,6 +42,10 @@ class FakeBleRadio implements BlePlatformDelegate {
 
   /// Loop injected sightings to peer radios via test harness.
   void inject(BleSighting s) => _onSight?.call(s);
+
+  /// Test aid: duty requested by the last scan start (drives the
+  /// browse-low-duty / listen-high-duty contract test).
+  bool lastLowDuty = false;
 
   @override
   Future<void> startAirPacket(String airServiceUuid, Uint8List airMfg,
@@ -65,8 +70,10 @@ class FakeBleRadio implements BlePlatformDelegate {
   }
 
   @override
-  Future<void> startScanning(void Function(BleSighting s) onSight) async {
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+      {bool lowDuty = false}) async {
     _onSight = onSight;
+    lastLowDuty = lowDuty;
   }
 
   @override

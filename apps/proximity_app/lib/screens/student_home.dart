@@ -412,7 +412,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           return;
         }
         try {
-          await engine.startScanning(deferIfNotReady: true);
+          // Browse/discovery scan: low duty (balanced) — the class appears
+          // via 10s rotations + 2s beacons, so max duty buys nothing here.
+          // Listen/prove escalates to low-latency (see student_driver).
+          await engine.startScanning(deferIfNotReady: true, lowDuty: true);
         } catch (_) {}
       });
     } catch (_) {}

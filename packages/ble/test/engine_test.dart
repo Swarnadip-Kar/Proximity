@@ -716,6 +716,19 @@ void main() {
     expect(await engine.retryPendingScan(), isFalse);
     expect(radio.scanning, isFalse);
   });
+
+  test('scan duty passes through and sticks across restarts', () async {
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio);
+    await engine.startScanning(lowDuty: true);
+    expect(radio.lastLowDuty, isTrue);
+    // Watchdog / manual restarts reuse the browse duty unless overridden.
+    await engine.restartScan(quiet: true);
+    expect(radio.lastLowDuty, isTrue);
+    await engine.restartScan(quiet: true, lowDuty: false);
+    expect(radio.lastLowDuty, isFalse);
+    await engine.stop();
+  });
 }
 
 /// Radio whose legacy advertise blocks until released: pins the ADV
@@ -746,16 +759,18 @@ class _SlowStopRadio extends FakeBleRadio {
 class _BtToggleRadio extends FakeBleRadio {
   bool powered = false;
   @override
-  Future<void> startScanning(void Function(BleSighting s) onSight) {
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+      {bool lowDuty = false}) {
     if (!powered) throw StateError('bluetooth not enabled');
-    return super.startScanning(onSight);
+    return super.startScanning(onSight, lowDuty: lowDuty);
   }
 }
 
 /// Radio whose scan stack is broken regardless of BT state.
 class _FailRadio extends FakeBleRadio {
   @override
-  Future<void> startScanning(void Function(BleSighting s) onSight) =>
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+          {bool lowDuty = false}) =>
       throw StateError('stack wedged');
 }
 
@@ -764,9 +779,10 @@ class _FailRadio extends FakeBleRadio {
 class _FlakyScanRadio extends FakeBleRadio {
   bool fail = true;
   @override
-  Future<void> startScanning(void Function(BleSighting s) onSight) {
+  Future<void> startScanning(void Function(BleSighting s) onSight,
+      {bool lowDuty = false}) {
     if (fail) throw StateError('first-run scan transient');
-    return super.startScanning(onSight);
+    return super.startScanning(onSight, lowDuty: lowDuty);
   }
 }
 

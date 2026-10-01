@@ -54,7 +54,15 @@ class ProxBleEngine {
   /// awaits engine.stop() while the next screen already re-started the
   /// scan; without this, stop's trailing stopScanning kills the fresh
   /// scan and the student silently hears nothing.
-  int _generation = 0;  /// Front-row relay switch. The student driver enables it while listening;
+  int _generation = 0;
+
+  /// Scan duty requested by the last [startScanning]: restarts (watchdog,
+  /// BT-back-on retry) reuse it so a browse scan never silently escalates
+  /// to high duty. Listen/prove paths pass false (default), browse passes
+  /// true — see the radio's lowDuty mapping.
+  bool _lowDuty = false;
+
+  /// Front-row relay switch. The student driver enables it while listening;
   /// professors never relay (they originate), and it is off otherwise so
   /// re-advertising strictly extends coverage during open windows.
   bool relayEnabled = false;
@@ -215,9 +223,11 @@ class ProxBleEngine {
   Timer? _pendingTimer;
   bool _retryBusy = false;
 
-  Future<void> startScanning({bool deferIfNotReady = false}) async {
+  Future<void> startScanning(
+      {bool deferIfNotReady = false, bool lowDuty = false}) async {
     _generation++;
     _halted = false;
+    _lowDuty = lowDuty;
     // A requested scan is watchdog-visible from the call, not from first
     // success: a non-defer failure (real stack error, gate says on) used
     // to leave _scanStartAt null, so restartScanIfSilent treated the dead
@@ -225,7 +235,7 @@ class ProxBleEngine {
     _scanStartAt = DateTime.now().toUtc();
     BleLog.log('BLE', 'scan start (filter $kAirSvc)');
     try {
-      await radio.startScanning(handleSighting);
+      await radio.startScanning(handleSighting, lowDuty: lowDuty);
       BleLog.log('BLE', 'scan started via ${radio.platformName}');
       _scanStartAt = DateTime.now().toUtc();
       _dropPendingScan();
@@ -285,7 +295,7 @@ class ProxBleEngine {
     if (await _radioDown()) return false;
     _dropPendingScan();
     try {
-      await startScanning();
+      await startScanning(lowDuty: _lowDuty);
       BleLog.log('BLE', 'scan restarted (radio back on)');
       return true;
     } catch (_) {
@@ -300,14 +310,17 @@ class ProxBleEngine {
   /// quiet spell while listening: platform stacks die silently while
   /// reporting active (observed live: zero sightings for minutes with an
   /// open window on air), and only a fresh start revives them. Never
-  /// throws; false means the radio itself is broken (logged).
-  Future<bool> restartScan({bool quiet = false}) async {
+  /// throws; false means the radio itself is broken (logged). Duty is
+  /// sticky: restarts reuse the last [startScanning] duty unless [lowDuty]
+  /// overrides, so a browse watchdog re-arm never escalates to high duty.
+  Future<bool> restartScan({bool quiet = false, bool? lowDuty}) async {
     _generation++;
+    final duty = lowDuty ?? _lowDuty;
     try {
       try {
         await radio.stopScanning().timeout(advTimeout);
       } catch (_) {}
-      await radio.startScanning(handleSighting);
+      await radio.startScanning(handleSighting, lowDuty: duty);
       _scanStartAt = DateTime.now().toUtc();
       _dropPendingScan();
       if (!quiet) BleLog.log('BLE', 'scan restarted via ${radio.platformName}');
