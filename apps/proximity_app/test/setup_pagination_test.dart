@@ -12,6 +12,7 @@ import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/security/integrity.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -85,6 +86,13 @@ void main() {
   // probe-sensitive suites keep the real probe.
   setUp(() => IntegrityGate.probe = const _CleanProbe());
   tearDown(() => IntegrityGate.probe = const PlatformIntegrityProbe());
+  // Stub hardware-id source: the real read awaits native channels whose
+  // Timer-based deadlines never advance under the testWidgets FakeAsync
+  // clock — the device-identity gate future never completes and teardown
+  // fails on the pending Timer (same stall as the integrity probe above).
+  setUp(() => HardwareDeviceIds.source = () async => '');
+  tearDown(
+      () => HardwareDeviceIds.source = getStableHardwareDeviceId);
   group('page map (7 → 6 after About-page removal)', () {
     test('order + count', () {
       expect(SetupStep.welcome, 0);

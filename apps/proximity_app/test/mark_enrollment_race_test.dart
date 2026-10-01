@@ -32,6 +32,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
@@ -176,6 +177,13 @@ Future<void> _dismissFlow(WidgetTester t) async {
 }
 
 void main() {
+  // Stub hardware-id source: the account move-gate fans into
+  // entryStudentGate, whose real read awaits native channels whose
+  // Timer-based deadlines never advance under the testWidgets FakeAsync
+  // clock — teardown then fails on the pending Timer.
+  setUp(() => HardwareDeviceIds.source = () async => '');
+  tearDown(
+      () => HardwareDeviceIds.source = getStableHardwareDeviceId);
   Finder onstageOf(Type type) =>
       find.byType(type).hitTestable();
 

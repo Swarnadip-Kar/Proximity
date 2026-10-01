@@ -264,7 +264,10 @@ void main() {
       await t.pumpWidget(_app(const DeviceConfirmStep()));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);
-      await t.scrollUntilVisible(find.text('Continue'), 200);
+      // Already-enrolled fixture (linked matches the auth account), so the
+      // CTA reads 'Continue to app' — reachability of the page CTA is what
+      // this pins, not the unenrolled 'Continue' copy.
+      await t.scrollUntilVisible(find.text('Continue to app'), 200);
       expect(t.takeException(), isNull);
 
       await t.pumpWidget(_app(const AccountKeyStep()));
