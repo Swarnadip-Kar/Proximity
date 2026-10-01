@@ -914,7 +914,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final isFaceRescan = prevEnrollment != null &&
           prevEnrollment.email.toLowerCase() == email &&
           prevEnrollment.faceId.isNotEmpty;
+      // Forced migration (stale face pipeline) is never quota-gated: the
+      // old template is incomparable with the current model, so refusing
+      // the save would strand the user with an unusable face and no legal
+      // path forward. The save below still stamps the quota, restarting
+      // the window — only voluntary re-scans are throttled.
+      final stalePipeline = prevEnrollment != null &&
+          prevEnrollment.email.toLowerCase() == email &&
+          prevEnrollment.isFaceStale(_verifier.verifierVer);
       if (isFaceRescan &&
+          !stalePipeline &&
           faceRescanBlocked(
               stampMillis: prevEnrollment.lastFaceRescanAtMillis, now: now)) {
         final eligible =
@@ -1003,7 +1012,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // here (first enrollment 0, rescan now); the online branch upgrades a
       // clear-data reinstall (no local prev, binding exists) to now so the
       // server persists the quota even when local was wiped.
-      var claimFaceStamp = isFaceRescan
+      var claimFaceStamp = (isFaceRescan || stalePipeline)
           ? nowMillis
           : (prevEnrollment != null &&
                   prevEnrollment.email.toLowerCase() == email
@@ -1123,9 +1132,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                       : preBinding.lastFaceRescanAtMillis;
               // Any upload with an existing binding replaces the template
               // (enrollFace always produced a fresh faceId above), so this
-              // runs even when local says first (clear-data case).
-              if (faceRescanBlocked(
-                  stampMillis: effectiveStamp, now: now)) {
+              // runs even when local says first (clear-data case). A stale
+              // local pipeline (forced migration) skips the block but
+              // still stamps below — same exemption as the local gate.
+              if (!stalePipeline &&
+                  faceRescanBlocked(
+                      stampMillis: effectiveStamp, now: now)) {
                 final eligible =
                     faceRescanEligibleAt(effectiveStamp);
                 BleLog.log('FACE',

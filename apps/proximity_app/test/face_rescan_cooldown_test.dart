@@ -220,6 +220,51 @@ void main() {
       expect(await ctl.faceRescanBlockedUntil(), eligible);
     });
 
+    test('stale pipeline bypasses the cooldown and re-stamps', () async {
+      // Forced migration: enrolled under an old face pipeline, stamped
+      // recently (5 days ago), now saving under the current pipeline.
+      // The old template is incomparable — refusing would strand the user
+      // with an unusable face and no legal path forward.
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final oldCtl = EnrollmentController(
+        auth: auth,
+        store: store,
+        verifier:
+            FakeFaceVerifier(version: 'face_verification/0.0.0+deadbeef'),
+        deviceKey: FakeDeviceKey(),
+        livenessGate: FakeLivenessGate(),
+      );
+      await oldCtl.signIn();
+      oldCtl.setRoll('B-ROLL');
+      await oldCtl.generateKey();
+      await oldCtl.enrollFace(_stills);
+      expect(await oldCtl.upload(), isNotNull);
+
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      await _overwriteStamp(store, nowMs - 5 * 24 * 60 * 60 * 1000);
+
+      // Fresh draft on the current pipeline (restart shape): restore
+      // keeps the key, drops the stale face, lands on capture.
+      final ctl = _ctl(auth, store);
+      await ctl.signIn();
+      await ctl.restartFace();
+      await ctl.enrollFace(_stills);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+
+      final before = DateTime.now().toUtc().millisecondsSinceEpoch;
+      expect(await ctl.upload(), isNotNull);
+      final after = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final saved = (await store.readEnrollment())!;
+      expect(saved.verifierVer, kFaceVerifierVer);
+      expect(
+          saved.lastFaceRescanAtMillis >= before &&
+              saved.lastFaceRescanAtMillis <= after,
+          isTrue,
+          reason: 'forced migration stamps now, restarting the window');
+      expect(await ctl.faceRescanBlockedUntil(), isNotNull);
+    });
+
     test('post-window rescan allowed and re-stamps', () async {
       final auth = FakeAuthService(_b);
       final store = InMemoryDeviceStore();
