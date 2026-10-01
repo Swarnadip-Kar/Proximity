@@ -422,12 +422,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           }
           // Browse scan watchdog: a platform scan can die silently while
           // reporting active (observed live: hints stop for minutes, class
-          // never lists). 30s with zero sightings → one quiet re-arm; a
-          // truly quiet room costs nothing more.
+          // never lists). 30s + 0-5s jitter with zero sightings → one quiet
+          // re-arm (jitter desyncs 500 phones from restarting in lockstep).
           try {
+            final jitter =
+                Duration(seconds: 30 + Random.secure().nextInt(6));
             await ref
                 .read(bleEngineProvider)
-                .restartScanIfSilent(const Duration(seconds: 30));
+                .restartScanIfSilent(jitter);
           } catch (_) {}
         } else if (phase == StudentPhase.waiting && _waitingTarget != null) {
           final waiting = _waitingTarget!;

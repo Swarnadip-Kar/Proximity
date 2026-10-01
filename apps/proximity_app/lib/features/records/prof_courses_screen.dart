@@ -210,8 +210,8 @@ class _ProfCoursesScreenState extends ConsumerState<ProfCoursesScreen> {
         profEmail: profEmail,
       );
       final entryName = exportAllEntryName(row.name);
-      archive.addFile(ArchiveFile(
-          entryName, utf8.encode(csv).length, utf8.encode(csv)));
+      final csvBytes = utf8.encode(csv);
+      archive.addFile(ArchiveFile(entryName, csvBytes.length, csvBytes));
       count++;
     }
     if (count == 0 || !mounted) return;

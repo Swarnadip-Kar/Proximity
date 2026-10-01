@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
@@ -1103,10 +1104,16 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         return null;
       }
       if (t == null) {
-        // Quiet slice with an awaited signal: the platform scan may have
-        // died underneath (reports active, delivers nothing) — re-arm it
-        // and keep waiting to the cap.
+        // Quiet slice: the platform scan may have died underneath —
+        // re-arm with 0-1.5s jitter so 500 quiet phones don't restart
+        // in lockstep. Skipped when tests shrink the slice (fast paths).
         BleLog.log('BLE', 'quiet while listening — re-arming scan…');
+        if (scanRestartSlice >= const Duration(seconds: 5)) {
+          try {
+            await Future.delayed(Duration(
+                milliseconds: Random.secure().nextInt(1501)));
+          } catch (_) {}
+        }
         await _engine.restartScan();
         continue;
       }

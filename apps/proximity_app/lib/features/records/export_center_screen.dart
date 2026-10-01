@@ -290,6 +290,8 @@ class _ExportBody extends ConsumerWidget {
     final tapSelect = !kIsWeb;
     final selecting = controller.selecting && !kIsWeb;
     final rangeErr = rangeError;
+    // Hoisted course union: was recomputed per row (O(N²) on every build).
+    final union = courseRoster(sessions).length;
     // Floating Export date range docked above the nav bar (same pattern
     // as the course overview's floating Review & export dock). Hidden
     // while the selection toolbar owns the bottom edge. List bottom
@@ -371,7 +373,6 @@ class _ExportBody extends ConsumerWidget {
                               // + tap behavior, never in card chrome.
                               final partial = partialCountOf(
                                   session.windows, session.allEmails);
-                              final union = courseRoster(sessions).length;
                               final absent =
                                   (union - session.presentCount - partial)
                                       .clamp(0, 1 << 30);
