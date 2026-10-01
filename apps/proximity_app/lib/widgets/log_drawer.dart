@@ -206,9 +206,30 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
     });
   }
 
-  List<BleLogEntry> get _visible => _only.isEmpty
-      ? _entries
-      : _entries.where((e) => _only.contains(e.tag)).toList();
+  List<BleLogEntry> get _filtered {
+    final base = _only.isEmpty
+        ? _entries
+        : _entries.where((e) => _only.contains(e.tag)).toList();
+    // Quiet by default (same rule as the full screen): radio chatter
+    // hides until the reader taps its chip; an explicit selection shows
+    // exactly that.
+    if (_only.isEmpty) {
+      return base.where((e) => !BleLog.mutedTags.contains(e.tag)).toList();
+    }
+    return base;
+  }
+
+  /// Render window over [_filtered] (the 50k ring never renders whole).
+  List<BleLogEntry> get _visible {
+    const renderCap = 500;
+    final all = _filtered;
+    return all.length > renderCap
+        ? all.sublist(all.length - renderCap)
+        : all;
+  }
+
+  /// True while the quiet default applies (no inclusive chip selection).
+  bool get _quiet => _only.isEmpty;
 
   void _toggleTag(String tag) {
     setState(() {
@@ -297,8 +318,10 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
                 ),
                 Text(
                   _dropped > 0
-                      ? '${visible.length} of ${_entries.length} (+$_dropped dropped)'
-                      : '${visible.length} of ${_entries.length}',
+                      ? '${visible.length} of ${_filtered.length} (+$_dropped dropped)'
+                      : _quiet
+                          ? '${visible.length} of ${_filtered.length} · BLE, MESH hidden'
+                          : '${visible.length} of ${_filtered.length}',
                   style: ProxType.caption(color: c.contentSecondary),
                 ),
                 TextButton(

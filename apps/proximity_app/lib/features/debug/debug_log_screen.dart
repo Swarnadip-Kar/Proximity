@@ -2,11 +2,14 @@
 // Show-log toggle: records screens now carry a Log affordance (terminal
 // icon) that pushes here instead of embedding a collapsible log.
 //
-// Design: mirrors the 500-entry BleLog ring buffer (never grows unbounded);
-// bursty entries coalesce through a 200ms flush timer (≤5 setStates/s);
-// rows are plain monospace Text (500 SelectableText regions cost real
-// frames under beacon load — adb logcat remains the grep/copy path);
+// Design: mirrors the BleLog ring (50k entries — a full lecture stays
+// greppable); the view renders a 500-row window, never the whole ring.
+// Bursty entries coalesce through a 200ms flush timer (≤5 setStates/s);
+// rows are plain monospace Text (SelectableText regions cost real
+// frames under beacon load — the Copy button is the copy path);
 // autoscroll jumps once per flush and only while pinned near the bottom.
+// BLE/MESH chatter is muted BY DEFAULT (stored, just not shown — tap a
+// chip to include it); an explicit chip selection shows exactly that.
 // Filter chips narrow by tag (dots colored by category via
 // logCategoryColor, §4.5); no entrance animation (a terminal must never
 // replay motion), so this screen is reduced-motion safe by construction.
@@ -16,13 +19,14 @@
 // brightness-independent black by design ([ProxPalette.terminalBlack] +
 // frozen [ProxLogColors] line vocabulary); header/borders/count copy read
 // `ProximityColors` so both themes ship at parity. [initialTags] carries
-// the log drawer's tag selection into `Expand` (additive — default shows
-// all, exactly as before).
+// the log drawer's tag selection into `Expand` (additive — an explicit
+// selection disables the BLE/MESH mute for exactly those tags).
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:proximity_ble/ble.dart';
 
 import '../../design/app_theme.dart';
@@ -42,6 +46,14 @@ class DebugLogScreen extends StatefulWidget {
 
 class _DebugLogScreenState extends State<DebugLogScreen> {
   static const _cap = BleLog.cap;
+
+  /// Rows rendered (the ring holds far more — this window keeps frames).
+  static const _renderCap = 500;
+
+  /// Lines the Copy button places on the clipboard (bounded: a full-ring
+  /// paste would jank + overflow mobile clipboards).
+  static const _copyCap = 2000;
+
   static const _flushEvery = ProxDurations.logFlush;
   static const _tags = ProxLogTags.all;
 
@@ -124,9 +136,29 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
     });
   }
 
-  List<BleLogEntry> get _visible => _only.isEmpty
-      ? _entries
-      : _entries.where((e) => _only.contains(e.tag)).toList();
+  List<BleLogEntry> get _filtered {
+    final base = _only.isEmpty
+        ? _entries
+        : _entries.where((e) => _only.contains(e.tag)).toList();
+    // Quiet by default: radio chatter hides until the reader taps its
+    // chip. An explicit chip selection shows exactly that (mute never
+    // overrides a choice).
+    if (_only.isEmpty) {
+      return base.where((e) => !BleLog.mutedTags.contains(e.tag)).toList();
+    }
+    return base;
+  }
+
+  /// Render window over [_filtered] (newest slice, never the whole ring).
+  List<BleLogEntry> get _visible {
+    final all = _filtered;
+    return all.length > _renderCap
+        ? all.sublist(all.length - _renderCap)
+        : all;
+  }
+
+  /// True while the quiet default applies (no inclusive chip selection).
+  bool get _quiet => _only.isEmpty;
 
   Color _colorFor(String tag) => ProxLogColors.of(tag);
 
@@ -146,13 +178,46 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
     setState(_entries.clear);
   }
 
+  /// Copies the filtered buffer (bounded — newest slice + truncation
+  /// note, never a 50k-line paste) to the clipboard for field reports.
+  Future<void> _copy() async {
+    final all = _filtered;
+    final take = all.length > _copyCap
+        ? all.sublist(all.length - _copyCap)
+        : all;
+    final buf = StringBuffer();
+    for (final e in take) {
+      buf.writeln(e.line);
+    }
+    if (take.length < all.length) {
+      buf.writeln(
+          '…(latest $take of ${all.length} matching lines)');
+    }
+    try {
+      await Clipboard.setData(ClipboardData(text: buf.toString()));
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Copied ${take.length} lines'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = ProximityColors.of(context);
+    final total = _entries.length;
     final visible = _visible;
     return AdaptiveScaffold(
       title: 'System log',
       actions: [
+        IconButton(
+          icon: const Icon(Icons.content_copy),
+          tooltip: 'Copy',
+          onPressed: () => unawaited(_copy()),
+        ),
         IconButton(
           icon: const Icon(Icons.delete_outline),
           tooltip: 'Clear',
@@ -200,8 +265,10 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
               horizontal: ProxSpacing.screenMargin,
             ),
             child: Text(
-              '${visible.length} of ${_entries.length} events'
-              '${_only.isEmpty ? '' : ' · ${_only.join(', ')}'}',
+              _quiet
+                  ? 'showing latest ${visible.length} of $total events · BLE, MESH hidden — tap a chip to show'
+                  : 'showing latest ${visible.length} of $total events'
+                      '${_only.isEmpty ? '' : ' · ${_only.join(', ')}'}',
               style: proxTabular(
                 context,
                 Theme.of(context).textTheme.bodySmall?.copyWith(

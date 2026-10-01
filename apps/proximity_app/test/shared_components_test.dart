@@ -490,14 +490,26 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('System log'), findsWidgets);
       expect(find.text('Expand'), findsOneWidget);
-      expect(find.textContaining('hello-ble'), findsOneWidget);
+      // Quiet by default: radio chatter hides until its chip is tapped.
+      expect(find.textContaining('hello-ble'), findsNothing);
+      expect(find.textContaining('hello-sync'), findsOneWidget);
       final sheet = t.widget<DraggableScrollableSheet>(
         find.byType(DraggableScrollableSheet),
       );
       expect(sheet.initialChildSize, moreOrLessEquals(0.3));
       expect(sheet.maxChildSize, moreOrLessEquals(1.0));
 
-      // Tag chips filter the stream view.
+      // Tag chips filter the stream view (tapping BLE shows exactly it).
+      await t.tap(find.text('BLE'));
+      await t.pump();
+      expect(find.textContaining('hello-ble'), findsOneWidget);
+      expect(find.textContaining('hello-sync'), findsNothing);
+      // Toggling BLE back off returns to the quiet default; tapping
+      // SYNC then shows exactly it.
+      await t.tap(find.text('BLE'));
+      await t.pump();
+      expect(find.textContaining('hello-ble'), findsNothing);
+      expect(find.textContaining('hello-sync'), findsOneWidget);
       await t.tap(find.text('SYNC'));
       await t.pump();
       expect(find.textContaining('hello-ble'), findsNothing);
@@ -520,6 +532,44 @@ void main() {
       expect(find.textContaining('1 of 2 events'), findsOneWidget);
       expect(find.textContaining('hello-ble'), findsOneWidget);
       expect(find.textContaining('hello-sync'), findsNothing);
+      await t.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('debug/log quiets chatter by default and copies',
+        (t) async {
+      BleLog.log('BLE', 'hello-ble');
+      BleLog.log('SYNC', 'hello-sync');
+      await t.pumpWidget(MaterialApp(
+        theme: proxLightTheme(),
+        home: const DebugLogScreen(),
+      ));
+      await t.pump();
+      // BLE hidden until its chip is tapped; count names the quiet set.
+      expect(find.textContaining('hello-ble'), findsNothing);
+      expect(find.textContaining('hello-sync'), findsOneWidget);
+      expect(find.textContaining('showing latest 1 of 2 events'),
+          findsOneWidget);
+      expect(find.textContaining('BLE, MESH hidden'), findsOneWidget);
+      // Copy places the FILTERED buffer on the clipboard with confirm
+      // (BLE stays out of the paste).
+      var pasted = '';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform,
+              (call) async {
+        if (call.method == 'Clipboard.setData') {
+          pasted = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding
+          .instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+      await t.tap(find.byTooltip('Copy'));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('Copied 1 lines'), findsOneWidget);
+      expect(pasted, contains('hello-sync'));
+      expect(pasted, isNot(contains('hello-ble')));
       await t.pumpWidget(const SizedBox());
     });
   });

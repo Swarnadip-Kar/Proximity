@@ -24,9 +24,16 @@ class BleLogEntry {
 }
 
 /// Ring-buffer + broadcast stream. UI subscribes via [stream] and seeds
-/// from [history]. Cap keeps the terminal bounded on long windows.
+/// from [history]. The cap covers a full lecture + debug session;
+/// views render a window, never the whole ring.
 class BleLog {
-  static const int cap = 500;
+  static const int cap = 50000;
+
+  /// Tags muted BY DEFAULT in the views (radio chatter — stored,
+  /// greppable and copyable, just not shown until the reader taps the
+  /// chip). Muting is view-only: nothing is dropped from the ring.
+  static const Set<String> mutedTags = {'BLE', 'MESH'};
+
   static final List<BleLogEntry> _history = [];
   static final StreamController<BleLogEntry> _ctl =
       StreamController<BleLogEntry>.broadcast();
