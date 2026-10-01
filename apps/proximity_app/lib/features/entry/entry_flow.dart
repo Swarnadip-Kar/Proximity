@@ -739,19 +739,36 @@ Future<void> entryContinueWithRole(WidgetRef ref, EntryMounted isMounted,
     await relinkLinkedIdentity(ref, acct);
   }
   if (which == 'prof') {
-    // H3 pre-host gates: stale builds refuse with update copy (offline →
-    // unchecked → passes, so offline professors stay local-only); the host
-    // verdict is advisory and never throws.
-    await entryRequireFreshBuild(checkNow: checkNow);
-    await entryHostIntegrity();
-    final profUid = (role['uid'] ?? '').trim();
-    unawaited(entryMergeProfCloud(
-        ref,
-        profUid.isNotEmpty ? profUid : acct.email.toLowerCase(),
-        acct.email,
-        role['displayName'] ?? acct.displayName,
-        org: acct.org.isNotEmpty ? acct.org : (role['org'] ?? '')));
-    await entryStampLastMode(ref, isMounted, acct, role, 'prof');
+    // Overall-budgeted like the student path below (see
+    // [operationTimeout]): each step has its own shorter timeout, but on a
+    // stalled network they can burn their budgets in turn with a disabled
+    // button and no feedback. Fail fast with one honest message instead.
+    // Safe: every write inside is idempotent (merge/stamp), and the cloud
+    // merge above stays fire-and-forget, so aborting mid-flight retries
+    // cleanly.
+    final email = acct.email.toLowerCase();
+    try {
+      await (() async {
+        // H3 pre-host gates: stale builds refuse with update copy (offline →
+        // unchecked → passes, so offline professors stay local-only); the host
+        // verdict is advisory and never throws.
+        await entryRequireFreshBuild(checkNow: checkNow);
+        await entryHostIntegrity();
+        final profUid = (role['uid'] ?? '').trim();
+        unawaited(entryMergeProfCloud(
+            ref,
+            profUid.isNotEmpty ? profUid : acct.email.toLowerCase(),
+            acct.email,
+            role['displayName'] ?? acct.displayName,
+            org: acct.org.isNotEmpty ? acct.org : (role['org'] ?? '')));
+        await entryStampLastMode(ref, isMounted, acct, role, 'prof');
+      })()
+          .timeout(operationTimeout);
+    } on TimeoutException {
+      BleLog.log('STATE', 'entry continue timed out for $email');
+      throw StateError(
+          'Taking too long — check your connection and try again.');
+    }
     await entryGoto(ref, isMounted, AppMode.prof);
     return;
   }
