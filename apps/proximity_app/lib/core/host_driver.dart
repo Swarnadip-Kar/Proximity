@@ -440,21 +440,15 @@ class RealHostDriver implements HostDriver {
   /// [expectedAirKey]/[expectedUuid] cover both formats (v2 `type:hex`,
   /// v1 `uuid:`) so mixed fleets interoperate.
   ///
-  /// M2 hop mapping (honest): air packets carry NO TTL byte, so hop is
-  /// derived ONLY from the v3 relayed bit — v2 direct or unflagged v3 maps
-  /// hop 0 (RSSI gate does the proximity work), v3 relayed maps hop 1
-  /// (relayed branch, flagged, RSSI still gates via kRssiRelayMinDbm
-  /// upstream). Legacy v1 UUIDs map hop 0 with legacy:true (hop0-assumed
-  /// log). `ttl` is never used as hop (it is always kTtlOriginate=3 on
-  /// receipt, which satisfies neither verify branch — the old stub-masked
-  /// bug). kMaxRelayHop(2) stays the verify-side ceiling; single re-air
-  /// (hop 1) is the only relayed value this path can produce.
+  /// Hop mapping: v3 b2..b3 hop count rides the sighting (0 = direct,
+  /// 1-2 = relayed, enforced at kMaxRelayHop upstream); v2 maps hop 0;
+  /// legacy v1 UUIDs map hop 0 with legacy:true (hop0-assumed log).
   static RadioSighting? matchResponse(
       ProxBleEngine engine, String expectedAirKey, String expectedUuid) {
     for (final s in engine.byRssiDesc) {
       if (s.isResponse &&
           (s.key == expectedAirKey || s.key == expectedUuid)) {
-        final hop = s.relayed ? 1 : 0;
+        final hop = s.legacy ? 0 : s.hop;
         BleLog.log('BLE',
             'response sighting match rssi=${s.rssiDbm} hop=$hop relayed=${s.relayed}');
         return RadioSighting(rssiDbm: s.rssiDbm, hop: hop, legacy: s.legacy);

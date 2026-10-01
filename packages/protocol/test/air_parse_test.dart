@@ -159,6 +159,23 @@ void main() {
     expect(s.ipHost, '10.50.19.107');
     expect(s.relayed, isTrue);
     expect(s.denseHint, isTrue);
+    expect(s.hop, 0);
+    // Hop rides the parser too.
+    final hopped = packAirV3(
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
+      host: '10.50.19.107',
+      port: 8443,
+      relayed: true,
+      hop: 2,
+    )!;
+    final sh = const AirParser().map(AirScan(
+      services: [kAirSvc],
+      manufacturerData: [AirMfg(kAirCompanyId, hopped)],
+      rssi: -60,
+    ))!;
+    expect(sh.hop, 2);
+    expect(sh.relayed, isTrue);
     // Token-keyed identity ignores version/flags: same rotation token heard
     // as v2-direct and v3-relayed is ONE packet for relay dedup.
     expect(unpackAir(v2Payload())!.key, unpackAir(v3)!.key);

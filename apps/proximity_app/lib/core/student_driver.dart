@@ -1106,9 +1106,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       if (t == null) {
         // Quiet slice: the platform scan may have died underneath —
         // re-arm with 0-1.5s jitter so 500 quiet phones don't restart
-        // in lockstep. Skipped when tests shrink the slice (fast paths).
+        // in lockstep. Skipped when tests shrink the budgets (fast paths
+        // inject a sighting on a tight schedule that jitter would miss).
         BleLog.log('BLE', 'quiet while listening — re-arming scan…');
-        if (scanRestartSlice >= const Duration(seconds: 5)) {
+        if (scanRestartSlice >= const Duration(seconds: 5) &&
+            silenceCap >= const Duration(seconds: 5)) {
           try {
             await Future.delayed(Duration(
                 milliseconds: Random.secure().nextInt(1501)));

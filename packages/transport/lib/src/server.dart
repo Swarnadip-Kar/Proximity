@@ -52,22 +52,25 @@ export 'live_room.dart';
 /// BLE sighting as seen by the host radio. Null = never heard over radio.
 class RadioSighting {
   final int rssiDbm;
-  final int hop; // 0 = direct
-  /// True when heard via a legacy v1 UUID (no direct-RSSI proof possible —
-  /// air packets carry no TTL byte, so hop is always mapped 0; see
-  /// matchResponse in the app's host driver). Drives the verify-rule log.
+  final int hop; // 0 = direct, 1-2 = relayed (v3 b2..b3 on air)
+  /// True when heard via a legacy v1 UUID (no hop byte — hop 0 assumed).
   final bool legacy;
   const RadioSighting(
       {required this.rssiDbm, required this.hop, this.legacy = false});
 }
 
 /// Which sighting rule marked the proof (host log only — the signed ACK
-/// verdict is unchanged): `direct-rssi` (RSSI > kRssiDirectDbm on a v2 air
-/// packet) vs `legacy-hop0-assumed` (v1 UUID or weak-signal path where
-/// hop 0 is assumed because air packets carry no TTL byte).
+/// verdict is unchanged): `direct-rssi` (hop 0 + RSSI > kRssiDirectDbm),
+/// `relayed-hopN` (v3 hop 1-2 within kMaxRelayHop),
+/// `legacy-hop0-assumed` (v1 UUID, hop 0 assumed).
 String sightingRuleOf(RadioSighting? sight) {
   if (sight == null) return 'no-sighting';
-  if (!sight.legacy && sight.rssiDbm > kRssiDirectDbm) return 'direct-rssi';
+  if (!sight.legacy && sight.hop == 0 && sight.rssiDbm > kRssiDirectDbm) {
+    return 'direct-rssi';
+  }
+  if (!sight.legacy && sight.hop >= 1 && sight.hop <= kMaxRelayHop) {
+    return 'relayed-hop${sight.hop}';
+  }
   return 'legacy-hop0-assumed';
 }
 

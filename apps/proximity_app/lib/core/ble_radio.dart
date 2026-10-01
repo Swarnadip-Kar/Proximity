@@ -155,6 +155,7 @@ class AirParserAdapter {
       log: BleLog.log,
     );
     if (hit == null) return null;
+    final hop = hit.hop;
     return BleSighting(
       version: hit.version,
       type: hit.type,
@@ -165,8 +166,11 @@ class AirParserAdapter {
       legacyUuid: hit.legacyUuid,
       relayed: hit.relayed,
       denseHint: hit.denseHint,
+      hop: hop,
       rssiDbm: hit.rssiDbm,
       at: hit.at,
+      // Compat ttl mirrors the wire hop (explicit ttl=0 still drops).
+      ttl: (kTtlOriginate - hop).clamp(0, kTtlOriginate),
     );
   }
 }

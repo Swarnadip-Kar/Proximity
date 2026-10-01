@@ -341,7 +341,7 @@ void main() {
         greaterThanOrEqualTo(250));
   });
 
-  test('front-row relay preserves format (v2 and v1)', () async {
+  test('front-row relay upgrades v2 to v3 (v1 stays v1)', () async {
     final radio = FakeBleRadio();
     final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
     engine.handleSighting(challengeSighting([3, 3, 3, 3, 3, 3, 3, 3]));
@@ -350,6 +350,9 @@ void main() {
     expect(pdu.type, kAirTypeChallenge);
     expect(pdu.token8, [3, 3, 3, 3, 3, 3, 3, 3]);
     expect(pdu.host, '10.50.19.107');
+    expect(pdu.version, kAirVerV3); // v2 upgrades on re-air
+    expect(pdu.hop, 1);
+    expect(pdu.relayed, isTrue);
     // Duplicate storm suppressed.
     engine.handleSighting(challengeSighting([3, 3, 3, 3, 3, 3, 3, 3]));
     await Future.delayed(const Duration(milliseconds: 400));
@@ -473,11 +476,12 @@ void main() {
     expect(pdu.version, kAirVerV3);
     expect(pdu.relayed, isTrue); // set on re-air
     expect(pdu.denseHint, isTrue); // preserved
+    expect(pdu.hop, 1); // hop 0 heard → hop 1 re-aired
     expect(pdu.token8, [9, 9, 9, 9, 9, 9, 9, 9]); // token bytes untouched
     await engine.stop();
   });
 
-  test('originate stays v2 unless v3 is opted in', () async {
+  test('originate is v3 with hop=0 (wire-bump default)', () async {
     WindowParams windowFor() => WindowParams(
           sessionId: randBytes(16),
           windowId: randBytes(6),
@@ -489,19 +493,60 @@ void main() {
     final engine = ProxBleEngine(radio: radio);
     engine.setServerIp('10.50.19.107', 8443);
     await engine.startProfRotation(windowFor());
-    expect(unpackAir(radio.advertisingMfg!)!.version, kAirVer);
+    final pdu = unpackAir(radio.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.hop, 0);
+    expect(pdu.relayed, isFalse); // originate never marks relayed
     await engine.stop();
+    // Opt-out stays v2 for tests that need it.
+    final radio2 = FakeBleRadio();
+    final engine2 = ProxBleEngine(radio: radio2)..v3Tx = false;
+    engine2.setServerIp('10.50.19.107', 8443);
+    await engine2.startProfRotation(windowFor());
+    expect(unpackAir(radio2.advertisingMfg!)!.version, kAirVer);
+    await engine2.stop();
     final radio3 = FakeBleRadio();
-    final engine3 = ProxBleEngine(radio: radio3)
-      ..v3Tx = true
-      ..denseHintTx = true;
+    final engine3 = ProxBleEngine(radio: radio3)..denseHintTx = true;
     engine3.setServerIp('10.50.19.107', 8443);
     await engine3.startProfRotation(windowFor());
-    final pdu = unpackAir(radio3.advertisingMfg!)!;
-    expect(pdu.version, kAirVerV3);
-    expect(pdu.relayed, isFalse); // originate never marks relayed
-    expect(pdu.denseHint, isTrue);
+    final pdu3 = unpackAir(radio3.advertisingMfg!)!;
+    expect(pdu3.version, kAirVerV3);
+    expect(pdu3.relayed, isFalse); // originate never marks relayed
+    expect(pdu3.denseHint, isTrue);
+    expect(pdu3.hop, 0);
     await engine3.stop();
+  });
+
+  test('relay upgrades v2 to v3 with hop+1 and stops at kMaxRelayHop',
+      () async {
+    // v2 hearing (hop=0, no flags byte) re-airs as v3 hop=1.
+    final radio = FakeBleRadio();
+    final engine = ProxBleEngine(radio: radio)..relayEnabled = true;
+    engine.handleSighting(challengeSighting([3, 3, 3, 3, 3, 3, 3, 3]));
+    await Future.delayed(const Duration(milliseconds: 600));
+    final pdu = unpackAir(radio.advertisingMfg!)!;
+    expect(pdu.version, kAirVerV3);
+    expect(pdu.hop, 1);
+    expect(pdu.relayed, isTrue);
+    await engine.stop();
+    // hop=2 (at the ceiling) never re-airs.
+    final radio2 = FakeBleRadio();
+    final engine2 = ProxBleEngine(radio: radio2)..relayEnabled = true;
+    engine2.handleSighting(BleSighting(
+      version: kAirVerV3,
+      type: kAirTypeChallenge,
+      token8: Uint8List.fromList([4, 4, 4, 4, 4, 4, 4, 4]),
+      ipHost: '10.50.19.107',
+      ipPort: 8443,
+      relayed: true,
+      hop: kMaxRelayHop,
+      rssiDbm: -60,
+      at: DateTime.now().toUtc(),
+    ));
+    await Future.delayed(const Duration(milliseconds: 500));
+    expect(radio2.advertisingMfg, isNull);
+    expect(radio2.advertisingLegacyUuid, isNull);
+    await engine2.stop();
   });
 
   test('responses are never relayed (no response-flood)', () async {

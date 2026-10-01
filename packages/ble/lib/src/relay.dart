@@ -1,22 +1,22 @@
 // Front-row relay admission (controlled flood, §6.2).
 //
 // Part of engine.dart (M4 radio slim): shares the engine's private relay
-// state verbatim. Rules are unchanged — TTL left, strong signal, unseen
-// only ([tokenRelayGuard]: token-keyed, one relay per token per device —
-// sender-keyed dedup would re-air each token once per path in a full
-// hall), jitter via [FloodController], halted abort,
+// state verbatim. Rules — TTL-on-air via the v3 b2..b3 hop count (0 =
+// direct, +1 per re-air, stop at kMaxRelayHop), strong signal, unseen
+// only ([tokenRelayGuard]: token-keyed, one relay per token per device),
+// jitter via [FloodController], halted abort,
 // split-horizon, challenge + IP-hint relay, responses never flooded,
 // busy-skip releases the key so the next hearing retries.
 part of 'engine.dart';
 
 extension ProxBleRelay on ProxBleEngine {
   /// Front-row re-advertise of professor packets (controlled flood,
-  /// §6.2): unseen packet + TTL left + strong signal + jitter, never what
-  /// we already advertise (split horizon), never responses (no flooding).
-  /// Both challenge and IP-hint packets relay (back rows need the server
-  /// address too); responses travel direct (or directed GATT write) only.
-  /// Air packets carry no TTL byte, so direct receptions arrive with
-  /// ttl=[kTtlOriginate]; explicit 0 still drops.
+  /// §6.2): unseen packet + hop budget left + strong signal + jitter,
+  /// never what we already advertise (split horizon), never responses.
+  /// Both challenge and IP-hint packets relay; responses travel direct
+  /// only. v2 hearings (hop=0, no flags byte) upgrade to v3 on re-air
+  /// with hop=1; v3 re-airs increment hop. v1 legacy UUIDs carry no
+  /// hop/IP and stay v1 (single-relay bound only).
   /// [log]: false silences the routine per-repeat lines (same packet heard
   /// every second) — the relay decision itself is unchanged.
   Future<void> _maybeRelay(BleSighting s, {bool log = true}) async {
@@ -28,8 +28,8 @@ extension ProxBleRelay on ProxBleEngine {
       if (log) BleLog.log('MESH', 'relay skip ($why) ${s.label}');
     }
 
-    if (s.ttl <= 0) {
-      skip('TTL spent');
+    if (s.ttl <= 0 || s.hop >= kMaxRelayHop) {
+      skip('TTL spent (hop=${s.hop})');
       return;
     }
     if (s.rssiDbm <= kRssiRelayMinDbm) {
@@ -68,21 +68,18 @@ extension ProxBleRelay on ProxBleEngine {
         aired = await _advGuard(
             () => radio.startLegacyUuid(s.legacyUuid!), 'relay ${s.label}');
       } else {
-        // Relays preserve the heard format verbatim (v2 stays v2, v3 stays
-        // v3) and set the v3 relayed flag on re-air — never upgrade v2.
-        final mfg = s.version == kAirVerV3
-            ? packAirV3(
-                type: s.type,
-                token8: s.token8,
-                host: s.ipHost,
-                port: s.ipPort,
-                relayed: true,
-                denseHint: s.denseHint)
-            : packAir(
-                type: s.type,
-                token8: s.token8,
-                host: s.ipHost,
-                port: s.ipPort);
+        // Re-air as v3 with hop+1 (v2 hearings upgrade: v2 has no flags
+        // byte, so hop arrives 0 and leaves 1). Relayed bit set, dense
+        // hint preserved, token/IP/port bytes untouched.
+        final nextHop = (s.hop + 1).clamp(0, kAirHopMax);
+        final mfg = packAirV3(
+            type: s.type,
+            token8: s.token8,
+            host: s.ipHost,
+            port: s.ipPort,
+            relayed: true,
+            denseHint: s.denseHint,
+            hop: nextHop);
         if (mfg == null) {
           tokenRelayGuard.remove(key);
           return;

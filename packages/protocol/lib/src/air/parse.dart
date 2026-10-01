@@ -52,6 +52,7 @@ class AirSighting {
   final String? legacyUuid; // normalized UUID when [legacy]
   final bool relayed; // v3 b0 (false on v2/v1 — no flags byte there)
   final bool denseHint; // v3 b1
+  final int hop; // v3 b2..b3 (0 on v2/v1 — no flags byte there)
   final int rssiDbm;
   final DateTime at;
   const AirSighting({
@@ -64,6 +65,7 @@ class AirSighting {
     this.legacyUuid,
     this.relayed = false,
     this.denseHint = false,
+    this.hop = 0,
     required this.rssiDbm,
     required this.at,
   }) : assert(token8.length == 8);
@@ -139,6 +141,7 @@ class AirParser {
           ipPort: pdu.port,
           relayed: pdu.relayed,
           denseHint: pdu.denseHint,
+          hop: pdu.hop,
           rssiDbm: d.rssi ?? -127,
           at: at,
         );

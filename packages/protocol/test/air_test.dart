@@ -172,10 +172,45 @@ void main() {
     final pp = unpackAir(plain)!;
     expect(pp.relayed, isFalse);
     expect(pp.denseHint, isFalse);
-    // Non-zero reserved bits drop (strict).
-    final reserved = Uint8List.fromList(plain)..[18] = 0x04;
+    // Non-zero reserved bits (b4..b7) drop (strict); b2..b3 carry hop.
+    final reserved = Uint8List.fromList(plain)..[18] = 0x10;
     expect(unpackAir(reserved), isNull);
-    expect(airDropCause(reserved), 'v3-reserved:4');
+    expect(airDropCause(reserved), 'v3-reserved:16');
+  });
+
+  test('v3 hop count roundtrips in b2..b3 (TTL on air)', () {
+    final tok = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
+    for (var hop = 0; hop <= kAirHopMax; hop++) {
+      final mfg = packAirV3(
+        type: kAirTypeChallenge,
+        token8: tok,
+        host: '10.50.19.107',
+        port: 8443,
+        hop: hop,
+      )!;
+      final pdu = unpackAir(mfg)!;
+      expect(pdu.hop, hop);
+      expect(pdu.token8, tok);
+    }
+    // Out-of-range hop refuses to pack.
+    expect(
+        packAirV3(
+          type: kAirTypeChallenge,
+          token8: tok,
+          host: '10.50.19.107',
+          port: 8443,
+          hop: 4,
+        ),
+        isNull);
+    // b2..b3 set without the helper still parses as hop (0x04 = hop 1).
+    final manual = Uint8List.fromList(packAirV3(
+      type: kAirTypeChallenge,
+      token8: tok,
+      host: '10.50.19.107',
+      port: 8443,
+    )!)
+      ..[18] = 0x04;
+    expect(unpackAir(manual)!.hop, 1);
   });
 
   test('strict lengths + unknown ver/type drop with causes', () {

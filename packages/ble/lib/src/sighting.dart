@@ -20,13 +20,14 @@ class BleSighting {
   final String? legacyUuid; // normalized UUID when [legacy]
   final bool relayed; // v3 b0 heard on air (a relay re-aired this packet)
   final bool denseHint; // v3 b1 heard on air (dense graph signal)
+  final int hop; // v3 b2..b3 hop count (0 = direct; 0 on v2/v1)
   final Uint8List? peerW; // 8B alias when present (response path)
   final int rssiDbm;
   final DateTime at;
-  /// Relay budget left. Air packets carry no TTL byte, so direct
-  /// sightings default to [kTtlOriginate]; an explicit 0 means TTL spent
-  /// (never relay). The relay storm-guard set still bounds each packet to
-  /// one re-advertise per device.
+  /// Relay budget left, derived from the on-air hop count:
+  /// direct/v2/v1 sightings carry hop=0 → full budget; v3 re-airs carry
+  /// hop+1 per relay and stop at kMaxRelayHop. An explicit ttl=0 still
+  /// drops (defensive — the wire hop is authoritative).
   final int ttl;
   BleSighting({
     this.version = kAirVer,
@@ -38,6 +39,7 @@ class BleSighting {
     this.legacyUuid,
     this.relayed = false,
     this.denseHint = false,
+    this.hop = 0,
     required this.rssiDbm,
     required this.at,
     this.peerW,

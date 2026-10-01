@@ -11,11 +11,13 @@
 //
 //   mfg payload v2 (18B, FROZEN byte-for-byte): 'P' 'X' ver(0x02) type(1B)
 //     token(8B) ipv4(4B) portBE(2B)
-//   mfg payload v3 (19B, opt-in): v2 layout + flags(1B) appended — token
+//   mfg payload v3 (19B): v2 layout + flags(1B) appended — token
 //     bytes are NEVER reused for flags:
 //     b0 = relayed (set by a relay re-airing a heard packet),
 //     b1 = dense-hint (originator signals a dense graph),
-//     b2..b7 = reserved, must be zero on transmit (non-zero drops).
+//     b2..b3 = hop count (0 = direct originate, +1 per re-air; enforced
+//       against kMaxRelayHop=2 — TTL on air),
+//     b4..b7 = reserved, must be zero on transmit (non-zero drops).
 //   v3 appends instead of re-laying the frame so every v2 parser still
 //   prefix-parses a v3 sighting: a mixed-version hall (professor on an
 //   old build, students updated, or vice versa) keeps verifying proximity
@@ -64,7 +66,10 @@ const int kAirV3PayloadLen = 19;
 /// v3 flag bits (trailing flags byte only — never token bytes).
 const int kAirFlagRelayed = 0x01; // b0: re-aired by a relay
 const int kAirFlagDenseHint = 0x02; // b1: originator signals dense graph
-const int kAirFlagReservedMask = 0xFC; // b2..b7: must be zero
+const int kAirFlagHopShift = 2; // b2..b3: hop count (TTL on air)
+const int kAirFlagHopMask = 0x0C; // b2..b3 mask
+const int kAirHopMax = 3; // 2-bit hop saturates at 3
+const int kAirFlagReservedMask = 0xF0; // b4..b7: must be zero
 
 class AirPdu {
   final int version; // kAirVer | kAirVerV3
@@ -72,9 +77,12 @@ class AirPdu {
   final Uint8List token8;
   final String host;
   final int port;
-  /// v3 flags (false on v2 sightings — v2 has no flags byte).
+  /// v3 flags (false/0 on v2 sightings — v2 has no flags byte).
   final bool relayed;
   final bool denseHint;
+  /// Hop count from the v3 flags byte (0 = direct originate, +1 per
+  /// re-air). Always 0 on v2 (no flags byte to carry it).
+  final int hop;
   const AirPdu({
     this.version = kAirVer,
     required this.type,
@@ -83,7 +91,9 @@ class AirPdu {
     required this.port,
     this.relayed = false,
     this.denseHint = false,
-  }) : assert(token8.length == 8);
+    this.hop = 0,
+  })  : assert(token8.length == 8),
+        assert(hop >= 0 && hop <= kAirHopMax);
 
   bool get isChallenge => type == kAirTypeChallenge;
   bool get isResponse => type == kAirTypeResponse;
@@ -125,9 +135,8 @@ Uint8List? packAir({
 }
 
 /// Packs a v3 air manufacturer payload (v2 layout + flags byte), or null
-/// when host/port/flags unusable. Opt-in: originators stay v2 unless they
-/// explicitly need the relayed/dense-hint signals; relays preserve the
-/// heard version and set [relayed] on re-air.
+/// when host/port/flags unusable. Originators emit hop=0; relays re-emit
+/// with hop+1 (enforced against kMaxRelayHop at the relay layer).
 Uint8List? packAirV3({
   required int type,
   required Uint8List token8,
@@ -135,10 +144,12 @@ Uint8List? packAirV3({
   required int port,
   bool relayed = false,
   bool denseHint = false,
+  int hop = 0,
 }) {
   if (type != kAirTypeChallenge && type != kAirTypeResponse) return null;
   if (token8.length != 8) return null;
   if (port < 1 || port > 65535) return null;
+  if (hop < 0 || hop > kAirHopMax) return null;
   final ip = parseIpv4(host);
   if (ip == null || host.startsWith('127.')) return null;
   final out = Uint8List(kAirV3PayloadLen);
@@ -151,7 +162,8 @@ Uint8List? packAirV3({
   out[16] = (port >> 8) & 0xFF;
   out[17] = port & 0xFF;
   out[18] = (relayed ? kAirFlagRelayed : 0) |
-      (denseHint ? kAirFlagDenseHint : 0);
+      (denseHint ? kAirFlagDenseHint : 0) |
+      ((hop << kAirFlagHopShift) & kAirFlagHopMask);
   return out;
 }
 
@@ -182,6 +194,7 @@ Uint8List? packAirV3({
   if (port < 1 || port > 65535) return (pdu: null, drop: 'bad-port:$port');
   var relayed = false;
   var denseHint = false;
+  var hop = 0;
   if (ver == kAirVerV3) {
     final flags = payload[18];
     if ((flags & kAirFlagReservedMask) != 0) {
@@ -189,6 +202,7 @@ Uint8List? packAirV3({
     }
     relayed = (flags & kAirFlagRelayed) != 0;
     denseHint = (flags & kAirFlagDenseHint) != 0;
+    hop = (flags & kAirFlagHopMask) >> kAirFlagHopShift;
   }
   return (
     pdu: AirPdu(
@@ -199,6 +213,7 @@ Uint8List? packAirV3({
       port: port,
       relayed: relayed,
       denseHint: denseHint,
+      hop: hop,
     ),
     drop: null,
   );

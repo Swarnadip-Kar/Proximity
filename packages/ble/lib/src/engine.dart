@@ -125,10 +125,10 @@ class ProxBleEngine {
     return true;
   }
 
-  /// Opt-in v3 originate (flags byte appended — token bytes untouched).
-  /// Default off: originators stay frozen v2; relays preserve the heard
-  /// version either way. [denseHintTx] sets v3 b1 when [v3Tx] is on.
-  bool v3Tx = false;
+  /// v3 originate (flags byte appended — token bytes untouched).
+  /// Default ON (testing-phase wire bump): originators emit hop=0 in b2..b3
+  /// so relays can enforce kMaxRelayHop on air. [denseHintTx] sets v3 b1.
+  bool v3Tx = true;
   bool denseHintTx = false;
 
   /// Guards every radio advertise call: a hung peripheral stack must never
@@ -516,14 +516,16 @@ class ProxBleEngine {
       BleLog.log('BLE', 'ADV challenge j=$j SKIPPED (no server IP set)');
       return;
     }
-    // Opt-in v3 originate: identical token/IP/port bytes + appended flags.
+    // v3 originate with hop=0 in b2..b3 (wire-bump default; v2 kept
+    // only for tests that opt out via v3Tx=false).
     final mfg = v3Tx
         ? packAirV3(
             type: kAirTypeChallenge,
             token8: cj,
             host: _serverHost,
             port: _serverPort,
-            denseHint: denseHintTx)
+            denseHint: denseHintTx,
+            hop: 0)
         : packAir(
             type: kAirTypeChallenge,
             token8: cj,
