@@ -2,6 +2,8 @@
 // PlatformException(...IllegalBlockSizeException... at
 // yb0.onSuccess ... BiometricPrompt.onAuthenticationSucceeded)" must never
 // reach the UI, and the cred slot must live in its own namespace.
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/security/secure_store_options.dart';
@@ -125,6 +127,42 @@ void main() {
     final repo = SecureDeviceStore(secure: strong, fallbackSecure: cred);
     expect(await repo.readInstallId(), 'ab12cd34ef56ab78');
     expect(strong.readKeys, hasLength(1)); // the first failed attempt only
+  });
+
+  test('clean miss on the preferred slot still serves the other slot',
+      () async {
+    // Reinstall shape: the unencrypted tier hint is wiped (prefers
+    // strong) but the live doc sits in cred. A first-slot miss must not
+    // report empty (that pushes a phantom enrollment over existing
+    // data) — the scan continues and adopts the hitting slot.
+    final strong = _ScriptedSecure();
+    final cred = _ScriptedSecure()
+      ..backend['prox.enrollment.v1'] = jsonEncode(_doc().toJson());
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    final got = await store.readEnrollment();
+    expect(got?.email, 'a@x.in');
+    expect(strong.readKeys, contains('prox.enrollment.v1'));
+    expect(cred.readKeys, contains('prox.enrollment.v1'));
+    // Tier flipped AND persisted: a fresh process leads with cred and
+    // never touches the dead strong slot (one prompt in steady state).
+    final repo = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+    strong.readKeys.clear();
+    expect((await repo.readEnrollment())?.email, 'a@x.in');
+    expect(strong.readKeys, isEmpty);
+  });
+
+  test('clean miss on the preferred slot still serves the install id',
+      () async {
+    // Same reinstall shape for the install id: resolving null here would
+    // mint a FRESH install over existing data (identity fork).
+    final strong = _ScriptedSecure();
+    final cred = _ScriptedSecure()
+      ..backend['prox.install.v1'] = 'ab12cd34ef56ab78';
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    expect(await store.readInstallId(), 'ab12cd34ef56ab78');
+    expect(cred.readKeys, contains('prox.install.v1'));
   });
 
   test('both slots failing throws sanitized copy, no raw stack', () async {

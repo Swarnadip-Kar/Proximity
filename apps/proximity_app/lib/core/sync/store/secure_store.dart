@@ -219,11 +219,20 @@ class SecureDeviceStore implements DeviceStore {
     await _ensureTierLoaded();
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
     // a missing enrollment just means "enroll".
+    // Both slots are always scanned: a clean miss on the preferred slot
+    // never stops the scan (the tier hint is unencrypted prefs — a
+    // reinstall wipes it, so the live data may sit in the other slot; a
+    // first-slot miss used to report empty and push a phantom enrollment
+    // over existing data). First hit wins; dismissed needs an auth/key
+    // failure with no hit anywhere; empty needs two clean misses.
     String? raw;
     var sawAuthFailure = false;
+    FlutterSecureStorage? hitSlot;
+    FlutterSecureStorage? missSlot;
     for (final slot in _orderedSlots()) {
+      String? v;
       try {
-        raw = await slot.read(key: _kEnroll);
+        v = await slot.read(key: _kEnroll);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
           // Non-auth failure (I/O, detached channel, programming bug):
@@ -236,25 +245,35 @@ class SecureDeviceStore implements DeviceStore {
         sawAuthFailure = true;
         continue;
       }
-      // The answering slot becomes the preferred slot: after an auth/key
-      // failure on the preferred slot, the slot that answers (hit or clean
-      // miss) is adopted, so steady state costs one prompt. A clean miss on
-      // the preferred slot breaks immediately (fresh installs must not pay
-      // two prompts).
-      if (raw != null || sawAuthFailure) {
-        await _adoptTier(identical(slot, _fallbackSecure));
+      // The hitting slot becomes the preferred slot, so steady state
+      // costs one prompt. A clean miss keeps scanning — but when the
+      // other slot failed behind the prompt gate, the answering (miss)
+      // slot is adopted below for the same one-prompt steady state, and
+      // a clean miss on the preferred slot with no failure anywhere
+      // leaves the tier untouched (fresh installs must not flip it).
+      if (v != null) {
+        raw = v;
+        hitSlot = slot;
+        break;
       }
-      break;
+      missSlot ??= slot;
     }
-    if (raw == null && sawAuthFailure) {
-      // Both slots refused behind the prompt gate and no proven value can
-      // be served: throw dismissed (data may exist behind the lock — never
-      // report empty here, or the shell pushes enrollment for an enrolled
-      // user who just pressed back). Coolstamp first (anti-hammer).
-      _lastSecureFailAt = now;
-      throw const SecureStoreDismissed();
-    }
-    if (raw == null) {
+    if (raw != null) {
+      await _adoptTier(identical(hitSlot, _fallbackSecure));
+      // fall through to parse below
+    } else {
+      if (sawAuthFailure) {
+        if (missSlot != null) {
+          await _adoptTier(identical(missSlot, _fallbackSecure));
+        }
+        // Every slot refused behind the prompt gate and no proven value
+        // can be served: throw dismissed (data may exist behind the lock
+        // — never report empty here, or the shell pushes enrollment for
+        // an enrolled user who just pressed back). Coolstamp first
+        // (anti-hammer).
+        _lastSecureFailAt = now;
+        throw const SecureStoreDismissed();
+      }
       _enrollmentCache = null;
       _enrollmentLoaded = true;
       return null;
@@ -699,11 +718,18 @@ class SecureDeviceStore implements DeviceStore {
       throw const SecureStoreDismissed();
     }
     await _ensureTierLoaded();
+    // Both slots always scanned (same law as readEnrollment above): a
+    // clean miss on the preferred slot never stops the scan, or a wiped
+    // tier hint resolves to null here and getOrCreateInstallId mints a
+    // FRESH install over existing data (identity fork).
     String? v;
     var sawAuthFailure = false;
+    FlutterSecureStorage? hitSlot;
+    FlutterSecureStorage? missSlot;
     for (final slot in _orderedSlots()) {
+      String? got;
       try {
-        v = await slot.read(key: _kInstall);
+        got = await slot.read(key: _kInstall);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
           // Non-auth failure: never a slot signal and never an empty
@@ -715,14 +741,22 @@ class SecureDeviceStore implements DeviceStore {
         sawAuthFailure = true;
         continue;
       }
-      if (v != null || sawAuthFailure) {
-        await _adoptTier(identical(slot, _fallbackSecure));
+      if (got != null) {
+        v = got;
+        hitSlot = slot;
+        break;
       }
-      break;
+      missSlot ??= slot;
     }
     if (v == null && sawAuthFailure) {
+      if (missSlot != null) {
+        await _adoptTier(identical(missSlot, _fallbackSecure));
+      }
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
+    }
+    if (v != null) {
+      await _adoptTier(identical(hitSlot, _fallbackSecure));
     }
     _installIdCache = v;
     _installIdLoaded = true;
