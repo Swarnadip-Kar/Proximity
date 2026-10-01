@@ -149,6 +149,8 @@ class _RoleHubScreenState extends ConsumerState<RoleHubScreen> {
                 linked.gmail.trim().toLowerCase() ==
                     widget.account.email.trim().toLowerCase();
           } catch (_) {}
+          BleLog.log('NAV',
+              'entry hub student continue enrolledHere=$enrolledHere → ${enrolledHere ? 'complete (to app)' : 'next (to device)'}');
           try {
             if (enrolledHere) {
               await scope.complete();
