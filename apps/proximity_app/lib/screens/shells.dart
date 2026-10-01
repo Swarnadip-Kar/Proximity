@@ -575,6 +575,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// resolve conclusion; consumed once by [_applyResolved].
   var _unlockDismissed = false;
 
+  /// Hides the unlock nudge banner for this park (dismiss X). Reset on
+  /// every non-dismissed resolve; locked-tab taps still re-resolve
+  /// (re-prompt) as the retry path.
+  var _unlockNudgeHidden = false;
+
   @override
   void dispose() {
     try {
@@ -802,6 +807,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (freshWant != want) return null;
     final matched = _linkedMatchesAccount(freshAcct, freshLinked);
     _unlockDismissed = !matched && outcome == UnlockOutcome.dismissed;
+    if (!_unlockDismissed) _unlockNudgeHidden = false;
     return matched;
   }
 
@@ -1022,34 +1028,67 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         // classic inset layout unchanged.
         extendBody: isMobile,
         body: _ShellEdgeBody(
-          child: PageView(
-            // Finger-locked paging (WhatsApp pattern): the page tracks the
-            // finger 1:1 and snaps on release — every tab, centre included
-            // (no gesture-arena fling to lose). [_KeepAlivePage] preserves
-            // each tab's stack + scroll exactly as the old IndexedStack did.
-            controller: _pages,
-            physics: (_pageLocked || ProxMotion.reduced(context))
-                ? const NeverScrollableScrollPhysics()
-                : const PageScrollPhysics(),
-            onPageChanged: _syncIndexFromPage,
+          child: Stack(
             children: [
-              for (var i = 0; i < 3; i++)
-                _KeepAlivePage(
-                  // Stable page identity (see [_KeepAlivePage]): the slot
-                  // always retakes its own GlobalKey'd Navigator.
-                  key: ValueKey('student-tab-$i'),
-                  child: Navigator(
-                    key: _nav(i),
-                    observers: [_navObservers[i]],
-                    onGenerateRoute: (s) => _tabRoute(
-                      s,
-                      [
-                        const StudentHomeScreen(),
-                        const MyAttendanceScreen(),
-                        StudentAccountScreen(key: accountTabKey),
-                      ][i],
+              PageView(
+                // Finger-locked paging (WhatsApp pattern): the page tracks the
+                // finger 1:1 and snaps on release — every tab, centre included
+                // (no gesture-arena fling to lose). [_KeepAlivePage] preserves
+                // each tab's stack + scroll exactly as the old IndexedStack did.
+                controller: _pages,
+                physics: (_pageLocked || ProxMotion.reduced(context))
+                    ? const NeverScrollableScrollPhysics()
+                    : const PageScrollPhysics(),
+                onPageChanged: _syncIndexFromPage,
+                children: [
+                  for (var i = 0; i < 3; i++)
+                    _KeepAlivePage(
+                      // Stable page identity (see [_KeepAlivePage]): the slot
+                      // always retakes its own GlobalKey'd Navigator.
+                      key: ValueKey('student-tab-$i'),
+                      child: Navigator(
+                        key: _nav(i),
+                        observers: [_navObservers[i]],
+                        onGenerateRoute: (s) => _tabRoute(
+                          s,
+                          [
+                            const StudentHomeScreen(),
+                            const MyAttendanceScreen(),
+                            StudentAccountScreen(key: accountTabKey),
+                          ][i],
+                        ),
+                        onUnknownRoute: proxOnUnknownRoute,
+                      ),
                     ),
-                    onUnknownRoute: proxOnUnknownRoute,
+                ],
+              ),
+              // Dismissed-unlock nudge: the enrollment exists behind the
+              // phone prompt the user just declined — this names the remedy
+              // (unlock, never re-enroll) with an explicit retry. Locked-tab
+              // taps/swipes re-resolve too. Hidden once unlocked, dismissed
+              // via X, or superseded by a non-dismissed resolve.
+              if (_unlockDismissed &&
+                  !_unlockNudgeHidden &&
+                  _tabsLocked)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                          ProxSpacing.screenMargin,
+                          ProxSpacing.sm,
+                          ProxSpacing.screenMargin,
+                          0),
+                      child: _UnlockNudge(
+                        onRetry: () =>
+                            unawaited(_refreshEnrollmentState()),
+                        onDismiss: () => setState(
+                            () => _unlockNudgeHidden = true),
+                      ),
+                    ),
                   ),
                 ),
             ],
@@ -1078,6 +1117,60 @@ class _StudentShellState extends ConsumerState<StudentShell> {
               icon: const _AccountTabIcon(active: false),
               activeIcon: const _AccountTabIcon(active: true),
               label: 'Account',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Unlock nudge banner for a dismissed phone prompt (student shell only).
+/// Shown when the enrollment exists behind the lock the user just
+/// declined: names unlock (never re-enroll) with an explicit retry.
+/// Static — no timers, settle-safe.
+class _UnlockNudge extends StatelessWidget {
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  const _UnlockNudge({required this.onRetry, required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ProximityColors.of(context);
+    return Material(
+      color: c.surfaceRaised,
+      borderRadius: BorderRadius.circular(ProxRadii.card),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+            ProxSpacing.md, ProxSpacing.sm, ProxSpacing.xs, ProxSpacing.sm),
+        child: Row(
+          children: [
+            Icon(Icons.lock_outline,
+                size: 20, color: c.contentSecondary),
+            const SizedBox(width: ProxSpacing.sm),
+            Expanded(
+              child: Text(
+                'Unlock to continue — approve the phone prompt.',
+                style: ProxType.body(color: c.contentPrimary),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+            IconButton(
+              tooltip: 'Dismiss',
+              iconSize: 20,
+              constraints: const BoxConstraints(
+                minWidth: ProxSpacing.minTap,
+                minHeight: ProxSpacing.minTap,
+              ),
+              onPressed: onDismiss,
+              icon: const Icon(Icons.close),
             ),
           ],
         ),

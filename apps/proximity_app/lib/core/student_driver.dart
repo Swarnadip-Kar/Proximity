@@ -916,8 +916,10 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       stored = await _store.readEnrollment();
     } on SecureStoreDismissed catch (e) {
       BleLog.log('SEC', 'prove: secure store dismissed ($e)');
-      return MarkedReceipt(
-          detail: '$e', result: StudentResult.error);
+      return const MarkedReceipt(
+          detail:
+              'Unlock to continue — approve the phone prompt, then try again.',
+          result: StudentResult.error);
     }
     if (stored == null ||
         stored.email.toLowerCase() != identity.gmail.toLowerCase()) {
