@@ -334,9 +334,11 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cams.first,
       );
-      // Max sensor resolution (same contract as enrollment: preset
-      // drives preview + stills; layout/overlays untouched).
-      final ctl = CameraController(front, ResolutionPreset.max,
+      // Medium resolution: the preset drives BOTH preview + stills.
+      // Max (8-12MP on old phones) stalled takePicture/decode/ML Kit and
+      // OOMed low-RAM devices for zero matcher gain (FaceNet embeds at
+      // ~160px). Layout/overlays untouched.
+      final ctl = CameraController(front, ResolutionPreset.medium,
           enableAudio: false);
       await ctl.initialize();
       if (_done) {

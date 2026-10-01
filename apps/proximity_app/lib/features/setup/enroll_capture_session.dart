@@ -103,10 +103,9 @@ class RealEnrollSessionCamera implements EnrollSessionCamera {
       orElse: () => cams.first,
     );
     final ctl =
-        // Max sensor resolution: the preset drives BOTH the preview and
-        // takePicture stills, so enrollment captures carry full detail
-        // for the template pipeline. Layout/overlays untouched.
-        CameraController(front, ResolutionPreset.max, enableAudio: false);
+        // Medium resolution (see face_capture: max stalled old phones for
+        // zero matcher gain — FaceNet embeds at ~160px).
+        CameraController(front, ResolutionPreset.medium, enableAudio: false);
     try {
       await ctl.initialize();
     } catch (e) {

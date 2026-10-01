@@ -73,11 +73,11 @@ class FaceCheckResult {
 
 /// Marking vitality robustness (app-local policy, NOT a ticket break).
 /// The face-check camera captures [kMarkingLivenessCaptures] stills per
-/// burst (~1s cadence, 7s window — the holder just holds still) and the
-/// driver scores vitality on each, deciding on the MAX: one still can dip on
-/// transient noise (motion blur mid-frame, glare flicker) while a
-/// print/screen spoof scores consistently low (field probes ≤0.31), so
-/// best-of-10 buys genuine FRR without moving the Tl that spoofs must beat.
+/// burst and the driver scores vitality on each, deciding on the MAX.
+/// 5 (was 10): halves worst-case serial main-thread ML (10×1200ms=12s
+/// froze old phones past the 7s accept window into perpetual retry);
+/// spoof probes (≤0.31) stay firmly in mismatch territory at Tl=0.70.
+const int kMarkingLivenessCaptures = 5;
 /// Scores landing within [kLivenessNearMissBand] below Tl are transient
 /// territory, not readable spoofs: they degrade to inconclusive (free
 /// rescan in place, burns nothing) instead of mismatch (burns an attempt).
@@ -85,7 +85,6 @@ class FaceCheckResult {
 /// never a constant, never an average. Marking Tl itself
 /// ([kLivenessThreshold] = 0.70 field-relaxed) is protocol-owned: moving it
 /// is a ticket break (ver bump + min_version).
-const int kMarkingLivenessCaptures = 10;
 
 /// Width of the near-miss vitality band below Tl that degrades to
 /// inconclusive instead of mismatch (see above). 0.10 keeps measured spoof
