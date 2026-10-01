@@ -375,13 +375,29 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     try {
       final engine = ref.read(bleEngineProvider);
       engine.onIpHintHeard = _onBleIpHint;
-      engine.applyRelayPolicy(lowPower: shouldRelayPassively());
-      if (shouldRelayPassively()) {
-        BleLog.log(ProxLogTags.mesh, 'mesh passive (listen only, no relay)');
-      } else {
-        engine.relayEnabled = true;
-        BleLog.log(ProxLogTags.mesh, 'mesh on (student relay armed)');
-      }
+      // Async policy (one cached channel read): passive devices never
+      // arm the relay; everyone else relays from browse onward. The scan
+      // below starts immediately — relay arming landing a hop later is
+      // harmless (nothing to re-air until a challenge is heard).
+      unawaited(() async {
+        bool passive = false;
+        try {
+          passive = await shouldRelayPassively();
+        } catch (_) {
+          passive = false;
+        }
+        if (!mounted) return;
+        try {
+          engine.applyRelayPolicy(lowPower: passive);
+          if (passive) {
+            BleLog.log(
+                ProxLogTags.mesh, 'mesh passive (listen only, no relay)');
+          } else {
+            engine.relayEnabled = true;
+            BleLog.log(ProxLogTags.mesh, 'mesh on (student relay armed)');
+          }
+        } catch (_) {}
+      }());
       Future(() async {
         var ok = true;
         try {

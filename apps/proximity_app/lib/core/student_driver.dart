@@ -735,10 +735,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       BleLog.log('BLE', 'prewarm scan FAILED: $e');
     }
     // Front-row relay armed here so the window opening under the camera
-    // UI still reaches back rows. Passive devices (old phones/iPhones)
-    // skip relay — they prove over WiFi, never re-air.
-    _engine.applyRelayPolicy(lowPower: shouldRelayPassively());
-    if (shouldRelayPassively()) {
+    // UI still reaches back rows. Passive devices (low-RAM/iPhones)
+    // skip relay — they prove over WiFi, never re-air. Policy is one
+    // cached channel read (2 s bound, fail-open to active).
+    final passive = await shouldRelayPassively();
+    _engine.applyRelayPolicy(lowPower: passive);
+    if (passive) {
       BleLog.log('MESH', 'mesh passive (no relay on this device)');
       return;
     }
@@ -967,8 +969,9 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // later rotation instead of racing a countdown. Loop until a verdict.
     _engine.clearSightings();
     BleLog.log('BLE', 'stale sightings cleared (listen start)');
-    _engine.applyRelayPolicy(lowPower: shouldRelayPassively());
-    if (shouldRelayPassively()) {
+    final passive = await shouldRelayPassively();
+    _engine.applyRelayPolicy(lowPower: passive);
+    if (passive) {
       BleLog.log('MESH', 'mesh passive (listen only, no relay)');
     } else {
       _engine.relayEnabled = true;
@@ -1138,7 +1141,9 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// after marks landed. Passive devices never linger.
   Timer? _lingerTimer;
   void _lingerRelay20sAfter(DateTime firstHeardAt) {
-    if (shouldRelayPassively()) return;
+    // Gated on the armed relay (passive devices never arm it, so they
+    // never linger — no policy read needed on this hot path).
+    if (!_engine.relayEnabled) return;
     const linger = Duration(seconds: 10);
     final elapsed = DateTime.now().toUtc().difference(firstHeardAt);
     if (elapsed >= linger) {

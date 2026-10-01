@@ -156,6 +156,18 @@ class MainActivity : FlutterFragmentActivity() {
                     android.provider.Settings.Secure.ANDROID_ID
                 )
                 result.success(id ?: "")
+            } else if (call.method == "getMemoryInfo") {
+                // No permission needed: total RAM + the OS low-RAM flag
+                // (ActivityManager.isLowRamDevice — OEM-tuned). The Dart
+                // relay policy treats either signal as passive-listen.
+                val am = getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                    as android.app.ActivityManager
+                val info = android.app.ActivityManager.MemoryInfo()
+                am.getMemoryInfo(info)
+                result.success(mapOf(
+                    "totalMemBytes" to info.totalMem,
+                    "lowRamDevice" to am.isLowRamDevice
+                ))
             } else {
                 result.notImplemented()
             }
