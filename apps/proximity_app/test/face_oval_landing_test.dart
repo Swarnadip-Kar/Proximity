@@ -35,6 +35,19 @@ Future<void> _settleHero(WidgetTester t) async {
 
 void main() {
   group('face-guide oval geometry (pure)', () {
+    test('marking capture surface: cover, black, retry (source pin)', () {
+      // Regression pin for the boxed/short marking preview (letterboxed
+      // AspectRatio on a light scaffold = white side borders) and the
+      // dead-end failed start (Capture disabled with no controller).
+      final src = _codeOf(
+          File('lib/screens/face_capture.dart').readAsStringSync());
+      expect(src.contains('OverflowBox('), isTrue);
+      expect(src.contains('ClipRect('), isTrue);
+      expect(src.contains('AspectRatio('), isFalse);
+      expect(src.contains('backgroundColor: Colors.black'), isTrue);
+      expect(src.contains('_retryStart'), isTrue);
+    });
+
     test('CaptureOverlay guide stays taller than wide: phone + desktop',
         () {
       const viewports = [

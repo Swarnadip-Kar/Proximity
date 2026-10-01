@@ -211,6 +211,59 @@ class _OvalOverlayPainter extends CustomPainter {
       old.progress != progress || old.color != color;
 }
 
+/// Orientation-adjusted sensor ratio for the cover box below (same
+/// helper the enrollment feed sizes itself with — see
+/// [displayedPreviewAspect]): null when unmeasurable (proven fallback
+/// path, never a garbage box).
+double? _coverAspect(CameraValue value) {
+  try {
+    final a = displayedPreviewAspect(value);
+    if (a.isFinite && a > 0) return a;
+  } catch (_) {}
+  return null;
+}
+
+/// Full-bleed camera surface (same math as the enrollment feed):
+/// explicit cover box, zero transforms. The inner box matches the
+/// native frame ratio (no squish); [OverflowBox] centers it over the
+/// area and [ClipRect] crops the bleed. The texture paints
+/// untransformed — only larger. Null ratio (should not happen — the
+/// build gate above requires initialized) renders the proven bare
+/// preview instead of a garbage box.
+class _CoverFeed extends StatelessWidget {
+  final double? aspectRatio;
+  final Widget child;
+  const _CoverFeed({required this.aspectRatio, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final ar = aspectRatio;
+    if (ar == null) return child;
+    return LayoutBuilder(builder: (context, constraints) {
+      final size = constraints.biggest;
+      // Unbounded (should not happen — the feed fills the Expanded):
+      // proven bare path, never a garbage box.
+      if (!size.isFinite) return child;
+      var w = size.width;
+      var h = w / ar;
+      if (h < size.height) {
+        h = size.height;
+        w = h * ar;
+      }
+      return ClipRect(
+        child: SizedBox.fromSize(
+          size: size,
+          child: OverflowBox(
+            maxWidth: w,
+            maxHeight: h,
+            child: SizedBox(width: w, height: h, child: child),
+          ),
+        ),
+      );
+    });
+  }
+}
+
 /// Still-capture sheet. Pops `List<String>` (captured image paths, oldest
 /// first) or null on cancel/close. [captures]: 1 per guided enrollment
 /// angle, 1 for marking. [autoFire]: capture automatically once the preview
@@ -320,6 +373,21 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
 
   bool _starting = false;
 
+  /// Explicit retry for a failed start (the failed branch owns its own
+  /// Try-again — the bottom Capture button stays disabled with no
+  /// controller, so without this the sheet stranded on black). Re-arms
+  /// the open from scratch, including the auto-fire when configured.
+  void _retryStart() {
+    if (_starting || _done) return;
+    setState(() {
+      _failed = false;
+      _denied = false;
+      _status = 'Starting camera…';
+      if (widget.autoFire) _autoFired = false;
+    });
+    unawaited(_start());
+  }
+
   Future<void> _start() async {
     // Single-flight: initState + a rapid pause/resume pair (or double
     // resume) must never build two controllers — the loser leaks the
@@ -355,7 +423,14 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
       return;
     }
     try {
-      final cams = await availableCameras();
+      // Bounded camera list: a hung plugin call used to strand the sheet
+      // on the spinner forever (white page). Past the budget it throws
+      // into the failed branch below, where Try-again re-runs the open.
+      // Side-effect-free (no controller yet), so timing out is safe —
+      // initialize() below stays unbounded (a timeout there could orphan
+      // a live controller holding the sensor lock).
+      final cams =
+          await availableCameras().timeout(const Duration(seconds: 15));
       if (_done) return;
       if (cams.isEmpty) throw StateError('No camera found.');
       final front = cams.firstWhere(
@@ -548,11 +623,16 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     final ctl = _ctl;
     final prompt = widget.prompt ?? 'Position your face in the oval';
     return Scaffold(
+      // Camera-black chrome: the preview COVERS its area (no letterbox
+      // bars) and every non-preview state (spinner, denied, failed)
+      // renders on black, so a slow bind never reads as a white page
+      // and side gaps can never show white borders. The bottom action
+      // panel keeps the themed surface (prompt + capture stay readable).
+      backgroundColor: Colors.black,
       // Mobile edge-to-edge: background bleeds behind the transparent
       // system bars (in-tab route — the shell's _ShellEdgeBody already
       // seats this Scaffold above the nav bar, so no inner SafeArea here
-      // which would double-pad). Preview math (AspectRatio + Stack + oval)
-      // untouched.
+      // which would double-pad).
       extendBody: isMobile,
       appBar: AppBar(
         title: const Text('Face check'),
@@ -570,50 +650,68 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
       body: Column(
         children: [
           Expanded(
-            child: Center(
+            child: Container(
+              color: Colors.black,
               child: _denied || _failed
-                  ? Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(_status, textAlign: TextAlign.center),
-                    )
-                  : ctl == null || !ctl.value.isInitialized
-                      ? const CircularProgressIndicator()
-                    : Center(
-                        // Squish fix: the old StackFit.expand forced the
-                        // feed to fill the body-minus-panel area (an
-                        // arbitrary ratio), stretching faces whenever it
-                        // differed from the sensor ratio. Size the box by
-                        // the ORIENTATION-ADJUSTED ratio the plugin paints
-                        // (see displayedPreviewAspect) so the feed is never
-                        // stretched; leftovers become plain background, and
-                        // the oval draws on the true video box.
-                        child: AspectRatio(
-                          aspectRatio:
-                              displayedPreviewAspect(ctl.value),
-                          child: Stack(
-                            children: [
-                              CameraPreview(ctl),
-                              // The oval ACTUALLY renders on the preview:
-                              // this overlay fills the aspect box above
-                              // (not beside it), pointer-transparent,
-                              // repainting per shot.
-                              Positioned.fill(
-                                child: FaceCaptureOvalOverlay(
-                                  progress: widget.captures <= 1
-                                      ? 1.0
-                                      : _taken / widget.captures,
-                                ),
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _status,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            // A failed start used to dead-end here (the
+                            // Capture button below stays disabled with no
+                            // controller): an explicit retry re-runs the
+                            // open instead of stranding on black.
+                            if (_failed && !_denied) ...[
+                              const SizedBox(height: 12),
+                              FilledButton.icon(
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Try again'),
+                                onPressed: _starting ? null : _retryStart,
                               ),
                             ],
-                          ),
+                          ],
                         ),
                       ),
-              ),
+                    )
+                  : ctl == null || !ctl.value.isInitialized
+                      ? const Center(child: CircularProgressIndicator())
+                      : Stack(
+                          children: [
+                            // Full-bleed cover (same contract as the
+                            // enrollment feed): the sensor frame COVERS the
+                            // area center-cropped at a uniform scale — never
+                            // squished, no letterbox bars, no white edges.
+                            // The oval draws on the visible area above it.
+                            Positioned.fill(
+                              child: _CoverFeed(
+                                aspectRatio:
+                                    _coverAspect(ctl.value),
+                                child: CameraPreview(ctl),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: FaceCaptureOvalOverlay(
+                                progress: widget.captures <= 1
+                                    ? 1.0
+                                    : _taken / widget.captures,
+                              ),
+                            ),
+                          ],
+                        ),
             ),
+          ),
           // In-tab route: the shell's _ShellEdgeBody already seats this
           // whole Scaffold above the system nav bar (live viewPadding);
-          // no inner SafeArea here — it would double-pad. Preview
-          // AspectRatio geometry untouched.
+          // no inner SafeArea here — it would double-pad. The bottom
+          // panel keeps the themed surface; only the preview area above
+          // is camera-black.
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
