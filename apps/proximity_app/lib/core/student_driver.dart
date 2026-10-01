@@ -506,25 +506,37 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // passive only, ~1s, no prompts): a photo/screen that would match the
     // template must still fail here. Best-of burst (see
     // [kMarkingLivenessCaptures]): every non-blank still is scored and the
-    // max decides. Blank paths are skipped (the old empty-frame guard —
-    // empty bytes crash the native plugin below the Dart catch);
-    // unreadable throws skip that still (no evidence either way, never a
-    // pass); nothing scoreable at all → inconclusive (rescan, burns
-    // nothing). The matcher then runs ONCE on the winning still.
-    LivenessResult? best;
-    String? bestPath;
-    for (final p in imagePaths) {
-      if (p.trim().isEmpty) continue;
-      LivenessResult live;
+    // max decides. Stills score CONCURRENTLY (independent files — one burst
+    // costs ~one probe, not N serial probes); selection is still the max
+    // by input order (ties keep the first, exactly as the serial loop).
+    // Blank paths are skipped (the old empty-frame guard — empty bytes
+    // crash the native plugin below the Dart catch); unreadable throws
+    // skip that still (no evidence either way, never a pass); nothing
+    // scoreable at all → inconclusive (rescan, burns nothing). The matcher
+    // then runs ONCE on the winning still.
+    Future<LivenessResult?> scoreOne(String p) async {
       try {
-        live = await _liveness.detectPassive(p);
+        return await _liveness.detectPassive(p);
       } catch (e) {
         BleLog.log('SEC', 'liveness check ERROR (still skipped): $e');
-        continue;
+        return null;
       }
+    }
+
+    final candidates = [
+      for (final p in imagePaths)
+        if (p.trim().isNotEmpty) p
+    ];
+    final scored = await Future.wait(
+        [for (final p in candidates) scoreOne(p)]);
+    LivenessResult? best;
+    String? bestPath;
+    for (var i = 0; i < candidates.length; i++) {
+      final live = scored[i];
+      if (live == null) continue;
       if (best == null || live.score > best.score) {
         best = live;
-        bestPath = p;
+        bestPath = candidates[i];
       }
     }
     final win = best;
