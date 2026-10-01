@@ -198,6 +198,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   // Elapsed open time: the window stays open until Stop (no countdown —
   // slow provers are never stranded by a clock).
   Duration elapsed = Duration.zero;
+  // Notifier driving ONLY the LiveStatusStrip timer label: the old 1s
+  // setState rebuilt the whole IndexedStack (5 tabs) every second.
+  final ValueNotifier<Duration> _elapsedN =
+      ValueNotifier<Duration>(Duration.zero);
+  int _lastPresent = -1;
+  int _lastWaitingN = -1;
   // Frozen elapsed at the last stop: resume re-opens the same round from
   // this value (start = now - banked) instead of zero. Null = no banked
   // value, so fresh rounds (_windowNo+1) still start at zero. Set in the
@@ -261,6 +267,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   final _nameCtrl = TextEditingController();
+
+  void _setElapsed(Duration d) {
+    elapsed = d;
+    if (_elapsedN.value != d) _elapsedN.value = d;
+  }
 
   /// Segmented sub-nav (§7.1): the active live sub-tab (0 roster,
   /// 1 waiting, 2 inbox, 3 add, 4 setup). IndexedStack keeps every tab
@@ -681,7 +692,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _lastSavedSig = '';
       // Restored drafts resume idle: no frozen stop to continue from.
       _bankedElapsed = null;
-      elapsed = Duration.zero;
+      _setElapsed(Duration.zero);
     });
     _maybeAutosave();
   }
@@ -808,7 +819,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _draftDateIso = null;
       _lastSavedSig = '';
       _bankedElapsed = null;
-      elapsed = Duration.zero;
+      _setElapsed(Duration.zero);
     });
   }
 
@@ -838,6 +849,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   void dispose() {
     _t?.cancel();
     _idlePoll?.cancel();
+    _elapsedN.dispose();
     _nameCtrl.dispose();
     _scrollCtrl.dispose();
     _setWake(false);
@@ -987,7 +999,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     setState(() {
       live = true;
       _windowNo = windowNo;
-      elapsed = startElapsed;
+      _setElapsed(startElapsed);
       serverError = null;
       _session = session;
       _ip = session.hostIp;
@@ -1001,10 +1013,25 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         return;
       }
       _maybeAutosave();
-      _logWaitingDelta();
       // Elapsed-up only: nothing auto-closes. Stop ends acceptance
-      // (after a short grace for proofs already on the wire).
-      setState(() => elapsed += const Duration(seconds: 1));
+      // (after a short grace for proofs already on the wire). The timer
+      // label updates via _elapsedN (no full rebuild); the roster
+      // rebuilds only when present/waiting actually moved.
+      _setElapsed(elapsed + const Duration(seconds: 1));
+      final waitingChanged = _logWaitingDelta();
+      int presentNow = 0;
+      int waitingNow = 0;
+      try {
+        presentNow = tally.confirmedCount;
+        waitingNow = _driver?.waitingCount ?? 0;
+      } catch (_) {}
+      if (waitingChanged ||
+          presentNow != _lastPresent ||
+          waitingNow != _lastWaitingN) {
+        _lastPresent = presentNow;
+        _lastWaitingN = waitingNow;
+        if (mounted) setState(() {});
+      }
     });
   }
 
@@ -1088,7 +1115,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
         _draftDateIso = null;
         _lastSavedSig = '';
         _bankedElapsed = null;
-        elapsed = Duration.zero;
+        _setElapsed(Duration.zero);
         // Defense-in-depth: the `live` guard at entry (line 1006)
         // rejects `live == true`, but a racing stop-window that hasn't
         // completed setState yet could leave it stale. Explicit false
@@ -1107,7 +1134,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // No round to resume from anymore: drop the frozen elapsed so the
     // next fresh Start begins at zero.
     _bankedElapsed = null;
-    elapsed = Duration.zero;
+    _setElapsed(Duration.zero);
     await _saveDraft();
     await _saveSnapshot();
     if (mounted) setState(() {});
@@ -1455,11 +1482,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                       ProxSpacing.screenMargin, 12, ProxSpacing.screenMargin, 0),
-                  child: LiveStatusStrip(
-                    live: live,
-                    elapsed: elapsed,
-                    present: present,
-                    waiting: waiting,
+                  child: ValueListenableBuilder<Duration>(
+                    valueListenable: _elapsedN,
+                    builder: (_, tick, __) => LiveStatusStrip(
+                      live: live,
+                      elapsed: tick,
+                      present: present,
+                      waiting: waiting,
+                    ),
                   ),
                 ),
                 if (_resumed)
@@ -1645,11 +1675,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
               bottom: ProxSpacing.sm,
               child: SafeArea(
                 top: false,
-                child: LiveFloatingControls(
-                  live: live,
-                  hosting: hosting,
-                  windowNo: _windowNo,
-                  elapsed: elapsed,
+                child: ValueListenableBuilder<Duration>(
+                  valueListenable: _elapsedN,
+                  builder: (_, tick, __) => LiveFloatingControls(
+                    live: live,
+                    hosting: hosting,
+                    windowNo: _windowNo,
+                    elapsed: tick,
                   present: present,
                   waiting: waiting,
                   onStart: _startNext,
@@ -1664,6 +1696,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
                       _stopEarly().whenComplete(bumpLiveHistoryTick),
                   onEnd: () =>
                       _endAttendance().whenComplete(bumpLiveHistoryTick),
+                ),
                 ),
               ),
             ),

@@ -225,7 +225,8 @@ class UniversalBleRadio implements BlePlatformDelegate {
       // Pre-parse RSSI floor: sub-(-90) noise never pays Uuid normalize +
       // AirParser + hex + DateTime work. Matches engine drop floor.
       try {
-        if ((d.rssi) < -90) return;
+        final rssi = d.rssi;
+        if (rssi != null && rssi < -90) return;
       } catch (_) {}
       final s = _parser.map(d);
       // Most neighbours parse to nothing and drop silently here; the
