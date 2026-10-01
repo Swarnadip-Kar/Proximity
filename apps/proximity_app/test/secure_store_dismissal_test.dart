@@ -246,4 +246,80 @@ void main() {
       );
     });
   });
+
+  group('transient platform failures (never empty, never a mint)', () {
+    test('non-auth read failure throws unavailable, not null', () async {
+      final strong = _IoFailSlot();
+      final cred = _IoFailSlot(cred: true);
+      final store =
+          SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+      // A transient I/O failure is unknown — reporting empty here would
+      // push a phantom enrollment; resolving null on the install id
+      // would mint a forked identity.
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreUnavailable>()),
+      );
+      await expectLater(
+        store.readInstallId(),
+        throwsA(isA<SecureStoreUnavailable>()),
+      );
+    });
+
+    test('unavailable carries no dismissal marker', () {
+      const e = SecureStoreUnavailable();
+      expect('$e'.toLowerCase(), isNot(contains('cancel')));
+      expect('$e', contains('try again'));
+    });
+  });
+}
+
+/// Slot whose platform call fails transiently (no prompt involved).
+class _IoFailSlot extends FlutterSecureStorage {
+  _IoFailSlot({bool cred = false})
+      : super(
+          aOptions:
+              cred ? SecureStoreOptions.aOptsFallback : SecureStoreOptions.aOpts,
+          iOptions:
+              cred ? SecureStoreOptions.iOptsFallback : SecureStoreOptions.iOpts,
+        );
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw StateError('disk full');
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw StateError('disk full');
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {}
 }

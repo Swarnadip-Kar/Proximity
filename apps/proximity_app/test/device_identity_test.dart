@@ -31,6 +31,16 @@ void main() {
     await store.writeInstallId(durable);
     expect(await getOrCreateInstallId(store), durable);
   });
+
+  test('transient read failure rethrows, never mints a fork', () async {
+    // A flaky install-id read must propagate (callers park/retry), not
+    // resolve null into a freshly minted identity over existing data.
+    final store = _UnavailableReadStore();
+    await expectLater(
+      getOrCreateInstallId(store),
+      throwsA(isA<SecureStoreUnavailable>()),
+    );
+  });
 }
 
 /// InMemoryDeviceStore with scriptable install-id write failures.
@@ -41,5 +51,13 @@ class _FailingWriteStore extends InMemoryDeviceStore {
   Future<void> writeInstallId(String id) async {
     if (failWrites) throw StateError('secure store unavailable');
     return super.writeInstallId(id);
+  }
+}
+
+/// InMemoryDeviceStore whose install-id read fails transiently.
+class _UnavailableReadStore extends InMemoryDeviceStore {
+  @override
+  Future<String?> readInstallId() async {
+    throw const SecureStoreUnavailable();
   }
 }

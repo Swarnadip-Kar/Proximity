@@ -681,6 +681,11 @@ Future<String> getOrCreateInstallId(DeviceStore store) async {
     // one here would fork the device identity (phantom move, orphaned
     // faceId). Propagate so callers park instead.
     rethrow;
+  } on SecureStoreUnavailable {
+    // Transient platform failure: same fork risk as a dismissal (the id
+    // may exist behind the failure) with no prompt involved — propagate
+    // so callers retry instead of minting.
+    rethrow;
   } catch (_) {}
   final id = newInstallId();
   // Durability gate: an id that never persisted must never be cached or

@@ -343,10 +343,12 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
       );
 }
 
-/// Empty-state radar: owns its own 200ms sweep timer so the parent
-/// browse list never rebuilds (old 50ms timer called setState on the
-/// whole BrowseClassesView at 20fps — the 84-frame skip signature).
-/// Only mounted when the list is empty; static under reduce-motion.
+/// Empty-state radar: owns its own 50ms sweep timer so the parent
+/// browse list never rebuilds (the old whole-list setState at 20fps was
+/// the 84-frame skip signature; the 200ms timer after it visibly stepped
+/// at 5fps). 20fps on this isolated RepaintBoundary subtree reads smooth
+/// for a 2.4s/rev sweep at negligible cost; static under reduce-motion.
+/// Only mounted when the list is empty.
 class _EmptyRadar extends StatefulWidget {
   const _EmptyRadar();
 
@@ -356,7 +358,7 @@ class _EmptyRadar extends StatefulWidget {
 
 class _EmptyRadarState extends State<_EmptyRadar> {
   static const _period = Duration(milliseconds: 2400);
-  static const _tick = Duration(milliseconds: 200);
+  static const _tick = Duration(milliseconds: 50);
   Timer? _t;
   var _sweep = 0.0;
 

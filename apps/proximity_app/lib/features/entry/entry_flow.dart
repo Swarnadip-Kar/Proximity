@@ -181,6 +181,13 @@ Future<UnlockOutcome> attemptUnlockIdentity(
       // never misread as unenrolled (that pushes enrollment for data that
       // exists behind the lock).
       return UnlockOutcome.dismissed;
+    } on SecureStoreUnavailable {
+      // Transient platform failure (no prompt involved): unknown, never
+      // unenrolled — the caller aborts and retries. Explicit type check
+      // (not the message matcher below) so dismissal copy never leaks
+      // onto a case the user did not dismiss.
+      BleLog.log('STATE', 'entry relink store unavailable (retry later)');
+      return UnlockOutcome.error;
     } catch (e) {
       if (isUnlockDismissal(e)) return UnlockOutcome.dismissed;
       // Transient/unknown read failure: NOT a proven absence — the

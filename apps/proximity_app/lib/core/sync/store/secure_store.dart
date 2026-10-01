@@ -226,10 +226,12 @@ class SecureDeviceStore implements DeviceStore {
         raw = await slot.read(key: _kEnroll);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
-          // Non-auth failure (I/O, programming bug): never a slot signal.
-          // Cache is necessarily null here (see above) — report empty.
-          _lastSecureFailAt = now;
-          return null;
+          // Non-auth failure (I/O, detached channel, programming bug):
+          // never a slot signal and never an empty report — a transient
+          // here must not read as "unenrolled" (phantom setup push) the
+          // way a clean miss does. Throw transient; callers park/retry.
+          // (No coolstamp: nothing was prompted, nothing to hammer.)
+          throw const SecureStoreUnavailable();
         }
         sawAuthFailure = true;
         continue;
@@ -695,10 +697,11 @@ class SecureDeviceStore implements DeviceStore {
         v = await slot.read(key: _kInstall);
       } catch (e) {
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
-          // Non-auth failure: never a slot signal. Cache is necessarily
-          // null here — report empty.
-          _lastSecureFailAt = now;
-          return null;
+          // Non-auth failure: never a slot signal and never an empty
+          // report — resolving null here would make getOrCreateInstallId
+          // mint a FRESH install over existing data (identity fork).
+          // Throw transient; callers park/retry.
+          throw const SecureStoreUnavailable();
         }
         sawAuthFailure = true;
         continue;

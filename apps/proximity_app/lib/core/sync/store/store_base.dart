@@ -180,13 +180,34 @@ class SecureStoreDismissed implements Exception {
   String toString() => 'SecureStoreDismissed: $message';
 }
 
+/// Thrown by secure-backend reads ([readEnrollment]/[readInstallId])
+/// when the platform call itself failed transiently — detached channel,
+/// busy/locked Keystore, I/O — as opposed to a user dismissal
+/// ([SecureStoreDismissed]) or a proven absence (null). The message
+/// deliberately carries no cancel marker so dismissal matchers never
+/// catch it. Callers must treat this as unknown/retryable: never report
+/// empty, never mint a fresh identity, never push enrollment. No
+/// anti-hammer cooldown applies (nothing was prompted, nothing to
+/// hammer); retries re-read. Prefer `is SecureStoreUnavailable` type
+/// checks for new code.
+class SecureStoreUnavailable implements Exception {
+  final String message;
+  const SecureStoreUnavailable(
+      [this.message =
+          'Secure storage is temporarily unreadable — try again.']);
+  @override
+  String toString() => 'SecureStoreUnavailable: $message';
+}
+
 abstract class DeviceStore {
   /// Reads the enrollment doc, or null when none is on file. The secure
   /// backend may instead throw [SecureStoreDismissed] when the prompt was
   /// dismissed and no proven value can be served (data may still exist
-  /// behind the lock — NOT the same as empty). Callers that only render
-  /// state treat it like null; callers that decide navigation/identity
-  /// (unlock, install-id minting) must catch it explicitly and park.
+  /// behind the lock — NOT the same as empty), or [SecureStoreUnavailable]
+  /// when the platform call itself failed transiently (also not empty).
+  /// Callers that only render state treat both like null; callers that
+  /// decide navigation/identity (unlock, install-id minting) must catch
+  /// both explicitly and park/retry.
   Future<StoredEnrollment?> readEnrollment();
   Future<void> writeEnrollment(StoredEnrollment e);
   Future<void> clearEnrollment();
