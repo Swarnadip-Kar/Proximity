@@ -147,11 +147,16 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
     final total = slotTotal;
     final reduced = ProxMotion.reduced(context);
     // Message for the preview's fail branch (denied / failed / no-key).
+    // Locked (enrollment doc found, key behind the lock) gets unlock +
+    // retry copy instead of the generate-first copy — same distinction
+    // the enrollFace key gate draws.
     final previewMessage = isFailed
         ? (isDenied
             ? 'Camera permission is needed for the face check — allow it in settings, then come back. Nothing is enrolled yet.'
             : 'The camera did not start — nothing is enrolled yet. Go back and try again.')
-        : 'Generate the device key on the previous screen first — the face capture seals to it.';
+        : restoreLocked
+            ? 'Couldn’t unlock this device’s key — approve the phone prompt, then try again.'
+            : 'Generate the device key on the previous screen first — the face capture seals to it.';
     // Fail-closed preview states (frozen copy): denied / failed / no-key
     // replace the feed; the opening spinner shows until open completes.
     final failMessage =
@@ -222,6 +227,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               targetSlot: targetSlot,
               liveYaw: liveYaw,
               livePitch: livePitch,
+              // Locked key gate (not a missing key): in-place retry that
+              // re-runs restore + camera open (re-prompts past cooldown).
+              restoreLocked: restoreLocked && failMessage != null,
+              onRetryRestore: () => retryRestoreAndOpen(),
               // The toast owns the message on error — hide the rotating
               // prompt so the two never stack on small preview areas.
               promptVisible: !saveError,

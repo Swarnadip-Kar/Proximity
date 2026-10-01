@@ -261,6 +261,30 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   var _failed = false;
   var _saving = false;
 
+  /// Key-gate outcome: true when the last open found an enrollment doc
+  /// for this account but no unlocked key (locked, retryable) as opposed
+  /// to a genuinely keyless draft (generate-first copy). Reset on every
+  /// open attempt; cleared on success.
+  var _restoreLocked = false;
+
+  /// See [_restoreLocked].
+  bool get restoreLocked => _restoreLocked;
+
+  /// In-place retry for the locked gate: re-runs restore + camera open
+  /// (re-prompts past the cooldown). No-op while opening/saving or after
+  /// teardown. The composer shows this behind a Try-again button only in
+  /// the locked branch — genuinely keyless drafts keep the static copy.
+  Future<void> retryRestoreAndOpen() async {
+    if (_done || _saving || _finished || _failed) return;
+    if (mounted) {
+      setState(() {
+        _opening = true;
+        _restoreLocked = false;
+      });
+    }
+    unawaited(_openCamera());
+  }
+
   /// Single-flight for the validated auto-advance: the terminal navigation
   /// (stepper advance or result push) fires at most once per driver, so an
   /// auto-advance racing a manual Continue cannot stack two results. The
@@ -370,12 +394,34 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
       return;
     }
     if (_done) return;
-    if (ref.read(enrollmentControllerProvider).pkHex.isEmpty) {
+    final ctl = ref.read(enrollmentControllerProvider);
+    final locked = ref
+        .read(enrollmentControllerProvider.notifier)
+        .restoreLockedForAccount;
+    if (ctl.pkHex.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _opening = false;
+          _restoreLocked = false;
+        });
+      }
+    } else if (locked) {
+      // Locked, not missing: an enrollment doc exists for this account
+      // but the key stayed behind the prompt/failure — offer unlock +
+      // retry IN PLACE (never the generate-first copy, never a dead end).
+      EnrollLog.face('scan locked: key behind the lock, retry offered');
+      if (mounted) {
+        setState(() {
+          _opening = false;
+          _restoreLocked = true;
+        });
+      }
+      return;
+    } else {
       EnrollLog.face('scan refused: no device key yet');
-      setState(() => _opening = false);
+      if (mounted) setState(() => _opening = false);
       return;
     }
-    setState(() => _opening = false);
     EnrollLog.face('session camera open — continuous to completion');
     // Prewarm the face + liveness models while the holder positions for
     // the first still (both loads are idempotent singletons; failures

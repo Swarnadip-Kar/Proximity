@@ -131,6 +131,15 @@ class EnrollCapturePreview extends StatelessWidget {
   final double? liveYaw;
   final double? livePitch;
 
+  /// Locked key gate (vs a genuinely missing key): shows unlock-and-retry
+  /// copy with a Try-again button that re-runs restore + camera open.
+  /// False (default) keeps the static fail copy with no action.
+  final bool restoreLocked;
+
+  /// Retry action for [restoreLocked] (ignored unless locked and the fail
+  /// branch is active).
+  final Future<void> Function()? onRetryRestore;
+
   const EnrollCapturePreview({
     super.key,
     required this.controller,
@@ -151,12 +160,35 @@ class EnrollCapturePreview extends StatelessWidget {
     this.targetSlot,
     this.liveYaw,
     this.livePitch,
+    this.restoreLocked = false,
+    this.onRetryRestore,
   });
 
   @override
   Widget build(BuildContext context) {
     final fail = failMessage;
     if (fail != null) {
+      // Locked gate (key behind the lock): message + in-place retry.
+      // Genuinely missing keys keep the static copy with no action.
+      final retry = onRetryRestore;
+      if (restoreLocked && retry != null) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(fail, textAlign: TextAlign.center),
+                const SizedBox(height: ProxSpacing.md),
+                ProxPrimaryButton(
+                  label: const Text('Try again'),
+                  onPressed: () => unawaited(retry()),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),

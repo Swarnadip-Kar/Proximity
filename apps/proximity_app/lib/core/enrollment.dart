@@ -171,7 +171,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   ed.KeyPair? _keys;
   String? _faceId;
   String? _restoredRoll;
-  // Latest slot-naming refusal in enrollFace (pose/liveness FAIL names its
+
+  /// Last restore attempt found an enrollment doc for the current account
+  /// but could not unlock it (dismissed prompt, transient store failure,
+  /// DKey unavailable) — capture must show unlock-and-retry, NOT the
+  /// generate-first copy. False after any success, clean miss, mismatch,
+  /// or account switch (those genuinely need the key step or already
+  /// hold keys).
+  bool _restoreLockedForAccount = false;
+
+  /// See [_restoreLockedForAccount].
+  bool get restoreLockedForAccount => _restoreLockedForAccount;  // Latest slot-naming refusal in enrollFace (pose/liveness FAIL names its
   // slot for the capture session's single-slot recapture). Null when the
   // last run did not refuse a slot. Cleared on each new scoring run + on
   // faceDone; the gallery stays untouched on every refusal either way.
@@ -256,6 +266,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     _keys = null;
     _faceId = null;
     _restoredRoll = null;
+    _restoreLockedForAccount = false;
     if (current == null) {
       state = const EnrollmentState(phase: EnrollPhase.signedOut);
       return;
@@ -335,6 +346,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     _keys = null;
     _faceId = null;
     _restoredRoll = null;
+    _restoreLockedForAccount = false;
     if (current == null) {
       state = const EnrollmentState(
           phase: EnrollPhase.error,
@@ -358,12 +370,22 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     } on SecureStoreDismissed {
       // Dismissed prompt: proceed as if nothing was found (today's null
       // path) — the unlock-owning callers (shell resolve, entry gate)
-      // observe the dismissal separately and park with retry.
+      // observe the dismissal separately and park with retry. Flagged
+      // locked (data may exist behind the prompt) for capture callers.
+      _restoreLockedForAccount = true;
+      return;
+    } on SecureStoreUnavailable {
+      // Transient platform failure: unknown, retryable — never a clean
+      // miss. Flagged locked so capture offers retry, not key generation.
+      _restoreLockedForAccount = true;
       return;
     } catch (_) {
       stored = null;
     }
-    if (stored == null || stored.email.toLowerCase() != email) return;
+    if (stored == null || stored.email.toLowerCase() != email) {
+      _restoreLockedForAccount = false;
+      return;
+    }
     try {
       // Sealed path (production): unwrap needs THIS device's DKey — a
       // backup-restore clone carrying ciphertext fails here with
@@ -377,6 +399,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       if (stored.sealedKeyHex.isEmpty) {
         BleLog.log('SEC',
             'enroll restore: unsealed legacy doc — re-enroll on hardware');
+        _restoreLockedForAccount = false;
         return;
       }
       ed.KeyPair keys;
@@ -389,6 +412,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         // without a retrying refresh would hit the key gate.
         BleLog.log('SEC',
             'enroll restore: DKey unavailable, key locked (pk known)');
+        _restoreLockedForAccount = true;
         state = state.copyWith(
           phase: EnrollPhase.signedIn,
           pkHex: stored.pkHex,
@@ -424,6 +448,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         if ('$e'.contains('restore detected')) {
           BleLog.log('SEC',
               'enroll restore detected (clone) — re-enroll required');
+          _restoreLockedForAccount = false;
           state = state.copyWith(
             phase: EnrollPhase.signedIn,
             message: 'restore detected — re-enroll',
@@ -434,6 +459,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       }
       _keys = keys;
       _restoredRoll = stored.roll;
+      _restoreLockedForAccount = false;
       // Stale pipeline (pre-plugin templates or older plugin builds): the
       // key is still valid, but the face record is incomparable — keep the
       // key, drop the face, land on the key step for a fresh capture.
@@ -466,7 +492,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     } catch (_) {
       // Corrupt store entry: ignore, proceed as fresh enrollment. Logged:
       // without this, a later Save fails with the misleading key-gate
-      // prompt while the log drawer stays silent.
+      // prompt while the log drawer stays silent. Unrecoverable either
+      // way — not a lock a retry could open.
+      _restoreLockedForAccount = false;
       BleLog.log('SEC', 'enroll restore failed, proceeding fresh');
     }
   }
