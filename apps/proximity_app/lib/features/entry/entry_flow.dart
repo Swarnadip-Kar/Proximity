@@ -130,40 +130,18 @@ Future<void> entrySignOut(WidgetRef ref, [EntryMounted? isMounted]) async {
   }
 }
 
-/// Outcome of an explicit identity-unlock attempt (see
-/// [attemptUnlockIdentity]): `linked` restores Mark, `empty` means no
-/// enrollment for this account (setup flow owns the next step),
-/// `dismissed` means the user cancelled the biometric prompt — stay
-/// locked on Accounts with retry (locked-tab taps re-resolve), never
-/// auto-push setup for an enrolled user who just declined to unlock.
-/// `error` means the store read itself failed (transient I/O, unknown
-/// platform error — NOT a proven absence): the caller must abort the
-/// resolve (no push, no park change) and retry later. Unknown is never
-/// unenrolled.
-enum UnlockOutcome { linked, empty, dismissed, error }
+/// Outcome of an enrollment read (see [attemptUnlockIdentity]):
+/// `linked` restores Mark, `empty` means no enrollment for this account
+/// (setup flow owns the next step), `error` means the store read itself
+/// failed (transient I/O — NOT a proven absence): the caller must abort
+/// the resolve (no push, no park change) and retry later. Unknown is
+/// never unenrolled.
+enum UnlockOutcome { linked, empty, error }
 
-/// Best-effort prompt-dismissal detector (Android BiometricPrompt
-/// cancel/back, iOS LAErrorUserCancel): message-based like every other
-/// platform-error matcher here. A missed cancel degrades to `error`
-/// (abort + retry), never to a false link — fail-safe direction.
-bool isUnlockDismissal(Object e) {
-  final s = '$e'.toLowerCase();
-  return s.contains('canceled') ||
-      s.contains('cancelled') ||
-      s.contains('user_cancel') ||
-      s.contains('auth_canceled');
-}
-
-/// Unlocks [linkedIdentityProvider] from the on-device enrollment when it
-/// belongs to [acct] (same Gmail, case-insensitive). This is the ONLY
-/// launcher of the biometric prompt on the entry path — callers invoke it
-/// from explicit user context (shell resolve, locked-tab retry), never at
-/// app start (see `main.dart`).
-///
-/// [userInitiated] marks an explicit tap (Retry button, locked-tab
-/// re-tap): the read bypasses the dismissal anti-hammer cooldown and
-/// re-prompts instead of silently replaying the dismissal. Mount and
-/// listener resolves pass false (a cooldown replay there stays silent).
+/// Binds [linkedIdentityProvider] from the on-device enrollment when it
+/// belongs to [acct] (same Gmail, case-insensitive). Reads are
+/// prompt-free (see [SecureStoreOptions]); explicit user presence is
+/// confirmed only at enrollment Save ([UserPresenceGate]), never here.
 ///
 /// Mirrors the startup preseed rule in `main.dart` (`initialLinked`)
 /// field-by-field — `LinkedIdentity(name: stored.name,
@@ -176,31 +154,14 @@ bool isUnlockDismissal(Object e) {
 /// (a post-await provider touch on a dead screen is swallowed, same as
 /// [entrySignOut]'s clearing touch).
 Future<UnlockOutcome> attemptUnlockIdentity(
-    WidgetRef ref,
-    SignedAccount acct, {
-    bool userInitiated = false,
-  }) async {
+  WidgetRef ref,
+  SignedAccount acct,
+) async {
   try {
     StoredEnrollment? stored;
     try {
-      final store = ref.read(deviceStoreProvider);
-      stored = userInitiated
-          ? await store.readEnrollmentRetry()
-          : await store.readEnrollment();
-    } on SecureStoreDismissed {
-      // Prompt dismissed with nothing proven: park locked with retry —
-      // never misread as unenrolled (that pushes enrollment for data that
-      // exists behind the lock).
-      return UnlockOutcome.dismissed;
-    } on SecureStoreUnavailable {
-      // Transient platform failure (no prompt involved): unknown, never
-      // unenrolled — the caller aborts and retries. Explicit type check
-      // (not the message matcher below) so dismissal copy never leaks
-      // onto a case the user did not dismiss.
-      BleLog.log('STATE', 'entry relink store unavailable (retry later)');
-      return UnlockOutcome.error;
-    } catch (e) {
-      if (isUnlockDismissal(e)) return UnlockOutcome.dismissed;
+      stored = await ref.read(deviceStoreProvider).readEnrollment();
+    } catch (_) {
       // Transient/unknown read failure: NOT a proven absence — the
       // caller aborts instead of pushing setup over possibly-existing
       // data (fail-safe direction: retry, never enroll).

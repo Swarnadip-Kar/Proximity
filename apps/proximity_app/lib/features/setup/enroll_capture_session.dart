@@ -296,7 +296,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         _restoreLocked = false;
       });
     }
-    unawaited(_openCamera(userInitiated: true));
+    unawaited(_openCamera());
   }
 
   /// Single-flight for the validated auto-advance: the terminal navigation
@@ -375,7 +375,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
   }
 
-  Future<void> _openCamera({bool userInitiated = false}) async {
+  Future<void> _openCamera() async {
     final cam = _camera;
     if (cam == null) return;
     try {
@@ -395,12 +395,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     // Rescan-after-restart (and the Accounts Re-scan entry): a fresh
     // controller holds no key (`_keys` null, `pkHex` empty) even though
     // this device stores one. Restore AFTER the camera is up (never
-    // before): a slow secure store — biometric prompt, blackholed token
-    // refresh — must never hold the preview hostage behind the opening
-    // spinner. Same-account with loaded keys is a cheap no-op, a stored
-    // key restores here, and a genuinely keyless draft still refuses
-    // honestly below. [userInitiated] (explicit Try-again tap) re-prompts
-    // past the dismissal cooldown; mount-time opens stay silent on it.
+    // before): a slow secure store or blackholed token refresh must never
+    // hold the preview hostage behind the opening spinner.
+    // Same-account with loaded keys is a cheap no-op, a stored key
+    // restores here, and a genuinely keyless draft still refuses honestly
+    // below.
     // Deferred past initState via an event-queue hop (Riverpod forbids
     // provider modification inside widget lifecycles): awaited, so the
     // key gate below always reads settled state. Never throws out of
@@ -408,7 +407,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     try {
       await Future(() => ref
           .read(enrollmentControllerProvider.notifier)
-          .refreshFromAuth(userInitiated: userInitiated));
+          .refreshFromAuth());
     } catch (_) {}
     if (_done) return;
     final ctl = ref.read(enrollmentControllerProvider);

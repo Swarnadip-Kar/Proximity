@@ -75,12 +75,10 @@ class DeviceAccountSection extends StatelessWidget {
 /// This-device key block: enrollment badge or the no-key note.
 ///
 /// Memoized: the future is created once per account (not per build) — an
-/// inline `future: load()` would fire a new biometric-gated read (hence a
-/// new prompt) on every parent rebuild. A locked store (dismissed /
-/// transient failure) renders an explicit Retry that runs the
-/// user-initiated unlock; success flips the linked identity, which is
-/// part of the memo key and refreshes the read from the warmed cache
-/// with no new prompt. Genuine absence still renders the no-key note.
+/// inline `future: load()` would fire a new store read on every parent
+/// rebuild. A locked store (transient failure) renders an explicit Retry;
+/// success flips the linked identity, which is part of the memo key and
+/// refreshes the read. Genuine absence still renders the no-key note.
 class DeviceKeySection extends ConsumerStatefulWidget {
   final Future<StoredEnrollment?> Function() loadEnrollment;
 
@@ -131,11 +129,10 @@ class _DeviceKeySectionState extends ConsumerState<DeviceKeySection> {
     if (acct == null || _retryBusy) return;
     setState(() => _retryBusy = true);
     try {
-      // Explicit unlock: bypasses the dismissal anti-hammer cooldown and
-      // re-prompts with context (a plain re-read here would silently
-      // replay the dismissal). Success sets linked → memo key flips →
-      // refresh from the warmed cache.
-      await attemptUnlockIdentity(ref, acct, userInitiated: true);
+      // Explicit retry: re-reads the stored enrollment (a transient
+      // failure parked locked). Success sets linked → memo key flips →
+      // fresh read.
+      await attemptUnlockIdentity(ref, acct);
     } catch (_) {
     } finally {
       if (mounted) setState(() => _retryBusy = false);
@@ -204,9 +201,7 @@ class _DeviceKeySectionState extends ConsumerState<DeviceKeySection> {
 /// server refuses); the binding's trust tier rides below every verdict.
 ///
 /// Memoized like [DeviceKeySection] (one gate read per account, never
-/// per rebuild — the gate touches the biometric-gated install id). A
-/// locked store renders Retry: the explicit unlock clears the shared
-/// dismissal cooldown, then the gate re-reads with context.
+/// per rebuild). A locked store renders Retry, then the gate re-reads.
 class DeviceMoveSection extends ConsumerStatefulWidget {
   final String? email;
   final Future<StudentGate?> Function(String? email) loadGate;
@@ -259,12 +254,11 @@ class _DeviceMoveSectionState extends ConsumerState<DeviceMoveSection> {
     if (acct == null || _retryBusy) return;
     setState(() => _retryBusy = true);
     try {
-      await attemptUnlockIdentity(ref, acct, userInitiated: true);
+      await attemptUnlockIdentity(ref, acct);
     } catch (_) {}
-    // Re-read regardless of the unlock outcome: success warmed the
-    // caches (prompt-free refresh, memo key also flips via linked);
-    // another dismissal lands back on the Retry below, never on the
-    // offline-looking "connect" note.
+    // Re-read regardless of the outcome: success flips linked (memo key
+    // also flips); another failure lands back on the Retry below, never
+    // on the offline-looking "connect" note.
     if (!mounted) return;
     setState(() {
       _retryBusy = false;

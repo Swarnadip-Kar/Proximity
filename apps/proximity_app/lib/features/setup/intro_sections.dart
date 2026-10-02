@@ -92,13 +92,12 @@ class _IntroKeySectionState extends ConsumerState<IntroKeySection> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      // Explicit unlock retry (NOT keygen): the store holds this
-      // account's enrollment behind the prompt. Clears the dismissal
-      // cooldown and full-scans, so a wrong-tier doc recovers instead
-      // of being overwritten by a fresh key.
+      // Explicit unlock retry (NOT keygen): re-reads the stored
+      // enrollment (a transient read failure parked locked) so a valid
+      // enrollment recovers instead of being overwritten by a fresh key.
       await ref
           .read(enrollmentControllerProvider.notifier)
-          .refreshFromAuth(userInitiated: true);
+          .refreshFromAuth();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -110,9 +109,9 @@ class _IntroKeySectionState extends ConsumerState<IntroKeySection> {
     final ctl = ref.read(enrollmentControllerProvider.notifier);
     final hasAccount = st.account != null;
     final hasKey = st.pkHex.isNotEmpty;
-    // Locked restore (dismissed prompt / transient store failure / DKey
-    // unavailable): generating here would overwrite a valid enrollment
-    // with a fresh key — offer the unlock retry instead.
+    // Locked restore (transient store failure / DKey unavailable):
+    // generating here would overwrite a valid enrollment with a fresh
+    // key — offer the unlock retry instead.
     final locked = !hasKey && ctl.restoreLockedForAccount;
     return ProxCard(
       child: Column(

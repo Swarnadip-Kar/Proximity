@@ -668,31 +668,27 @@ void clearInstallIdCacheForTest() => _cachedInstallId = null;
 Future<String> getOrCreateInstallId(DeviceStore store) async {
   final cached = _cachedInstallId;
   if (cached != null && isValidInstallId(cached)) return cached;
+  String? existing;
   try {
-    final existing = await store.readInstallId();
-    if (existing != null &&
-        existing.isNotEmpty &&
-        isValidInstallId(existing)) {
-      _cachedInstallId = existing;
-      return existing;
-    }
-  } on SecureStoreDismissed {
-    // Dismissed prompt: the id may exist behind the lock — minting a fresh
-    // one here would fork the device identity (phantom move, orphaned
-    // faceId). Propagate so callers park instead.
+    existing = await store.readInstallId();
+  } catch (_) {
+    // Unknown (never empty): the id may exist — minting a fresh one here
+    // would fork the device identity (phantom move, orphaned faceId).
+    // Callers park instead.
     rethrow;
-  } on SecureStoreUnavailable {
-    // Transient platform failure: same fork risk as a dismissal (the id
-    // may exist behind the failure) with no prompt involved — propagate
-    // so callers retry instead of minting.
-    rethrow;
-  } catch (_) {}
+  }
+  if (existing != null &&
+      existing.isNotEmpty &&
+      isValidInstallId(existing)) {
+    _cachedInstallId = existing;
+    return existing;
+  }
   final id = newInstallId();
   // Durability gate: an id that never persisted must never be cached or
   // claimed with — every fresh id reads as "another device" downstream,
-  // so a swallowed write here turns one dismissed biometric prompt into a
-  // perpetual cooldown confusion (plus a restamped move clock on every
-  // reclaim). Throw honestly instead: callers surface unlock-and-retry
+  // so a swallowed write here turns one failed save into perpetual
+  // cooldown confusion (plus a restamped move clock on every reclaim).
+  // Throw honestly instead: callers surface retry copy
   // (upload/generate/enrollFace fail with copy; entryStudentGate treats
   // throws as unknown-stay-put, per its contract).
   await store.writeInstallId(id);

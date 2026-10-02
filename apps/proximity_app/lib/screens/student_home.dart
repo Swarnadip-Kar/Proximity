@@ -1203,22 +1203,22 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       // Account-switch race: the stored enrollment already belongs to the
       // new account but linked has not relinked yet. One fail-soft relink
       // attempt before refusing (never throws, never touches providers on
-      // a dead screen). A dismissed prompt is NOT "unenrolled" — it gets
-      // the unlock copy, never the enroll push.
+      // a dead screen). A read failure is NOT "unenrolled" — it gets a
+      // retry copy, never the enroll push.
       if (acct != null) {
-        var dismissed = false;
+        var relinkError = false;
         try {
-          dismissed =
+          relinkError =
               await attemptUnlockIdentity(ref, acct) ==
-                  UnlockOutcome.dismissed;
+                  UnlockOutcome.error;
         } catch (_) {}
         if (!mounted) return false;
         acct = _readAccount();
         linked = _readLinked();
-        if (dismissed && !_identityMatchesCurrent(acct, linked)) {
+        if (relinkError && !_identityMatchesCurrent(acct, linked)) {
           if (!mounted) return false;
-          setState(() => joinError = 'Unlock to continue — approve the '
-              'phone prompt, then join again.');
+          setState(() => joinError = 'Couldn’t check the enrollment on '
+              'this device — try joining again.');
           return false;
         }
       }

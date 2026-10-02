@@ -37,7 +37,6 @@ import 'package:proximity_ble/ble.dart';
 import '../core/auth.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
-import '../core/sync/roles.dart';
 import '../features/entry/entry_flow.dart';
 import '../design/tokens.dart';
 import '../features/account/account_screen.dart';
@@ -579,29 +578,10 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// settle on exactly one flow.
   var _flowOpen = false;
 
-  /// Last resolve ended in a prompt dismissal (not "unenrolled"): the
-  /// shell parks locked WITHOUT auto-pushing setup. Set fresh on every
-  /// resolve conclusion; consumed once by [_applyResolved].
-  var _unlockDismissed = false;
-
-  /// Email a dismissal park belongs to: while a park is set for the
-  /// current account, automatic re-resolves (account arrival, listener
-  /// echoes) never touch the store — no second prompt uninvited after a
-  /// skip (the skip-then-prompt-again defect). Only an explicit user
-  /// retry (Retry, locked-tab re-tap) re-prompts. Cleared on unlock, on
-  /// account change (a different email gets a fresh attempt), and on
-  /// any non-dismissed conclusion.
-  var _dismissParkEmail = '';
-
-  /// Hides the unlock nudge banner for this park (dismiss X). Reset on
-  /// every non-dismissed resolve; locked-tab taps still re-resolve
-  /// (re-prompt) as the retry path.
-  var _unlockNudgeHidden = false;
-
   /// Resolve in flight (initial mount, taps, retries): the locked shell
   /// shows a slim "Checking enrollment…" row instead of dead silence
-  /// while the biometric-gated store read runs. Never stuck on: every
-  /// conclusion path clears it for its own generation.
+  /// while the store read runs. Never stuck on: every conclusion path
+  /// clears it for its own generation.
   var _resolving = false;
 
   /// Last resolve hit a transient store failure: parked locked with a
@@ -610,12 +590,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// start; Dismiss hides it until the next failure.
   var _storeError = false;
 
-  /// Copy override for the [_storeError] banner. Null keeps the default
-  /// unreachable-storage copy; the role-contradiction path below sets its
-  /// own words (the store answered, but disagrees with the role cache).
-  /// Cleared together with [_storeError].
-  String? _storeErrorCopy;
-
   /// Latched on any enrolled resolve: distinguishes sign-out (account
   /// gone AFTER enrollment — park locked, never push) from a cold-start
   /// account gap (unknown — do nothing and wait for arrival). Never
@@ -623,15 +597,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   var _wasEnrolled = false;
 
   /// Resolve single-flight: mount, account/identity listeners and taps
-  /// all funnel here, and only one biometric-gated read runs at a time —
-  /// a second prompt while one is showing throws canceled, and that
-  /// duplicate's dismissed conclusion used to re-lock an unlocked shell
-  /// (the pass-then-banner flake). Extra triggers during a flight set
-  /// [_resolveQueued] and re-run once after (never dropped, never
-  /// overlapping).
+  /// all funnel here, and only one store read runs at a time, so rapid
+  /// triggers settle instead of overlapping. Extra triggers during a
+  /// flight set [_resolveQueued] and re-run once after (never dropped,
+  /// never overlapping).
   var _resolveBusy = false;
   var _resolveQueued = false;
-  var _resolveQueuedUserInitiated = false;
 
   @override
   void dispose() {
@@ -680,7 +651,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // the setup flow (no-dead-end rule — the flow push is the only way
     // forward now the Account entry surfaces are gone). The push itself is
     // resolve-gated (see [_refreshEnrollmentState] → [_applyResolved]) so
-    // a stale lock racing an enrolled relink never prompts redundantly.
+    // a stale lock racing an enrolled relink never pushes redundantly.
     if (_tabsLocked && (i == 0 || i == 1)) {
       _stayOnAccountAndPushFlow();
       return;
@@ -697,8 +668,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// account — an unenrolled conclusion re-pushes the flow (single-flight).
   /// No snackbar: the pushed flow IS the hint (dropped to avoid snackbar
   /// storms on rapid taps; dimming + snap-back remain the visual layer).
-  /// Explicit tap: the retry bypasses the dismissal cooldown and
-  /// re-prompts instead of silently replaying it.
   void _stayOnAccountAndPushFlow() {
     if (!mounted) return;
     if (_index != 2) {
@@ -706,7 +675,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       setState(() => _index = 2);
       _animateTo(2, from);
     }
-    unawaited(_refreshEnrollmentState(userInitiated: true));
+    unawaited(_refreshEnrollmentState());
   }
 
   void _animateTo(int i, int from) {
@@ -783,7 +752,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       try {
         if (_pages.hasClients) _pages.jumpToPage(_index);
       } catch (_) {}
-      unawaited(_refreshEnrollmentState(userInitiated: true));
+      unawaited(_refreshEnrollmentState());
       return;
     }
     if (!mounted) return;
@@ -832,17 +801,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// Gate resolve outcome: `enrolled` unlocks, `unenrolled` parks +
   /// pushes setup, `signedOut` parks locked WITHOUT pushing (account
   /// vanished after enrollment), `unknown` aborts silently (stale
-  /// generation, transient store failure, account not known yet, or the
-  /// role-contradiction below — never push, never park, except the
-  /// contradiction which flags the visible Retry).
-  ///
-  /// Role-contradiction rule: auto reads check the preferred slot alone,
-  /// so a proven-empty from them is only trusted when the prompt-free
-  /// role cache agrees (no student role for this Gmail). Cache says
-  /// student + store said empty = unknown + Retry (the tap full-scans
-  /// and either recovers or then pushes setup honestly).
-  Future<_GateResolve> _resolveCurrentEnrollment(int gen,
-      {bool userInitiated = false}) async {
+  /// generation, transient store failure, account not known yet — never
+  /// push, never park, except errors which flag the visible Retry).
+  /// Reads are prompt-free single-slot: empty IS empty (no tier
+  /// confusion), so no contradiction rule is needed.
+  Future<_GateResolve> _resolveCurrentEnrollment(int gen) async {
     var acct = _readCurrentAccount();
     LinkedIdentity? linked;
     try {
@@ -851,13 +814,9 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       linked = null;
     }
     if (_linkedMatchesAccount(acct, linked)) {
-      _unlockDismissed = false;
-      _dismissParkEmail = '';
       return _GateResolve.enrolled;
     }
     if (acct == null) {
-      _unlockDismissed = false;
-      _dismissParkEmail = '';
       // Signed-out after enrollment parks (never pushes); a cold-start
       // gap with no history yet simply waits for the account listener.
       return _wasEnrolled
@@ -865,35 +824,20 @@ class _StudentShellState extends ConsumerState<StudentShell> {
           : _GateResolve.unknown;
     }
     final want = acct.email.trim().toLowerCase();
-    // Dismissal park: this account already parked on a skipped prompt
-    // with retry UI — an automatic re-resolve (account arrival after a
-    // slow restore, listener echoes) must never prompt again uninvited.
-    // Only an explicit user retry re-prompts. The live linked fast-path
-    // above already ran, so a locked park here stays silent unknown.
-    // A different email always gets a fresh attempt (park is per-email).
-    if (!userInitiated && _unlockDismissed && _dismissParkEmail == want) {
-      return _GateResolve.unknown;
-    }
     // Async gap: the store read + provider touch below may outlive a
     // rapid switch or disposal. [attemptUnlockIdentity] is fail-soft
     // (never throws, swallows dead-screen touches), so awaiting it is
-    // safe. A dismissed prompt is NOT "unenrolled": flag it so the shell
-    // parks locked with retry (locked-tab taps re-resolve) instead of
-    // auto-pushing setup for an enrolled user who just declined to unlock.
+    // safe.
     UnlockOutcome outcome = UnlockOutcome.empty;
     try {
-      outcome = await attemptUnlockIdentity(ref, acct,
-          userInitiated: userInitiated);
+      outcome = await attemptUnlockIdentity(ref, acct);
     } catch (_) {
       outcome = UnlockOutcome.error;
     }
-    // A transient store failure is unknown, never unenrolled: flag the
-    // visible Retry (a silent abort is what read as "retry does
-    // nothing") and abort the resolve — the account listener and
-    // locked-tab taps retry.
+    // A store failure is unknown, never unenrolled: flag the visible
+    // Retry (a silent abort is what read as "retry does nothing") and
+    // abort the resolve — the account listener and locked-tab taps retry.
     if (outcome == UnlockOutcome.error) {
-      _unlockDismissed = false;
-      _dismissParkEmail = '';
       if (mounted) {
         setState(() => _storeError = true);
       }
@@ -909,47 +853,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     final freshWant = freshAcct?.email.trim().toLowerCase() ?? '';
     if (freshWant != want) return _GateResolve.unknown;
-    final matched = _linkedMatchesAccount(freshAcct, freshLinked);
-    _unlockDismissed = !matched && outcome == UnlockOutcome.dismissed;
-    if (_unlockDismissed) {
-      // Parked for this account: later automatic re-resolves stay silent
-      // (see the park check above) until the user retries explicitly.
-      _dismissParkEmail = want;
-    } else {
-      _unlockNudgeHidden = false;
-      _dismissParkEmail = '';
-    }
-    if (matched) return _GateResolve.enrolled;
-    // Proven empty is only trusted when the scan actually covered both
-    // slots: auto reads check the preferred slot alone (one prompt for
-    // the empty case), so a wiped tier hint (reinstall/clear-data) can
-    // miss a live doc sitting in the other slot. The prompt-free role
-    // cache disambiguates: it says this Gmail holds the student role,
-    // the store just said empty — contradiction, not enrollment. Park
-    // unknown with a visible Retry (the tap runs the explicit full-scan
-    // retry, which recovers a wrong-tier doc or confirms genuinely
-    // empty and only then pushes setup). No-role / unreadable cache
-    // keeps the old push (fresh users must still land in setup).
-    // Explicit retries already full-scanned, so their empty is trusted.
-    if (outcome == UnlockOutcome.empty && !userInitiated) {
-      var roleSaysStudent = false;
-      try {
-        final role = await ref.read(deviceStoreProvider).readRole();
-        roleSaysStudent = roleHas(role, 'student', email: want);
-      } catch (_) {
-        roleSaysStudent = false;
-      }
-      if (!mounted || gen != _gateGen) return _GateResolve.unknown;
-      if (roleSaysStudent) {
-        if (mounted) {
-          setState(() {
-            _storeError = true;
-            _storeErrorCopy =
-                'Enrollment check was inconclusive — tap Retry to unlock and check again.';
-          });
-        }
-        return _GateResolve.unknown;
-      }
+    if (_linkedMatchesAccount(freshAcct, freshLinked)) {
+      return _GateResolve.enrolled;
     }
     return _GateResolve.unenrolled;
   }
@@ -959,10 +864,10 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// stays on Accounts with Mark/Courses locked and auto-pushes the setup
   /// flow (single-flight) — except sign-out (park, no push) and unknown
   /// (do nothing). Serialized with every other trigger via
-  /// [_enqueueResolve] (never overlapping prompts).
+  /// [_enqueueResolve] (never overlapping reads).
   Future<void> _initialResolve() async {
     if (!mounted) return;
-    await _enqueueResolve(userInitiated: false);
+    await _enqueueResolve();
   }
 
   /// Applies a resolve result: unlocks + advances to Mark on enrolled,
@@ -980,11 +885,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (!mounted || gen != _gateGen) return;
     final enrolled = resolved == _GateResolve.enrolled;
     if (enrolled) _wasEnrolled = true;
-    // A dismissed prompt NEVER re-locks an unlocked shell: with
-    // serialized resolves the only way a dismiss lands while unlocked is
-    // a stale prompt verdict (the user passed on a later pass, or the
-    // prompt was superseded) — re-locking is the pass-then-banner flake.
-    if (_unlockDismissed && !_tabsLocked) return;
     if (enrolled) {
       // Advance to Mark only from the Account ROOT: while the auto-pushed
       // flow is open above the shell, the user stays in it to finish
@@ -1034,12 +934,10 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       setState(() => _index = 2);
       _animateTo(2, from);
     }
-    // Dismissed unlock parks here WITHOUT the setup push: the enrollment
-    // exists, the user just declined the prompt — locked-tab taps/swipes
-    // re-resolve (re-prompt) as the retry path. Signed-out parks the same
-    // way (lock, no push): sign-out is not unenrollment. (The unlocked
-    // case early-returned above and never reaches this lock.)
-    if (resolved == _GateResolve.unenrolled && !_unlockDismissed) {
+    // Signed-out parks locked with NO push (sign-out is not
+    // unenrollment). The unlocked case early-returned above and never
+    // reaches this lock.
+    if (resolved == _GateResolve.unenrolled) {
       _maybePushFlow(gen);
     }
   }
@@ -1109,39 +1007,30 @@ class _StudentShellState extends ConsumerState<StudentShell> {
 
   /// Re-resolve the CURRENT account's enrollment (initial mount, taps,
   /// swipes, identity / account changes, first registration all funnel
-  /// here). Serialized: at most one biometric-gated read runs; triggers
-  /// during a flight re-run once after (coalesced, never dropped).
-  /// [userInitiated] marks explicit taps (Retry, locked-tab re-tap): the
-  /// store read re-prompts past the dismissal cooldown instead of
-  /// silently replaying it.
-  Future<void> _refreshEnrollmentState({bool userInitiated = false}) async {
+  /// here). Serialized: at most one store read runs; triggers during a
+  /// flight re-run once after (coalesced, never dropped).
+  Future<void> _refreshEnrollmentState() async {
     if (!mounted) return;
-    await _enqueueResolve(userInitiated: userInitiated);
+    await _enqueueResolve();
   }
 
   /// Serialized resolve runner (see [_resolveBusy]): one pass per call,
-  /// plus one coalesced pass when triggers arrived mid-flight (their
-  /// userInitiated flags OR together, so a tap-retry queued behind a
-  /// mount resolve still re-prompts). Generation-guarded per pass so a
-  /// switch racing the read cannot land the wrong tab or push a stale
-  /// flow — with serialization the guard is belt-and-braces (no other
-  /// pass can interleave a generation bump).
-  Future<void> _enqueueResolve({required bool userInitiated}) async {
+  /// plus one coalesced pass when triggers arrived mid-flight.
+  /// Generation-guarded per pass so a switch racing the read cannot land
+  /// the wrong tab or push a stale flow — with serialization the guard is
+  /// belt-and-braces (no other pass can interleave a generation bump).
+  Future<void> _enqueueResolve() async {
     if (_resolveBusy) {
       _resolveQueued = true;
-      _resolveQueuedUserInitiated =
-          _resolveQueuedUserInitiated || userInitiated;
       return;
     }
     _resolveBusy = true;
-    var ui = userInitiated;
     try {
       while (mounted) {
         final gen = ++_gateGen;
         _beginResolve();
         try {
-          final resolved = await _resolveCurrentEnrollment(gen,
-              userInitiated: ui);
+          final resolved = await _resolveCurrentEnrollment(gen);
           if (!mounted || gen != _gateGen) return;
           if (resolved == _GateResolve.unknown) {
             // Fall through: a queued trigger still gets its pass below.
@@ -1153,8 +1042,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         }
         if (!_resolveQueued) return;
         _resolveQueued = false;
-        ui = _resolveQueuedUserInitiated;
-        _resolveQueuedUserInitiated = false;
       }
     } finally {
       _resolveBusy = false;
@@ -1167,7 +1054,6 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// tap/listener/post-frame contexts (never from build).
   void _beginResolve() {
     _storeError = false;
-    _storeErrorCopy = null;
     _resolving = true;
     if (mounted && _tabsLocked) setState(() {});
   }
@@ -1181,12 +1067,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (_tabsLocked) setState(() {});
   }
 
-  /// Resolve slot (locked only): spinner while a resolve runs, the
-  /// dismissed-unlock nudge, or the transient-failure banner. Renders
-  /// just above the tab bar (never overlaid on content, never pushing
-  /// the page down from the top). Empty while unlocked or while there
-  /// is nothing to say. Nudge hides via X or a non-dismissed resolve;
-  /// the error banner hides via X or the next resolve start.
+  /// Resolve slot (locked only): spinner while a resolve runs, or the
+  /// transient-failure banner. Renders just above the tab bar (never
+  /// overlaid on content, never pushing the page down from the top).
+  /// Empty while unlocked or while there is nothing to say. The error
+  /// banner hides via X or the next resolve start.
   Widget _resolveSlot() {
     Widget? slot;
     if (_tabsLocked && _resolving) {
@@ -1211,22 +1096,11 @@ class _StudentShellState extends ConsumerState<StudentShell> {
           ),
         );
       });
-    } else if (_unlockDismissed && !_unlockNudgeHidden && _tabsLocked) {
-      slot = _UnlockNudge(
-        onRetry: () =>
-            unawaited(_refreshEnrollmentState(userInitiated: true)),
-        onDismiss: () => setState(() => _unlockNudgeHidden = true),
-      );
     } else if (_storeError && _tabsLocked) {
       slot = _UnlockNudge(
-        message: _storeErrorCopy ??
-            'Couldn’t reach secure storage — try again.',
-        onRetry: () =>
-            unawaited(_refreshEnrollmentState(userInitiated: true)),
-        onDismiss: () => setState(() {
-          _storeError = false;
-          _storeErrorCopy = null;
-        }),
+        message: 'Couldn’t reach secure storage — try again.',
+        onRetry: () => unawaited(_refreshEnrollmentState()),
+        onDismiss: () => setState(() => _storeError = false),
       );
     }
     if (slot == null) return const SizedBox.shrink();
@@ -1306,8 +1180,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
           // Resolve slot rides BELOW the pages, just above the tab bar
           // (never overlaid on content, never pushing the Account page
           // down from the top): spinner while a resolve runs, then the
-          // dismissed-unlock nudge or the transient-failure banner.
-          // Locked-tab taps/swipes re-resolve too.
+          // transient-failure banner. Locked-tab taps/swipes re-resolve
+          // too.
           child: Column(
             children: [
               Expanded(
@@ -1380,11 +1254,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   }
 }
 
-/// Unlock nudge banner for a dismissed phone prompt (student shell only).
-/// Shown when the enrollment exists behind the lock the user just
-/// declined: names unlock (never re-enroll) with an explicit retry.
-/// [message] overrides the copy for the transient-failure variant.
-/// Static — no timers, settle-safe.
+/// Resolve-retry banner (student shell only): names the transient
+/// failure with an explicit retry. Static — no timers, settle-safe.
 class _UnlockNudge extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onDismiss;
@@ -1414,8 +1285,7 @@ class _UnlockNudge extends StatelessWidget {
             const SizedBox(width: ProxSpacing.sm),
             Expanded(
               child: Text(
-                message ??
-                    'Unlock to continue — approve the phone prompt.',
+                message ?? 'Couldn’t reach secure storage — try again.',
                 style: ProxType.body(color: c.contentPrimary),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,

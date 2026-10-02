@@ -61,6 +61,7 @@ import 'cloud_sync.dart';
 import 'device_store.dart';
 import 'platformx.dart';
 import 'security/revocation_cache.dart';
+import 'security/user_presence.dart';
 import 'sync/device_hardware_id.dart';
 
 /// Enroll side-slot liveness bar (app-local policy, NOT a ticket break).
@@ -155,6 +156,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   final PoseGate? _poseGate;
   // Cloud device binding (null in unit tests → local-only behavior).
   final CloudSync? _cloud;
+  // Explicit user presence at enrollment Save (biometric-or-credential;
+  // silent everywhere else — background writes never prompt).
+  final UserPresenceGate _presence;
   // NONE-tier law: software device keys can NEVER enroll, in any build
   // mode (the debug allowance was removed 2026-09-13 — debug enrolls like
   // release, against real secure hardware; unit tests use FakeDeviceKey at
@@ -173,11 +177,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   String? _restoredRoll;
 
   /// Last restore attempt found an enrollment doc for the current account
-  /// but could not unlock it (dismissed prompt, transient store failure,
-  /// DKey unavailable) — capture must show unlock-and-retry, NOT the
-  /// generate-first copy. False after any success, clean miss, mismatch,
-  /// or account switch (those genuinely need the key step or already
-  /// hold keys).
+  /// but could not unlock it (transient store failure, DKey unavailable)
+  /// — capture must show retry, NOT the generate-first copy. False after
+  /// any success, clean miss, mismatch, or account switch (those
+  /// genuinely need the key step or already hold keys).
   bool _restoreLockedForAccount = false;
 
   /// See [_restoreLockedForAccount].
@@ -212,6 +215,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     CloudSync? cloud,
     LivenessGate? livenessGate,
     PoseGate? poseGate,
+    UserPresenceGate? presenceGate,
   })  : _auth = auth,
         _store = store,
         _verifier = verifier,
@@ -223,6 +227,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         _liveness = livenessGate ?? HeuristicLivenessGate(),
         _poseGate = poseGate,
         _cloud = cloud,
+        // Explicit biometric/PIN at enrollment Save (tests inject
+        // FakePresenceGate; production confirms via local_auth).
+        _presence = presenceGate ?? LocalAuthPresenceGate(),
         super(EnrollmentState(
             phase: preseed == null
                 ? EnrollPhase.signedOut
@@ -236,7 +243,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// whole draft (keys, face, roll, restore) and adopts the current
   /// account fresh, so the card/claim/org can never ride a stale preseed.
   /// Call on every enroll entry + after sign-out/switch.
-  Future<void> refreshFromAuth({bool userInitiated = false}) async {
+  Future<void> refreshFromAuth() async {
     SignedAccount? current;
     try {
       current = _auth.current;
@@ -251,7 +258,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       if (current != null && state.account == null) {
         state = state.copyWith(
             phase: EnrollPhase.signedIn, account: current, message: '');
-        await _tryRestore(current, userInitiated: userInitiated);
+        await _tryRestore(current);
         return;
       }
       // Same account but no usable key (e.g. a locked restore that only
@@ -259,7 +266,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // the key gate with a key this device holds. No-op when keys are
       // loaded or nothing is stored.
       if (current != null && _keys == null) {
-        await _tryRestore(current, userInitiated: userInitiated);
+        await _tryRestore(current);
       }
       return;
     }
@@ -277,7 +284,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     } catch (_) {
       // Offline: the persisted account still stands; Save re-checks.
     }
-    await _tryRestore(current, userInitiated: userInitiated);
+    await _tryRestore(current);
   }
 
   /// Background account pickup for the enrollment page (NO sign-in tap):
@@ -362,33 +369,18 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
     return null;
   }
 
-  Future<void> _tryRestore(SignedAccount acct,
-      {bool userInitiated = false}) async {
+  Future<void> _tryRestore(SignedAccount acct) async {
     final email = acct.email.toLowerCase();
     StoredEnrollment? stored;
     try {
-      stored = userInitiated
-          ? await _store.readEnrollmentRetry()
-          : await _store.readEnrollment();
-    } on SecureStoreDismissed {
-      // Dismissed prompt: proceed as if nothing was found (today's null
-      // path) — the unlock-owning callers (shell resolve, entry gate)
-      // observe the dismissal separately and park with retry. Flagged
-      // locked (data may exist behind the prompt) for capture callers.
-      // Logged: without this, a field log shows a silent skip where the
-      // restore should have been.
-      BleLog.log('SEC', 'enroll restore: secure prompt dismissed — retry');
-      _restoreLockedForAccount = true;
-      return;
-    } on SecureStoreUnavailable {
-      // Transient platform failure: unknown, retryable — never a clean
-      // miss. Flagged locked so capture offers retry, not key generation.
-      BleLog.log(
-          'SEC', 'enroll restore: secure store transiently unreadable — retry');
-      _restoreLockedForAccount = true;
-      return;
+      stored = await _store.readEnrollment();
     } catch (_) {
-      stored = null;
+      // Transient read failure: unknown, retryable — never a clean miss.
+      // Flagged locked so capture offers retry, not key generation.
+      BleLog.log(
+          'SEC', 'enroll restore: secure store unreadable — retry');
+      _restoreLockedForAccount = true;
+      return;
     }
     if (stored == null || stored.email.toLowerCase() != email) {
       _restoreLockedForAccount = false;
@@ -441,20 +433,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         final dk = _deviceKey;
         final Uint8List seed;
         if (dk is HwDeviceKey) {
-          // getOrCreate rethrows the prompt/transient failures (never a
-          // silent mint over locked data): park locked with retry instead
-          // of falling through to 'proceeding fresh'.
+          // getOrCreate rethrows read failures (never a silent mint over
+          // locked data): park locked with retry instead of falling
+          // through to 'proceeding fresh'.
           String installId;
           try {
             installId = await getOrCreateInstallId(_store);
-          } on SecureStoreDismissed {
+          } catch (_) {
             BleLog.log(
-                'SEC', 'enroll restore: install identity locked — retry');
-            _restoreLockedForAccount = true;
-            return;
-          } on SecureStoreUnavailable {
-            BleLog.log('SEC',
-                'enroll restore: install identity unreadable — retry');
+                'SEC', 'enroll restore: install identity unreadable — retry');
             _restoreLockedForAccount = true;
             return;
           }
@@ -1382,13 +1369,18 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final rescanStampMillis = claimFaceStamp;
       // Sealed-only (security §2 F1 fix): `sealedKeyHex + pkDHex +
       // chainDERHex` only — no raw-seed field exists.
-      // Local-persist-only failure (secure-store lock changed under us —
-      // the field IllegalBlockSizeException): the online claim above
-      // already succeeded and the key/face/account are all still valid, so
-      // stay on faceDone (Save stays enabled, capture visibly kept) with
-      // the honest store copy — never drop to error/"capture pending",
-      // which would strand retry behind another face scan.
+      // Local-persist failure (presence cancelled, unsupported device,
+      // or secure-store unavailable): the online claim above already
+      // succeeded and the key/face/account are all still valid, so stay
+      // on faceDone (Save stays enabled, capture visibly kept) with the
+      // honest copy — never drop to error/"capture pending", which would
+      // strand retry behind another face scan.
+      // Explicit presence at identity creation (biometric-or-credential):
+      // the store itself is prompt-free, so Save confirms here — once per
+      // enrollment, never on cold start or background paths.
       try {
+        await _presence.confirm(
+            reason: 'Save enrollment on this device');
         await _store.writeEnrollment(StoredEnrollment(
           email: email,
           name: name,
@@ -1410,7 +1402,13 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         ));
       } on StateError catch (e) {
         final m = '$e';
-        if (m.contains('Secure storage rejected the save')) {
+        // faceDone stays (Save enabled, capture visibly kept) for local
+        // save refusals — presence cancelled/unsupported or persist
+        // failure — never drop to error/"capture pending", which would
+        // strand retry behind another face scan.
+        if (m.contains('Secure storage rejected the save') ||
+            m.contains('Save cancelled') ||
+            m.contains('Could not confirm')) {
           state = state.copyWith(
               phase: EnrollPhase.faceDone, message: 'Save failed: $m');
           return null;

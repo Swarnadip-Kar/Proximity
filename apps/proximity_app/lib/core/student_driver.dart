@@ -928,20 +928,12 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // then drop the raw faceScore param.
     FaceCheckResult? faceCheck,
   }) async {
-    // A dismissed prompt is NOT "not enrolled" (that copy strands users in
-    // setup for data that exists behind the lock): surface an honest
-    // unlock-and-retry receipt instead. Other read failures keep today's
-    // behavior (null → not-enrolled error).
+    // Read failures are unknown, never "not enrolled" (that copy would
+    // strand users in setup over a transient I/O failure): null still
+    // means not-enrolled, while a throw propagates to the caller, which
+    // parks with retry.
     StoredEnrollment? stored;
-    try {
-      stored = await _store.readEnrollment();
-    } on SecureStoreDismissed catch (e) {
-      BleLog.log('SEC', 'prove: secure store dismissed ($e)');
-      return const MarkedReceipt(
-          detail:
-              'Unlock to continue — approve the phone prompt, then try again.',
-          result: StudentResult.error);
-    }
+    stored = await _store.readEnrollment();
     if (stored == null ||
         stored.email.toLowerCase() != identity.gmail.toLowerCase()) {
       return const MarkedReceipt(

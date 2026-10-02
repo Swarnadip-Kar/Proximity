@@ -99,7 +99,7 @@ class StoredEnrollment {
         // Security §2 sealed-only: `sealedKeyHex` + `pkDHex` + `chainDERHex`.
         'pkHex': pkHex,
         'sealedKeyHex': sealedKeyHex,
-        // Single chain key (payload diet for the biometric-gated write):
+        // Single chain key (payload diet for the store write):
         // readers accept the legacy Firestore wire alias `attestationChain`
         // (see fromJson), so pre-upgrade docs with both keys still parse.
         'chainDERHex': List<String>.of(chainDERHex),
@@ -160,62 +160,14 @@ class StoredEnrollment {
   }
 }
 
-/// Thrown by [DeviceStore.readEnrollment] (secure backend only) when the
-/// biometric/prompt gate refused and nothing proven can be served: the
-/// user dismissed the prompt (back/cancel), or the key blob died with a
-/// lock-set change. Distinct from "no enrollment" (null): data may exist
-/// behind the lock, so callers must park/retry — never treat this as
-/// empty and never mint a fresh identity over it.
-///
-/// The message stays user-readable (it surfaces on explicit-action
-/// surfaces like ID edit) and carries the `user_cancel` marker so the
-/// legacy message-based dismissal matchers ([isUnlockDismissal]) catch it
-/// too. Prefer `is SecureStoreDismissed` type checks for new code.
-class SecureStoreDismissed implements Exception {
-  final String message;
-  const SecureStoreDismissed(
-      [this.message =
-          'Secure storage needs unlocking — the fingerprint prompt was dismissed (user_cancel). Unlock and try again.']);
-  @override
-  String toString() => 'SecureStoreDismissed: $message';
-}
-
-/// Thrown by secure-backend reads ([readEnrollment]/[readInstallId])
-/// when the platform call itself failed transiently — detached channel,
-/// busy/locked Keystore, I/O — as opposed to a user dismissal
-/// ([SecureStoreDismissed]) or a proven absence (null). The message
-/// deliberately carries no cancel marker so dismissal matchers never
-/// catch it. Callers must treat this as unknown/retryable: never report
-/// empty, never mint a fresh identity, never push enrollment. No
-/// anti-hammer cooldown applies (nothing was prompted, nothing to
-/// hammer); retries re-read. Prefer `is SecureStoreUnavailable` type
-/// checks for new code.
-class SecureStoreUnavailable implements Exception {
-  final String message;
-  const SecureStoreUnavailable(
-      [this.message =
-          'Secure storage is temporarily unreadable — try again.']);
-  @override
-  String toString() => 'SecureStoreUnavailable: $message';
-}
-
 abstract class DeviceStore {
-  /// Reads the enrollment doc, or null when none is on file. The secure
-  /// backend may instead throw [SecureStoreDismissed] when the prompt was
-  /// dismissed and no proven value can be served (data may still exist
-  /// behind the lock — NOT the same as empty), or [SecureStoreUnavailable]
-  /// when the platform call itself failed transiently (also not empty).
-  /// Callers that only render state treat both like null; callers that
-  /// decide navigation/identity (unlock, install-id minting) must catch
-  /// both explicitly and park/retry.
+  /// Reads the enrollment doc, or null when none is on file. A platform
+  /// failure throws [StateError] — unknown/retryable, never empty:
+  /// callers that decide navigation/identity (unlock, install-id
+  /// minting) must catch and park/retry instead of treating it as
+  /// unenrolled.
   Future<StoredEnrollment?> readEnrollment();
 
-  /// Explicit-retry read: same as [readEnrollment] but clears any
-  /// prompt-anti-hammer cooldown first, so a user-tapped Retry
-  /// re-prompts instead of silently replaying the dismissal. Auto flows
-  /// (mount, listeners) must use [readEnrollment]; tapped retries use
-  /// this. Default implementations delegate plainly.
-  Future<StoredEnrollment?> readEnrollmentRetry();
   Future<void> writeEnrollment(StoredEnrollment e);
   Future<void> clearEnrollment();
   Future<List<ClassRecord>> readHistory();

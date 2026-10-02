@@ -575,7 +575,7 @@ class RealHostDriver implements HostDriver {
     _crlRefresh?.cancel();
     _crlRefresh = RevocationCache.schedulePeriodicRefresh(
         hashStore: _store.revocationHashStore);
-    // Advisory-only read (see below): a dismissed prompt must not break
+    // Advisory-only read (see below): a store failure must not break
     // hosting start — degrade to no-chain, exactly like a missing doc.
     StoredEnrollment? stored;
     try {
