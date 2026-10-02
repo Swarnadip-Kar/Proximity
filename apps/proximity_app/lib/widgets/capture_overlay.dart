@@ -259,10 +259,12 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Flash-ring frame (see [flashLevel]): the rounded-rect border the ring
-  /// light paints — full preview area deflated by a small margin so the
-  /// stroke + glow stay inside the video. Pure for unit tests.
+  /// light paints — full preview area deflated past the outer glow width
+  /// so no paint ever touches the bottom progress bar or the top edge
+  /// (the glow stroke is 60px wide, i.e. 30px of bleed each side).
+  /// Pure for unit tests.
   static RRect flashRingRRectFor(Size size) => RRect.fromRectAndRadius(
-        (Offset.zero & size).deflate(10),
+        (Offset.zero & size).deflate(34),
         const Radius.circular(26),
       );
 

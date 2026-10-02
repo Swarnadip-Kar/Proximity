@@ -418,11 +418,11 @@ void main() {
     });
 
     test('flash ring frame hugs the preview edges', () {
-      // Pure geometry: full area deflated by a small margin so stroke +
-      // glow stay inside the video.
+      // Contained geometry: the deflate clears the 30px glow bleed on all
+      // sides so the ring never touches the bottom bar or the top edge.
       final rrect = CaptureOverlay.flashRingRRectFor(const Size(800, 400));
       expect(rrect.outerRect,
-          (Offset.zero & const Size(800, 400)).deflate(10));
+          (Offset.zero & const Size(800, 400)).deflate(34));
       expect(rrect.tlRadiusX, moreOrLessEquals(26));
     });
 

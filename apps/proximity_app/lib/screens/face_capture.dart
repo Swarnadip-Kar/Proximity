@@ -196,7 +196,10 @@ class _OvalOverlayPainter extends CustomPainter {
     // Flash-assist edge ring first (directly above the surround, uniform
     // light): fatter strokes because the lit area IS the light output.
     if (assist) {
-      final edge = (Offset.zero & size).deflate(12);
+      // Contained edge ring (see CaptureOverlay.flashRingRRectFor): the
+      // deflate clears the glow bleed top and bottom so the ring never
+      // touches the prompt line or the button panel.
+      final edge = (Offset.zero & size).deflate(34);
       canvas.drawOval(
           edge,
           Paint()
