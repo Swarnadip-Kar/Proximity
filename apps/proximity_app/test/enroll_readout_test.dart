@@ -125,7 +125,7 @@ void main() {
       expect(find.textContaining('/0.70'), findsOneWidget);
       // The overlay prompt stays frozen on the target (never narrates
       // checker state).
-      expect(find.text('Tilt down into the glowing band'), findsOneWidget);
+      expect(find.text('Tilt down into the glowing blue band'), findsOneWidget);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);

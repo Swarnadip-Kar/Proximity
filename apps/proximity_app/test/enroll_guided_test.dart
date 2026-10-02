@@ -514,11 +514,11 @@ void main() {
     test('one prompt per walk slot, pinned verbatim', () {
       expect(enrollCapturePrompt,
           'Rotate your face slowly, following the glow.');
-      expect(enrollTargetPrompt('down'), 'Tilt down into the glowing band');
+      expect(enrollTargetPrompt('down'), 'Tilt down into the glowing blue band');
       expect(enrollTargetPrompt('centre'), 'Look straight at the lens');
-      expect(enrollTargetPrompt('up'), 'Tilt up into the glowing band');
-      expect(enrollTargetPrompt('left'), 'Turn left into the glowing band');
-      expect(enrollTargetPrompt('right'), 'Turn right into the glowing band');
+      expect(enrollTargetPrompt('up'), 'Tilt up into the glowing blue band');
+      expect(enrollTargetPrompt('left'), 'Turn left into the glowing blue band');
+      expect(enrollTargetPrompt('right'), 'Turn right into the glowing blue band');
       expect(enrollTargetPrompt('nope'), enrollCapturePrompt);
       expect(faceEnrollSlots, ['centre', 'left', 'right', 'up', 'down']);
     });
