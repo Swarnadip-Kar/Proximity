@@ -251,6 +251,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// first probe lands.
   double? _lastBar;
 
+  /// Machine-readable cause of the last unreadable probe (null when the
+  /// last probe scored, or none ran yet). Drives the DIM/BLURRY/NO FACE
+  /// suffix in the readout — warn-only presentation, never a gate.
+  LivenessUnreadableReason? _lastQuality;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -555,6 +560,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
               ? kLivenessThreshold
               : kEnrollSideLivenessThreshold;
           double vitality = -1;
+          LivenessUnreadableReason? quality;
           try {
             vitality = (await ref
                     .read(enrollSessionLivenessProvider)
@@ -563,17 +569,24 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
           } catch (e) {
             EnrollLog.face(
                 'slot $target vitality unreadable (silent, continuing): $e');
+            quality = e is LivenessUnreadable
+                ? e.reason
+                : LivenessUnreadableReason.unknown;
           }
           if (_done || _finished) return;
           if (mounted) {
             // Readout tracks every measured probe (pass or fail) with the
             // bar that judged it; an unreadable probe clears the score
             // back to the placeholder but keeps its bar, so the holder
-            // still sees what the next probe must clear.
+            // still sees what the next probe must clear. A scored probe
+            // clears any prior DIM/BLURRY hint; an unreadable one sets it
+            // from the structured reason (no message parsing).
             final v = vitality;
+            final q = quality;
             setState(() {
               _lastVitality = v < 0 ? null : v;
               _lastBar = bar;
+              _lastQuality = v < 0 ? q : null;
             });
           }
           if (vitality < bar) {
@@ -739,11 +752,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
-  /// judged it + guided target (e.g. `LIVE 0.93/0.70 · DOWN`). Placeholders
-  /// until the first probe/read lands. No match score exists mid-walk (the
-  /// matcher first runs at the terminal self-check — its boundary score
-  /// lands on the result screen), so this line never invents one.
-  /// Non-blocking presentation only: the bar text never gates anything.
+  /// judged it + guided target (e.g. `LIVE 0.93/0.70 · DOWN`, or
+  /// `LIVE —/0.70 · DOWN · DIM` after an unreadable dim probe).
+  /// Placeholders until the first probe/read lands. No match score exists
+  /// mid-walk (the matcher first runs at the terminal self-check — its
+  /// boundary score lands on the result screen), so this line never
+  /// invents one. The DIM/BLURRY/NO FACE suffix is warn-only presentation
+  /// from the structured throw reason — it never gates anything, and
+  /// file/timeout/unknown failures stay silent (no wrong hint).
   String get liveReadout {
     final v = _lastVitality;
     final score = v == null ? '—' : v.toStringAsFixed(2);
@@ -751,7 +767,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         (_currentTarget == 'centre'
             ? kLivenessThreshold
             : kEnrollSideLivenessThreshold);
-    return 'LIVE $score/${bar.toStringAsFixed(2)} · ${_currentTarget.toUpperCase()}';
+    final hint = v == null
+        ? LivenessUnreadable.shortLabel(
+            _lastQuality ?? LivenessUnreadableReason.unknown)
+        : null;
+    final target = _currentTarget.toUpperCase();
+    return hint == null
+        ? 'LIVE $score/${bar.toStringAsFixed(2)} · $target'
+        : 'LIVE $score/${bar.toStringAsFixed(2)} · $target · $hint';
   }
 
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
@@ -818,6 +841,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     EnrollLog.face('slot recapture reopened: $slot (kept $_doneCount/'
         '${_paths.length} buckets)');
     _recaptureTarget = slot;
+    // Stale readout would name the old probe's score against the new
+    // target — clear back to the placeholder (presentation only).
+    _lastVitality = null;
+    _lastBar = null;
+    _lastQuality = null;
     _finished = false;
     if (mounted) setState(() => _saving = false);
     _loopStarted = false;

@@ -488,6 +488,36 @@ void main() {
       final g = FakeLivenessGate(throwOnDetect: true);
       expect(() => g.detectPassive('still.jpg'), throwsStateError);
     });
+
+    test('scripted throw carries its reason (DIM readout path)', () async {
+      final g = FakeLivenessGate(
+          throwOnDetect: true, throwReason: LivenessUnreadableReason.dim);
+      try {
+        await g.detectPassive('still.jpg');
+        fail('expected LivenessUnreadable');
+      } on LivenessUnreadable catch (e) {
+        expect(e.reason, LivenessUnreadableReason.dim);
+      }
+    });
+  });
+
+  group('LivenessUnreadable.shortLabel (readout hints)', () {
+    test('dim/blurry/no-face map, timeout/unknown stay silent', () {
+      expect(LivenessUnreadable.shortLabel(LivenessUnreadableReason.dim),
+          'DIM');
+      expect(LivenessUnreadable.shortLabel(LivenessUnreadableReason.blurry),
+          'BLURRY');
+      expect(LivenessUnreadable.shortLabel(LivenessUnreadableReason.noFace),
+          'NO FACE');
+      expect(LivenessUnreadable.shortLabel(LivenessUnreadableReason.timeout),
+          isNull);
+      expect(LivenessUnreadable.shortLabel(LivenessUnreadableReason.unknown),
+          isNull);
+    });
+
+    test('is a StateError (existing catches keep working)', () {
+      expect(LivenessUnreadable('x'), isA<StateError>());
+    });
   });
 
   group('HeuristicLivenessGate fail-closed (native)', () {

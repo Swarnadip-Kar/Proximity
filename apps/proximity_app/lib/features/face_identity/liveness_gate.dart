@@ -607,13 +607,45 @@ class LivenessResult {
   const LivenessResult({required this.score, required this.ver});
 }
 
+/// Machine-readable cause for an unreadable liveness probe (fail-closed
+/// throw from [LivenessGate.detectPassive]). The human message stays the
+/// source of truth for terminal slot-naming copy; this enum is for
+/// non-blocking live hints only (the enroll loop's bottom-bar readout).
+/// `unknown` covers file/missing/model/timeout failures that must never
+/// render as a light hint.
+enum LivenessUnreadableReason { noFace, blurry, dim, timeout, unknown }
+
+/// Fail-closed unreadable probe with a machine-readable [reason].
+/// Subclasses [StateError] so every existing `on StateError` catch
+/// (enrollFace slot-naming, marking inconclusive mapping) keeps working
+/// unchanged — callers that want the hint read `reason`, others just
+/// see the message as before.
+class LivenessUnreadable extends StateError {
+  final LivenessUnreadableReason reason;
+  LivenessUnreadable(String message,
+      [this.reason = LivenessUnreadableReason.unknown])
+      : super(message);
+
+  /// Short bottom-bar token for the readout (null = no hint: file,
+  /// timeout and unknown failures stay silent, never a wrong light hint).
+  static String? shortLabel(LivenessUnreadableReason reason) => switch (reason) {
+        LivenessUnreadableReason.dim => 'DIM',
+        LivenessUnreadableReason.blurry => 'BLURRY',
+        LivenessUnreadableReason.noFace => 'NO FACE',
+        LivenessUnreadableReason.timeout => null,
+        LivenessUnreadableReason.unknown => null,
+      };
+}
+
 /// Narrow anti-spoof interface (one file, no wrappers).
 abstract class LivenessGate {
   /// Passive anti-spoof on one still file (marking hot path, ~1s budget;
   /// enroll centre-still). Returns {score, ver}. Throws StateError when
   /// the still is unreadable/unsupported or the platform cannot run the
   /// classifier — fail-closed (callers map throws to inconclusive/rescan,
-  /// never a pass, never a throw past them).
+  /// never a pass, never a throw past them). Readability throws SHOULD
+  /// be [LivenessUnreadable] with a [LivenessUnreadableReason] so live
+  /// UI can hint DIM/BLURRY/NO FACE without parsing message text.
   Future<LivenessResult> detectPassive(String imagePath);
 }
 
@@ -669,20 +701,27 @@ class FakeLivenessGate implements LivenessGate {
   String ver;
   final List<String> calls = [];
 
-  /// When true, [detectPassive] throws StateError (unreadable-still path).
+  /// When true, [detectPassive] throws [LivenessUnreadable]
+  /// (unreadable-still path) with [throwReason].
   bool throwOnDetect;
+
+  /// Machine-readable cause carried by the scripted throw (lets widget
+  /// tests drive DIM/BLURRY/NO FACE readout hints deterministically).
+  LivenessUnreadableReason throwReason;
   FakeLivenessGate({
     this.score = 0.92,
     this.ver = kLivenessVer,
     this.throwOnDetect = false,
+    this.throwReason = LivenessUnreadableReason.unknown,
   });
 
   @override
   Future<LivenessResult> detectPassive(String imagePath) async {
     calls.add(imagePath);
     if (throwOnDetect) {
-      throw StateError(
-          'Liveness check did not read clearly — adjust light and try again.');
+      throw LivenessUnreadable(
+          'Liveness check did not read clearly — adjust light and try again.',
+          throwReason);
     }
     return LivenessResult(score: score, ver: ver);
   }

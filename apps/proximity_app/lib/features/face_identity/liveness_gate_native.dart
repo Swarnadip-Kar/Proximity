@@ -348,8 +348,9 @@ class HeuristicLivenessGate implements LivenessGate {
         // misses were already failing (fallback scored ~0.005 « Tl) — this
         // changes the failure MODE (retryable, no burn), not the rate.
         if (faceBox == null) {
-          throw StateError('Liveness check did not read clearly — no face '
-              'found, hold still in good light and try again.');
+          throw LivenessUnreadable('Liveness check did not read clearly — no face '
+              'found, hold still in good light and try again.',
+              LivenessUnreadableReason.noFace);
         }
         // Sharpness floor (see kLivenessMinSharpness calibration): severe
         // motion blur is transient evidence, not vitality evidence — refuse
@@ -362,8 +363,9 @@ class HeuristicLivenessGate implements LivenessGate {
           contextScale: kLivenessContextScale,
         );
         if (sharp < kLivenessMinSharpness) {
-          throw StateError('Liveness check did not read clearly — too '
-              'blurry, hold still in good light and try again.');
+          throw LivenessUnreadable('Liveness check did not read clearly — too '
+              'blurry, hold still in good light and try again.',
+              LivenessUnreadableReason.blurry);
         }
         // Exposure bounds (see kLivenessMinMeanBrightness): lens-covered
         // near-black and flash-blown near-white crops carry no facial
@@ -378,8 +380,8 @@ class HeuristicLivenessGate implements LivenessGate {
         );
         if (meanBright < kLivenessMinMeanBrightness ||
             meanBright > kLivenessMaxMeanBrightness) {
-          throw StateError('Liveness check did not read clearly — adjust '
-              'the light and try again.');
+          throw LivenessUnreadable('Liveness check did not read clearly — adjust '
+              'the light and try again.', LivenessUnreadableReason.dim);
         }
         // Discriminant log: box geometry + sharpness ride alongside the
         // callers' score lines so any future low score on a live face is
@@ -419,15 +421,16 @@ class HeuristicLivenessGate implements LivenessGate {
       } on TimeoutException catch (e) {
         // Hung read/decode/model: fail closed as a rescan-safe error (driver
         // maps to inconclusive, burns nothing), never a hang, never a pass.
-        throw StateError(
-            'Liveness check timed out — adjust light and try again ($e)');
+        throw LivenessUnreadable(
+            'Liveness check timed out — adjust light and try again ($e)',
+            LivenessUnreadableReason.timeout);
       } on ArgumentError catch (e) {
         // Pure pre/post-processing contract breach (never on real frames):
         // fail closed, same mapping.
-        throw StateError(
+        throw LivenessUnreadable(
             'Liveness check did not read clearly — adjust light and try again ($e)');
       } catch (e) {
-        throw StateError(
+        throw LivenessUnreadable(
             'Liveness check did not read clearly — adjust light and try again ($e)');
       }
     } on StateError {
@@ -435,10 +438,11 @@ class HeuristicLivenessGate implements LivenessGate {
     } on TimeoutException catch (e) {
       // Turnstile wait outlived the budget (a previous pass hogged it):
       // fail closed the same way, never a hang, never a pass.
-      throw StateError(
-          'Liveness check timed out — adjust light and try again ($e)');
+      throw LivenessUnreadable(
+          'Liveness check timed out — adjust light and try again ($e)',
+          LivenessUnreadableReason.timeout);
     } catch (e) {
-      throw StateError(
+      throw LivenessUnreadable(
           'Liveness check did not read clearly — adjust light and try again ($e)');
     } finally {
       turn.complete();
