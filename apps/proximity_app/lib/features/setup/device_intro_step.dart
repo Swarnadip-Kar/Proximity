@@ -53,10 +53,25 @@ class DeviceConfirmStep extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final acct = ref.watch(accountProvider).valueOrNull;
     final linked = ref.watch(linkedIdentityProvider);
-    final alreadyEnrolled = acct != null &&
+    final linkedMatch = acct != null &&
         linked != null &&
         linked.gmail.trim().toLowerCase() ==
             acct.email.trim().toLowerCase();
+    // Restored-key exit: the controller HW-unsealed this Gmail's doc from
+    // this device's store (stronger proof than a read — the seal opened),
+    // but nothing set linked (only unlock/upload write it, and the shell
+    // parked on a dismissal/contradiction instead of unlocking). Funneling
+    // such a returner into account & key would re-keygen over a valid
+    // enrollment; exiting to the app lets the shell's cache-warmed
+    // re-resolve unlock with no new prompt. Fresh keygen stays on the
+    // enroll path (`restored` is false there by construction).
+    final ctl = ref.watch(enrollmentControllerProvider);
+    final restoredForAcct = acct != null &&
+        ctl.restored &&
+        ctl.pkHex.isNotEmpty &&
+        ctl.account?.email.trim().toLowerCase() ==
+            acct.email.trim().toLowerCase();
+    final alreadyEnrolled = linkedMatch || restoredForAcct;
     // Root cause of the behind-nav-bar CTA: the app is edge-to-edge
     // (transparent system bars + extendBody, see main + MainActivity) and
     // AdaptiveScaffold bodies own their insets — this scroll had a fixed

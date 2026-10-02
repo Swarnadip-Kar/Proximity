@@ -4,9 +4,12 @@
 // welcome/capture/result stay one page each. Start-index semantics,
 // listeners, lazy camera mount, back behavior, and scope branches are
 // behavior-identical (capture/result are 4/5; progress counts 6 pages).
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:proximity_protocol/protocol.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
@@ -59,6 +62,17 @@ List<Override> _base({SignedAccount? acct = _acct}) {
     authServiceProvider.overrideWithValue(FakeAuthService(acct)),
     cloudSyncProvider.overrideWithValue(FakeCloudSync()),
     deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+    // DeviceConfirmStep watches the draft (restored-key app exit), so
+    // every harness pumping it must wire the controller.
+    enrollmentControllerProvider.overrideWith(
+      (ref) => EnrollmentController(
+        auth: ref.watch(authServiceProvider),
+        store: ref.watch(deviceStoreProvider),
+        verifier: FakeFaceVerifier(),
+        deviceKey: FakeDeviceKey(),
+        livenessGate: FakeLivenessGate(),
+      ),
+    ),
   ];
 }
 
@@ -418,6 +432,75 @@ void main() {
       expect(find.text('Confirm device'), findsOneWidget);
       expect(find.text('Account & key'), findsNothing);
       await _settleStepped(t);
+    });
+
+    testWidgets('device step with restored keys offers Continue to app',
+        (t) async {
+      // Returner funneled into setup (dismissal park / tier-wiped
+      // auto-miss): the store holds this Gmail's enrollment (blank roll
+      // so the flow starts at account&key), the role cache holds
+      // student. Backing to the device step must offer the app exit —
+      // never funnel a valid enrollment into re-keygen + face scan.
+      final store = InMemoryDeviceStore();
+      await store.writeInstallId('ab12cd34ef56ab78');
+      await store.writeRole(_studentRole());
+      await store.writeEnrollment(StoredEnrollment(
+        email: _acct.email,
+        name: 'Test User',
+        roll: '',
+        pkHex: 'cd' * 32,
+        sealedKeyHex: hexEncode(await FakeDeviceKey()
+            .seal(Uint8List.fromList(hexDecode('ab' * 32)))),
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: 'old-pipeline',
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'FULL',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      var completed = false;
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_acct)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          faceVerifierProvider.overrideWithValue(FakeFaceVerifier()),
+          deviceKeyProvider.overrideWithValue(FakeDeviceKey()),
+          enrollmentControllerProvider.overrideWith(
+            (ref) => EnrollmentController(
+              auth: ref.watch(authServiceProvider),
+              store: ref.watch(deviceStoreProvider),
+              verifier: FakeFaceVerifier(),
+              deviceKey: FakeDeviceKey(),
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          home: SetupFlowScreen(
+            onFirstBack: () async {},
+            onComplete: () async {
+              completed = true;
+            },
+          ),
+        ),
+      ));
+      await _settleStepped(t);
+      // Restored key, blank roll → starts at account&key (not device).
+      expect(find.text('Account & key'), findsOneWidget);
+      // System back to the device step: the restored returner exits to
+      // the app instead of re-keygenning.
+      await t.binding.handlePopRoute();
+      await _settleStepped(t);
+      expect(find.text('Confirm device'), findsOneWidget);
+      expect(find.widgetWithText(ProxPrimaryButton, 'Continue to app'),
+          findsOneWidget);
+      await t.tap(
+          find.widgetWithText(ProxPrimaryButton, 'Continue to app'));
+      await _settleStepped(t);
+      expect(completed, isTrue);
     });
 
     testWidgets('double Continue advances exactly one page (single-flight)',
