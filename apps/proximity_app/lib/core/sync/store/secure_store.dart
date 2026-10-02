@@ -203,6 +203,24 @@ class SecureDeviceStore implements DeviceStore {
       _lastSecureFailAt != null &&
       now.difference(_lastSecureFailAt!) < _secureFailCooldown;
 
+  // Biometric-prompt single-flight: concurrent gated reads overlap
+  // BiometricPrompts, which cancel each other — the scanned prompt then
+  // belongs to a read whose result nobody uses, while the unlock read
+  // dies dismissed behind a banner (cold-open "scan does nothing").
+  // Queued behind this chain, readers run one at a time; each re-checks
+  // the warm cache and the dismissal cooldown on entry, so an overlap
+  // costs exactly one prompt total (first success warms, first failure
+  // cools) instead of a prompt fight. The chain itself never carries
+  // errors — a failed reader must not wedge later readers — while the
+  // error still propagates to its own caller.
+  Future<void> _promptGate = Future<void>.value();
+
+  Future<T> _behindPromptGate<T>(Future<T> Function() work) {
+    final run = _promptGate.then((_) => work(), onError: (_) => work());
+    _promptGate = run.then<void>((_) {}, onError: (_) {});
+    return run;
+  }
+
   @override
   Future<StoredEnrollment?> readEnrollment() async {
     if (_enrollmentLoaded) return _enrollmentCache;
@@ -212,6 +230,22 @@ class SecureDeviceStore implements DeviceStore {
     // re-prompting (anti-hammer) and WITHOUT misreporting empty — the
     // caller (unlock resolve) parks locked with retry instead of pushing
     // the enrollment flow for data that may still exist behind the lock.
+    if (_inSecureCooldown(now)) {
+      _lastSecureFailAt = now;
+      throw const SecureStoreDismissed();
+    }
+    return _behindPromptGate(() => _readEnrollmentCold());
+  }
+
+  /// Gated enrollment scan (one prompt-chain turn): re-checks the warm
+  /// cache and the dismissal cooldown on entry — a reader queued behind
+  /// a success serves the cache with no second prompt; a reader queued
+  /// behind a failure stays dismissed with no second prompt (a
+  /// just-dismissed user is never re-prompted by someone else's stale
+  /// overlap).
+  Future<StoredEnrollment?> _readEnrollmentCold() async {
+    if (_enrollmentLoaded) return _enrollmentCache;
+    final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) {
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
@@ -713,6 +747,19 @@ class SecureDeviceStore implements DeviceStore {
     // re-prompting, and crucially must NOT resolve to null here, or
     // getOrCreateInstallId mints a FRESH install over existing data
     // (identity fork: orphaned faceId, phantom device move).
+    if (_inSecureCooldown(now)) {
+      _lastSecureFailAt = now;
+      throw const SecureStoreDismissed();
+    }
+    return _behindPromptGate(() => _readInstallIdCold());
+  }
+
+  /// Gated install-id scan (one prompt-chain turn — same cache + cooldown
+  /// re-check contract as [_readEnrollmentCold], so overlaps cost one
+  /// prompt total and never re-prompt a just-dismissed user).
+  Future<String?> _readInstallIdCold() async {
+    if (_installIdLoaded) return _installIdCache;
+    final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) {
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();

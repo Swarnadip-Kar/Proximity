@@ -34,6 +34,12 @@ class _ScriptedSecure extends FlutterSecureStorage {
   Object? readError;
   Object? writeError;
 
+  /// Prompt-latency stand-in + overlap detector (prompt single-flight
+  /// tests): concurrent slot readers must never overlap.
+  Duration readDelay = Duration.zero;
+  int activeReads = 0;
+  int maxActiveReads = 0;
+
   @override
   Future<String?> read({
     required String key,
@@ -45,9 +51,16 @@ class _ScriptedSecure extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     readKeys.add(key);
-    final e = readError;
-    if (e != null) throw e;
-    return backend[key];
+    activeReads++;
+    if (activeReads > maxActiveReads) maxActiveReads = activeReads;
+    try {
+      if (readDelay > Duration.zero) await Future.delayed(readDelay);
+      final e = readError;
+      if (e != null) throw e;
+      return backend[key];
+    } finally {
+      activeReads--;
+    }
   }
 
   @override
@@ -163,6 +176,65 @@ void main() {
 
     expect(await store.readInstallId(), 'ab12cd34ef56ab78');
     expect(cred.readKeys, contains('prox.install.v1'));
+  });
+
+  test('concurrent enrollment reads cost one prompt total', () async {
+    // Cold-open race shape (shell resolve + account entry firing
+    // together): the slot readers serialize and the second serves the
+    // warmed cache — one prompt, both callers unlocked, never a
+    // prompt fight where the scanned prompt belongs to nobody.
+    final strong = _ScriptedSecure()
+      ..backend['prox.enrollment.v1'] = jsonEncode(_doc().toJson())
+      ..readDelay = const Duration(milliseconds: 50);
+    final cred = _ScriptedSecure()
+      ..readDelay = const Duration(milliseconds: 50);
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    final results = await Future.wait([
+      store.readEnrollment(),
+      store.readEnrollment(),
+    ]);
+    expect(results[0]?.email, 'a@x.in');
+    expect(results[1]?.email, 'a@x.in');
+    expect(strong.maxActiveReads, 1);
+    expect(cred.maxActiveReads, 0); // hit on strong: cred never touched
+    expect(cred.readKeys, isEmpty);
+    // Second reader served the warmed cache: the preferred slot was
+    // touched exactly once (one prompt total, not two).
+    expect(strong.readKeys, hasLength(1));
+  });
+
+  test('concurrent failures prompt once and never wedge the chain',
+      () async {
+    // Both readers fail behind the prompt gate: the first coolstamps,
+    // the queued second respects the cooldown (no re-prompt of a
+    // just-dismissed user), both report dismissed — and a later
+    // explicit retry still runs (the chain never carries errors).
+    final strong = _ScriptedSecure()
+      ..readError = StateError('user canceled')
+      ..readDelay = const Duration(milliseconds: 50);
+    final cred = _ScriptedSecure()
+      ..readError = StateError('user canceled')
+      ..readDelay = const Duration(milliseconds: 50);
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    final outcomes = await Future.wait([
+      store.readEnrollment().then((_) => 'value', onError: (e) => '$e'),
+      store.readEnrollment().then((_) => 'value', onError: (e) => '$e'),
+    ]);
+    for (final o in outcomes) {
+      expect(o, contains('dismissed'));
+    }
+    // One prompt total: the queued reader never re-touched the slots.
+    expect(strong.readKeys, hasLength(1));
+    expect(cred.readKeys, hasLength(1));
+    // Explicit retry still runs the slots (chain unwedged).
+    await expectLater(
+      store.readEnrollmentRetry(),
+      throwsA(isA<SecureStoreDismissed>()),
+    );
+    expect(strong.readKeys, hasLength(2));
+    expect(cred.readKeys, hasLength(2));
   });
 
   test('both slots failing throws sanitized copy, no raw stack', () async {
