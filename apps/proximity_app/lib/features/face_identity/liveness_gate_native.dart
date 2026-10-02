@@ -415,7 +415,8 @@ class HeuristicLivenessGate implements LivenessGate {
             'liveness probs=[${probs.map((p) => p.toStringAsFixed(3)).join(', ')}]');
         debugPrint('liveness sampler=bilinear-bgr-raw255');
         final score = liveScoreFromProbs(probs);
-        return LivenessResult(score: score, ver: kLivenessVer);
+        return LivenessResult(
+            score: score, ver: kLivenessVer, meanBrightness: meanBright);
       } on StateError {
         rethrow;
       } on TimeoutException catch (e) {

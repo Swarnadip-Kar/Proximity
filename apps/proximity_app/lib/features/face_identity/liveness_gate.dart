@@ -417,6 +417,17 @@ double liveScoreFromProbs(List<double> probs) {
 /// evidence.
 const double kLivenessMinSharpness = 10.0;
 
+/// Warn-only dim hint level for the enroll readout (mean 0-255 grayscale
+/// of the scored crop, same probe as the block bounds). Initial 60.0 from
+/// the 2026 field session (normal-room scored crops read bright 80-100, so
+/// 60 fires only when clearly darker than a normal pass). WARN ONLY: it
+/// appends DIM to the bottom-bar readout, never blocks or rejects — the
+/// fail-closed block stays at [kLivenessMinMeanBrightness] (12.0). Tune
+/// from field `bright=` logs; still-brightness rides phone auto-exposure
+/// (dark rooms get exposure-compensated), so this is guidance, not a
+/// darkness detector.
+const double kLivenessDimHintBrightness = 60.0;
+
 /// Exposure bounds for the vitality pass (mean 0-255 grayscale of the SAME
 /// scored crop [livenessCropRect] hands the packer — see
 /// [cropMeanBrightnessRgba]). Lens-covered near-black frames and
@@ -598,13 +609,19 @@ List<List<List<List<double>>>> minifasnetInputFromRgba({
   return [planes];
 }
 
-/// Result of one passive anti-spoof pass: vitality score + pipeline tag.
+/// Result of one passive anti-spoof pass: vitality score + pipeline tag,
+/// plus the scored crop's mean brightness (0-255 grayscale, null when
+/// unknown — fakes, unreadable throws). Carried so live UI can warn DIM
+/// on dark-but-scoring probes without a second decode; never a gate input
+/// (the block stays the throw bounds in the native gate).
 /// `ver` is [kLivenessVer] on real runs (the ticket binds it); fakes in
 /// tests pin their own tag (allowlist-carrying tests set full tags).
 class LivenessResult {
   final double score;
   final String ver;
-  const LivenessResult({required this.score, required this.ver});
+  final double? meanBrightness;
+  const LivenessResult(
+      {required this.score, required this.ver, this.meanBrightness});
 }
 
 /// Machine-readable cause for an unreadable liveness probe (fail-closed
@@ -708,11 +725,16 @@ class FakeLivenessGate implements LivenessGate {
   /// Machine-readable cause carried by the scripted throw (lets widget
   /// tests drive DIM/BLURRY/NO FACE readout hints deterministically).
   LivenessUnreadableReason throwReason;
+  /// Scripted brightness carried on the returned result (lets widget
+  /// tests drive the DIM warn path on scoring probes deterministically).
+  /// Null (default) carries none — readout shows no brightness hint.
+  double? scriptedBrightness;
   FakeLivenessGate({
     this.score = 0.92,
     this.ver = kLivenessVer,
     this.throwOnDetect = false,
     this.throwReason = LivenessUnreadableReason.unknown,
+    this.scriptedBrightness,
   });
 
   @override
@@ -723,7 +745,8 @@ class FakeLivenessGate implements LivenessGate {
           'Liveness check did not read clearly — adjust light and try again.',
           throwReason);
     }
-    return LivenessResult(score: score, ver: ver);
+    return LivenessResult(
+        score: score, ver: ver, meanBrightness: scriptedBrightness);
   }
 }
 

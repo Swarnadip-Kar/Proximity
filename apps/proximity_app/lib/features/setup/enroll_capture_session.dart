@@ -256,6 +256,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// suffix in the readout — warn-only presentation, never a gate.
   LivenessUnreadableReason? _lastQuality;
 
+  /// Mean brightness (0-255) of the last SCORED probe's crop (null when
+  /// the last probe was unreadable, unknown, or predates this field).
+  /// Drives the warn-only DIM suffix on passing-but-dark probes — the
+  /// throw-reason path above only fires below the 12.0 block floor, which
+  /// auto-exposed phone frames almost never reach, so without this the
+  /// hint would never appear in a real dark room.
+  double? _lastBrightness;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -559,12 +567,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
               ? kLivenessThreshold
               : kEnrollSideLivenessThreshold;
           double vitality = -1;
+          double? brightness;
           LivenessUnreadableReason? quality;
           try {
-            vitality = (await ref
-                    .read(enrollSessionLivenessProvider)
-                    .detectPassive(still))
-                .score;
+            final result = await ref
+                .read(enrollSessionLivenessProvider)
+                .detectPassive(still);
+            vitality = result.score;
+            brightness = result.meanBrightness;
           } catch (e) {
             EnrollLog.face(
                 'slot $target vitality unreadable (silent, continuing): $e');
@@ -578,14 +588,17 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             // bar that judged it; an unreadable probe clears the score
             // back to the placeholder but keeps its bar, so the holder
             // still sees what the next probe must clear. A scored probe
-            // clears any prior DIM/BLURRY hint; an unreadable one sets it
-            // from the structured reason (no message parsing).
+            // clears any prior throw hint and carries its crop brightness
+            // for the warn-only DIM suffix; an unreadable one sets the
+            // hint from the structured reason (no message parsing).
             final v = vitality;
+            final b = brightness;
             final q = quality;
             setState(() {
               _lastVitality = v < 0 ? null : v;
               _lastBar = bar;
               _lastQuality = v < 0 ? q : null;
+              _lastBrightness = v < 0 ? null : b;
             });
           }
           if (vitality < bar) {
@@ -752,13 +765,16 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
   /// judged it + guided target (e.g. `LIVE 0.93/0.70 · DOWN`, or
-  /// `LIVE —/0.70 · DOWN · DIM` after an unreadable dim probe).
+  /// `LIVE —/0.70 · DOWN · DIM` after an unreadable dim probe, or
+  /// `LIVE 0.99/0.70 · DOWN · DIM` for a passing-but-dark probe).
   /// Placeholders until the first probe/read lands. No match score exists
   /// mid-walk (the matcher first runs at the terminal self-check — its
   /// boundary score lands on the result screen), so this line never
   /// invents one. The DIM/BLURRY/NO FACE suffix is warn-only presentation
-  /// from the structured throw reason — it never gates anything, and
-  /// file/timeout/unknown failures stay silent (no wrong hint).
+  /// — it never gates anything, and file/timeout/unknown failures stay
+  /// silent (no wrong hint). The scored-probe DIM comes from
+  /// [kLivenessDimHintBrightness] (warn-only); the unreadable-probe DIM
+  /// comes from the throw reason at the 12.0 block floor.
   String get liveReadout {
     final v = _lastVitality;
     final score = v == null ? '—' : v.toStringAsFixed(2);
@@ -766,10 +782,16 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         (_currentTarget == 'centre'
             ? kLivenessThreshold
             : kEnrollSideLivenessThreshold);
-    final hint = v == null
-        ? LivenessUnreadable.shortLabel(
-            _lastQuality ?? LivenessUnreadableReason.unknown)
-        : null;
+    String? hint;
+    if (v == null) {
+      hint = LivenessUnreadable.shortLabel(
+          _lastQuality ?? LivenessUnreadableReason.unknown);
+    } else {
+      final b = _lastBrightness;
+      if (b != null && b.isFinite && b < kLivenessDimHintBrightness) {
+        hint = 'DIM';
+      }
+    }
     final target = _currentTarget.toUpperCase();
     return hint == null
         ? 'LIVE $score/${bar.toStringAsFixed(2)} · $target'
@@ -845,6 +867,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _lastVitality = null;
     _lastBar = null;
     _lastQuality = null;
+    _lastBrightness = null;
     _finished = false;
     if (mounted) setState(() => _saving = false);
     _loopStarted = false;

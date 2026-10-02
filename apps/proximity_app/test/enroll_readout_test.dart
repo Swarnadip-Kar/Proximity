@@ -141,5 +141,32 @@ void main() {
       await _drain(t);
       expect(t.takeException(), isNull);
     });
+
+    testWidgets('passing-but-dark probe warns DIM without blocking',
+        (t) async {
+      // Auto-exposed dark-room frame that still scores: the bucket fills
+      // (warn-only, never a gate) and the readout names DIM so the holder
+      // moves to brighter light for the remaining slots.
+      final gate = FakePoseGate(readings: const [
+        PoseReading(yaw: 0, pitch: -15, roll: 0),
+        PoseReading(yaw: 0, pitch: -15, roll: 0),
+        PoseReading(yaw: 0, pitch: -15, roll: 0),
+      ]);
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.95, scriptedBrightness: 45.0),
+      ));
+      await _openSession(t);
+      await t.pump(const Duration(milliseconds: 1500));
+      expect(find.textContaining('DIM'), findsOneWidget);
+      expect(find.textContaining('0.95/0.70'), findsOneWidget);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
   });
 }
