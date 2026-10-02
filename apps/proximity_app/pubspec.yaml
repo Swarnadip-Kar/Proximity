@@ -140,6 +140,8 @@ dev_dependencies:
   # e2e prove fixtures only (real P-256 dSig in TestHwBackend): same pin
   # as protocol/transport (^4.0.0) so the resolved tree stays unified.
   pointycastle: ^4.0.0
+  local_auth_platform_interface: ^1.1.0
+  plugin_platform_interface: ^2.1.8
 
 # macOS Google Sign-In keychain regression: native GoogleSignIn 7.1+ / 8.x
 # throws "keychain error" on macOS even with correct entitlements
