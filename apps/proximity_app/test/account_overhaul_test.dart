@@ -393,8 +393,7 @@ void main() {
       expect((await store.readEnrollment())!.roll, 'R1001');
     });
 
-    testWidgets('rules-denied directory still saves (fail-open lookup)',
-        (t) async {
+    testWidgets('rules-denied directory still saves (fail-open lookup)',        (t) async {
       // Directory reads refused by rules: the guard cannot run, so the
       // save proceeds without it instead of stranding — the write is
       // Gmail-keyed and overwrites nothing. No scary copy on screen.
@@ -421,6 +420,53 @@ void main() {
       expect(find.textContaining('security rules'), findsNothing);
       expect(cloud.devices[_email]!.roll, 'R4004');
       expect((await store.readEnrollment())!.roll, 'R4004');
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('same roll in another org does not block', (t) async {
+      // Guard is org-scoped: R2002 held at other.edu must not refuse our
+      // example.com save.
+      final store = await _enrolledStore();
+      final cloud = _boundCloud();
+      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+      cloud.devices['x@other.edu'] = StudentDeviceDoc(
+        email: 'x@other.edu',
+        uid: 'uid-x',
+        pkHex: 'ff' * 32,
+        name: 'X',
+        roll: 'R2002',
+        modelVer: kFaceVerifierVer,
+        installId: _otherInstall,
+        platform: 'android',
+        org: 'other.edu',
+        createdAtMillis: now,
+        lastSeenAtMillis: now,
+        updatedAtMillis: now,
+        pkDHex: 'aa' * 32,
+        attestationLevel: 'NONE',
+      );
+      cloud.dir['x@other.edu'] = const StudentDirectoryEntry(
+          email: 'x@other.edu', name: 'X', roll: 'R2002', org: 'other.edu');
+      await t.pumpWidget(ProviderScope(
+        overrides: _overrides(store: store, cloud: cloud),
+        child: MaterialApp(
+            theme: proxLightTheme(), home: AccountEnrollmentPage(acct: _acct)),
+      ));
+      await _drain(t);
+
+      await t.ensureVisible(find.byKey(const Key('account-id-edit')));
+      await _drain(t);
+      await t.tap(find.byKey(const Key('account-id-edit')));
+      await _drain(t);
+      await t.enterText(find.byKey(const Key('account-id-field')), 'R2002');
+      await t.ensureVisible(find.byKey(const Key('account-id-save')));
+      await _drain(t);
+      await t.tap(find.byKey(const Key('account-id-save')));
+      await _drain(t, 10);
+
+      expect(find.textContaining('already held'), findsNothing);
+      expect(cloud.devices[_email]!.roll, 'R2002');
+      expect((await store.readEnrollment())!.roll, 'R2002');
       expect(t.takeException(), isNull);
     });
 
