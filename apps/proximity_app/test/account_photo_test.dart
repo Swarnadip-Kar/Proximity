@@ -12,6 +12,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/relay_policy.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
@@ -50,6 +51,7 @@ List<Override> _overrides({String? photoUrl}) => [
           store: ref.watch(deviceStoreProvider),
           verifier: FakeFaceVerifier(),
           deviceKey: FakeDeviceKey(),
+          presenceGate: FakePresenceGate(),
         ),
       ),
     ];

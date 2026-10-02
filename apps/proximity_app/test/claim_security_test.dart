@@ -44,14 +44,14 @@ StudentDeviceDoc dev(
   );
 }
 
-/// Install store whose biometric gate dismisses: reads throw the typed
-/// dismissal instead of resolving null, so identity minting must abort.
+/// Install store whose read fails: reads throw instead of resolving
+/// null, so identity minting must abort.
 class _DismissingInstallStore extends InMemoryDeviceStore {
   bool minted = false;
 
   @override
   Future<String?> readInstallId() async =>
-      throw const SecureStoreDismissed();
+      throw StateError('Secure storage is temporarily unreadable — try again.');
 
   @override
   Future<void> writeInstallId(String id) async {
@@ -317,18 +317,18 @@ void main() {
     expect(doc['faceFlags'], isA<List>());
   });
 
-  test('dismissed install-id read never mints a forked identity', () async {
-    // Back-press on the biometric prompt must propagate (park with
-    // retry), never mint a fresh installId over data that exists behind
-    // the lock (phantom device move + orphaned faceId).
+  test('failed install-id read never mints a forked identity', () async {
+    // A failed store read must propagate (park with retry), never mint a
+    // fresh installId over possibly-existing data (phantom device move +
+    // orphaned faceId).
     clearInstallIdCacheForTest();
     final store = _DismissingInstallStore();
     await expectLater(
       getOrCreateInstallId(store),
-      throwsA(isA<SecureStoreDismissed>()),
+      throwsA(isStateError),
     );
     expect(store.minted, isFalse,
-        reason: 'no writeInstallId on a dismissed read');
+        reason: 'no writeInstallId on a failed read');
     clearInstallIdCacheForTest();
   });
 

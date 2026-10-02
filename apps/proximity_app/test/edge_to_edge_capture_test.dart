@@ -28,6 +28,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -80,6 +81,7 @@ Future<EnrollmentController> _keyReady() async {
     store: InMemoryDeviceStore(),
     verifier: FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    presenceGate: FakePresenceGate(),
   );
   await ctl.signIn();
   await ctl.generateKey();

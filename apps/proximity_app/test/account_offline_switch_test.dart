@@ -20,6 +20,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/account/account_header.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
@@ -51,6 +52,7 @@ List<Override> _offlineOverrides({
         store: ref.watch(deviceStoreProvider),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
       ),
     ),
   ];
@@ -234,6 +236,7 @@ void main() {
             store: ref.watch(deviceStoreProvider),
             verifier: FakeFaceVerifier(),
             deviceKey: FakeDeviceKey(),
+            presenceGate: FakePresenceGate(),
           ),
         ),
       ]);

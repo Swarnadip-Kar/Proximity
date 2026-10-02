@@ -11,6 +11,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -74,6 +75,7 @@ List<Override> _enrollOverrides({
           store: store,
           verifier: FakeFaceVerifier(),
           deviceKey: FakeDeviceKey(),
+          presenceGate: FakePresenceGate(),
           cloud: cloud,
           // enrollFace measures liveness: scripted pass (liveness itself
           // is pinned in enroll_liveness_gate_test.dart).
@@ -121,6 +123,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -506,18 +509,17 @@ void main() {
 
     testWidgets('locked store shows retry, never the no-key note',
         (t) async {
-      // A dismissed prompt used to read as "no enrollment on file"
-      // (the loader swallowed to null): the section must name the lock
-      // with an explicit unlock retry instead.
+      // A failed read used to surface as "no enrollment on file": the
+      // section must show an explicit retry instead.
       Future<StoredEnrollment?> loader() =>
-          Future<StoredEnrollment?>.error(const SecureStoreDismissed());
+          Future<StoredEnrollment?>.error(
+              StateError('Secure storage is temporarily unreadable — try again.'));
       await t.pumpWidget(sectionApp(loader, ThemeData.light()));
       await t.pumpAndSettle();
       expect(find.text('Retry unlock'), findsOneWidget);
       expect(find.textContaining('No student key'), findsNothing);
-      // Retry runs the explicit unlock (no prompt needed against the
-      // memory store) and the lock UI persists honestly — never flips
-      // to the no-key note on a second dismissal.
+      // Retry re-reads and the lock UI persists honestly — never flips
+      // to the no-key note on a second failure.
       await t.tap(find.text('Retry unlock'));
       await t.pumpAndSettle();
       expect(find.text('Retry unlock'), findsOneWidget);

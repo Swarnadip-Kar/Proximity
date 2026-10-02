@@ -16,6 +16,7 @@ import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/core/sync/claim.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
@@ -38,6 +39,7 @@ EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
       store: store,
       verifier: verifier ?? FakeFaceVerifier(),
       deviceKey: FakeDeviceKey(),
+      presenceGate: FakePresenceGate(),
       // enrollFace measures liveness: scripted pass (liveness itself is
       // pinned in enroll_liveness_gate_test.dart).
       livenessGate: FakeLivenessGate(),
@@ -158,6 +160,7 @@ void main() {
         store: store,
         verifier: verifier,
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
         livenessGate: FakeLivenessGate(),
       );
       await ctl.signIn();

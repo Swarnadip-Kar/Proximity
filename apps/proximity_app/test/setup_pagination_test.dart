@@ -14,6 +14,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/design/app_theme.dart';
@@ -70,6 +71,7 @@ List<Override> _base({SignedAccount? acct = _acct}) {
         store: ref.watch(deviceStoreProvider),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
         livenessGate: FakeLivenessGate(),
       ),
     ),
@@ -219,6 +221,7 @@ void main() {
                 store: store,
                 verifier: FakeFaceVerifier(),
                 deviceKey: FakeDeviceKey(),
+                presenceGate: FakePresenceGate(),
                 cloud: cloud,
                 // enrollFace measures liveness: scripted pass (liveness
                 // itself is pinned in enroll_liveness_gate_test.dart).
@@ -331,6 +334,7 @@ void main() {
                 store: store,
                 verifier: FakeFaceVerifier(),
                 deviceKey: FakeDeviceKey(),
+                presenceGate: FakePresenceGate(),
                 cloud: cloud,
                 // enrollFace measures liveness: scripted pass (liveness
                 // itself is pinned in enroll_liveness_gate_test.dart).
@@ -370,6 +374,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -410,6 +415,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -474,6 +480,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -505,10 +512,10 @@ void main() {
 
     testWidgets('locked restore offers unlock retry, never generate-over',
         (t) async {
-      // Dismissed-prompt shape: the store holds this Gmail's enrollment
-      // but the first read was skipped. The key step must offer the
-      // unlock retry — generating here would overwrite a valid
-      // enrollment with a fresh key.
+      // Transient-failure shape: the store holds this Gmail's
+      // enrollment but the first read fails. The key step must offer
+      // the retry — generating here would overwrite a valid enrollment
+      // with a fresh key.
       final store = _LockedOnceStore();
       await store.writeInstallId('ab12cd34ef56ab78');
       await store.writeEnrollment(StoredEnrollment(
@@ -533,8 +540,9 @@ void main() {
         store: store,
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
       );
-      // First restore hits the skipped prompt → locked, keyless.
+      // First restore hits the read failure → locked, keyless.
       await ctl.refreshFromAuth();
       expect(ctl.restoreLockedForAccount, isTrue);
       expect(ctl.state.pkHex, isEmpty);
@@ -576,6 +584,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -612,6 +621,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -658,6 +668,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -699,6 +710,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -739,6 +751,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -802,6 +815,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -841,6 +855,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -869,22 +884,19 @@ void main() {
   });
 }
 
-/// Enrollment store whose first read replays a skipped biometric prompt
-/// (dismissal with the doc behind the lock); the explicit retry then
-/// serves the seeded doc: the key step must offer unlock-retry over a
-/// locked enrollment, never generate-over.
+/// Enrollment store whose first read fails transiently; the explicit
+/// retry then serves the seeded doc: the key step must offer
+/// unlock-retry over a locked enrollment, never generate-over.
 class _LockedOnceStore extends InMemoryDeviceStore {
-  var locked = true;
+  var failuresLeft = 1;
 
   @override
   Future<StoredEnrollment?> readEnrollment() async {
-    if (locked) throw const SecureStoreDismissed();
-    return super.readEnrollment();
-  }
-
-  @override
-  Future<StoredEnrollment?> readEnrollmentRetry() async {
-    locked = false;
+    if (failuresLeft > 0) {
+      failuresLeft--;
+      throw StateError(
+          'Secure storage is temporarily unreadable — try again.');
+    }
     return super.readEnrollment();
   }
 }

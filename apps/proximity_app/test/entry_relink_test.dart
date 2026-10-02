@@ -266,26 +266,12 @@ void main() {
       expect(container.read(appModeProvider), AppMode.unset);
     });
 
-  group('unlock outcome tri-state (prompt dismissal)', () {
+  group('unlock outcomes (linked / empty / error)', () {
     const acct = SignedAccount(
         email: _email,
         displayName: 'Test User',
         uid: 'test-uid',
         org: 'example.com');
-
-    test('isUnlockDismissal matches cancels, not crypto/disk errors', () {
-      expect(
-          isUnlockDismissal(
-              StateError('Biometric authentication error [10]: canceled')),
-          isTrue);
-      expect(isUnlockDismissal(StateError('auth_canceled')), isTrue);
-      expect(isUnlockDismissal(StateError('user_cancelled')), isTrue);
-      expect(
-          isUnlockDismissal(StateError(
-              'PlatformException(Exception encountered, javax.crypto.IllegalBlockSizeException, null)')),
-          isFalse);
-      expect(isUnlockDismissal(StateError('disk full')), isFalse);
-    });
 
     testWidgets('linked outcome restores identity', (t) async {
       final store = await _enrolledStore();
@@ -307,62 +293,22 @@ void main() {
       expect(container.read(linkedIdentityProvider), isNull);
     });
 
-    testWidgets('dismissed prompt yields dismissed, never linked',
-        (t) async {
-      final store = _ThrowingStore(
-          StateError('Biometric authentication error [3]: canceled'));
-      final container = _container(store: store, account: acct);
-      addTearDown(container.dispose);
-      final ref = await _pumpRef(t, container);
-
-      expect(
-          await attemptUnlockIdentity(ref, acct), UnlockOutcome.dismissed);
-      expect(container.read(linkedIdentityProvider), isNull);
-    });
-
-    testWidgets('typed dismissal (locked store, data unknown) parks',
-        (t) async {
-      // Secure-backend contract: back-press with nothing proven throws
-      // SecureStoreDismissed (NOT null) so a dismissal can never read as
-      // "unenrolled" and push the enrollment flow.
-      final store = _DismissingStore();
-      final container = _container(store: store, account: acct);
-      addTearDown(container.dispose);
-      final ref = await _pumpRef(t, container);
-
-      expect(
-          await attemptUnlockIdentity(ref, acct), UnlockOutcome.dismissed);
-      expect(container.read(linkedIdentityProvider), isNull);
-    });
-
-    testWidgets('non-cancel throw aborts (unknown, never unenrolled)',
-        (t) async {
-      // Fail-safe direction: a transient read failure is not a proven
+    testWidgets('read failure yields error, never linked', (t) async {
+      // Fail-safe direction: a store read failure is not a proven
       // absence — the shell aborts the resolve (no push, retry later)
       // instead of pushing setup over possibly-existing data.
-      final store = _ThrowingStore(StateError('disk full'));
-      final container = _container(store: store, account: acct);
-      addTearDown(container.dispose);
-      final ref = await _pumpRef(t, container);
+      for (final msg in [
+        'Secure storage is temporarily unreadable — try again.',
+        'disk full',
+      ]) {
+        final store = _ThrowingStore(StateError(msg));
+        final container = _container(store: store, account: acct);
+        addTearDown(container.dispose);
+        final ref = await _pumpRef(t, container);
 
-      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.error);
-      expect(container.read(linkedIdentityProvider), isNull);
-    });
-
-    testWidgets('userInitiated reads via the retry path', (t) async {
-      // Explicit taps must reach readEnrollmentRetry (cooldown-clearing
-      // re-prompt); mount/listener resolves use the plain read.
-      final store = _RecordingStore();
-      final container = _container(store: store, account: acct);
-      addTearDown(container.dispose);
-      final ref = await _pumpRef(t, container);
-
-      expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.empty);
-      expect(store.retryUsed, isFalse);
-      expect(await attemptUnlockIdentity(ref, acct, userInitiated: true),
-          UnlockOutcome.empty);
-      expect(store.retryUsed, isTrue);
-      expect(container.read(linkedIdentityProvider), isNull);
+        expect(await attemptUnlockIdentity(ref, acct), UnlockOutcome.error);
+        expect(container.read(linkedIdentityProvider), isNull);
+      }
     });
   });
 
@@ -536,31 +482,12 @@ void main() {
 
 Future<void> _noopContinue(Map<String, String> role, String which) async {}
 
-/// DeviceStore that throws a scripted error on enrollment reads (prompt
-/// dismissal / I/O failure probes for the unlock tri-state).
+/// DeviceStore that throws a scripted error on enrollment reads (I/O
+/// failure probe for the unlock outcomes).
 class _ThrowingStore extends InMemoryDeviceStore {
   final Object error;
   _ThrowingStore(this.error);
 
   @override
   Future<StoredEnrollment?> readEnrollment() async => throw error;
-}
-
-/// Store recording whether the retry read path was used.
-class _RecordingStore extends InMemoryDeviceStore {
-  bool retryUsed = false;
-
-  @override
-  Future<StoredEnrollment?> readEnrollmentRetry() {
-    retryUsed = true;
-    return readEnrollment();
-  }
-}
-
-/// Secure-backend dismissal: back-press with nothing proven throws the
-/// typed dismissal (never null) — the shell must park, not push enroll.
-class _DismissingStore extends InMemoryDeviceStore {
-  @override
-  Future<StoredEnrollment?> readEnrollment() async =>
-      throw const SecureStoreDismissed();
 }

@@ -38,7 +38,7 @@ void main() {
     final store = _UnavailableReadStore();
     await expectLater(
       getOrCreateInstallId(store),
-      throwsA(isA<SecureStoreUnavailable>()),
+      throwsA(isStateError),
     );
   });
 }
@@ -58,6 +58,6 @@ class _FailingWriteStore extends InMemoryDeviceStore {
 class _UnavailableReadStore extends InMemoryDeviceStore {
   @override
   Future<String?> readInstallId() async {
-    throw const SecureStoreUnavailable();
+    throw StateError('Secure storage is temporarily unreadable — try again.');
   }
 }

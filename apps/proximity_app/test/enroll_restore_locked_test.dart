@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -33,24 +34,15 @@ EnrollmentController _controller(
       store: store,
       verifier: FakeFaceVerifier(),
       deviceKey: FakeDeviceKey(),
+      presenceGate: FakePresenceGate(),
     );
 
 void main() {
   group('restoreLockedForAccount (controller)', () {
-    test('dismissed prompt flags locked, keys stay empty', () async {
+    test('read failure flags locked, keys stay empty', () async {
       final ctl = _controller(
         FakeAuthService(_acct),
-        _FailingReadStore(const SecureStoreDismissed()),
-      );
-      await ctl.refreshFromAuth();
-      expect(ctl.state.pkHex, isEmpty);
-      expect(ctl.restoreLockedForAccount, isTrue);
-    });
-
-    test('transient failure flags locked, keys stay empty', () async {
-      final ctl = _controller(
-        FakeAuthService(_acct),
-        _FailingReadStore(const SecureStoreUnavailable()),
+        _FailingReadStore(StateError('Secure storage is temporarily unreadable — try again.')),
       );
       await ctl.refreshFromAuth();
       expect(ctl.state.pkHex, isEmpty);

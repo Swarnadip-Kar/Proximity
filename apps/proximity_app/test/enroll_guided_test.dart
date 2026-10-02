@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
@@ -74,6 +75,7 @@ Future<EnrollmentController> _keyReady(
     store: store ?? InMemoryDeviceStore(),
     verifier: verifier ?? FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    presenceGate: FakePresenceGate(),
     // enrollFace measures liveness: scripted pass unless a test passes its
     // own gate (liveness itself is pinned in enroll_liveness_gate_test).
     livenessGate: livenessGate ?? FakeLivenessGate(),
@@ -374,7 +376,7 @@ void main() {
       // Relocation only: open/close, classify-fill loop, save, dispose,
       // timers — byte-identical bodies, called out in the breakup entry.
       inOrder(sessionLib(), [
-        'Future<void> _openCamera({',
+        'Future<void> _openCamera()',
         'void _startLoop()',
         'Future<void> _autoLoop()',
         'Future<String?> _captureOne()',
@@ -572,6 +574,7 @@ void main() {
         store: store,
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
         // enrollFace measures liveness on the fake stills: scripted pass
         // (liveness itself is pinned in enroll_liveness_gate_test).
         livenessGate: FakeLivenessGate(),
@@ -1129,6 +1132,7 @@ void main() {
         store: InMemoryDeviceStore(),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
         // enrollFace measures liveness: scripted pass (liveness itself is
         // pinned in enroll_liveness_gate_test.dart).
         livenessGate: FakeLivenessGate(),

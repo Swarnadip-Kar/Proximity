@@ -28,6 +28,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -53,6 +54,7 @@ Future<EnrollmentController> _keyReady() async {
     store: InMemoryDeviceStore(),
     verifier: FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    presenceGate: FakePresenceGate(),
     // enrollFace measures liveness: scripted pass (same as the
     // enroll_guided suite). Without this the controller falls back to the
     // production HeuristicLivenessGate, which would score the fake still
@@ -254,7 +256,7 @@ void main() {
         'class FakeEnrollSessionCamera',
         'enrollSessionCameraProvider',
         'mixin EnrollCaptureSessionDriver',
-        'Future<void> _openCamera({',
+        'Future<void> _openCamera()',
         'void _startLoop()',
         'Future<void> _autoLoop()',
         'Future<String?> _captureOne()',

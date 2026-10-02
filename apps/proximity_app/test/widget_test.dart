@@ -10,6 +10,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
@@ -100,6 +101,7 @@ ProviderScope testScope(
             store: ref.watch(deviceStoreProvider),
             verifier: FakeFaceVerifier(),
             deviceKey: FakeDeviceKey(),
+            presenceGate: FakePresenceGate(),
             // enrollFace measures liveness: scripted pass (liveness
             // itself is pinned in enroll_liveness_gate_test.dart).
             livenessGate: FakeLivenessGate(),

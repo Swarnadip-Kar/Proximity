@@ -13,6 +13,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
@@ -116,6 +117,7 @@ List<Override> _accountOverrides({
         store: ref.watch(deviceStoreProvider),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
       ),
     ),
   ];
@@ -437,6 +439,7 @@ void main() {
             store: ref.watch(deviceStoreProvider),
             verifier: FakeFaceVerifier(),
             deviceKey: FakeDeviceKey(),
+            presenceGate: FakePresenceGate(),
           ),
         ),
       ]);
@@ -690,11 +693,10 @@ void main() {
       }
     });
 
-    testWidgets('dismissed unlock parks locked with no setup push',
+    testWidgets('unreadable enrollment parks locked with no setup push',
         (t) async {
-      // Back-press on the launch biometric prompt must park on Accounts
-      // (locked, retry on tap) — never auto-push enrollment for data that
-      // exists behind the lock.
+      // A store read failure must park on Accounts (locked, retry on
+      // tap) — never auto-push enrollment over possibly-existing data.
       final store = _DismissingEnrollStore();
       await store.writeInstallId(_installId);
       await t.pumpWidget(ProviderScope(
@@ -705,19 +707,18 @@ void main() {
       await _drain(t, 10);
 
       expect(find.byType(SetupFlowScreen), findsNothing,
-          reason: 'dismissal must not push the enrollment flow');
+          reason: 'a read failure must not push the enrollment flow');
       expect(find.byType(StudentAccountScreen), findsOneWidget);
       expect(t.takeException(), isNull);
     });
   });
 }
 
-/// Enrollment store whose biometric gate dismisses with nothing proven:
-///
-/// readEnrollment throws the typed dismissal (secure-backend contract),
-/// so the shell must park locked — never read the dismissal as empty.
+/// Enrollment store whose read fails: readEnrollment throws (unknown,
+/// never empty), so the shell must park locked — never read the failure
+/// as empty.
 class _DismissingEnrollStore extends InMemoryDeviceStore {
   @override
   Future<StoredEnrollment?> readEnrollment() async =>
-      throw const SecureStoreDismissed();
+      throw StateError('Secure storage is temporarily unreadable — try again.');
 }

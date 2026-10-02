@@ -15,6 +15,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
@@ -235,13 +236,12 @@ void main() {
       }
     });
 
-    testWidgets('role/enrollment contradiction parks with retry, pushes nothing',
+    testWidgets('role-held but unenrolled pushes setup directly',
         (t) async {
-      // Tier-wiped shape: the role cache says this Gmail holds the
-      // student role but the (single-slot auto) enrollment read missed.
-      // The shell must NOT push a phantom setup flow — park locked with
-      // an inconclusive Retry. The explicit Retry full-scans; the store
-      // here is genuinely empty, so it then pushes setup honestly.
+      // Deterministic single-slot reads: empty IS empty (no tier
+      // confusion), so a role cache that says student with no stored
+      // enrollment resolves unenrolled and pushes the setup flow —
+      // no inconclusive park, no phantom retry.
       //
       // The pushed flow's move gate awaits the real hardware-id channel
       // (4s Timer never advances under FakeAsync): stub the injectable
@@ -266,20 +266,9 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
-      expect(find.byType(SetupFlowScreen), findsNothing);
-      expect(
-          find.text(
-              'Enrollment check was inconclusive — tap Retry to unlock and check again.'),
-          findsOneWidget);
-      expect(
-          find.byType(StudentAccountScreen).hitTestable(), findsOneWidget);
-      await t.tap(find.widgetWithText(TextButton, 'Retry'));
-      await t.pump();
-      for (var i = 0; i < 4; i++) {
-        await t.pump(const Duration(milliseconds: 500));
-      }
-      // Full-scan retry confirmed genuinely empty → setup pushes (once).
       expect(find.byType(SetupFlowScreen), findsOneWidget);
+      expect(find.text('Couldn’t reach secure storage — try again.'),
+          findsNothing);
       expect(t.takeException(), isNull);
       // Drain stagger one-shots + the move-gate device-id timeout inside
       // the pushed flow (stepped: lets each tick settle).
@@ -333,15 +322,10 @@ void main() {
       }
     });
 
-    testWidgets('locked account fires no entry read (no prompt race)',
-        (t) async {
-      // Cold-open race pin: while locked, the Account tab entry must not
-      // fire its own biometric-gated read — it raced the shell resolve's
-      // unlock prompt (overlapping prompts cancel; the scanned prompt
-      // did nothing and the banner stayed). Exactly one read happens
-      // here (the mount resolve): the account-arrival re-resolve hits
-      // the dismissal park and stays silent (no second prompt uninvited),
-      // and the entry never reads while locked.
+    testWidgets('locked account shows retry, pushes nothing', (t) async {
+      // Read failure parks locked with a visible banner (no flow, no
+      // silence). Retry visibly re-attempts (reads climb, banner persists
+      // while the store keeps failing).
       final store = _CountingDismissStore();
       await t.pumpWidget(helpers.testScope(
           store: store,
@@ -351,36 +335,28 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
-      expect(store.reads, 1);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      expect(find.text('Unlock to continue — approve the phone prompt.'),
+      expect(find.text('Couldn’t reach secure storage — try again.'),
           findsOneWidget);
       expect(t.takeException(), isNull);
-      // Drain stagger one-shots (stepped: lets each tick settle).
-      for (var i = 0; i < 4; i++) {
-        await t.pump(const Duration(milliseconds: 500));
-      }
-      expect(store.reads, 1);
-      // Explicit retry still re-prompts past the park (the park only
-      // silences AUTOMATIC re-resolves): reads climb, banner persists
-      // while the store keeps dismissing.
+      final reads = store.reads;
+      expect(reads, greaterThan(0));
       await t.tap(find.widgetWithText(TextButton, 'Retry'));
       await t.pump();
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
-      expect(store.reads, 2);
-      expect(find.text('Unlock to continue — approve the phone prompt.'),
+      expect(store.reads, greaterThan(reads));
+      expect(find.text('Couldn’t reach secure storage — try again.'),
           findsOneWidget);
+      expect(find.byType(SetupFlowScreen), findsNothing);
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('stale dismiss never re-locks an unlocked shell',
-        (t) async {
-      // Pass-then-banner flake: the shell unlocks (prompt passed), then a
-      // stale dismissed verdict lands (duplicate prompt canceled while one
-      // was showing). The shell must stay on Mark — never re-lock, never
-      // park, never push, never banner.
+    testWidgets('store error never re-locks an unlocked shell', (t) async {
+      // The shell unlocks (doc served), then a later read fails: the
+      // resolve aborts unknown, which changes nothing — the shell stays
+      // on Mark, never re-locks, never pushes, never banners.
       final store = _FlakyPromptStore();
       late ProviderContainer container;
       await t.pumpWidget(helpers.testScope(
@@ -398,8 +374,8 @@ void main() {
       // Proven unlock: on Mark, no flow, no banner.
       expect(find.byType(StudentHomeScreen).hitTestable(), findsOneWidget);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      // A stale duplicate prompt verdict arrives (dismissed): the identity
-      // listener re-resolves, the store replays the dismissal.
+      // A later read failure arrives (transient): the identity
+      // listener re-resolves, the store throws.
       container.read(linkedIdentityProvider.notifier).state = null;
       await t.pump();
       for (var i = 0; i < 4; i++) {
@@ -407,7 +383,7 @@ void main() {
       }
       expect(find.byType(StudentHomeScreen).hitTestable(), findsOneWidget);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      expect(find.text('Unlock to continue — approve the phone prompt.'),
+      expect(find.text('Couldn’t reach secure storage — try again.'),
           findsNothing);
       expect(find.text('Checking enrollment…'), findsNothing);
       expect(t.takeException(), isNull);
@@ -431,7 +407,7 @@ void main() {
       // Mounts on Accounts, unlocks, advances to Mark — no flow involved.
       expect(find.byType(StudentHomeScreen).hitTestable(), findsOneWidget);
       expect(find.byType(SetupFlowScreen), findsNothing);
-      // Enrolled → never: tab storms never prompt redundantly (the
+      // Enrolled → never: tab storms never push redundantly (the
       // reported original bug stays fixed).
       for (final label in ['Courses', 'Account', 'Mark']) {
         await t.tap(find.descendant(
@@ -499,6 +475,7 @@ void main() {
               store: ref.watch(deviceStoreProvider),
               verifier: FakeFaceVerifier(),
               deviceKey: FakeDeviceKey(),
+              presenceGate: FakePresenceGate(),
             ),
           ),
         ],
@@ -557,22 +534,20 @@ void main() {
   });
 }
 
-/// Enrollment store that always replays a prompt dismissal while counting
-/// reads (cold-open race pin: while locked, only the shell resolve itself
-/// may read — display entries must stay silent).
+/// Enrollment store that always fails reads while counting them.
 class _CountingDismissStore extends InMemoryDeviceStore {
   int reads = 0;
 
   @override
   Future<StoredEnrollment?> readEnrollment() async {
     reads++;
-    throw const SecureStoreDismissed();
+    throw StateError('disk full');
   }
 }
 
-/// Enrollment store whose first read serves the doc (prompt passed) and
-/// every later read replays a prompt dismissal (stale duplicate prompt
-/// verdict stand-in): the shell must stay unlocked on Mark throughout.
+/// Enrollment store whose first read serves the doc and every later read
+/// fails (transient-failure stand-in): the shell must stay unlocked on
+/// Mark throughout.
 class _FlakyPromptStore extends InMemoryDeviceStore {
   int reads = 0;
 
@@ -588,7 +563,7 @@ class _FlakyPromptStore extends InMemoryDeviceStore {
         enrolledAt: DateTime.utc(2026, 1, 1),
       );
     }
-    throw const SecureStoreDismissed();
+    throw StateError('disk full');
   }
 }
 

@@ -14,6 +14,7 @@ import 'package:proximity_app/core/ble_radio.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/student_driver.dart';
 import 'package:proximity_app/design/app_theme.dart';
@@ -59,6 +60,7 @@ List<Override> _overrides({LinkedIdentity? linked}) {
         store: ref.watch(deviceStoreProvider),
         verifier: FakeFaceVerifier(),
         deviceKey: FakeDeviceKey(),
+        presenceGate: FakePresenceGate(),
       ),
     ),
   ];
@@ -101,6 +103,7 @@ Widget _profApp(InMemoryDeviceStore store, {bool reduced = false}) {
           store: ref.watch(deviceStoreProvider),
           verifier: FakeFaceVerifier(),
           deviceKey: FakeDeviceKey(),
+          presenceGate: FakePresenceGate(),
         ),
       ),
     ],

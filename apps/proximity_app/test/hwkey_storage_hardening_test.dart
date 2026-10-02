@@ -21,6 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/security/secure_store_options.dart';
 import 'package:proximity_app/features/device_identity/hw_device_key.dart';
@@ -112,6 +113,7 @@ EnrollmentController _ctl(FakeAuthService auth, InMemoryDeviceStore store,
       store: store,
       verifier: FakeFaceVerifier(),
       deviceKey: deviceKey ?? FakeDeviceKey(),
+      presenceGate: FakePresenceGate(),
       livenessGate: FakeLivenessGate(),
     );
 
@@ -225,34 +227,33 @@ void main() {
     });
 
     test('FlutterSealStore Android options stay prompt-free by design', () {
-      // The enrollment doc (SecureStoreOptions.aOpts) is biometric-gated;
-      // the DEK must NOT be: every 5s prove rotation unseals, and use is
-      // already gated by the 4h HW-key grant + the face check.
+      // The DEK must never prompt: every 5s prove rotation unseals, and
+      // use is already gated by the 4h HW-key grant + the face check.
+      // (The enrollment store is prompt-free too — presence is confirmed
+      // explicitly at Save, never per-read.)
       const seal = FlutterSealStore();
       expect(seal.storage.aOptions, isA<AndroidOptions>());
       expect(seal.storage.aOptions.toMap()['enforceBiometrics'], 'false');
     });
 
     test('seal and enrollment stores use distinct crash-safe namespaces', () {
-      // Regression pin for the shared-namespace wipe: different key ciphers
-      // (RSA-wrap here vs AES-wrap in SecureStoreOptions.aOpts) sharing one
-      // namespace flip algorithm markers and trigger migrate/reset wipes of
-      // each other's data (FSS v11 namespaced prefs + KeyStore suffixes).
+      // Regression pin for the shared-namespace wipe: two FSS instances
+      // sharing one namespace flip algorithm markers and wipe each
+      // other's data (FSS v11 namespaced prefs + KeyStore suffixes).
       const seal = FlutterSealStore();
       final sealMap = seal.storage.aOptions.toMap();
       final enrollMap = SecureStoreOptions.aOpts.toMap();
       expect(sealMap['storageNamespace'], 'prox_seal');
       expect(sealMap['migrateWithBackup'], 'true');
       // Plugin-level migration stays OFF on both (namespace-per-config
-      // is the migration strategy — the backup path crashes on fresh
-      // namespaces and wipes the key anyway). resetOnError stays OFF on
-      // both too: any cipher error must surface (mapped to re-enroll copy
+      // is the migration strategy). resetOnError stays OFF on both too:
+      // any cipher error must surface (mapped to re-enroll copy
       // upstream), never silently wipe the DEK or the enrollment.
       expect(sealMap['migrateOnAlgorithmChange'], 'false');
       expect(sealMap['resetOnError'], 'false');
       expect(enrollMap['migrateOnAlgorithmChange'], 'false');
       expect(enrollMap['resetOnError'], 'false');
-      expect(enrollMap['storageNamespace'], 'prox_enroll');
+      expect(enrollMap['storageNamespace'], 'prox_store');
       expect(sealMap['storageNamespace'],
           isNot(equals(enrollMap['storageNamespace'])));
     });

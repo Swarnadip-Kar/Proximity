@@ -19,6 +19,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/features/entry/entry_flow.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -49,13 +50,15 @@ class _DenyOwnCloud extends FakeCloudSync {
 
 Future<EnrollmentController> _readyToSave(
     FakeAuthService auth, InMemoryDeviceStore store, FakeCloudSync cloud,
-    {String installId = 'install-new-01'}) async {
+    {String installId = 'install-new-01',
+    UserPresenceGate? presence}) async {
   await store.writeInstallId(installId);
   final ctl = EnrollmentController(
     auth: auth,
     store: store,
     verifier: FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    presenceGate: presence ?? FakePresenceGate(),
     cloud: cloud,
     // enrollFace measures liveness: scripted pass (liveness itself is
     // pinned in enroll_liveness_gate_test.dart).
@@ -101,6 +104,33 @@ void main() {
           isFalse);
       expect(isRulesDenialMessage(''), isFalse);
       expect(isRulesDenialMessage('Save failed: boom'), isFalse);
+    });
+  });
+
+  group('upload presence gate (explicit Save only)', () {
+    test('cancelled presence stays faceDone with the save copy', () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _readyToSave(auth, store, FakeCloudSync(),
+          presence: FakePresenceGate()..willConfirm = false);
+      final id = await ctl.upload();
+      expect(id, isNull);
+      // faceDone (Save enabled, capture visibly kept) — never error.
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.message, contains('Save cancelled'));
+      expect(await store.readEnrollment(), isNull);
+    });
+
+    test('unsupported device stays faceDone with the setup copy', () async {
+      final auth = FakeAuthService(_b);
+      final store = InMemoryDeviceStore();
+      final ctl = await _readyToSave(auth, store, FakeCloudSync(),
+          presence: FakePresenceGate()..unsupportedDevice = true);
+      final id = await ctl.upload();
+      expect(id, isNull);
+      expect(ctl.state.phase, EnrollPhase.faceDone);
+      expect(ctl.state.message, contains('no screen lock'));
+      expect(await store.readEnrollment(), isNull);
     });
   });
 

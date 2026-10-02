@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
@@ -52,6 +53,7 @@ Future<EnrollmentController> _keyReady({FaceVerifier? verifier}) async {
     store: InMemoryDeviceStore(),
     verifier: verifier ?? FakeFaceVerifier(),
     deviceKey: FakeDeviceKey(),
+    presenceGate: FakePresenceGate(),
     // enrollFace measures liveness: scripted pass (liveness itself is
     // pinned in enroll_liveness_gate_test.dart).
     livenessGate: FakeLivenessGate(),
