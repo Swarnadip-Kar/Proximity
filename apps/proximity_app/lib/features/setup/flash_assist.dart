@@ -78,9 +78,13 @@ class ChannelScreenBrightnessControl implements ScreenBrightnessControl {
   @override
   Future<void> set(double value) async {
     if (kIsWeb) return;
+    // -1.0 = follow system (clear the window override). Must pass through
+    // verbatim — clamping it to 0.0 strands the window at darkest and
+    // Android reports "brightness controlled by another app".
+    final v = value < 0 ? -1.0 : value.clamp(0.0, 1.0);
     try {
       await channel.invokeMethod<void>(
-          'setBrightness', {'value': value.clamp(0.0, 1.0)}).timeout(
+          'setBrightness', {'value': v}).timeout(
           _hopBudget);
     } catch (_) {}
   }
@@ -158,7 +162,10 @@ class _FlashAssistSyncState extends State<FlashAssistSync> {
       final prev = _previous;
       _applied = false;
       _previous = null;
-      if (prev != null) unawaited(widget.control.set(prev));
+      // Unknown previous still clears (follow system) — leaving max applied
+      // strands the window and Android reports "brightness controlled by
+      // another app" after back navigation (same Activity window survives).
+      unawaited(widget.control.set(prev ?? -1.0));
     }
     super.dispose();
   }
@@ -184,9 +191,9 @@ class _FlashAssistSyncState extends State<FlashAssistSync> {
     _applied = false;
     final prev = _previous;
     _previous = null;
-    if (prev == null) return;
+    // Same clear-on-unknown rule as dispose (see above).
     try {
-      await widget.control.set(prev);
+      await widget.control.set(prev ?? -1.0);
     } catch (_) {}
   }
 

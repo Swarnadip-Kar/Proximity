@@ -120,15 +120,32 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('unknown previous skips restore, never writes garbage',
+    testWidgets('unknown previous clears to system, never strands max',
         (t) async {
+      // Previous unknown (channel failure): restore clears the window
+      // override (-1 = follow system) instead of leaving max applied —
+      // a stranded max is what showed "controlled by another app" after
+      // back navigation (same Activity window survives the pop).
       final fake = FakeScreenBrightnessControl(scriptedCurrent: null);
       await pumpSync(t, active: true, fake: fake);
       await t.pump();
       expect(fake.sets, [1.0]);
       await t.pumpWidget(const MaterialApp(home: Scaffold()));
       await t.pump();
+      expect(fake.sets, [1.0, -1.0]);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('system-follow previous restores verbatim', (t) async {
+      // Window already followed system (-1): max then restore to -1, never
+      // clamped to 0 (darkest) — clamping stranded the slider.
+      final fake = FakeScreenBrightnessControl(scriptedCurrent: -1.0);
+      await pumpSync(t, active: true, fake: fake);
+      await t.pump();
       expect(fake.sets, [1.0]);
+      await pumpSync(t, active: false, fake: fake);
+      await t.pump();
+      expect(fake.sets, [1.0, -1.0]);
       expect(t.takeException(), isNull);
     });
   });

@@ -192,10 +192,16 @@ class MainActivity : FlutterFragmentActivity() {
                     result.success(window.attributes.screenBrightness.toDouble())
                 }
                 "setBrightness" -> {
-                    val v = (call.argument<Double>("value") ?: 1.0).coerceIn(0.0, 1.0)
+                    // Negative (Dart sends -1.0) = follow system: clear the
+                    // window override so the OS brightness slider works again
+                    // after back navigation. Coercing it into 0..1 stranded
+                    // the window at darkest with "controlled by another app".
+                    val raw = call.argument<Double>("value")
+                    val v = if (raw != null && raw < 0) -1.0f
+                        else (raw ?: 1.0).coerceIn(0.0, 1.0).toFloat()
                     runOnUiThread {
                         val attrs = window.attributes
-                        attrs.screenBrightness = v.toFloat()
+                        attrs.screenBrightness = v
                         window.attributes = attrs
                         result.success(null)
                     }
