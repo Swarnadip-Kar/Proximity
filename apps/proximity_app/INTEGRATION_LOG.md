@@ -56,3 +56,30 @@ Two tester-verified defects, presentation/navigation only. Frozen kept: decision
 ### Deviations
 
 - (1) Sessions toggle required a minimal presentation-only edit to `features/records/course_overview_screen.dart` (`_OverviewBody`), although the brief's ownership line did not list it: FIX 1(a) explicitly orders the toggle on "each selectable list (inbox + sessions multi-delete)", and the sessions list cannot gain it via shared widgets alone (its `selectionMode` binding lives in that file; an arm-free `selectAll`-as-entry alternative was rejected as hostile UX for large lists). Holding strictly to the ownership list would have left half of FIX 1(a) unimplemented. No decision/filter/sort/data logic touched. (2) Desktop coach-mark copy deliberately NOT changed (`Hold to select` everywhere — the brief allowed, not ordered, naming the Select control; keeping it avoids re-showing churn and keeps the mobile assertion byte-identical). (3) No driver `notify` hook added — the poll is additive and read-only, so none was needed; no `live_sections.dart` change was needed either (the section-level timer covers the focused screen).
+
+## Mark face-scan crash hardening
+
+Audit of the face scan during the student mark flow (`screens/student_home.dart` `_scanFace` + `screens/face_capture.dart` sheet). No mis-mark path found — the driver already maps every verifier throw to `inconclusive`/`mismatch` and the SK gate stamps only on gated passes. Every fix below is crash/dead-end hardening; verdict semantics, attempt burns (4), the 7s window, and all copy are unchanged except new retry guidance lines.
+
+### Root causes (verified in code, not assumed)
+
+- Unawaited sheet push: `StillCapturer.capture` awaited with no `try` — a throw (dead context, channel error) escaped as an unhandled async error and skipped `liveReadout.dispose()`.
+- Backgrounding left the pushed camera sheet open above `Paused` (phase guards only stop future work; the sheet kept capturing behind the next screen).
+- Denied camera permission popped null with no notice (indistinguishable from Cancel) and the denied branch offered no recovery (Capture disabled, no Try-again/Settings).
+- Unbounded `CameraController.initialize()` stranded the sheet on the spinner on hung init; `ResolutionPreset.high` had no fallback; `takePicture` raced background dispose on the same handle; `inactive` (shade/call UI) needlessly blacked the preview.
+- Legacy (non-`accept`) auto-retries used untracked `Future.delayed` with no run guard.
+- Outer verify and both `accept` callbacks caught only `StateError` — any other throw escaped the host or prematurely popped the sheet.
+
+### Diff per item
+
+- `lib/screens/student_home.dart`: capture wrapped in try/catch+finally (`Could not open the camera — tap Scan to try again`, readout always disposed, `_faceSheetOpen` tracked); backgrounding pops the sheet best-effort; `acceptStill` pops (returns true) once the phase leaves; generic throws in both callbacks keep capturing (burst budget still bounds); outer verify maps non-`StateError` to the inconclusive retry notice; null burst checks `Permission.camera.status` and names the fix when denied; legacy retries via tracked, run-guarded `_autoFaceTimer` cancelled on every teardown/dispose/reset; `_scanBusy` contention logged. Stale burst-size comments corrected (5 stills, ~0.6s gaps).
+- `lib/screens/face_capture.dart`: bounded `_openController` (15s init with dispose-before-throw, high→medium fallback); `_ctlGen` staleness latch on every await in `_captureAll`; lifecycle parks only on real backgrounding (`paused`/`hidden`/`detached`); backgrounded-during-init sets `Paused — returning…`; denied branch distinguishes permanent (Open Settings) vs temporary (Try-again re-request).
+
+### Tests
+
+- `dart analyze` on both files: clean.
+- Face/mark suites green: `face_auto_retry`, `face_crash_hardening`, `face_check_single_shot`, `face_manual_fallback`, `face_liveness_check`, `face_rescan_cooldown`, `student_driver` (97 pass); `widget_test`, `join_student_visuals`, `face_oval_landing`, `face_identity`, `face_isolate_crash_fix`, `mark_enrollment_race`, `mark_slimdown`, `capture_preview_fidelity`, `edge_to_edge_capture`, `flash_assist`, `enroll_capture_breakup` (164 pass).
+
+### Deliberately untouched (audited, no change)
+
+- `TODO(sec-face)` migration notes, raw-score `listenAndProve` overload (fake/test path), `FakeStillCapturer` accept-compat, `face/capture` settings-name constant, `FaceCheckView` compat params, EXIF/test-only liveness helpers — all intentional or test-pinned; changing them adds risk with no crash benefit.
