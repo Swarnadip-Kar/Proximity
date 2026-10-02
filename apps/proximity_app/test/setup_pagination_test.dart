@@ -503,6 +503,62 @@ void main() {
       expect(completed, isTrue);
     });
 
+    testWidgets('locked restore offers unlock retry, never generate-over',
+        (t) async {
+      // Dismissed-prompt shape: the store holds this Gmail's enrollment
+      // but the first read was skipped. The key step must offer the
+      // unlock retry — generating here would overwrite a valid
+      // enrollment with a fresh key.
+      final store = _LockedOnceStore();
+      await store.writeInstallId('ab12cd34ef56ab78');
+      await store.writeEnrollment(StoredEnrollment(
+        email: _acct.email,
+        name: 'Test User',
+        roll: 'R1001',
+        pkHex: 'cd' * 32,
+        sealedKeyHex: hexEncode(await FakeDeviceKey()
+            .seal(Uint8List.fromList(hexDecode('ab' * 32)))),
+        faceId: 'face-1',
+        enrolledAt: DateTime.utc(2026, 9, 1),
+        verifierVer: 'old-pipeline',
+        org: 'example.com',
+        pkDHex: 'ef' * 32,
+        attestationLevel: 'FULL',
+        attestedAt: DateTime.utc(2026, 9, 1),
+        attestedUntil: DateTime.utc(2026, 11, 30),
+      ));
+      final auth = FakeAuthService(_acct);
+      final ctl = EnrollmentController(
+        auth: auth,
+        store: store,
+        verifier: FakeFaceVerifier(),
+        deviceKey: FakeDeviceKey(),
+      );
+      // First restore hits the skipped prompt → locked, keyless.
+      await ctl.refreshFromAuth();
+      expect(ctl.restoreLockedForAccount, isTrue);
+      expect(ctl.state.pkHex, isEmpty);
+      await t.pumpWidget(_app(
+        const AccountKeyStep(),
+        [
+          authServiceProvider.overrideWithValue(auth),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(store),
+          enrollmentControllerProvider.overrideWith((ref) => ctl),
+        ],
+      ));
+      await t.pumpAndSettle();
+      expect(find.text('Retry unlock'), findsOneWidget);
+      expect(find.text('Generate device key'), findsNothing);
+      // Explicit retry restores the held key — still no keygen offered.
+      await t.tap(find.text('Retry unlock'));
+      await t.pumpAndSettle();
+      expect(ctl.state.pkHex.isNotEmpty, isTrue);
+      expect(find.text('Generate device key'), findsNothing);
+      expect(find.textContaining('Key:'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('double Continue advances exactly one page (single-flight)',
         (t) async {
       final store = InMemoryDeviceStore();
@@ -811,4 +867,24 @@ void main() {
       await _settleStepped(t);
     });
   });
+}
+
+/// Enrollment store whose first read replays a skipped biometric prompt
+/// (dismissal with the doc behind the lock); the explicit retry then
+/// serves the seeded doc: the key step must offer unlock-retry over a
+/// locked enrollment, never generate-over.
+class _LockedOnceStore extends InMemoryDeviceStore {
+  var locked = true;
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() async {
+    if (locked) throw const SecureStoreDismissed();
+    return super.readEnrollment();
+  }
+
+  @override
+  Future<StoredEnrollment?> readEnrollmentRetry() async {
+    locked = false;
+    return super.readEnrollment();
+  }
 }
