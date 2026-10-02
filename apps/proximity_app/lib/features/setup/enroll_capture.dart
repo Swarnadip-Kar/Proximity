@@ -158,9 +158,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
         : restoreLocked
             ? 'Couldn’t unlock this device’s key — approve the phone prompt, then try again.'
             : 'Generate the device key on the previous screen first — the face capture seals to it.';
-    // Flash assist (dark session): graded ring-light level + window
-    // brightness via the sync shell below (restored after). Pure
-    // derivation from the driver's stall state — no new timers here.
+    // Flash assist (dark room): graded ring-light level + window
+    // brightness via the sync shell below (restored after). Live room
+    // reading when a sensor reports (instant), capture-brightness
+    // fallback otherwise — pure derivation, no new timers here.
     final assist = flashAssist;
     final level = flashLevel;
     // Fail-closed preview states (frozen copy): denied / failed / no-key

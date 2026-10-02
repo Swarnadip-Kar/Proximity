@@ -44,6 +44,7 @@ import '../../design/tokens.dart';
 import '../../features/face_identity/face_verifier.dart';
 import '../../features/face_identity/liveness_gate.dart';
 import '../../features/face_identity/pose_gate.dart';
+import 'ambient_light.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
 import 'setup_step_scope.dart';
@@ -350,18 +351,20 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// the ring fully instead of hovering near-invisible).
   static const _flashSnap = 0.02;
 
-  /// Graded ring intensity 0..1 actually painted (0 = hidden): the darker
-  /// the measured crop, the brighter the ring glows. Eased, never jumped.
-  double get flashLevel => _flashShown;
+  /// Graded ring intensity 0..1 actually painted (0 = hidden): with a live
+  /// ambient sensor this tracks the room directly (darker room = brighter
+  /// ring, gradual — the sensor itself moves smoothly, so no easing lag);
+  /// without one it plays the eased capture-brightness level below.
+  double get flashLevel =>
+      _liveLux != null ? luxToLevel(_liveLux!) : _flashShown;
 
   /// Flash-assist switch for the dark session (see flash_assist.dart):
-  /// true once the eased ring level is visibly on. Single source of truth
-  /// for ring + window brightness so the two never disagree (maxed screen
-  /// with no ring, or ring with no light). The window max applies as soon
-  /// as the fade starts (~one repaint) and restores as it finishes — light
-  /// first, glow follows, both settle together. Pure derivation — no side
-  /// effects here (application lives in [FlashAssistSync]).
-  bool get flashAssist => _flashShown > 0.05;
+  /// with a live sensor this fires the moment the room reads dark
+  /// (~100-200ms, no beat wait); without one it follows the eased ring
+  /// level so ring + window brightness never disagree. Pure derivation —
+  /// no side effects here (application lives in [FlashAssistSync]).
+  bool get flashAssist =>
+      _liveLux != null ? luxIsDark(_liveLux!) : _flashShown > 0.05;
 
   /// Darkness target the eased [flashLevel] chases: fresh measured
   /// brightness maps linearly below the warn hint (bright 70 → 0,
@@ -405,6 +408,46 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     } catch (_) {
       return false;
     }
+  }
+
+  /// Live ambient lux from the light sensor (null when the device has no
+  /// sensor side — iOS, desktop, emulator — or before the first event).
+  /// While non-null the ring, the window-max switch, and the readout B
+  /// token all track the room live; otherwise the capture-brightness path
+  /// below serves as fallback. Presentation only, never a gate.
+  double? _liveLux;
+  StreamSubscription<double>? _luxSub;
+
+  /// Starts the ambient feed (idempotent; safe to call per open). Errors
+  /// and missing sensors yield an empty stream — the fallback path simply
+  /// stays in charge. Events land at sensor rate (~5Hz) and repaint
+  /// directly: lux moves smoothly on its own, so no easing lag is added.
+  void _startAmbient() {
+    if (_luxSub != null) return;
+    late final AmbientLight source;
+    try {
+      source = ref.read(enrollAmbientLightProvider);
+    } catch (_) {
+      return;
+    }
+    try {
+      _luxSub = source.watch().listen(
+        (lux) {
+          if (_done || _finished || _failed || !mounted) return;
+          setState(() => _liveLux = lux);
+        },
+        // Missing plugin / no sensor ends the stream instead (fail-soft —
+        // the capture-brightness fallback stays in charge).
+        onError: (_) {},
+      );
+    } catch (_) {
+      _luxSub = null;
+    }
+  }
+
+  void _stopAmbient() {
+    unawaited(_luxSub?.cancel());
+    _luxSub = null;
   }
 
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
@@ -625,6 +668,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _livenessPlan = EnrollLivenessPlan.fresh();
     EnrollLog.face(
         'liveness walk: ${_livenessPlan!.order.map((a) => a.name).join(' → ')}');
+    _startAmbient();
     _startLoop();
   }
 
@@ -664,6 +708,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   void _stopSweep() {
     _sweepTimer?.cancel();
     _sweepTimer = null;
+    _stopAmbient();
   }
 
   /// The no-tap driver: take a still, read its pose ONCE, and fill the
@@ -999,13 +1044,13 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
-  /// judged it + measured crop brightness + guided target (e.g.
-  /// `LIVE 0.93/0.70 B139 · DOWN`, or `LIVE —/0.70 · DOWN · DIM` after an
-  /// unreadable dim probe, or `LIVE 0.99/0.70 B58 · DOWN · DIM` for a
-  /// passing-but-dark probe). The brightness sits in the same line as the
-  /// score (same probe the native gate logs as `bright=`) so the holder
-  /// sees the number, not just the verdict. Placeholders until the first
-  /// probe/read lands. No match score exists mid-walk (the matcher first
+  /// judged it + live brightness + guided target (e.g.
+  /// `LIVE 0.93/0.70 B139 · DOWN`, or `LIVE —/0.70 B12 · DOWN · DIM` in a
+  /// dark room before any probe scores). The brightness sits in the same
+  /// line as the score: the live room reading when a sensor reports
+  /// (updates every beat, even off-target when no probe runs), else the
+  /// last scored probe's crop mean (same probe the native gate logs as
+  /// `bright=`). Placeholders until the first read lands. No match score exists mid-walk (the matcher first
   /// runs at the terminal self-check — its boundary score lands on the
   /// result screen), so this line never invents one. The DIM/BLURRY/NO
   /// FACE suffix is warn-only presentation — it never gates anything, and
@@ -1020,7 +1065,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         (_currentTarget == 'centre'
             ? kLivenessThreshold
             : kEnrollSideLivenessThreshold);
-    final bright = _lastBrightness;
+    // Brightness rides the live sensor when one is reporting (updates every
+    // beat, even off-target when no probe runs); otherwise the last scored
+    // probe's crop mean. Either way the holder sees a live number, never a
+    // stuck line.
+    final liveLux = _liveLux;
+    final bright = liveLux != null && liveLux.isFinite && liveLux >= 0
+        ? luxToBrightness(liveLux)
+        : _lastBrightness;
     final bTok = bright != null && bright.isFinite
         ? ' B${bright.round()}'
         : '';
@@ -1029,11 +1081,14 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
       hint = LivenessUnreadable.shortLabel(
           _lastQuality ?? LivenessUnreadableReason.unknown);
     } else {
-      if (bright != null &&
-          bright.isFinite &&
-          bright < kLivenessDimHintBrightness) {
-        hint = 'DIM';
-      }
+      // DIM from either evidence: the scored crop (AE-compensated, may
+      // look bright in a dark room) or the live room reading itself.
+      final cropDim = _lastBrightness != null &&
+          _lastBrightness!.isFinite &&
+          _lastBrightness! < kLivenessDimHintBrightness;
+      final roomDim =
+          liveLux != null && luxIsDark(liveLux) && liveLux.isFinite;
+      if (cropDim || roomDim) hint = 'DIM';
     }
     final target = _currentTarget.toUpperCase();
     return hint == null

@@ -173,6 +173,7 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         registerScreenBrightnessChannel(flutterEngine)
+        registerAmbientLightChannel(flutterEngine)
     }
 
     // Enroll flash assist (Dart: features/setup/flash_assist.dart).
@@ -209,6 +210,56 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    // Live ambient light (Dart: features/setup/ambient_light.dart).
+    // TYPE_LIGHT lux at sensor rate (~5Hz, no permission needed) for the
+    // instant flash-assist trigger: true pre-AE ambient, unlike the
+    // auto-exposed capture crops. No sensor (emulator, some low-end) ends
+    // the stream with UNAVAILABLE and Dart falls back to capture
+    // brightness. Listener lives only while Dart listens (capture screens
+    // up) — negligible battery.
+    private fun registerAmbientLightChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        io.flutter.plugin.common.EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "org.iitbhilai.proximity/ambient_light"
+        ).setStreamHandler(object : io.flutter.plugin.common.EventChannel.StreamHandler {
+            private var listener: android.hardware.SensorEventListener? = null
+            private var manager: android.hardware.SensorManager? = null
+
+            override fun onListen(args: Any?, events: io.flutter.plugin.common.EventChannel.EventSink?) {
+                val sink = events ?: return
+                val mgr = getSystemService(android.content.Context.SENSOR_SERVICE)
+                    as android.hardware.SensorManager
+                val sensor = mgr.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)
+                if (sensor == null) {
+                    sink.error("UNAVAILABLE", "No ambient light sensor", null)
+                    return
+                }
+                manager = mgr
+                val l = object : android.hardware.SensorEventListener {
+                    override fun onSensorChanged(e: android.hardware.SensorEvent?) {
+                        if (e != null && e.values.isNotEmpty()) {
+                            sink.success(e.values[0].toDouble())
+                        }
+                    }
+                    override fun onAccuracyChanged(
+                        s: android.hardware.Sensor?, acc: Int) {}
+                }
+                listener = l
+                mgr.registerListener(
+                    l, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+            }
+
+            override fun onCancel(args: Any?) {
+                try {
+                    val l = listener
+                    if (l != null) manager?.unregisterListener(l)
+                } catch (_: Exception) {}
+                listener = null
+                manager = null
+            }
+        })
     }
 
     private fun ByteArray.toHex(): String {
