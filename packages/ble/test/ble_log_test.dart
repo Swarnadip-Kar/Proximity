@@ -47,4 +47,23 @@ void main() {
     }
     expect(BleLog.history, hasLength(BleLog.cap));
   });
+
+  test('PROX_LOG_CONSOLE flag overrides the build default', () {
+    // Unset: debug/test echoes, release stays silent.
+    expect(BleLog.consoleEchoFor(flag: '', productBuild: false), isTrue);
+    expect(BleLog.consoleEchoFor(flag: '', productBuild: true), isFalse);
+    // Explicit true-ish forces echo even on release builds.
+    for (final f in ['true', 'TRUE', ' 1 ', 'yes', 'on']) {
+      expect(BleLog.consoleEchoFor(flag: f, productBuild: true), isTrue,
+          reason: f);
+    }
+    // Explicit false-ish forces silence even on debug builds.
+    for (final f in ['false', 'FALSE', ' 0 ', 'no', 'off']) {
+      expect(BleLog.consoleEchoFor(flag: f, productBuild: false), isFalse,
+          reason: f);
+    }
+    // Unknown values fall back to the build default (never crash).
+    expect(BleLog.consoleEchoFor(flag: 'maybe', productBuild: true), isFalse);
+    expect(BleLog.consoleEchoFor(flag: 'maybe', productBuild: false), isTrue);
+  });
 }

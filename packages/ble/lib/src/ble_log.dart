@@ -26,6 +26,14 @@ class BleLogEntry {
 /// Ring-buffer + broadcast stream. UI subscribes via [stream] and seeds
 /// from [history]. The cap covers a full lecture + debug session;
 /// views render a window, never the whole ring.
+///
+/// Release console echo (field debugging without restructuring):
+///   flutter run --release --dart-define=PROX_LOG_CONSOLE=true
+///   flutter build apk --release --dart-define=PROX_LOG_CONSOLE=true
+/// `true` forces the `print` mirror on even on user builds; `false`
+/// forces it off; unset keeps the safe default (on in debug/test, off
+/// in release). Release echo carries PII/scores into logcat — pilot and
+/// personal debug builds only, never store builds.
 class BleLog {
   static const int cap = 50000;
 
@@ -48,7 +56,15 @@ class BleLog {
   /// emails/scores/verdicts stay in the in-memory ring + on-screen
   /// terminal and never reach logcat on user builds. Tests flip this to
   /// pin both branches (zone-intercepted `print`).
-  static bool echoToConsole = !bool.fromEnvironment('dart.vm.product');
+  ///
+  /// Compile-time override `--dart-define=PROX_LOG_CONSOLE=true|false`
+  /// (see [consoleEchoFor]): forces the mirror on/off regardless of the
+  /// build mode, so release builds can stream logs to the terminal while
+  /// debugging without restructuring. Unset = the safe default above.
+  static bool echoToConsole = consoleEchoFor(
+    flag: const String.fromEnvironment('PROX_LOG_CONSOLE', defaultValue: ''),
+    productBuild: bool.fromEnvironment('dart.vm.product'),
+  );
 
   static void log(String tag, String msg) {
     final e = BleLogEntry(DateTime.now().toUtc(), tag, msg);
@@ -71,6 +87,27 @@ class BleLog {
   }
 
   static void clear() => _history.clear();
+
+  /// Resolves the console mirror for a build: an explicit
+  /// `--dart-define=PROX_LOG_CONSOLE=true|false` (also `1/0`, `yes/no`,
+  /// `on/off`) always wins; otherwise debug/test echoes and release
+  /// (`dart.vm.product`) stays silent. Pure so tests pin the table.
+  static bool consoleEchoFor({required String flag, required bool productBuild}) {
+    switch (flag.trim().toLowerCase()) {
+      case '1':
+      case 'true':
+      case 'yes':
+      case 'on':
+        return true;
+      case '0':
+      case 'false':
+      case 'no':
+      case 'off':
+        return false;
+      default:
+        return !productBuild;
+    }
+  }
 
   /// Short UUID helper for logs: first 8 chars of the canonical form.
   static String shortUuid(String uuid) {
