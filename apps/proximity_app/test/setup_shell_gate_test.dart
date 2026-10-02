@@ -215,6 +215,12 @@ void main() {
       await t.pump(const Duration(milliseconds: 100));
       expect(find.text('Checking enrollment…'), findsOneWidget);
       expect(find.byType(SetupFlowScreen), findsNothing);
+      // Resolve slot rides below the pages, just above the tab bar —
+      // never pushing the Account page down from the top.
+      expect(
+        t.getTopLeft(find.text('Checking enrollment…')).dy,
+        greaterThan(400),
+      );
       store.gate.complete(null);
       await t.pump();
       for (var i = 0; i < 4; i++) {
@@ -246,6 +252,14 @@ void main() {
           find.text('Couldn’t reach secure storage — try again.'),
           findsOneWidget);
       expect(find.byType(SetupFlowScreen), findsNothing);
+      // Error banner rides below the pages too (same slot as above).
+      expect(
+        t
+            .getTopLeft(
+                find.text('Couldn’t reach secure storage — try again.'))
+            .dy,
+        greaterThan(400),
+      );
       final reads = store.reads;
       expect(reads, greaterThan(0));
       await t.tap(find.widgetWithText(TextButton, 'Retry'));

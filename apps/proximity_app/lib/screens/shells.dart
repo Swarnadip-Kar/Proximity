@@ -1106,6 +1106,64 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (_tabsLocked) setState(() {});
   }
 
+  /// Resolve slot (locked only): spinner while a resolve runs, the
+  /// dismissed-unlock nudge, or the transient-failure banner. Renders
+  /// just above the tab bar (never overlaid on content, never pushing
+  /// the page down from the top). Empty while unlocked or while there
+  /// is nothing to say. Nudge hides via X or a non-dismissed resolve;
+  /// the error banner hides via X or the next resolve start.
+  Widget _resolveSlot() {
+    Widget? slot;
+    if (_tabsLocked && _resolving) {
+      slot = Builder(builder: (context) {
+        return Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: ProxSpacing.sm),
+              Text(
+                'Checking enrollment…',
+                style: ProxType.caption(
+                    color:
+                        ProximityColors.of(context).contentSecondary),
+              ),
+            ],
+          ),
+        );
+      });
+    } else if (_unlockDismissed && !_unlockNudgeHidden && _tabsLocked) {
+      slot = _UnlockNudge(
+        onRetry: () =>
+            unawaited(_refreshEnrollmentState(userInitiated: true)),
+        onDismiss: () => setState(() => _unlockNudgeHidden = true),
+      );
+    } else if (_storeError && _tabsLocked) {
+      slot = _UnlockNudge(
+        message: 'Couldn’t reach secure storage — try again.',
+        onRetry: () =>
+            unawaited(_refreshEnrollmentState(userInitiated: true)),
+        onDismiss: () => setState(() => _storeError = false),
+      );
+    }
+    if (slot == null) return const SizedBox.shrink();
+    // Plain padding: the shell edge body already clears the system nav
+    // bar below, so no SafeArea here (a top SafeArea would float the
+    // slot mid-screen; a bottom one would double-pad).
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          ProxSpacing.screenMargin,
+          ProxSpacing.sm,
+          ProxSpacing.screenMargin,
+          ProxSpacing.sm),
+      child: slot,
+    );
+  }
+
   void _armGate() {
     // Called from build (like before): Riverpod scopes each `ref.listen`
     // to the build, so re-arming every build keeps exactly the current
@@ -1166,85 +1224,13 @@ class _StudentShellState extends ConsumerState<StudentShell> {
         // classic inset layout unchanged.
         extendBody: isMobile,
         body: _ShellEdgeBody(
-          // Resolve slot (locked only, in flow above the tabs — never
-          // overlaid on content): a spinner while a resolve runs (never
-          // dead silence during the biometric-gated read), then the
-          // dismissed-unlock nudge (remedy: unlock, never re-enroll, with
-          // explicit retry), then a transient-failure banner with Retry.
-          // Locked-tab taps/swipes re-resolve too. Nudge hides via X or a
-          // non-dismissed resolve; the error banner hides via X or the
-          // next resolve start.
+          // Resolve slot rides BELOW the pages, just above the tab bar
+          // (never overlaid on content, never pushing the Account page
+          // down from the top): spinner while a resolve runs, then the
+          // dismissed-unlock nudge or the transient-failure banner.
+          // Locked-tab taps/swipes re-resolve too.
           child: Column(
             children: [
-              if (_tabsLocked && _resolving)
-                SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm,
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm),
-                    child: Center(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2),
-                          ),
-                          const SizedBox(width: ProxSpacing.sm),
-                          Text(
-                            'Checking enrollment…',
-                            style: ProxType.caption(
-                                color: ProximityColors.of(context)
-                                    .contentSecondary),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                )
-              else if (_unlockDismissed &&
-                  !_unlockNudgeHidden &&
-                  _tabsLocked)
-                SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm,
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm),
-                    child: _UnlockNudge(
-                      onRetry: () => unawaited(
-                          _refreshEnrollmentState(userInitiated: true)),
-                      onDismiss: () =>
-                          setState(() => _unlockNudgeHidden = true),
-                    ),
-                  ),
-                )
-              else if (_storeError && _tabsLocked)
-                SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm,
-                        ProxSpacing.screenMargin,
-                        ProxSpacing.sm),
-                    child: _UnlockNudge(
-                      message:
-                          'Couldn’t reach secure storage — try again.',
-                      onRetry: () => unawaited(
-                          _refreshEnrollmentState(userInitiated: true)),
-                      onDismiss: () =>
-                          setState(() => _storeError = false),
-                    ),
-                  ),
-                ),
               Expanded(
                 child: PageView(
                 // Finger-locked paging (WhatsApp pattern): the page tracks the
@@ -1279,6 +1265,8 @@ class _StudentShellState extends ConsumerState<StudentShell> {
                 ],
               ),
               ),
+              // Resolve slot below the pages, just above the tab bar.
+              _resolveSlot(),
             ],
           ),
         ),
