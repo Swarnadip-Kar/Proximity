@@ -375,11 +375,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // path) — the unlock-owning callers (shell resolve, entry gate)
       // observe the dismissal separately and park with retry. Flagged
       // locked (data may exist behind the prompt) for capture callers.
+      // Logged: without this, a field log shows a silent skip where the
+      // restore should have been.
+      BleLog.log('SEC', 'enroll restore: secure prompt dismissed — retry');
       _restoreLockedForAccount = true;
       return;
     } on SecureStoreUnavailable {
       // Transient platform failure: unknown, retryable — never a clean
       // miss. Flagged locked so capture offers retry, not key generation.
+      BleLog.log(
+          'SEC', 'enroll restore: secure store transiently unreadable — retry');
       _restoreLockedForAccount = true;
       return;
     } catch (_) {
@@ -436,12 +441,69 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         final dk = _deviceKey;
         final Uint8List seed;
         if (dk is HwDeviceKey) {
-          seed = await dk.unsealEnrollment(
-            sealed: sealedBytes,
-            email: stored.email,
-            installId: await getOrCreateInstallId(_store),
-            pkS: Uint8List.fromList(hexDecode(stored.pkHex)),
-          );
+          // getOrCreate rethrows the prompt/transient failures (never a
+          // silent mint over locked data): park locked with retry instead
+          // of falling through to 'proceeding fresh'.
+          String installId;
+          try {
+            installId = await getOrCreateInstallId(_store);
+          } on SecureStoreDismissed {
+            BleLog.log(
+                'SEC', 'enroll restore: install identity locked — retry');
+            _restoreLockedForAccount = true;
+            return;
+          } on SecureStoreUnavailable {
+            BleLog.log('SEC',
+                'enroll restore: install identity unreadable — retry');
+            _restoreLockedForAccount = true;
+            return;
+          }
+          final pkSBytes = Uint8List.fromList(hexDecode(stored.pkHex));
+          String livePkDHex = '';
+          try {
+            livePkDHex = hexEncode(dk.pkD);
+          } catch (_) {}
+          final storedPkDHex = stored.pkDHex.trim().toLowerCase();
+          if (livePkDHex.isNotEmpty &&
+              storedPkDHex.isNotEmpty &&
+              storedPkDHex != livePkDHex.trim().toLowerCase()) {
+            BleLog.log('SEC',
+                'enroll restore: DKey rotated (stored pkD != live pkD) — re-enroll');
+            _restoreLockedForAccount = false;
+            state = state.copyWith(
+              phase: EnrollPhase.signedIn,
+              message: 'restore detected — re-enroll',
+            );
+            return;
+          }
+          try {
+            seed = await dk.unsealEnrollment(
+              sealed: sealedBytes,
+              email: stored.email,
+              installId: installId,
+              pkS: pkSBytes,
+            );
+          } on StateError {
+            // Fail-closed, classified (see classifyUnsealFailure): the
+            // terminal copy stays 'restore detected — re-enroll' but the
+            // log names the stage for field diagnosis.
+            final code = classifyUnsealFailure(
+              sealed: sealedBytes,
+              hwKeyPresent: true, // ensure() succeeded above
+              dekPresent: await dk.sealDekPresent(),
+              aadInputsComplete: stored.email.trim().isNotEmpty &&
+                  installId.isNotEmpty &&
+                  pkSBytes.isNotEmpty,
+              pkDMatchesStored: true, // pre-checked above
+            );
+            BleLog.log('SEC', 'enroll restore: SKey unwrap failed ($code)');
+            _restoreLockedForAccount = false;
+            state = state.copyWith(
+              phase: EnrollPhase.signedIn,
+              message: 'restore detected — re-enroll',
+            );
+            return;
+          }
         } else {
           seed = await _deviceKey.unseal(sealedBytes);
         }

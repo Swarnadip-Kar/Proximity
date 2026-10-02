@@ -1252,12 +1252,63 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
         final dk = _deviceKey;
         final Uint8List seed;
         if (dk is HwDeviceKey) {
-          seed = await dk.unsealEnrollment(
-            sealed: sealed,
-            email: stored.email,
-            installId: await _store.readInstallId() ?? '',
-            pkS: Uint8List.fromList(hexDecode(stored.pkHex)),
-          );
+          // AAD inputs must be complete BEFORE the open: the seal binds
+          // email/installId/pkS/pkD, so a missing input fails the GCM tag
+          // exactly like a clone. Name it honestly instead. (Deliberately
+          // a read, never getOrCreate: minting a fresh installId here
+          // would fork the device identity AND guarantee the tag fails.)
+          final installId = await _store.readInstallId() ?? '';
+          if (installId.isEmpty) {
+            BleLog.log('SEC',
+                'prove refused: install identity missing — re-enroll (not a clone)');
+            return const MarkedReceipt(
+                detail: 'Install identity missing — re-enroll',
+                result: StudentResult.error);
+          }
+          final pkSBytes = Uint8List.fromList(hexDecode(stored.pkHex));
+          // DKey rotation pre-check: the seal opens only with the SAME HW
+          // key that sealed it, so a stored-vs-live pkD mismatch can never
+          // unseal — fail with the honest copy before the tag does. (The
+          // post-unseal rebind below stays for the live-unavailable path.)
+          String livePkDHex = '';
+          try {
+            livePkDHex = hexEncode(dk.pkD);
+          } catch (_) {}
+          final storedPkDHex = stored.pkDHex.trim().toLowerCase();
+          if (livePkDHex.isNotEmpty &&
+              storedPkDHex.isNotEmpty &&
+              storedPkDHex != livePkDHex.trim().toLowerCase()) {
+            BleLog.log('SEC',
+                'prove refused: DKey rotated (stored pkD != live pkD) — re-enroll');
+            return const MarkedReceipt(
+                detail: 'Device key changed — re-enroll',
+                result: StudentResult.error);
+          }
+          try {
+            seed = await dk.unsealEnrollment(
+              sealed: sealed,
+              email: stored.email,
+              installId: installId,
+              pkS: pkSBytes,
+            );
+          } on StateError {
+            // Fail-closed, but classified: the next field log names the
+            // stage (no-hw-key / no-dek / shape / legacy / inputs /
+            // rotated / tag-mismatch) instead of guessing 'clone?'.
+            final code = classifyUnsealFailure(
+              sealed: sealed,
+              hwKeyPresent: true, // ensure() succeeded above
+              dekPresent: await dk.sealDekPresent(),
+              aadInputsComplete: stored.email.trim().isNotEmpty &&
+                  installId.isNotEmpty &&
+                  pkSBytes.isNotEmpty,
+              pkDMatchesStored: true, // pre-checked above
+            );
+            BleLog.log('SEC', 'SKey unwrap failed ($code) — re-enroll');
+            return const MarkedReceipt(
+                detail: 'restore detected — re-enroll',
+                result: StudentResult.error);
+          }
         } else {
           seed = await _deviceKey.unseal(sealed);
         }

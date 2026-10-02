@@ -479,6 +479,58 @@ bool _isKeyInvalidated(Object e) =>
 StateError _restoreDetected([String detail = '']) => StateError(
     'restore detected — re-enroll${detail.isEmpty ? '' : ' ($detail)'}');
 
+/// PII-free unseal failure classifier for field diagnosis (shapes and
+/// presence only — never key material, DEK bytes, or envelope content).
+/// One 'restore detected — re-enroll' collapses six distinct local
+/// failures; callers log the returned code alongside it so the next field
+/// log names the stage instead of guessing 'clone?':
+/// - `no-hw-key`: the HW key is gone (rotation, invalidation, wipe).
+/// - `no-dek`: the seal DEK is unreadable (namespace wipe, failed write).
+/// - `bad-envelope-shape` / `bad-envelope-magic`: corrupt doc.
+/// - `legacy-pxk1-seal`: pre-HW software envelope in a HW doc (re-enroll
+///   after the security upgrade, not a clone).
+/// - `incomplete-aad-inputs`: an AAD input is missing (notably the
+///   install identity — an identity fork, not a clone).
+/// - `pkd-rotated`: the live DKey no longer matches the enrolled one
+///   (re-bind without re-enroll — re-enroll, not a clone).
+/// - `tag-mismatch`: complete inputs but the GCM tag fails — a genuine
+///   backup-restore clone, a pre-M7 empty-AAD seal, or corruption.
+/// Fail-closed either way: the code only names the refusal, never opens.
+String classifyUnsealFailure({
+  required Uint8List sealed,
+  required bool hwKeyPresent,
+  required bool dekPresent,
+  required bool aadInputsComplete,
+  required bool pkDMatchesStored,
+}) {
+  if (!hwKeyPresent) return 'no-hw-key';
+  if (!dekPresent) return 'no-dek';
+  if (sealed.length < kHwSealMagic.length) return 'bad-envelope-shape';
+  var hwMagic = true;
+  for (var i = 0; i < kHwSealMagic.length; i++) {
+    if (sealed[i] != kHwSealMagic[i]) {
+      hwMagic = false;
+      break;
+    }
+  }
+  if (!hwMagic) {
+    var legacyMagic = sealed.length >= kSealedKeyMagic.length;
+    if (legacyMagic) {
+      for (var i = 0; i < kSealedKeyMagic.length; i++) {
+        if (sealed[i] != kSealedKeyMagic[i]) {
+          legacyMagic = false;
+          break;
+        }
+      }
+    }
+    return legacyMagic ? 'legacy-pxk1-seal' : 'bad-envelope-magic';
+  }
+  if (sealed.length != kHwSealEnvelopeBytes) return 'bad-envelope-shape';
+  if (!aadInputsComplete) return 'incomplete-aad-inputs';
+  if (!pkDMatchesStored) return 'pkd-rotated';
+  return 'tag-mismatch';
+}
+
 /// HW-bound `DeviceKey` (P-256, non-exportable, ES256).
 ///
 /// Owns the enrollment challenge binding + chain persistence carrier
@@ -878,6 +930,18 @@ class HwDeviceKey implements DeviceKey {
     }
     if (dek == null) throw StateError('restore detected — re-enroll');
     return unsealWithDek(dek32: dek, sealed: sealed);
+  }
+
+  /// Diagnostics-only: whether the seal DEK is readable right now (input
+  /// to [classifyUnsealFailure] — never key material). False on a missing
+  /// entry AND on a read failure (both fail unseal identically, and both
+  /// mean re-enroll, never a fallback).
+  Future<bool> sealDekPresent() async {
+    try {
+      return await _sealStore.readDek(alias: alias) != null;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// AAD-bound seal (M7, preferred): wraps [seed32] with AAD binding
