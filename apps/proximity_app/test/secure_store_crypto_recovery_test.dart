@@ -319,21 +319,53 @@ void main() {
     expect(cred.writtenKeys, isEmpty);
   });
 
-  test('system cancel (no user marker) is transient, never a dismissal park',
+  test('field cancel wordings dismiss, never prompt a second slot',
       () async {
-    // Overlapping BiometricPrompts / activity destroy report bare
-    // `canceled` with no user marker. That must NOT park as a user
-    // dismissal (5s cooldown + unlock nudge) — it retries transiently.
+    // Verbatim flutter_secure_storage logcat on a skipped prompt (field):
+    // `Biometric authentication error [10]: Authentication cancelled`
+    // and `... Fingerprint operation cancelled by user.` Neither carries
+    // a user_cancel/auth_canceled/dismiss marker, and the first ALSO
+    // contains `biometric` — a narrow matcher routes the skip into the
+    // other slot's prompt (cancel-first-pass-second loop). Both must
+    // park as dismissal after exactly one slot touch.
+    for (final msg in [
+      'Biometric authentication error [10]: Authentication cancelled',
+      'Biometric authentication error [10]: Fingerprint operation cancelled by user.',
+    ]) {
+      final strong = _ScriptedSecure()..readError = StateError(msg);
+      final cred = _ScriptedSecure()..readError = StateError(msg);
+      final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+      await expectLater(
+        store.readEnrollment(),
+        throwsA(isA<SecureStoreDismissed>()),
+      );
+      expect(strong.readKeys, hasLength(1));
+      expect(cred.readKeys, isEmpty);
+    }
+  });
+
+  test('skipped save prompt stops with sanitized copy, no second prompt',
+      () async {
+    // Same defect on the write path: a skipped save prompt must not fall
+    // through to the other slot's prompt, and the raw PlatformException
+    // + Java stack must never reach the UI.
     final strong = _ScriptedSecure()
-      ..readError = StateError('Authentication canceled by system');
-    final cred = _ScriptedSecure()
-      ..readError = StateError('Authentication canceled by system');
+      ..writeError = StateError(
+          'Biometric authentication error [10]: Authentication cancelled');
+    final cred = _ScriptedSecure();
     final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
 
-    await expectLater(
-      store.readEnrollment(),
-      throwsA(isA<SecureStoreUnavailable>()),
-    );
+    Object? caught;
+    try {
+      await store.writeEnrollment(_doc());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught, isStateError);
+    expect('$caught', contains('Secure storage rejected the save'));
+    expect('$caught', isNot(contains('Biometric authentication error')));
+    expect(cred.writtenKeys, isEmpty);
   });
 
   test('tier sticks to the live slot (one prompt in steady state)', () async {

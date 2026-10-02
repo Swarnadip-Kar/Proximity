@@ -76,9 +76,11 @@ class SecureDeviceStore implements DeviceStore {
   /// True for every secure-store failure that must try the OTHER slot
   /// instead of surfacing raw platform text:
   /// - pre-auth unavailability (no strong biometric enrolled, no hardware);
-  /// - user-skipped prompts (`user_cancel`/`auth_canceled` — kept here
-  ///   for the WRITE path only: saves fall through to the other slot;
-  ///   READS check [_isPromptDismissal] first and stop, never fall through);
+  /// - user-skipped prompts (`cancel…`/`auth_canceled`/`user_cancel` —
+  ///   kept here for the WRITE path only, where a dismissal stops the
+  ///   slot loop with the sanitized persist error instead of falling
+  ///   through; READS check [_isPromptDismissal] first and stop there,
+  ///   never fall through);
   /// - POST-AUTH key/blob mismatch: the prompt succeeded but the stored
   ///   Keystore-wrapped app-key blob cannot be unwrapped with the unlocked
   ///   key (`IllegalBlockSizeException` / `BadPaddingException` /
@@ -88,11 +90,10 @@ class SecureDeviceStore implements DeviceStore {
   /// - iOS keychain lockout/invalidation (`biometryCurrentSet` items die
   ///   with the enrolled set: err -34018/-25300).
   ///
-  /// Deliberately EXCLUDES bare `canceled`/`cancelled`: system cancels
-  /// (overlapping prompts, activity destroy) carry those words with no
-  /// user marker and must degrade to transient/retry
-  /// ([SecureStoreUnavailable]) — never a slot switch (which would prompt
-  /// again) and never a dismissal park.
+  /// `biometric` stays matched here for genuine unavailability ("no
+  /// biometrics enrolled", "biometric hardware unavailable" → cred-slot
+  /// fallback). Cancel wordings never reach this matcher on reads:
+  /// [_isPromptDismissal] runs first and parks them as dismissal.
   ///
   /// Non-matching errors (I/O, Firestore, programming bugs) rethrow
   /// untouched — they are never a signal to switch slots.
@@ -137,28 +138,29 @@ class SecureDeviceStore implements DeviceStore {
   /// skip-then-prompt-again defect: pass-or-fail, it only re-parks).
   /// One read call costs at most one prompt, ever. Checked BEFORE
   /// [_isSecureStoreAuthOrKeyFailure], which keeps matching these
-  /// strings for the write path (unchanged: saves fall through).
+  /// strings for the write path (writes stop on dismissal too — see
+  /// below — and fall through only on genuine key/blob mismatch).
   /// Key/blob-mismatch signals (crypto, invalidated, keychain codes)
   /// are NOT dismissals — the slot genuinely cannot serve, so the scan
   /// still continues to the other slot (cred-slot recovery preserved).
   ///
-  /// Deliberately NARROW: bare `canceled`/`cancelled` are NOT matched.
-  /// The platform also reports system cancels with those words
-  /// (overlapping BiometricPrompts, activity destroy, screen-off), which
-  /// must degrade to transient/retry — never park as a user dismissal.
-  /// Genuine user skips carry `user_cancel`/`auth_canceled`/
-  /// `negative_button`/`dismiss` markers (plus the `user cancel` spaced
-  /// form), all matched here.
+  /// Deliberately BROAD on `cancel`: field logcat pins the real
+  /// flutter_secure_storage strings as
+  /// `Biometric authentication error [10]: Authentication cancelled`
+  /// and `... Fingerprint operation cancelled by user.` — neither
+  /// carries a `user_cancel`/`auth_canceled`/`dismiss` marker, and the
+  /// first ALSO contains `biometric`, so anything narrower routes a
+  /// plain skip into the other slot's prompt (the cancel-first-pass-
+  /// second-then-inconclusive loop). No legitimate crypto/keystore/io
+  /// error contains `cancel`, and an overlap/system cancel sharing the
+  /// wording degrades to a dismissal park (explicit retry recovers) —
+  /// fail-safe, never a second prompt, never a hammer loop.
   bool _isPromptDismissal(Object e) {
     final s = '$e'.toLowerCase();
-    return s.contains('user_cancel') ||
-        s.contains('usercancel') ||
-        s.contains('user cancel') ||
-        s.contains('auth_canceled') ||
-        s.contains('authcanceled') ||
+    return s.contains('cancel') ||
+        s.contains('dismiss') ||
         s.contains('negative_button') ||
-        s.contains('negativebutton') ||
-        s.contains('dismiss');
+        s.contains('negativebutton');
   }
 
   /// Honest, prompt-free copy for an unrecoverable secure-store write (both
@@ -417,6 +419,11 @@ class SecureDeviceStore implements DeviceStore {
       try {
         await slot.write(key: _kEnroll, value: payload);
       } catch (err) {
+        // Skipped save prompt: stop here with the sanitized copy — the
+        // other slot would prompt again immediately (same defect as the
+        // read scan), and the raw PlatformException + Java stack must
+        // never reach the UI.
+        if (_isPromptDismissal(err)) throw _secureStorePersistError();
         if (!_isSecureStoreAuthOrKeyFailure(err)) rethrow;
         // Best-effort: drop the unreadable entry so a later init cannot
         // trip on stale data (the Keystore blob itself is namespaced away
@@ -903,6 +910,10 @@ class SecureDeviceStore implements DeviceStore {
       try {
         await slot.write(key: _kInstall, value: id);
       } catch (e) {
+        // Same dismissal law as the enrollment write above: a skipped
+        // save prompt stops here instead of prompting again on the
+        // other slot.
+        if (_isPromptDismissal(e)) throw _secureStorePersistError();
         if (!_isSecureStoreAuthOrKeyFailure(e)) rethrow;
         try {
           await slot.delete(key: _kInstall);
