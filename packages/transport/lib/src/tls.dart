@@ -1,4 +1,4 @@
-// Per-window TLS identity: runtime-generated self-signed RSA cert.
+// Per-hosting TLS identity: runtime-generated self-signed RSA cert.
 // The SHA-256 fingerprint of the DER is the channel-binding anchor:
 // the student captures it during the TLS handshake and binds it into
 // Sig_bind; the professor rejects any POST whose fingerprint differs

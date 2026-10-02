@@ -8,8 +8,9 @@
 // platform depends on scan responses.
 // [LinuxBleRadio]: universal_ble scan + BlueZ D-Bus advertise shim
 // (universal_ble on Linux is scan-only).
-// peerW: unused by the v2 air path (kept for the GATT fallback); the
-// professor matches radio sightings by response token instead.
+// peerW rides POST /prove for server dup/sighting matching (not the BLE
+// air path — the professor matches radio sightings by response token
+// instead); the GATT fallback retains local use.
 library;
 
 import 'dart:async';

@@ -4,7 +4,7 @@
 //
 // Design: mirrors the BleLog ring (50k entries — a full lecture stays
 // greppable); the view renders a 500-row window, never the whole ring.
-// Bursty entries coalesce through a 200ms flush timer (≤5 setStates/s);
+// Bursty entries coalesce through a 500ms flush timer (≤2 setStates/s);
 // rows are plain monospace Text (SelectableText regions cost real
 // frames under beacon load — the Copy button is the copy path);
 // autoscroll jumps once per flush and only while pinned near the bottom.

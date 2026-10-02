@@ -116,7 +116,7 @@ void main() {
     expect(shapes.length, ProxStatus.values.length - 1); // pending shares dot
   });
 
-  testWidgets('both app themes register ProximityColors', (_) async {
+  test('both app themes register ProximityColors', () async {
     expect(proxLightTheme().extension<ProximityColors>(),
         const ProximityColors.light());
     expect(proxDarkTheme().extension<ProximityColors>(),

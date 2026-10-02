@@ -7,10 +7,12 @@
 //
 // Integration (owned outside 1B — entry/host/enroll call this, never the
 // reverse):
-//   final result = await ForceUpdate.checkNow();
-//   if (result.updateRequired && context.mounted) {
-//     await ForceUpdate.showBarrier(context, result);
-//   }
+// ```dart
+// final result = await ForceUpdate.checkNow();
+// if (result.updateRequired && context.mounted) {
+//   await ForceUpdate.showBarrier(context, result);
+// }
+// ```
 // Bump the remote doc on any ticket/rules/verifier break; stale builds with
 // `force: true` get a non-dismissible barrier instead of cryptic
 // `bad-sig`/`face-unbound` failures (no silent downgrades, no pinned-APK

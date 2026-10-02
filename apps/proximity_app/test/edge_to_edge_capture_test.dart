@@ -40,39 +40,12 @@ import 'package:proximity_app/features/setup/enroll_capture_sections.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 
+import 'capture_test_helpers.dart';
+
 Widget _themed(Widget child) => MaterialApp(
       theme: proxLightTheme(),
       home: Scaffold(body: child),
     );
-
-/// Test stand-in for a live frame: self-maintains its native aspect
-/// internally (like `CameraPreview`), so the suite can prove the loose
-/// Stack never distorts it.
-class _NativeFeed extends StatelessWidget {
-  final double ratio;
-  const _NativeFeed({required this.ratio});
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: ratio,
-      child: const SizedBox.expand(key: Key('feed')),
-    );
-  }
-}
-
-/// The preview Stack: the loose, centered Stack carrying the overlay.
-Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
-    w is Stack &&
-    w.fit == StackFit.loose &&
-    w.alignment == Alignment.center &&
-    w.children.whereType<CaptureOverlay>().isNotEmpty);
-
-/// Strips `//` doc/provenance comments so negative pins only see code.
-String _codeOf(String src) => src
-    .split('\n')
-    .where((l) => !l.trimLeft().startsWith('//'))
-    .join('\n');
 
 Future<EnrollmentController> _keyReady() async {
   final ctl = EnrollmentController(
@@ -171,7 +144,7 @@ void main() {
     });
 
     test('composer source pins the below-bar chrome (source pin)', () {
-      final screen = _codeOf(
+      final screen = codeOf(
           File('lib/features/setup/enroll_capture.dart').readAsStringSync());
       expect(screen.contains('extendBodyBehindAppBar: false'), isTrue);
       expect(screen.contains('overlayTopInset'), isTrue);
@@ -189,8 +162,8 @@ void main() {
       )));
       await t.pump();
       // THE preview Stack (loose + centered, frame + overlay).
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
       // No chrome inside the video path: the button floats beside the
       // preview Stack in the outer fullscreen Stack, never inside it.
@@ -217,7 +190,7 @@ void main() {
     });
 
     test('mark source has overlay chrome, zero boxing (source pin)', () {
-      final face = _codeOf(
+      final face = codeOf(
           File('lib/features/mark/face_check.dart').readAsStringSync());
       // Fullscreen overlay structure.
       expect(face.contains('StackFit.loose'), isTrue);
@@ -250,8 +223,8 @@ void main() {
         onScan: () {},
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       // Frame-path pin (chrome lives inside CaptureOverlay, never around
       // video): non-overlay direct children are the bare frame.
       for (final child in stack.children) {
@@ -273,14 +246,14 @@ void main() {
         total: 5,
         nextAngle: 1,
         totalAngles: 5,
-        statusLine: 'Rotate your face slowly, following the glow.',
+        statusLine: enrollCapturePrompt,
         sweepAngle: 0.5,
         saveError: false,
         saveMessage: '',
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
       expect(stack.children.whereType<Positioned>(), isEmpty);
       // Same frame-path pin as mark above.
@@ -294,12 +267,12 @@ void main() {
     });
 
     test('video-path source has zero treatment (source pin)', () {
-      final sections = _codeOf(File(
+      final sections = codeOf(File(
               'lib/features/setup/enroll_capture_sections.dart')
           .readAsStringSync());
-      final face = _codeOf(
+      final face = codeOf(
           File('lib/features/mark/face_check.dart').readAsStringSync());
-      final overlay = _codeOf(
+      final overlay = codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final combined = sections + face + overlay;
       // Full-bleed raw feed: explicit cover math (OverflowBox +
@@ -374,7 +347,7 @@ void main() {
         total: 5,
         nextAngle: 0,
         totalAngles: 5,
-        statusLine: 'Rotate your face slowly, following the glow.',
+        statusLine: enrollCapturePrompt,
         sweepAngle: null,
         saveError: true,
         saveMessage: 'Could not save — try again.',
@@ -413,12 +386,12 @@ void main() {
       // own filling gauge is intentionally full-bleed (no SafeArea): a
       // progress line at the preview edge — not tappable chrome, not
       // text — so notch insets must not shrink it.
-      final overlay = _codeOf(
+      final overlay = codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
-      final sections = _codeOf(File(
+      final sections = codeOf(File(
               'lib/features/setup/enroll_capture_sections.dart')
           .readAsStringSync());
-      final face = _codeOf(
+      final face = codeOf(
           File('lib/features/mark/face_check.dart').readAsStringSync());
       for (final src in [sections, face]) {
         expect(src.contains('SafeArea('), isTrue);
@@ -446,7 +419,7 @@ void main() {
           canScan: false,
           onScan: _noop,
           previewAspectRatio: ratio,
-          preview: _NativeFeed(ratio: ratio),
+          preview: NativeFeed(ratio: ratio),
         ),
       )));
       await t.pump();
@@ -473,11 +446,11 @@ void main() {
           total: 5,
           nextAngle: 1,
           totalAngles: 5,
-          statusLine: 'Rotate your face slowly, following the glow.',
+          statusLine: enrollCapturePrompt,
           sweepAngle: 0.5,
           saveError: false,
           saveMessage: '',
-          preview: _NativeFeed(ratio: ratio),
+          preview: NativeFeed(ratio: ratio),
           previewAspectRatio: ratio,
         ),
       )));

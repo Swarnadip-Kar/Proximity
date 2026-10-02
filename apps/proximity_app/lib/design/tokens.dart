@@ -354,10 +354,11 @@ abstract final class ProxLogColors {
 // Everything below is ADDITIVE: legacy classes above are frozen (see
 // their rebuild section migrates them onto this API.
 // How a screen reads tokens:
-//   final c = ProximityColors.of(context); // ThemeExtension, dark/light pair
-//   color: c.statusMarked,
-//   decoration: BoxDecoration(gradient: c.gradientBrand),
-//   boxShadow: [c.glowLive.toShadow(), c.elevationRaised],
+// ```dart
+// final c = ProximityColors.of(context); // ThemeExtension, dark/light pair
+// color: c.statusMarked,
+// ```
+// See the members below for the full surface.
 // ---------------------------------------------------------------------------
 
 /// Responsive layout rules, redesign §10 (narrow / wide breakpoints).
@@ -365,7 +366,7 @@ abstract final class ProxLogColors {
 /// Single source for the width contract every screen shares:
 /// - narrow (< [narrowBreakpoint], 360dp): bottom bar goes icon-only
 ///   (labels off, tooltips carry the words), card padding drops
-///   [cardPadding] → [cardPaddingNarrow], `StudentCard` round trails wrap.
+///   [cardPadding] → [ProxSpacing.md], `StudentCard` round trails wrap.
 /// - wide (≥ [wideBreakpoint], 600dp): list screens gain a max content
 ///   width ([ProxSpacing.maxContentWidth]) and center via `ConstrainedBox`
 ///   instead of stretching edge-to-edge — no bespoke landscape path
@@ -397,7 +398,6 @@ abstract final class ProxLayout {
 ///
 /// Canonical family is [family] (`Inter`, already bundled in pubspec with
 /// exactly the 400/500/600 cuts this scale needs).
-/// still pairs Space Grotesk display + Inter body with Bold 700 cuts.
 /// `ProxType` declares the spec scale for all NEW components; the legacy
 /// textTheme is untouched by Foundation (flipping it now would restyle
 /// every screen) and consolidates during the Shared-components section.

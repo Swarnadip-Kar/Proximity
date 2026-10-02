@@ -31,44 +31,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/mark/face_check.dart';
 import 'package:proximity_app/features/setup/enroll_capture_sections.dart';
+import 'package:proximity_app/features/setup/enroll_widgets.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
+
+import 'capture_test_helpers.dart';
 
 Widget _themed(Widget child) => MaterialApp(
       theme: proxLightTheme(),
       home: Scaffold(body: child),
     );
-
-/// Test stand-in for the live frame: mimics `CameraPreview`'s contract of
-/// self-maintaining its native aspect internally (the plugin wraps its
-/// texture in an AspectRatio), so the suite can prove the loose Stack
-/// never distorts it. The keyed child marks the painted frame for
-/// measurement.
-class _NativeFeed extends StatelessWidget {
-  final double ratio;
-  const _NativeFeed({required this.ratio});
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: ratio,
-      child: const SizedBox.expand(key: Key('feed')),
-    );
-  }
-}
-
-/// The preview Stack: the loose, centered Stack carrying the overlay
-/// (Navigator/Overlay internals use different fits, so this is unique).
-Finder _previewStackFinder() => find.byWidgetPredicate((w) =>
-    w is Stack &&
-    w.fit == StackFit.loose &&
-    w.alignment == Alignment.center &&
-    w.children.whereType<CaptureOverlay>().isNotEmpty);
-
-/// Strips `//` doc/provenance comments so negative pins only see code.
-String _codeOf(String src) => src
-    .split('\n')
-    .where((l) => !l.trimLeft().startsWith('//'))
-    .join('\n');
 
 const _camDesc = CameraDescription(
   name: 'front',
@@ -162,19 +133,19 @@ void main() {
         total: 5,
         nextAngle: 2,
         totalAngles: 5,
-        statusLine: 'Rotate your face slowly, following the glow.',
+        statusLine: enrollCapturePrompt,
         sweepAngle: 1.0,
         saveError: false,
         saveMessage: '',
-        preview: _NativeFeed(ratio: 3 / 4),
+        preview: NativeFeed(ratio: 3 / 4),
         previewAspectRatio: 3 / 4,
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       // Bare surface: the frame itself is the first direct child — no
       // wrapper of any kind between it and the Stack.
-      expect(stack.children.first, isA<_NativeFeed>());
+      expect(stack.children.first, isA<NativeFeed>());
       // Nothing positioned mid-flow (frame + overlay both unpositioned;
       // the save-error toast is saveError-gated and absent here).
       expect(stack.children.whereType<Positioned>(), isEmpty);
@@ -191,14 +162,14 @@ void main() {
         total: 5,
         nextAngle: 0,
         totalAngles: 5,
-        statusLine: 'Rotate your face slowly, following the glow.',
+        statusLine: enrollCapturePrompt,
         sweepAngle: null,
         saveError: false,
         saveMessage: '',
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
       // Zero treatment on the frame path: every direct Stack child that
       // is not the overlay chrome must be the bare frame itself (prompt
@@ -219,8 +190,8 @@ void main() {
         onScan: () {},
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.text('Scan face'), findsOneWidget);
@@ -240,12 +211,12 @@ void main() {
         canScan: false,
         onScan: _noop,
         previewAspectRatio: 20 / 9,
-        preview: _NativeFeed(ratio: 20 / 9),
+        preview: NativeFeed(ratio: 20 / 9),
       )));
       await t.pump();
-      expect(_previewStackFinder(), findsOneWidget);
-      final stack = t.element(_previewStackFinder()).widget as Stack;
-      expect(stack.children.first, isA<_NativeFeed>());
+      expect(previewStackFinder(), findsOneWidget);
+      final stack = t.element(previewStackFinder()).widget as Stack;
+      expect(stack.children.first, isA<NativeFeed>());
       final overlay =
           t.widget<CaptureOverlay>(find.byType(CaptureOverlay));
       expect(overlay.previewAspectRatio,
@@ -255,12 +226,12 @@ void main() {
     });
 
     test('preview surface code has zero treatment (source pin)', () {
-      final sections = _codeOf(File(
+      final sections = codeOf(File(
               'lib/features/setup/enroll_capture_sections.dart')
           .readAsStringSync());
-      final face = _codeOf(
+      final face = codeOf(
           File('lib/features/mark/face_check.dart').readAsStringSync());
-      final overlay = _codeOf(
+      final overlay = codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final combined = sections + face + overlay;
       // The live frame renders full-bleed raw: explicit cover math
@@ -318,11 +289,11 @@ void main() {
           total: 5,
           nextAngle: 1,
           totalAngles: 5,
-          statusLine: 'Rotate your face slowly, following the glow.',
+          statusLine: enrollCapturePrompt,
           sweepAngle: 0.5,
           saveError: false,
           saveMessage: '',
-          preview: _NativeFeed(ratio: ratio),
+          preview: NativeFeed(ratio: ratio),
           previewAspectRatio: ratio,
         ),
       )));
@@ -347,7 +318,7 @@ void main() {
           canScan: false,
           onScan: _noop,
           previewAspectRatio: ratio,
-          preview: _NativeFeed(ratio: ratio),
+          preview: NativeFeed(ratio: ratio),
         ),
       )));
       await t.pump();
@@ -426,7 +397,7 @@ void main() {
 
     test('painter draws head + tail (source pin)', () {
       final overlay =
-          _codeOf(File('lib/widgets/capture_overlay.dart').readAsStringSync());
+          codeOf(File('lib/widgets/capture_overlay.dart').readAsStringSync());
       // Comet = fading tail arcs + bright head dot (+ halo).
       expect(overlay.contains('drawArc('), isTrue);
       expect(overlay.contains('drawCircle('), isTrue);

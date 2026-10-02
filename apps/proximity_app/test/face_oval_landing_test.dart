@@ -21,11 +21,7 @@ import 'package:proximity_app/features/setup/welcome_sections.dart';
 import 'package:proximity_app/screens/face_capture.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 
-/// Strips `//` doc/provenance comments so source pins only see code.
-String _codeOf(String src) => src
-    .split('\n')
-    .where((l) => !l.trimLeft().startsWith('//'))
-    .join('\n');
+import 'capture_test_helpers.dart';
 
 Future<void> _settleHero(WidgetTester t) async {
   await t.pump();
@@ -40,7 +36,7 @@ void main() {
       // Regression pin for the boxed/short marking preview (letterboxed
       // AspectRatio on a light scaffold = white side borders) and the
       // dead-end failed start (Capture disabled with no controller).
-      final src = _codeOf(
+      final src = codeOf(
           File('lib/screens/face_capture.dart').readAsStringSync());
       expect(src.contains('OverflowBox('), isTrue);
       expect(src.contains('ClipRect('), isTrue);
@@ -131,7 +127,7 @@ void main() {
     });
 
     test('painter draws a true oval, never a rounded rect (source pin)', () {
-      final overlay = _codeOf(
+      final overlay = codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       expect(overlay.contains('drawOval('), isTrue);
       // RRect exists only inside the guidance wheels (1D yaw/pitch
@@ -148,7 +144,7 @@ void main() {
         idx++;
       }
       expect(overlay.contains('RRect.'), isTrue); // wheels rails only
-      final still = _codeOf(
+      final still = codeOf(
           File('lib/screens/face_capture.dart').readAsStringSync());
       expect(still.contains('drawOval('), isTrue);
       expect(still.contains('drawRRect('), isFalse);

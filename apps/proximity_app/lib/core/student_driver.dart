@@ -75,8 +75,9 @@ class FaceCheckResult {
 /// Marking vitality robustness (app-local policy, NOT a ticket break).
 /// The face-check camera captures [kMarkingLivenessCaptures] stills per
 /// burst and the driver scores vitality on each, deciding on the MAX.
-/// 5 (was 10): halves worst-case serial main-thread ML (10×1200ms=12s
-/// froze old phones past the 7s accept window into perpetual retry);
+/// 5 (was 10): halves the worst-case burst cost (the old serial 10×1200ms=12s
+/// froze old phones past the 7s accept window into perpetual retry — stills
+/// now score concurrently, one burst costs ~one probe);
 /// spoof probes (≤0.31) stay firmly in mismatch territory at Tl=0.70.
 const int kMarkingLivenessCaptures = 5;
 /// Scores landing within [kLivenessNearMissBand] below Tl are transient
@@ -1102,7 +1103,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
       firstHeardAt ??= DateTime.now().toUtc();
       // Token heard: keep meshing so back rows still receive it. The
       // instant prove below is unaffected (fire-and-forget arming).
-      _lingerRelay20sAfter(firstHeardAt);
+      _lingerRelay10sAfter(firstHeardAt);
       onStatus(ListenStatus.proving);
       try {
         return await _prove(
@@ -1230,7 +1231,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// 10s (one rotation) — the old 20s kept the whole hall meshing long
   /// after marks landed. Passive devices never linger.
   Timer? _lingerTimer;
-  void _lingerRelay20sAfter(DateTime firstHeardAt) {
+  void _lingerRelay10sAfter(DateTime firstHeardAt) {
     // Gated on the armed relay (passive devices never arm it, so they
     // never linger — no policy read needed on this hot path).
     if (!_engine.relayEnabled) return;

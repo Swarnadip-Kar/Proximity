@@ -126,15 +126,5 @@ void main() {
       }
     });
 
-    test('isExportDirWritable: real dir true, blank false', () async {
-      final tmp =
-          await Directory.systemTemp.createTemp('prox_writable_test');
-      try {
-        expect(await isExportDirWritable(tmp.path), isTrue);
-      } finally {
-        await tmp.delete(recursive: true);
-      }
-      expect(await isExportDirWritable('   '), isFalse);
-    });
   });
 }

@@ -1,5 +1,4 @@
-// Web implementation of [saveTextFile]: triggers a browser download,
-// returns the filename as the "path".
+// Web implementation of [saveTextFile]: triggers a browser download.
 library;
 
 import 'dart:js_interop';

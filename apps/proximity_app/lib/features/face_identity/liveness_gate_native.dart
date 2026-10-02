@@ -17,7 +17,8 @@
 // post-processing ([liveScoreFromProbs]). See liveness_gate.dart header
 // for the model contract (BGR 0-255 raw — /255 collapses every live face
 // to replay) and the honesty note (face-box crop, single 2.7
-// model, no ensemble; FAR/FRR unmeasured + calibration TODO). Every failure —
+// model, no ensemble; FAR/FRR unmeasured — see the TODO(sec-face) in
+// liveness_gate.dart). Every failure —
 // unreadable still, missing asset, interpreter/shape error, timeout —
 // throws StateError (fail-closed); there is NO heuristic fallback, by
 // design. The face-box fallback (centre-crop) is NOT a heuristic pass:
