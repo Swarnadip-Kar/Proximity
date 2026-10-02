@@ -568,7 +568,7 @@ class RealHostDriver implements HostDriver {
     // refresh for long-lived sessions (no-op unless stale; cancelled on
     // teardown). Prompt-free by design: the hash travels in the prefs
     // sidecar (see DeviceStore.revocationHashStore — null on every
-    // backend), never behind a BiometricPrompt that could race the
+    // backend), never behind a prompt that could race the
     // unlock below.
     unawaited(RevocationCache.refreshBestEffort(
         hashStore: _store.revocationHashStore));

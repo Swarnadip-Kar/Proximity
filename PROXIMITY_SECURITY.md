@@ -73,11 +73,50 @@
 
 ## 3. Secure storage
 
-**Research:** `flutter_secure_storage ^11.0.0` (Aug 2026): `AndroidOptions.biometric(enforceBiometrics:true, biometricType:strongBiometricOnly)` (Class-3 only, PIN rejected), `AES_GCM_NoPadding` Keystore-based; `IOSOptions(synchronizable:false, accessibility:first_unlock_this_device_only, accessControlFlags:[biometryCurrentSet])`; never `local_auth bool` alone (forgeable — `biometric_security` analysis).
+**Posture (2026-10-02 revision — fleet fix for the KeyStore2-strict
+field crash):** prompt-free Keystore/Keychain storage
+(`SecureStoreOptions`: plain RSA-wrapped AES-GCM in namespace
+`prox_store`; iOS `synchronizable:false`,
+`first_unlock_this_device`, NO biometric access-control flag;
+`resetOnError:false` + `migrateOnAlgorithmChange:false` everywhere).
+Reads/writes NEVER pop a system prompt on any device. Explicit user
+presence lives one layer up (`UserPresenceGate`, `local_auth`
+biometric-or-credential via `LocalAuthentication.authenticate`), fired
+only at enrollment Save — never on cold start, never on background
+paths (prove-time rebind, roll edits stay silent). Signing authority is
+unchanged and stays hardware-bound: HW DKey (StrongBox→TEE / Secure
+Enclave, biometric grant, Signature-CryptoObject pattern that works on
+strict devices) + live face per marking + server-side single-device
+claim; the enrollment doc is sealed-only, so at-rest readability
+confers no signing ability.
 
-**New file:** `lib/core/security/secure_store_options.dart` (`aOpts/iOpts` constants above).
+**Why not Keystore-auth-bound storage (retired):** the old
+`AndroidOptions.biometric(enforceBiometrics:true)` design bound every
+read to an auth-gated cipher `init`, which throws
+`UserNotAuthenticatedException` BEFORE any prompt on KeyStore2-strict
+devices; FSS v11 misclassifies it as corruption and its recovery wiped
+all data into a fatal worker-thread crash loop (field log 2026-10-02).
+Auth-bound `cipher.init` semantics vary by OEM/keymaster, so the fleet
+cannot rely on them. `local_auth bool` alone is never the gate
+(forgeable — `biometric_security` analysis); it is only the explicit
+consent touchpoint, not the signing authority.
 
-**Diffs:** `secure_store.dart:30` → `FlutterSecureStorage(aOptions:aOpts,iOptions:iOpts)`; `AndroidManifest.xml: application android:allowBackup="false" android:fullBackupContent="false"`; iOS `Info.plist: NSFaceIDUsageDescription + kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Migration (completed one-time): SE-read → if old-default hit, SE-write → old-delete; log `SEC migrate ok`; never dual-retain.
+**Research:** `flutter_secure_storage ^11.1.1` (plain `AndroidOptions`;
+`IOSOptions(synchronizable:false,
+accessibility:first_unlock_this_device)`); `local_auth ^3.0.2`
+(`authenticate(biometricOnly:false)` so PIN/pattern phones confirm too).
+
+**Files:** `lib/core/security/secure_store_options.dart` (`aOpts/iOpts`
+constants above) + `lib/core/security/user_presence.dart`
+(`UserPresenceGate`/`LocalAuthPresenceGate`/`FakePresenceGate`).
+
+**Diffs:** `secure_store.dart` → single-slot prompt-free
+(`prox_store` namespace — never the retired `prox_enroll` AES-wrap
+markers); `AndroidManifest.xml: application android:allowBackup="false"
+android:fullBackupContent="false"`; iOS `Info.plist:
+NSFaceIDUsageDescription + kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
+History/outbox stay plaintext `SharedPreferences` (rooted-read
+residual — HW seal DEK never lives there).
 
 ## 4. Face liveness (`LivenessGate`)
 

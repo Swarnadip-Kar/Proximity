@@ -147,12 +147,9 @@ class _StudentFaceIdEntry extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final linked = ref.watch(linkedIdentityProvider);
-    // Unlock-gated: while locked this entry fires NO store read. A gated
-    // read here races the shell resolve's unlock prompt at cold open —
-    // overlapping BiometricPrompts cancel each other and the unlock
-    // silently dies (the scanned prompt does nothing, the banner stays).
-    // Once unlocked the shell resolve has warmed the cache, so this read
-    // never prompts. The re-scan entry is only useful unlocked anyway.
+    // Unlock-gated: while locked this entry fires NO store read (no
+    // redundant reads at cold open). The re-scan entry is only useful
+    // unlocked anyway.
     final unlocked = linked != null &&
         linked.gmail.trim().toLowerCase() ==
             acct.email.trim().toLowerCase();

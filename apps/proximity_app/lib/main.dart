@@ -162,13 +162,11 @@ Future<void> main() async {
       } catch (_) {}
     })(),
   ]);
-  // Linked identity is NOT read here: the enrollment doc lives behind the
-  // biometric-gated store, and reading it would pop a system prompt over
-  // the splash on every cold start (dismissable, so it never worked as a
-  // lock — and trained dismissal). Startup stays prompt-free; the student
-  // shell resolve (`shells.dart` → `relinkLinkedIdentity`) unlocks on
-  // entering the student area, and prove/enroll re-prompt per operation.
-  // Fail-open preserved: an unread store simply starts de-identified.
+  // Linked identity is NOT read here: the enrollment doc is unlocked on
+  // entering the student area (the shell resolve → `relinkLinkedIdentity`
+  // binds it there), and prove/enroll confirm per operation (presence at
+  // Save, HW-key grant + face at prove). Startup stays lean; an unread
+  // store simply starts de-identified (fail-open preserved).
   // Debug-only preview seeding: release ignores PROX_MODE entirely.
   final DeviceStore store = (kDebugMode &&
           (_debugMode == 'course' ||
