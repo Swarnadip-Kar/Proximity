@@ -550,8 +550,8 @@ void main() {
       expect(find.textContaining('showing latest 1 of 2 events'),
           findsOneWidget);
       expect(find.textContaining('BLE, MESH hidden'), findsOneWidget);
-      // Copy places the FILTERED buffer on the clipboard with confirm
-      // (BLE stays out of the paste).
+      // Copy places the TAG-FILTERED buffer on the clipboard (the view
+      // mute never applies): BLE rides along even from Quiet.
       var pasted = '';
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform,
@@ -567,9 +567,9 @@ void main() {
       await t.tap(find.byTooltip('Copy'));
       await t.pump();
       await t.pump(const Duration(milliseconds: 100));
-      expect(find.textContaining('Copied 1 lines'), findsOneWidget);
+      expect(find.textContaining('Copied 2 lines'), findsOneWidget);
       expect(pasted, contains('hello-sync'));
-      expect(pasted, isNot(contains('hello-ble')));
+      expect(pasted, contains('hello-ble'));
       await t.pumpWidget(const SizedBox());
     });
   });
