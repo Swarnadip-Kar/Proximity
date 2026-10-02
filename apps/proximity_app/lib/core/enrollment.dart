@@ -629,16 +629,21 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           'SKey install identity ready install=${installId.substring(0, 8)}…');
       // iOS assertion path: same-install re-enroll yields an assertion, not
       // an object — carry the previous enrollment credential key forward
-      // (same account only; anything else starts clean).
+      // (same account only; anything else starts clean). iOS-ONLY read:
+      // on Android this secure read costs a second biometric prompt for a
+      // value only the Apple branch consumes (field report: skip once,
+      // second prompt appears) — bindEnrollment ignores it there.
       var prevAppAttestCred = '';
-      try {
-        final prevStored = await _store.readEnrollment();
-        if (prevStored != null &&
-            prevStored.email.trim().toLowerCase() ==
-                acct.email.toLowerCase()) {
-          prevAppAttestCred = prevStored.appAttestCredKeyHex;
-        }
-      } catch (_) {}
+      if (isIOS) {
+        try {
+          final prevStored = await _store.readEnrollment();
+          if (prevStored != null &&
+              prevStored.email.trim().toLowerCase() ==
+                  acct.email.toLowerCase()) {
+            prevAppAttestCred = prevStored.appAttestCredKeyHex;
+          }
+        } catch (_) {}
+      }
       try {
         await _deviceKey
             .bindEnrollment(
