@@ -172,6 +172,37 @@ class MainActivity : FlutterFragmentActivity() {
                 result.notImplemented()
             }
         }
+        registerScreenBrightnessChannel(flutterEngine)
+    }
+
+    // Enroll flash assist (Dart: features/setup/flash_assist.dart).
+    // Window brightness, NOT system brightness: a per-window attribute
+    // that dies with the window, so backgrounding/kill self-heals a missed
+    // Dart-side restore. getBrightness returns -1.0 when the window follows
+    // the system (restored verbatim); setBrightness takes 0.0..1.0.
+    // Callbacks already run on the platform thread; runOnUiThread is
+    // belt-and-braces for OEM handler quirks.
+    private fun registerScreenBrightnessChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        io.flutter.plugin.common.MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "org.iitbhilai.proximity/screen_brightness"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getBrightness" -> {
+                    result.success(window.attributes.screenBrightness.toDouble())
+                }
+                "setBrightness" -> {
+                    val v = (call.argument<Double>("value") ?: 1.0).coerceIn(0.0, 1.0)
+                    runOnUiThread {
+                        val attrs = window.attributes
+                        attrs.screenBrightness = v.toFloat()
+                        window.attributes = attrs
+                        result.success(null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     private fun ByteArray.toHex(): String {
