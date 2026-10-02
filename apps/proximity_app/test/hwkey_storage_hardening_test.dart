@@ -245,9 +245,13 @@ void main() {
       expect(sealMap['migrateWithBackup'], 'true');
       // Plugin-level migration stays OFF on both (namespace-per-config
       // is the migration strategy — the backup path crashes on fresh
-      // namespaces and wipes the key anyway).
+      // namespaces and wipes the key anyway). resetOnError stays OFF on
+      // both too: any cipher error must surface (mapped to re-enroll copy
+      // upstream), never silently wipe the DEK or the enrollment.
       expect(sealMap['migrateOnAlgorithmChange'], 'false');
+      expect(sealMap['resetOnError'], 'false');
       expect(enrollMap['migrateOnAlgorithmChange'], 'false');
+      expect(enrollMap['resetOnError'], 'false');
       expect(enrollMap['storageNamespace'], 'prox_enroll');
       expect(sealMap['storageNamespace'],
           isNot(equals(enrollMap['storageNamespace'])));

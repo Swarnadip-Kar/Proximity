@@ -393,6 +393,10 @@ abstract class HwSealStore {
 /// backup-migration path crashes on fresh namespaces
 /// (`IllegalStateException: Cipher not initialized`, observed in field
 /// logcat) and wipes the key anyway — off goes straight to clean reinit.
+/// `resetOnError: false`: the plugin's init AND op paths delete data on
+/// any cipher error when enabled — a DEK wipe here re-enrolls every user
+/// on the device, so failures surface as errors (mapped to re-enroll
+/// copy upstream) instead of silent wipes.
 class FlutterSealStore implements HwSealStore {
   final FlutterSecureStorage storage;
 
@@ -401,6 +405,7 @@ class FlutterSealStore implements HwSealStore {
         aOptions: AndroidOptions(
           storageNamespace: 'prox_seal',
           migrateOnAlgorithmChange: false,
+          resetOnError: false,
           migrateWithBackup: true,
         ),
         iOptions: IOSOptions(

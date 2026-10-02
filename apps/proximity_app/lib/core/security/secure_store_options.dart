@@ -57,7 +57,7 @@ class SecureStoreOptions {
   /// `FlutterSecureStorageConfig`: namespace suffixes KeyStore aliases and
   /// scopes all prefs).
   ///
-  /// `migrateOnAlgorithmChange: false` (with `resetOnError` default true):
+  /// `migrateOnAlgorithmChange: false` (with `resetOnError: false`):
   /// namespace-per-config IS the migration strategy — a config change
   /// ships a NEW namespace, never a marker flip — because the plugin's
   /// backup-migration crashes on fresh biometric namespaces
@@ -66,6 +66,17 @@ class SecureStoreOptions {
   /// logcat) and then `resetOnError` wipes the Keystore key anyway. Off
   /// goes straight to delete+clean-reinit on mismatch: crash-free, and
   /// the only data at risk is already unrecoverable.
+  ///
+  /// `resetOnError: false` is load-bearing (field crash 2026-10-02): on
+  /// KeyStore2-strict devices `cipher.init` throws
+  /// `UserNotAuthenticatedException` (an InvalidKeyException) BEFORE any
+  /// BiometricPrompt shows, and the plugin misclassifies it as a key
+  /// mismatch. With reset enabled it deletes ALL data + keys, re-inits,
+  /// fails again, and recurses on its worker HandlerThread until
+  /// StackOverflowError kills the process — wiping the enrollment to
+  /// boot. With reset off the failure surfaces as a PlatformException,
+  /// which secure_store.dart maps to dismissed/unavailable (park +
+  /// retry, data preserved, no crash).
   static const aOpts = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.strongBiometricOnly,
@@ -73,6 +84,7 @@ class SecureStoreOptions {
     biometricPromptNegativeButton: 'Cancel',
     storageNamespace: 'prox_enroll',
     migrateOnAlgorithmChange: false,
+    resetOnError: false,
     migrateWithBackup: true,
   );
 
@@ -96,12 +108,17 @@ class SecureStoreOptions {
   /// `migrateOnAlgorithmChange: false` like [aOpts] (namespace-per-config
   /// is the migration strategy; the plugin backup path crashes on fresh
   /// biometric namespaces — see above).
+  /// `resetOnError: false` like [aOpts] (the same KeyStore2-strict
+  /// `UserNotAuthenticatedException`-as-mismatch wipe + worker-thread
+  /// StackOverflow crash applies to this slot too — surface errors, never
+  /// wipe).
   static const aOptsFallback = AndroidOptions.biometric(
     enforceBiometrics: true,
     biometricType: AndroidBiometricType.biometricOrDeviceCredential,
     biometricPromptTitle: 'Authenticate to access Proximity',
     storageNamespace: 'prox_enroll_cred',
     migrateOnAlgorithmChange: false,
+    resetOnError: false,
     migrateWithBackup: true,
   );
 

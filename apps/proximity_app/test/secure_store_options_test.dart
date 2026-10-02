@@ -23,6 +23,13 @@ void main() {
     expect(params['storageNamespace'], 'prox_enroll');
     expect(params['migrateOnAlgorithmChange'], 'false');
     expect(params['migrateWithBackup'], 'true');
+    // Field crash 2026-10-02: KeyStore2-strict devices throw
+    // UserNotAuthenticatedException at cipher.init (pre-prompt), which the
+    // plugin misclassifies as a key mismatch — resetOnError:true wiped ALL
+    // data + keys and recursed to a worker-thread StackOverflow FATAL.
+    // Failures must surface as errors (mapped to park + retry upstream),
+    // never wipe.
+    expect(params['resetOnError'], 'false');
   });
 
   test('iOS options are this-device-only, unsynced, current-set bound', () {
@@ -43,6 +50,8 @@ void main() {
     final fallback = SecureStoreOptions.aOptsFallback.toMap();
     expect(fallback['storageNamespace'], 'prox_enroll_cred');
     expect(fallback['migrateOnAlgorithmChange'], 'false');
+    // Same wipe-loop guard as the strong slot (see above).
+    expect(fallback['resetOnError'], 'false');
     expect(fallback['storageNamespace'],
         isNot(equals(strong['storageNamespace'])));
     expect(fallback['storageNamespace'], isNot(equals('prox_seal')));
