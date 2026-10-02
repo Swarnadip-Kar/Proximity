@@ -775,6 +775,28 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
                                 assist: widget.assist,
                               ),
                             ),
+                            // Bottom filling gauge (same design as the
+                            // enrollment overlay): still-capture progress,
+                            // full-bleed like a video progress line.
+                            // Prompt + taken-count + Capture button below
+                            // stay exactly as they were.
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child: LinearProgressIndicator(
+                                value: (widget.captures <= 1
+                                        ? 1.0
+                                        : _taken / widget.captures)
+                                    .clamp(0.0, 1.0),
+                                minHeight: 6,
+                                backgroundColor: Colors.white
+                                    .withValues(alpha: 0.24),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    ProximityColors.of(context)
+                                        .statusMarked),
+                              ),
+                            ),
                           ],
                         ),
             ),

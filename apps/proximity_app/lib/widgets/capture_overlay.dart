@@ -377,6 +377,12 @@ class CaptureOverlay extends StatefulWidget {
   /// still reads as a comet without implying motion).
   static const double cometMinTailSpan = 0.22;
 
+  /// Idle wheel chrome: cool blue (matches the live-glow token family) —
+  /// the bands/markers rest blue and transition to the green signal tone
+  /// on alignment. The track itself stays white-translucent so the video
+  /// keeps priority.
+  static const Color wheelIdle = Color(0xFF5B8CFF);
+
   /// Comet tail paint slices (paint-only, zero layout effect).
   static const int cometSlices = 8;
 
@@ -558,12 +564,17 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
               // this exact slot (the rotating instruction is meaningless
               // once the loop stopped; rendering both stacked them on
               // small preview areas, field-verified).
-              if (widget.errorBanner != null && promptTop != null)
-                Positioned(
-                  top: promptTop,
-                  left: CaptureOverlay.promptSideMargin,
-                  right: CaptureOverlay.promptSideMargin,
-                  child: widget.errorBanner!,
+              // Chip slot shared with the painter (see promptSlotFor): an
+              // empty slot (tiny screens) falls through to the bottom
+              // fallback below instead of vanishing.
+              if (widget.errorBanner != null &&
+                  promptTop != null &&
+                  !promptPill.isEmpty)
+                Positioned.fromRect(
+                  rect: promptPill,
+                  child: Center(
+                    child: widget.errorBanner!,
+                  ),
                 )
               else if (widget.errorBanner != null)
                 Positioned(
@@ -572,17 +583,21 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   bottom: ProxSpacing.xl,
                   child: widget.errorBanner!,
                 )
-              else if (widget.showStatusLine && promptTop != null)
-                Positioned(
-                  top: promptTop,
-                  left: CaptureOverlay.promptSideMargin,
-                  right: CaptureOverlay.promptSideMargin,
-                  child: Text(
-                    line,
-                    style: ProxType.label(color: Colors.white),
-                    textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
+              else if (widget.showStatusLine &&
+                  promptTop != null &&
+                  !promptPill.isEmpty)
+                Positioned.fromRect(
+                  rect: promptPill,
+                  // Centered both ways in the chip (the text top-aligned
+                  // here before, crowding the oval on two lines).
+                  child: Center(
+                    child: Text(
+                      line,
+                      style: ProxType.label(color: Colors.white),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
                   ),
                 )
               else if (widget.showStatusLine)
@@ -868,8 +883,10 @@ class _CaptureOverlayPainter extends CustomPainter {
       canvas.drawRRect(
         RRect.fromRectAndRadius(bandRect, const Radius.circular(3)),
         Paint()
-          ..color = (aligned ? beaconColor : Colors.white)
-              .withValues(alpha: (aligned ? 0.95 : 0.55) * alpha),
+          ..color = (aligned
+                  ? beaconColor
+                  : CaptureOverlay.wheelIdle)
+              .withValues(alpha: (aligned ? 0.95 : 0.75) * alpha),
       );
     }
     // Live marker.
@@ -893,7 +910,7 @@ class _CaptureOverlayPainter extends CustomPainter {
       at,
       5,
       Paint()
-        ..color = (aligned ? beaconColor : Colors.white)
+        ..color = (aligned ? beaconColor : CaptureOverlay.wheelIdle)
             .withValues(alpha: (active ? 0.95 : 0.60) * alpha),
     );
   }
