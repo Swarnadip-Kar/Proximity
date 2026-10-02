@@ -130,6 +130,7 @@ dependencies:
   # a rules deploy + min_version bump together, never silently.
   tflite_flutter: ^0.12.1
   device_info_plus: ^13.2.0
+  local_auth: ^3.0.2
 
 dev_dependencies:
   flutter_test:
