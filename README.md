@@ -14,7 +14,9 @@ and records-only devices (no key at all, manual path only) — see
 design §3.4/§4.
 
 Design source of truth: [`PROXIMITY_DESIGN.md`](PROXIMITY_DESIGN.md).
-This README describes the system as built.
+This README describes the system as built. On any conflict: DESIGN wins on
+behavior, `routes.dart` wins on routes, `tokens.dart` wins on visual;
+live suite counts live in the `INTEGRATION_LOG.md` tail.
 
 ## How it works
 
@@ -42,7 +44,10 @@ online it resolves name/email from the directory, offline it queues and
 applies on the next sync. An install already enrolled as another Gmail
 refuses too (one phone holds one student enrollment; app clones/dual-apps
 count as the same phone — wipe app data to switch identity). Same-device
-re-keys and re-enrolls are always free. Student enrollment needs internet
+re-keys and re-enrolls are always free. Face-template rescans are gated
+separately: the Save path refuses within 30 days of the last face save
+(`kFaceRescanCooldown`, per-Gmail; failed saves never stamp the date).
+Student enrollment needs internet
 exactly once (claim + role register); offline progress is kept for retry.
 Every claim and every online re-sign-in heartbeats last-online.
 The enrollment page needs no Google tap: it adopts the persisted session
@@ -91,7 +96,7 @@ page, never someone else's home).
  3. While open, the professor advertises a rotating challenge (new token
    every 10s, unbounded); students hear it over BLE, answer with their
    response token, pass the single-shot plugin holder check + passive
-   MiniFASNetV2 liveness gate (Tl=0.85 strict, graded 0..1 on the ticket),
+   MiniFASNetV2 liveness gate (Tl=0.70 field-relaxed, graded 0..1 on the ticket),
    and POST an
    Ed25519-signed proof binding the live challenge + face/liveness
    score/timestamp/
@@ -104,7 +109,7 @@ page, never someone else's home).
    (freshness 17 s, single-use `(windowID,ID,j)`, signatures under the
    PINNED `pkS` (prefetched online; unknown `pkS` rejected offline),
    face ticket score ≥ 0.70 + 5-min freshness + allowlisted
-   matcher version, liveness score ≥ 0.85 + allowlisted liveness version,
+   matcher version, liveness score ≥ 0.70 + allowlisted liveness version,
    hardware `dSig` + chain-vs-pinned-roots, BLE sighting with RSSI gates) and
    returns a signed ACK, which the student sees as ✓ Marked.
 4. Front-row phones re-advertise challenges (hop/jitter/dedup/split-horizon
@@ -146,7 +151,7 @@ flags plus the offline double-pkD audit leave a permanent attributable
 trace. No server re-check exists (see design §3.4 for what that costs).
 See design §4–§5.
 
-Persistence notes: the student signs, announces and POSTs *every* fresh
+Persistence notes: the student signs and POSTs *every* fresh
 challenge until a verdict lands (unheard responses, stale tokens and
 loose-WiFi drops wait for the next rotation, never fail; refused means
 wrong IP and fails fast); dead air ends the listen only after a window
@@ -167,7 +172,7 @@ listening; the UDP listener falls back when reusePort is unsupported
 (Android), so beacon discovery works there too. Under Option A (Pure WiFi/TCP Proving),
 physical presence is established by receiving the 10s rotating air-gapped challenge $C_j$ over
 the local BLE mesh in the lecture hall. Proving travels pure WiFi/TCP with on-device face verification
-($\ge 0.85$), hardware key attestation (`pkD`, `dSig`), and TLS channel binding. Return BLE sighting
+($\ge 0.70$), hardware key attestation (`pkD`, `dSig`), and TLS channel binding. Return BLE sighting
 is not required, eliminating `no-ble-sighting` errors, radio bus contention, and 6s polling waits,
 guaranteeing 100% attendance reliability across all 500 seats. Marked students stay for the next round with
 zero taps: the badge parks until the round ends (same window never
@@ -334,7 +339,7 @@ packages/storage/        tally + course history + roster helpers (in-memory API;
 
 Prereqs: Flutter stable, Firebase CLI + flutterfire, Xcode (iOS/macOS),
 Android SDK. Firebase project: `proximity-attendence`. Suite status:
-protocol 225 · transport 73 · ble 38 · storage 19 · app 1238 — green,
+protocol 225 · transport 73 · ble 39 · storage 20 · app 1334 — green,
 `flutter analyze` clean, `flutter build web` green.
 
 ```bash
@@ -411,7 +416,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    (`BaseI64` — IPv4 + port beside the discriminator; the 8-byte
    challenge itself is never truncated, crypto untouched).
 7. **BLE air is one mfg format + legacy v1, unfiltered scan.** The
-   packet (`packages/protocol/lib/src/air.dart`) is fixed `FCD2` + 18 B
+   packet (`packages/protocol/lib/src/air.dart`) is fixed `FCD2` + 19 B
    manufacturer payload (`PX 03`, type, token8, IPv4, port, flags — 30 B total
    in the PRIMARY advertisement on every platform, no scan-response
    dependence). Flags carry relayed / dense-hint / 2-bit hop count (TTL on air, enforced at 2 hops);
@@ -437,7 +442,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
    bundled model, fully offline)** — the old hand-rolled
    BlazeFace/EdgeFace pipeline is deleted (models, code, and tests);
    face threshold 0.70 on the plugin score scale (old EdgeFace numbers stay
-   retired) + liveness Tl=0.85 strict on vendored MiniFASNetV2
+   retired) + liveness Tl=0.70 field-relaxed on vendored MiniFASNetV2
    `2.7_80x80` (2.7x training crop, graded score on the ticket).
    **Device binding is dual-key** (HW DKey sealing the Ed25519
    SKey: Android StrongBox→FULL / TEE→STD, iOS Secure Enclave→STD via
@@ -529,7 +534,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
   phones with live relay + victim face can still wormhole within 10 s
   (needs an accomplice present both windows; UWB would close it);
   printed-photo/replay fraud must now beat the passive MiniFASNetV2
-  vitality gate (Tl=0.85 strict + 2.7x training crop, graded score on the
+  vitality gate (Tl=0.70 field-relaxed + 2.7x training crop, graded score on the
   ticket) plus face/ticket/radio gates — FAR/FRR remain UNMEASURED on
   Proximity captures (field ROC via `sweepTl`/`recommendTl` before moving
   Tl); directory professor-gate is advisory until roles are
@@ -558,7 +563,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
 - [ ] Two phones: full mark on `#1` and `#2`, course-page export verifies.
 - [x] Back row: relay extends challenge — verified live 2026-09 (Mac advertises
       challenge, phone re-advertises it, Mac sees phone's relay at −43 dBm;
-      split-horizon + 20s linger logged in the system log).
+      split-horizon + 10s linger logged in the system log (20s at verification time, 2026-09)).
 - [ ] Adversarial: forwarded screenshot code, off-site VPN join, lent phone,
       airplane-mode BLE-off (expect honest no-signal, never fake success).
 - [x] BLE air matrix — verified live 2026-09-05 (institute WiFi,
@@ -579,7 +584,7 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
       second Android on hand: prof hint `0xFFFF/PX 02` decodes to host:port;
       Mac bleak already confirms the bytes survive the air intact).
 - [ ] Face tuning: face threshold 0.70 on the plugin score scale (old EdgeFace
-  0.60/0.80 numbers retired, never reused) + liveness Tl=0.85 strict on
+  0.60/0.80 numbers retired, never reused) + liveness Tl=0.70 field-relaxed on
   MiniFASNetV2 `2.7_80x80` with the 2.7x training crop (upstream ~98.2%
   acc / ROC-AUC 0.9984 on CelebA Spoof, APK near FPR 1e-5 @ TPR 97.8%;
   Proximity FAR/FRR UNMEASURED — field ROC via `sweepTl`/`recommendTl`
@@ -623,7 +628,7 @@ auto-present on face fail). A version mismatch forces re-face (key kept);
 no images ever leave the device; marking proofs carry a compact face vector
 (numbers only, no photo) to the professor's phone over classroom WiFi —
 held in memory for that session only, never the cloud. Anti-spoof is the
-passive MiniFASNetV2 vitality gate (Tl=0.85 strict, 2.7x training crop,
+passive MiniFASNetV2 vitality gate (Tl=0.70 field-relaxed, 2.7x training crop,
 graded 0..1 live-prob bound into `Sig_s`/`dSig` — the professor sees
 strong vs weak passes) plus the shuffled active blink/smile walk at enroll
 (order unpredictability, not measured vitality) plus the signed ticket plus
@@ -634,14 +639,14 @@ UNMEASURED on Proximity captures until a field ROC is measured.
 
 Every live screen carries a **Show system log** toggle rendering the same
 `BleLog` stream in a terminal window (black, monospace, color-coded tags,
-autoscroll, 500-entry ring buffer, clear button):
+autoscroll, 50k-entry ring buffer with a 500-row render window, 500ms flush, clear button):
 
 - Student: browsing (browse/list), waiting room, face scan, listening radar,
   marked/late/no-signal verdicts. Face-scan screen too (radio keeps
   listening under the camera UI).
 - Professor: take-attendance screen (above the waiting list).
 
-Tags: `BLE` (scan start, ADV on air/failures, RX challenge/response with
+Tags (`NAV`/`SYNC`/`FACE`/`STATE`/`BLE`/`MESH`/`LAN`/`SEC`/`NET`/`TRANSPORT`/`CRYPTO`/`SESSION`/`CLOCK` — see `ProxLogTags`): `BLE` (scan start, ADV on air/failures, RX challenge/response with
 RSSI, IP-hint heard/probe/listed, air-visibility probes), `MESH` (relay armed, forwarding, relayed,
 skip reasons: TTL/weak/dup/split-horizon/cap — the disarmed steady state stays
 silent), `LAN` (HTTPS up, announce IP,
@@ -676,7 +681,7 @@ MIT — FaceNet embeddings + ML Kit detection, model bundled in the
 package, fully offline and on-device; integration follows the package's
 own example app). Face threshold 0.70 on the plugin score scale (plugin
 default; old EdgeFace 0.60/0.80 numbers retired, never reused —
-different embedding space) + liveness Tl=0.85 strict on the vendored
+different embedding space) + liveness Tl=0.70 field-relaxed on the vendored
 MiniFASNetV2 `2.7_80x80` model (`assets/models/silentface-minifasnetv2-27-80x80.tflite`,
 Apache-2.0, `tflite_flutter`, 2.7x training crop, graded 0..1 live-prob on
 the ticket). The old

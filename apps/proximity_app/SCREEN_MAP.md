@@ -73,13 +73,10 @@ inside a single screen instead of across a whole route table.
   reusable `AnglePrompt` widget cycled by the capture controller (redesign
   §4.7), not five hardcoded near-duplicate screens — the actual camera-
   session logic here is unchanged by the stepper wrapper.
-  **HARD REQUIREMENT — overlay:** uses the two-oval capture overlay
-  (redesign §6.2: small oval = live head-position target in sync with
-  the current angle, large oval = overall sequence progress; no other
-  overlay element) — same overlay as `mark/face` below, one design for
-  both. Note the 3-vs-5-angle discrepancy between `README.md` and this
-  doc, flagged in the redesign doc §6.2 — verify against the actual
-  capture controller before finalizing angle count.
+  **Overlay:** single framing oval + orbiting beacon/comet + progress bar
+  + prompt (redesign §6.2 as revised — the two-oval rule is superseded).
+  Counts resolved: 5 angles per the capture controller
+  (`faceEnrollSlots.length`).
   **HARD REQUIREMENT — entry:** this step is now also entered when a
   student opens Mark with no completed enrollment, not only from a fresh
   install (redesign §3.4).
@@ -102,105 +99,85 @@ Three destinations, per `PROXIMITY_UI_REDESIGN.md` §3.1: **Mark**,
 "Professor" is reached from one of these three tabs; nothing in the
 student shell is a fourth, hidden entry point.
 
-**HARD REQUIREMENT — rename:** this tab was `Records` in the original
-map; it's `Courses` now (redesign §3.1), and it is explicitly confirmed
+**SUPERSEDED — label only:** this tab was `Records` in the original
+map; it is labelled `Courses` now (redesign §3.1), and it is explicitly confirmed
 **records-only** (redesign §3.1a) — no join/mark affordance renders here,
-ever, even for a course with an open window. That affordance lives only
+ever, even for a course with an open window. Routes stay `records/*`
+(`records/mine`, `records/mine/<course>`). That affordance lives only
 in `Mark` below.
 
 ### Mark tab (one continuation, phases not pages)
 
 **HARD REQUIREMENT — entry guard:** tapping `Mark` with no completed
-enrollment routes into `SetupFlowScreen` (Enroll section above), not
-`mark/browse` (redesign §3.4). Tapping `Mark` fully enrolled with no open
-window lands on `mark/browse` as below. Tapping `Mark` with an open
-window for a joined class resumes directly into
-`waiting`/`face`/`proving`, unchanged.
-- `mark/browse` EXISTS — reason: discover (UDP beacons + BLE hints + typed
+enrollment routes into `SetupFlowScreen` (Enroll section above), not the
+browsing phase (redesign §3.4). Tapping `Mark` fully enrolled with no open
+window lands on the `browsing` phase as below. Tapping `Mark` with an open
+window for a joined class resumes directly into the
+`waiting`/`faceCheck`/`listening` phases, unchanged. Mark has no named
+routes — all phases below are in-tab view-states of the one Mark host
+(`StudentPhase`: browsing/waiting/faceCheck/listening/marked/late/
+wrongOrg/needsReview/noSignal/paused/manualPending).
+- `browsing` — reason: discover (UDP beacons + BLE hints + typed
   IP) + join; degradation ladder + broadcast-blocked stated aloud.
   **Visual:** `effect.glow.live` behind the radar-sweep empty state
   (redesign §2.5, §6.1) — the one ambient effect that's allowed at rest,
-  because it signals active scanning, not decoration.
-- `mark/join` MERGED into browse — reason: typed IP is one field on browse,
-  not a separate screen (removes a hop mid-lecture); surfaces as a
+  because it signals active scanning, not decoration. Typed IP is one
+  field on browse (no separate join screen); surfaces as a
   `FallbackButton` → one-field sheet per redesign §4.4/§6.1, never inline.
-- `mark/waiting` EXISTS — reason: park with presence heartbeat until the
+- `waiting` — reason: park with presence heartbeat until the
   window opens; honest-unreachable stated, manual fallback offered.
   **Visual:** `effect.glow.live` behind the pulsing presence ring
   (redesign §2.5, §6.2).
-- `mark/face` EXISTS — reason: single-shot holder check (zero-tap
+- `faceCheck` — reason: single-shot holder check (zero-tap
   auto-scan, Scan fallback); inconclusive never burns, mismatch burns one.
-  **Presentation note, superseded:** the original version of this map
-  noted the current implementation uses an oval scan overlay while the
-  redesign spec (§6.2, as first written) specified corner-brackets
-  instead, with spec winning. **HARD REQUIREMENT, current state:** the
-  redesign spec itself has since been revised — the product owner
-  specifies exactly two ovals (small = live head-position target, large =
-  overall progress), not corner-brackets, so the original oval-based
-  implementation direction turns out to be closer to correct than the
-  interim corner-bracket spec was. Build to the two-oval design in
-  redesign §6.2's current text, not the corner-bracket version. The
-  underlying scan/match/burn behavior remains frozen and unaffected
-  either way.
-  Transition in from `mark/waiting` is the ring morphing into the camera
+  Static framing oval + one prompt line only (redesign §6.2 as revised).
+  Transition in from `waiting` is the ring morphing into the camera
   frame (redesign §6.2), not a hard cut.
-- `mark/proving` EXISTS — reason: radio wait with step status only (no
+- `listening` — reason: radio wait with step status only (no
   countdown); clock-drift banner shown honestly.
-- `mark/verdict` EXISTS — reason: one outcome (marked/late/wrong-org/
-  no-signal/needs-review) with per-round trail + next step.
+- verdict (`marked`/`late`/`wrongOrg`/`noSignal`/`needsReview`) — reason: one outcome
+  with per-round trail + next step.
   **Visual:** on `Marked` only — `gradient.marked` wash + `effect.glow.marked`,
   400ms, non-blocking, skippable (redesign §2.5, §6.3). Every other
   outcome is flat, per §4.6 (error states are actionable, not decorative).
   This is the single most gradient/glow-forward moment in the whole app,
   deliberately — see redesign principle 11.
-- `mark/manual` EXISTS — reason: manual fallback branch (pending →
+- `manualPending` — reason: manual fallback branch (pending →
   approved/rejected) with professor contact path.
 
-### Courses tab (student) — renamed from "Records tab", HARD REQUIREMENT records-only
-- `courses/mine` (was `records/mine`) EXISTS — reason: student's synced
+### Courses tab (student) — labelled `Courses`, HARD REQUIREMENT records-only
+- `records/mine` EXISTS — reason: student's synced
   courses (course cards → sessions); offline shows last sync honestly
   (paired with a next step — "retry sync" — per redesign §4.6, not a bare
   "offline" label). **No join/mark affordance rendered here, ever** —
   even for a course with a currently-open window, per redesign §3.1a.
-- `courses/course/<course>` (was `records/course/<course>`) EXISTS —
+- `records/mine/<course>` EXISTS —
   reason: one student's course drill-down (sessions + totals).
 
 ### Account tab (student)
 This section originally proposed redesigning the old single-scroll
 Account into **a menu plus one focused page per topic**
-(`PROXIMITY_UI_REDESIGN.md` §5, original), with `account`,
-`account/enrollment`, `account/face-id`, `account/device` as four
-addressable routes. **HARD REQUIREMENT, revised:** the product owner
-wants Account to be **one consolidated page** owning profile header,
-enrollment status + re-enroll entry, ID edit, device key/move status
-(short form), offline/hosting note (collapsed), sign-out, and system
-log — absorbing the pre-auth `device` screen's facts too — with `roles`
-reduced to a pure role-picker. `account/face-id` is the one route that
-stays separate (reason below). This is fewer routes than originally
-proposed, not new routes; every fact from the original four-route split
-is preserved, just regrouped:
+(`PROXIMITY_UI_REDESIGN.md` §5, original). **SUPERSEDED twice since:**
+first (per owner instruction) into **one consolidated page**, then by the
+shipped submenus overhaul into a **menu root + one-feature pushes**
+(`INTEGRATION_LOG.md` Account overhaul) — that final structure is what
+ships. `account/face-id` stays its own route (reason below). The bullets
+below describe the *content* of the sub-pages, not sections of one page:
 
-- `account` (ONE PAGE, tab landing page, sectioned) EXISTS — reason:
-  identity header + all of enrollment/ID/device/theme/log/sign-out as
-  labeled sections on one page, each collapsing secondary explanation
-  into a `DetailsExpander` (redesign §4.7) rather than a separate route.
-  - **Enrollment section** — the full content originally proposed for
-    `account/enrollment`: date enrolled, organization, trust tier badge
-    (tapping it opens the plain-language explainer via
-    `DetailsExpander`, not a separate sheet route).
-  - **ID section** — roll/student-ID, editable. **Flag for verification
-    before building the write path** — if the ID is currently immutable
-    server-side, render read-only and report the gap rather than
-    inventing new business logic (redesign §5.1).
-  - **Device section** — the full content originally proposed for
-    `account/device`: device model, install status, move-cooldown date,
-    "Move to this device" fallback; offline/hosting note collapsed in
-    this section's `DetailsExpander`.
-  - `Theme` — still the one inline control row, unchanged from the
-    original proposal (Dark/Light/System segmented control, redesign
-    §5.1) — does not push to a sub-page.
+- Account menu (tab landing page) — reason:
+  identity header + pushes to Enrollment / Device / Appearance /
+  Face ID / System log rows, plus sign-out.
+  - **Enrollment push** — date enrolled, organization, trust tier badge
+    (tapping it opens the plain-language explainer), re-enroll/move
+    entry point when relevant.
+  - **ID row** — roll/student-ID, editable with Save (write path exists:
+    `CloudSync.updateStudentRoll` + uniqueness guard; directory-denied
+    saves fail open).
+  - **Device push** — device model, install status, move-cooldown date,
+    "Move to this device" fallback; offline/hosting note.
+  - `Appearance` — Dark/Light/System segmented control.
   - `System log` row — opens `debug/log` directly, unchanged.
-  - `Sign out` — bottom of page, visually separated, unchanged.
+  - `Sign out` — bottom of the menu, visually separated, unchanged.
   - **Visual:** subtle `gradient.brand` wash behind the header only
     (redesign §2.5, §4.3) — unchanged from the original proposal.
 - `account/face-id` EXISTS, **stays its own route** (not folded in) —
@@ -211,8 +188,8 @@ is preserved, just regrouped:
   so this hard "never preview" rule can't accidentally inherit a stray
   image widget from the shared Account page layout.
 - `account/enrollment` and `account/device` as standalone routes are
-  **removed as separate pushes** — their content lives in the sections
-  above on `account` now. See "Removed / merged" below.
+  **removed as separate pushes** — their content lives on the sub-pages
+  above now. See "Removed / merged" below.
 
 ---
 
@@ -236,31 +213,32 @@ face, so `account/face-id` doesn't apply to them; scope that page's
 contents fresh against what a professor actually needs (device/sign-out/
 theme at minimum), don't just copy the student page.
 
-### `live/<course>` (one host, focused sections)
+### `live/<course>` (one host, focused sections — in-tab, not sub-routes)
 - `live/<course>` EXISTS — reason: the mid-class always-on block (LIVE/
   IDLE, elapsed, present/waiting, Start⇄Stop cluster).
   **Visual:** header picks up `gradient.brand` while state is `LIVE`,
   flat `surface.raised` while `IDLE` (redesign §2.5, §7) — the one
   flourish given to the professor surface, because it directly answers
   "is this actually running."
-- `live/<course>/roster` SPLIT — reason: waiting + present (intersection) +
+- roster section — reason: waiting + present (intersection) +
   partial + search, readable mid-lecture without the control cluster.
-- `live/<course>/inbox` SPLIT — reason: manual approvals where they happen
+- inbox section — reason: manual approvals where they happen
   (near top, bulk approve/reject via hold-and-tap, not checkboxes).
   **HARD REQUIREMENT:** backed by the `features/manual_attendance/`
   module (redesign §4.8) rather than owning bespoke approve/reject UI
   inline — one implementation shared with `add` below.
-- `live/<course>/add` SPLIT — reason: direct add (directory search fills
+- add section — reason: direct add (directory search fills
   the same fields) without scrolling past the roster.
   **HARD REQUIREMENT:** also backed by `features/manual_attendance/`
   (redesign §4.8), the add-form half of the same module.
 - **HARD REQUIREMENT — no shortcut from `Courses`:** nothing under
-  `live/<course>/*` is reachable from the `Courses` tab
+  `live/<course>` is reachable from the `Courses` tab
   (`prof/courses/<course>` may show a read-only "LIVE now" status chip,
-  but tapping it never jumps into these routes) — redesign §3.1a.
-- `live/<course>/setup` SPLIT — reason: hosting setup (name, IP pick,
+  but tapping it never jumps into hosting) — redesign §3.1a. Extra URL
+  suffixes (`live/<course>/*`) resolve as unknown (exact-shape guard).
+- setup section — reason: hosting setup (name, IP pick,
   discovery assumptions) before Start.
-- `live/<course>/recover` SPLIT — reason: draft recovery decision (recover
+- recover section — reason: draft recovery decision (recover
   vs archive-then-fresh), data never dropped; stays on the flow-
   orchestration host screen, not a features/ presentational split, since
   it owns the draft (see "Removed / merged" notes below).
@@ -276,13 +254,14 @@ theme at minimum), don't just copy the student page.
   not enter hosting controls.
 - `prof/courses/<course>/export` EXISTS — reason: review + export the past
   (per-session CSV, date-range matrix).
-- `prof/sessions/<id>` (detail, read) EXISTS — reason: one saved session
+- session detail (in-tab push from the course overview) — reason: one saved session
   with per-round ticks.
-- `prof/sessions/<id>/edit` EXISTS — reason: fix marks later (per-round
+- session edit (in-tab push) — reason: fix marks later (per-round
   checkboxes — professor-side correction is the one legitimate checkbox
   use in the app, distinct from the hold-and-tap selection pattern used
   for bulk actions elsewhere; partial/absent quick lists, unified
-  manual-add).
+  manual-add). Neither is a named route (`prof/sessions/<id>` deep-links
+  resolve as unknown).
 
 ---
 
@@ -296,7 +275,8 @@ theme at minimum), don't just copy the student page.
   third, inconsistent entry point anywhere else.
 
 ## Removed / merged (no dead routes)
-- `mark/join` merged into `mark/browse` (see above).
+- Typed-IP join lives on the browsing phase (no separate join screen —
+  one field on browse; see Mark tab above).
 - Desktop enrollment UI removed (see above).
 - `MarkedBadge` (widgets/animated) removed — superseded by
   `ProxVerdictBadge` (one verdict language, elastic reserved for Marked).
@@ -314,8 +294,8 @@ theme at minimum), don't just copy the student page.
   original scroll or the four-route split is dropped — only where it's
   read changes, again.
 - `records/mine` / `records/course/<course>` **renamed** to
-  `courses/mine` / `courses/course/<course>`; tab renamed `Records` →
-  `Courses` (redesign §3.1). Same screens, same data.
+  `records/mine` / `records/mine/<course>`; tab labelled `Records` →
+  `Courses` (redesign §3.1, routes unchanged). Same screens, same data.
 - Standalone pre-auth `device` screen — **folded into `Account`**, not
   deleted as a function; its facts are now read from the same Account
   sections that read them post-auth on demand.

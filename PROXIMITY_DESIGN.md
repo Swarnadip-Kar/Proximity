@@ -132,7 +132,8 @@ most once per 30 days); manual attendance covers any gap.
    replace: the HW key deletes-then-creates under the same alias, the
    SKey swaps + sealed doc overwrites at upload, and `generateKey`
    drops the previous gallery template (an aborted re-enroll never
-   leaves a stale template).
+   leaves a stale template). Face-template rescans are Save-gated separately
+   (`kFaceRescanCooldown` = 30d per Gmail; failed saves never stamp).
 5. Atomic extended claim `{Gmail, pkS, pkD, installId, name, roll,
    modelVer/verifierVer, attestationLevel, attestedAt,
    attestedUntil=+90d, attestationChain, appAttestRawHex,
@@ -336,8 +337,8 @@ enrollment, marking, and the SK-use stamp. Backend is the
   any plugin/model swap forces re-face via the stale-pipeline check
   (key kept). The host allowlists verifier versions; flapping across
   proves is flagged post-hoc.
-- Liveness: passive MiniFASNetV2 classifier (`2.7_80x80`, `Tl=0.85`
-  strict, 2.7x training crop, graded 0..1 live-prob on the ticket — the
+- Liveness: passive MiniFASNetV2 classifier (`2.7_80x80`, `Tl=0.70`
+  field-relaxed, 2.7x training crop, graded 0..1 live-prob on the ticket — the
   professor CAN tell 0.95 from 0.86) PLUS an active challenge walk at
   enroll (shuffled blink/smile prompts — order unpredictability is the
   anti-replay property) gating the save, and per-still passive scoring
@@ -378,7 +379,7 @@ enrollment, marking, and the SK-use stamp. Backend is the
   because a group-flag's error cost differs from a rescan AND to keep
   expected false pairs <1/session at pilot scale; blatant same-lecture
   proxy scores 0.85+; pipeline-scoped, self-excluded). Pairs AND larger
-  groups (A/B/C…) all flag: every involved entry marks `DUPLICATE_FLAGGED`
+  groups (A/B/C…) all flag: every involved entry marks `FLAGGED`
   — roster-visible ("Duplicate face detected between [A] and [B]"), 1-tap
   professor override resolving on the spot (exempts the pair for the
   session), never auto-absent. Window close AND hosting end wipe all
@@ -457,12 +458,12 @@ hint (see §6.3).
 BaseP64 = fixed 64-bit Proximity challenge prefix (e.g. 9A3B7C1D4E5F6071)
 BaseS64 = fixed 64-bit Proximity response prefix (different constant)
 UUID_P(j) = BaseP64 || C_j                 // professor challenge, rotating every 10 s
-UUID_S(ID,j) = BaseS64 || R_IDj            // student response, rotating every 10 s
+UUID_S(ID,j) = BaseS64 || R_IDj            // student response, rotating every 10 s — RETIRED under Option A (2026-09-30): students transmit nothing, they only listen + POST
 ```
 
 Fixed service UUID `PROX_SVC` is always advertised alongside for scan filtering. Rotating UUID carries the secret. Scan-response carries `peerW(ID)` (8 bytes) so the professor can map radio sightings to class entries without stable MACs and without linkability across lectures.
 
-GATT service `PROX_SVC` with characteristic `PROX_CHR` (read/write/notify + CCCD) exposes the full `{windowID, j, C_j, Sig_p(j), TTL}` for fallback reads when advertisements collide.
+GATT service `PROX_SVC` with characteristic `PROX_CHR` (read/write/notify + CCCD) exposes the full `{windowID, j, C_j, Sig_p(j), TTL}` for fallback reads when advertisements collide. (Never built — directed-response relay stays direct-ADV-only; see README gaps.)
 
 Binary packet header for any relayed Mesh PDU (copied from BitChat framing):
 
@@ -561,7 +562,7 @@ Back rows cannot hear the professor directly. Front-row phones re-advertise what
   the same address on their alternating IP-hint UUID ticks (see above),
   with UDP/manual as backstop.
 
-This is the BitChat controlled flood reduced to the minimum needed for a lecture hall: 3 hops max, 30 s lifetime, tiny fixed payloads, authority still centralized.
+This is the BitChat controlled flood reduced to the minimum needed for a lecture hall: originate TTL 3, accepted ≤2 hops, tiny fixed payloads, authority still centralized.
 
 ### 6.3 WiFi HTTPS (bulk transport)
 
@@ -585,7 +586,7 @@ GET  /live                 -> counts + rows (professor Bearer)
 GET  /export               -> {csv} (professor Bearer; .sig applied at the app layer)
 ```
 
-Rate limits: `/prove` 40/10 s/IP, `/window` 5/10 s/IP. TLS pinned as in §3.3. If campus AP isolates clients, BLE hint + typed IP carry the join and an unreachable host fails honestly into the manual path — hotspot is excluded, never the fallback.
+Rate limits: `/prove` 40/10 s/IP (+10/10 s per ID), `/window` 5/10 s/IP. TLS pinned as in §3.3. If campus AP isolates clients, BLE hint + typed IP carry the join and an unreachable host fails honestly into the manual path — hotspot is excluded, never the fallback.
 
 Discovery detail — ORG-GATED (as built + field-verified 2026-09):
 professors advertise CONTINUOUSLY while hosting over UDP broadcast
@@ -808,8 +809,8 @@ warmed low-end signal, join paints before network.
   (doc id = record id, `set(merge:true)`, monotonic timestamps).
 - Tests: golden vectors (HMAC/UUID pack/Ed25519 RFC8032, ticket/dSig
   preimages), claim/tier unit tests, dedup/flood unit tests, two-phone
-  relay test, suite: protocol 189 · transport 66 · ble 38 · storage 18 ·
-  app 1110, `flutter analyze` clean, `flutter build web`
+  relay test, suite counts live in the `INTEGRATION_LOG.md` tail,
+  `flutter analyze` clean, `flutter build web`
   green. Pilots pending: 30-room, 150-hall, 500-hall load + adversarial
   drill (forwarded code, off-site VPN, lent phone, photo spoof,
   dual-phone wormhole attempt). Ship only when wormhole needs active accomplice across both windows.
@@ -826,7 +827,7 @@ BitChat (permissionlesstech/bitchat, whitepaper v2.0 Jul 2026; `bitchat-android`
 
 Shipped: protocol HMAC/UUID/Ed25519 + window rotation (10 s) + mesh relay +
 typed-IP/manual join + iOS parity (App Attest STD) + face gate + liveness
-gate (MiniFASNetV2 Tl=0.85) + SK lock + email→key pins (profDevices +
+gate (MiniFASNetV2 Tl=0.70) + SK lock + email→key pins (profDevices +
 directory pkS, TOFU + queue) + leave-token anti-ejection +
 channel-bound TLS + desktop host + Linux shim + cloud roles/claims/
 session backup + student records + web records build +
@@ -834,7 +835,7 @@ org join-gate with structured
 wrong-org receipts (§3.0) + Track 6 consolidation (§13) + disk-backed
 force-update floor (§6). (GATT
 `PROX_SVC`/`PROX_CHR` fallback is future work, not shipped.)
-Suite: protocol 189 · transport 66 · ble 38 · storage 18 · app 1110,
+Suite counts live in the `INTEGRATION_LOG.md` tail,
 `flutter analyze` clean, `flutter build web` green.
 Prior-track verified: `flutter build macos`, `flutter build apk`,
 `flutter build ios --no-codesign` green (2026-09-06; Track 6 touches
@@ -908,9 +909,9 @@ one-liner idioms and intentional seams (below).
 
 ### 13.3 Honest residual weaknesses (as-built — HW shipped, trust still TOFU)
 
-1. **Face + liveness trust is local; liveness is strict, Proximity ROC
+1. **Face + liveness trust is local; liveness is field-relaxed, Proximity ROC
    still unmeasured.** `T=0.70` (face: plugin default + FaceNet512 0.7
-   deployment point) and `Tl=0.85` (liveness, strict — 2.7x training crop
+   deployment point) and `Tl=0.70` (liveness, field-relaxed — 2.7x training crop
    + upstream ~98.2% acc / ROC-AUC 0.9984 + APK near FPR 1e-5 @ TPR 97.8%)
    are the shipped operating points — no Proximity FAR/FRR numbers claimed
    anywhere in this doc. Passive MiniFASNetV2 + 5 pose gates raise spoof

@@ -149,7 +149,7 @@ Read each block the same way: **Does → Why this one → Good → Bad → Preve
 
 - **Does:** Splits pure logic (crypto/math) from radio, network, and local records.
 - **Why:** Pure-Dart crypto can be unit-tested fast with zero phone needed; radio/network can evolve without touching signatures.
-- **Good:** Fast tests (1400+), clear ownership, web-safe conditional shims.
+- **Good:** Fast tests (1600+), clear ownership, web-safe conditional shims.
 - **Bad:** More packages to version and keep in sync.
 - **Prevents:** A WiFi bug breaking signature code; untestable spaghetti.
 

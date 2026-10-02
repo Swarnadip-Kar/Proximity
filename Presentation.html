@@ -173,7 +173,7 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <p class="eyebrow">10 · Flutter + Dart 🐦</p>
 <h2 class="t">One codebase, every screen</h2>
 <div class="tech4"><div class="card"><div class="k">What it does</div><p>Compiles one UI + logic to Android, iOS, macOS, Windows, Linux, Web.</p></div><div class="card"><div class="k">Why this one</div><p>Small team can't maintain native apps; attendance logic must be identical.</p></div><div class="card"><div class="k">Good ↔ Trade-off</div><p>Same protocol + fast UI + one test suite ↔ shims for BLE/camera, larger size.</p></div><div class="card"><div class="k">Prevents</div><p>Logic drift ("Android marks, iOS doesn't"); desktop/web fail closed, never weakly mark.</p></div></div>
-<details class="notes"><summary>Speaker notes</summary><p>Flutter and Dart compile one codebase to Android, iOS, macOS, Windows, Linux and Web, so a small team maintains one attendance protocol instead of three native apps. Pure logic lives in testable monorepo packages with 1400+ fast unit tests, and desktop and web builds fail closed — they cannot mark, instead of marking weakly. The cost is platform shims for BLE, camera and file saving, a larger binary, and quirks like Apple stripping BLE payload data leaking through.</p></details>
+<details class="notes"><summary>Speaker notes</summary><p>Flutter and Dart compile one codebase to Android, iOS, macOS, Windows, Linux and Web, so a small team maintains one attendance protocol instead of three native apps. Pure logic lives in testable monorepo packages with 1600+ fast unit tests, and desktop and web builds fail closed — they cannot mark, instead of marking weakly. The cost is platform shims for BLE, camera and file saving, a larger binary, and quirks like Apple stripping BLE payload data leaking through.</p></details>
 <div class="foot"><span>10 / Flutter + Dart</span><span>Fail closed off-mobile</span></div>
 </section>
 
@@ -185,7 +185,7 @@ h3.st{font-family:var(--font-display);font-size:34px;margin-bottom:8px}
 <li><b>Why this one —</b> A small team can't maintain 3–4 native apps; attendance logic must be identical everywhere.</li>
 <li><b>Good —</b> Same protocol on every platform; fast UI; one test suite; web build falls out nearly free.</li>
 <li><b>Bad —</b> Needs shims where platforms differ (BLE, camera, file save); app size is larger than pure native; platform quirks (e.g. Apple stripping BLE payload data) still leak through.</li>
-<li><b>Prevents —</b> Logic drift — 'Android marks but iOS doesn't' class of bugs; plus fail-closed behavior off-mobile (desktop/web can't mark instead of marking weakly). Monorepo split (protocol/ble/transport/storage) keeps crypto testable with 1400+ fast tests and stops a WiFi bug breaking signature code.</li>
+<li><b>Prevents —</b> Logic drift — 'Android marks but iOS doesn't' class of bugs; plus fail-closed behavior off-mobile (desktop/web can't mark instead of marking weakly). Monorepo split (protocol/ble/transport/storage) keeps crypto testable with 1600+ fast tests and stops a WiFi bug breaking signature code.</li>
 </ul></div>
 <details class="notes"><summary>Speaker notes</summary><p>One language and UI toolkit compiles to Android, iOS, macOS, Windows, Linux, and Web from a single codebase. A small team can't maintain 3–4 native apps; attendance logic must be identical everywhere.</p></details>
 <div class="foot"><span>10B / Deep dive</span><span>Detail · same level as the explainer</span></div>

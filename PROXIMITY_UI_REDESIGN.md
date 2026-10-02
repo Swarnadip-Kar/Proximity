@@ -95,7 +95,7 @@ while doing visual work):
     convenience. See §3.1a.
 13. **HARD REQUIREMENT — no unenrolled student ever sees a bare Mark
     screen.** Selecting Student mode / opening Mark with no completed
-    enrollment routes straight into the setup flow, not `mark/browse`.
+    enrollment routes straight into the setup flow, not `browsing`.
     See §3.4.
 14. **Text minimalism is a component, not a guideline.** Principle 2's
     "no unessential text" and the error/detail patterns in §4.6/§9 are
@@ -169,7 +169,7 @@ never a one-off `LinearGradient(...)` hand-authored inline on a screen.
 | `gradient.brand` | `#5B8CFF → #8F6BFF`, 135° | `#3A63E0 → #6A4FD9`, 135° | Primary CTA fill (one per screen, §1.1), active `Live` state header |
 | `gradient.marked` | `#33C77A → #2FE0A0`, 120° | `#1E9A5C → #22B87E`, 120° | The one-shot verdict color-wash in §6.3, and only there |
 | `gradient.scrim` | `#0B0D10 @0% → #0B0D10 @72%` | `#14161A @0% → #14161A @55%` | Bottom-sheet/modal scrim, image-caption legibility overlay (session thumbnails, if any) |
-| `effect.glow.live` | `accent.brand` blur `24`, 24% opacity | `accent.brand` blur `16`, 14% opacity | Soft halo behind the pulsing presence ring (`mark/waiting`) and the radar-sweep empty state (`mark/browse`) — reinforces "this is actively working," not static |
+| `effect.glow.live` | `accent.brand` blur `24`, 24% opacity | `accent.brand` blur `16`, 14% opacity | Soft halo behind the pulsing presence ring (`waiting`) and the radar-sweep empty state (`browsing`) — reinforces "this is actively working," not static |
 | `effect.glow.marked` | `status.marked` blur `32`, 30% opacity, fades over 400ms | `status.marked` blur `20`, 18% opacity, fades over 400ms | Rides along with `gradient.marked`'s wash in §6.3 — one glow, same event, never triggered independently |
 | `effect.elevation.raised` | shadow `0 1 2 rgba(0,0,0,0.4)` | shadow `0 1 2 rgba(0,0,0,0.08)` | `surface.raised` cards/sheets — a hairline lift, not a drop-shadow floating look |
 | `effect.elevation.sheet` | shadow `0 -2 12 rgba(0,0,0,0.5)` | shadow `0 -2 12 rgba(0,0,0,0.1)` | Bottom sheets only, paired with `gradient.scrim` behind them |
@@ -192,13 +192,13 @@ doesn't get a gradient):
   header (§7) picks up `gradient.brand` only in the `LIVE` state; `IDLE`
   stays flat `surface.raised`. This is the professor-side equivalent of
   the student presence-ring glow: gradient = "this is currently running."
-- **`mark/waiting` presence ring + `mark/browse` radar-sweep empty state**
+- **`waiting` presence ring + `browsing` radar-sweep empty state**
   — `effect.glow.live` behind the ring/sweep animation already specified
   in §6.1/§6.2. The glow rides on the same ambient loop, it isn't a
   separate effect layered on top; under reduce-motion it's dropped to a
   static soft halo, never fully removed (removing it would make the ring
   look inert rather than "connected").
-- **`mark/verdict` → `Marked` wash (§6.3)** — upgrade the flat
+- **`verdict` → `Marked` wash (§6.3)** — upgrade the flat
   `status.marked` color-wash already specified there to `gradient.marked` +
   `effect.glow.marked` together, same 400ms non-blocking skippable timing,
   same single-use rule (this exact combination never appears anywhere
@@ -229,21 +229,23 @@ is reinforcement, not the message itself.
 
 `Mark` · `Courses` · `Account`
 
-**HARD REQUIREMENT — rename:** this tab was originally proposed as
-`Records`; it is renamed **`Courses`** here (and throughout this document
-and `SCREEN_MAP.md`) to read the same way on both shells and to make
-explicit the tab's one job is "look at a course," not merely "see a list."
-Routes rename accordingly: `records/mine` → `courses/mine`,
-`records/course/<course>` → `courses/course/<course>`. This is a rename +
-scope clarification, not a new route — see §3.1a and §8.
+**SUPERSEDED — label only, routes unchanged:** this tab was originally proposed as
+`Records`; it is now labelled **`Courses`** on both shells (the tab's one job
+is "look at a course"). Routes did NOT rename: records screens stay
+`records/mine` → `records/mine/<course>` (see `routes.dart` — renaming would
+break deep-links and history ids for zero user gain). Every `courses/mine`
+/ `courses/course/<course>` route in this document and `SCREEN_MAP.md` reads
+as `records/mine` / `records/mine/<course>`.
 
-- **Mark** — icon: proximity/radar glyph. Lands on `mark/browse` or, if a
+- **Mark** — icon: proximity/radar glyph. Lands on the `browsing` phase or, if a
   window is currently open for a joined class, resumes directly into
-  `mark/waiting` / `mark/face` / `mark/proving` (no re-browse on relaunch
-  mid-session — matches existing autosave/resume behavior). **If the
+  the `waiting` / `faceCheck` / `listening` phases (no re-browse on relaunch
+  mid-session — matches existing autosave/resume behavior). Mark has no named
+  routes — all phases are in-tab view-states of the one Mark host. **If the
   student has not completed enrollment, Mark does not land on
-  `mark/browse` at all — see the enrollment gate, §3.4.**
-- **Courses** — icon: layered cards/stack. Lands on `courses/mine`.
+  browsing at all — see the enrollment gate, §3.4.**
+- **Courses** — icon: layered cards/stack. Lands on `records/mine` (tab
+  label `Courses`, routes stay `records/*`).
   **HARD REQUIREMENT: records-only, see §3.1a.**
 - **Account** — icon slot is **not a generic icon** — it renders the
   signed-in Gmail account's avatar/initial inside the tab itself (see §5.1).
@@ -263,23 +265,28 @@ student side — see §7.
 
 **HARD REQUIREMENT**, both shells:
 
-- **Student `Courses`:** `courses/mine` → `courses/course/<course>`. No
+- **Student `Courses`:** `records/mine` → `records/mine/<course>`. No
   entry point into `Mark` from here, and no "join now" affordance on a
   course card even when that course currently has an open window — that
   affordance lives only in `Mark`.
 - **Professor `Courses`:** `prof/courses` → `prof/courses/<course>` →
-  `prof/sessions/<id>` → `prof/sessions/<id>/edit` + `export`. **No
+  session detail → session edit (in-tab pushes from the course overview —
+  `prof/sessions/<id>` and `/edit` are NOT named routes) + `export`. **No
   Start/Stop, no "go live," no host-setup entry anywhere in this tab.**
   Hosting is reached exclusively through `Live`. `prof/courses/<course>`
   may show a **read-only** "LIVE now" status chip, but tapping it does
   not jump into hosting controls — it's information, not a shortcut
   around the tab boundary.
-- `live/<course>` and everything under it (`roster`, `inbox`, `add`,
-  `setup`, `recover`) is owned entirely by the `Live` tab. See §7.
+- `live/<course>` (exact shape only — `roster`, `inbox`, `add`,
+  `setup`, `recover` are in-tab `IndexedStack` sections of the one
+  `TakeAttendanceScreen` host, never addressable sub-routes) and everything
+  under it is owned entirely by the `Live` tab. See §7.
 
-Deep-links to `live/<course>/*` and `mark/*` still work exactly as before
-— no dead routes, this is a tab-*placement* decision, not a route
-removal. The point: viewed on its own, `Courses` answers exactly one
+`live/<course>/*` suffixes resolve as unknown (exact-shape guard — the
+sections are in-tab, not deep-linkable), and `mark/*` never existed as
+named routes (in-tab phases only — see §6). This is a tab-*placement* decision for `live/<course>` sections, not a route
+removal. `mark/*` never existed as named routes (in-tab phases only —
+see §6). The point: viewed on its own, `Courses` answers exactly one
 question ("what happened / what's my status") and never becomes a second
 on-ramp into the primary action.
 
@@ -303,7 +310,7 @@ Bar behavior:
 - **Sheet-style fallbacks** (IP entry, manual add, filters — see §6.4):
   bottom sheet, 200ms spring, drag-to-dismiss enabled, scrim fades in
   parallel.
-- **Verdict arrival** (`mark/proving` → `mark/verdict`): this is not a
+- **Verdict arrival** (`listening` → `verdict`): this is not a
   generic push. See §6.3.
 - **Back gesture / system back:** reverses the forward transition exactly;
   never a different animation than its forward pair.
@@ -312,15 +319,16 @@ Bar behavior:
 
 ### 3.3 Serialized entry + enrollment flow
 
-Today `welcome` → `roles` → `device` → `enroll/intro` → `enroll/capture` →
-`enroll/result` are six separate routes, each a full push. For a brand-new
-student these are not six independent decisions, they're one continuous
+`welcome` → `roles` → `device` are entry routes; enrollment itself is the
+serialized `SetupFlowScreen` (the standalone `enroll/intro` route is
+deleted). For a brand-new
+student these are not independent decisions, they're one continuous
 setup — so present them as **one serialized flow** with a persistent step
-indicator, instead of six discrete screens each with their own transition
+indicator, instead of discrete screens each with their own transition
 weight:
 
 - A single `SetupFlowScreen` hosts an internal `PageView`/stepper. Steps:
-  `Sign in → Pick role → Confirm device → About to enroll → Capture face → Done`.
+  `Sign in → Pick role → Confirm device → Account & key → Capture face → Done`.
   Forward motion is a horizontal step-slide *inside* this one screen
   (150ms, lighter than the app's normal push transition — these are steps,
   not destinations); back moves the same way in reverse.
@@ -354,11 +362,11 @@ weight:
 ### 3.4 Enrollment gate on the Mark tab — HARD REQUIREMENT
 
 A student who has **not** completed enrollment must never land on
-`mark/browse` (or any bare Mark screen). Selecting Student mode / tapping
+`browsing` (or any bare Mark screen). Selecting Student mode / tapping
 `Mark` for the first time with no completed enrollment routes directly
 into `SetupFlowScreen` (§3.3), resuming from whichever step is
 incomplete, exactly like a brand-new install. On completion, the flow
-lands the student on `mark/browse` (or resumes an in-progress window,
+lands the student on `browsing` (or resumes an in-progress window,
 per existing behavior) — never back on `roles`/RoleHub.
 
 **Open gap, flagged rather than resolved here:** none of the source
@@ -396,7 +404,7 @@ any claim/retry semantics.
   - From an in-progress `SetupFlowScreen` step, back moves one step
     backward inside the stepper (already specified in §3.3 internally);
     back from the *first* step goes to `Account`/RoleHub, **never** to a
-    bare/unenrolled `mark/browse` (which would contradict §3.4).
+    bare/unenrolled `browsing` (which would contradict §3.4).
 - **Remove the old `PopScope` → `setMode(unset)` exit pattern** wherever
   it exists in the current codebase. Explicit deletion instruction, not
   "leave it if it still works" — it is the mechanism most likely to be
@@ -451,6 +459,7 @@ copied verbatim from existing verdict vocabulary — this component only
 standardizes rendering, never invents new states:
 `Marked` (status.marked, check), `Late` (status.late, clock),
 `Wrong org` (status.error, triangle), `No signal` (status.error, slash),
+`Absent` (status.error, person-off),
 `Needs review` (status.review, flag), `Waiting` (content.secondary, dot),
 `Pending` (status.review, dot-pulsing — animated only while actually
 pending). This supersedes the old `MarkedBadge` widget per
@@ -585,26 +594,19 @@ table only fixes *how* it's shown and confirms every row has a next step.
 
 ## 5. Account tab (student)
 
-**HARD REQUIREMENT — revised structure.** This section originally proposed
-a menu-plus-four-full-pages layout (`account` menu → `account/enrollment`,
-`account/face-id`, `account/device` as separate pushes). The product
-owner's explicit instruction is that Account should be **one consolidated
-page** owning: signed-in profile header, enrollment status + re-enroll
-entry, ID edit, device key (short form) + move status, offline/hosting
-note (collapsed), Switch account (sign out), System log — absorbing the
-old pre-auth `device`/identity read into the same fact set, with `roles`
-reduced to a pure role-picker. That pulls against the original "one
-question per page" reasoning above (which is *why* this document proposed
-the split in the first place) — this is resolved below by keeping the
-whole thing as one page, sectioned, with `DetailsExpander` (§4.7) doing
-the "don't show everything at once" job that separate pushed pages used
-to do, **except** for Face ID, which keeps its own separate page for a
-reason that still holds (see 5.2). Nothing in the original content below
-is dropped — every fact from the old `account/enrollment` and
-`account/device` sub-pages is still here, just laid out as sections on
-one page instead of destinations behind a menu.
+**SUPERSEDED — menu-root, not one page.** This section originally proposed
+a menu-plus-four-full-pages layout, then (per owner instruction) a **one
+consolidated page** owning everything. Both directions are superseded by
+the shipped submenus overhaul (`INTEGRATION_LOG.md` Account overhaul):
+Account is a **menu root** (`Enrollment >` / `Device >` / `Appearance >` /
+`Face ID >` / `System log >`) plus one-feature pushes — the section
+bullets below describe the *content* of those sub-pages (enrollment
+status + re-enroll entry, ID edit, device key + move status,
+offline/hosting note, switch account, system log), not sections of one
+page. **Except** for Face ID, which keeps its own separate page for a
+reason that still holds (see 5.2).
 
-### 5.1 `account` (one sectioned page, the tab's landing page)
+### 5.1 `account` (menu root; content below lives on the sub-pages)
 
 - **Header** — `AccountChip` at large size (56dp avatar), Gmail OAuth
   photo (§4.3, §1 principle 6 — never `face_verification` output),
@@ -616,14 +618,11 @@ one page instead of destinations behind a menu.
   rather than a separate sheet route) plus a re-enroll/move entry point
   shown inline as a row when relevant. This is the full content of the
   original `account/enrollment` page, now a section instead of a push.
-- **ID** row — roll/student-ID, editable. **HARD REQUIREMENT, flagged for
-  verification, not an assumption to build blind:** if the current data
-  model treats this ID as immutable (resolved once from directory/claim
-  data, never written back), exposing an edit control here is new
-  business logic, not a presentation change, and is out of scope for a
-  presentation-only pass. Check whether a write path already exists
-  server-side before wiring the control; if it doesn't, render the row
-  read-only and report the gap.
+- **ID** row — roll/student-ID, editable with Save. The write path exists
+  (`CloudSync.updateStudentRoll` + `EnrollmentController.updateLocalRoll`):
+  an exact roll held by another Gmail refuses (org-scoped uniqueness
+  guard); directory-denied saves fail open per the 2026-10-03 brightness
+  pass. Face-template rescans are Save-gated separately (30d per Gmail).
 - **Device** section — device model, install status (Active /
   Move-cooldown-until-`<date>`), abbreviated key facts, `Move to this
   device` fallback when eligible (else the exact re-enroll date,
@@ -676,13 +675,13 @@ investment is justified. Still governed by "no unessential text" — the
 weight comes from motion, spatial clarity, and status choreography, not
 from added copy or clutter.
 
-### 6.1 `mark/browse`
+### 6.1 `browsing` (in-tab Mark phase, not a route)
 
 - Full-bleed list of discovered classes as a lightweight variant of
   `StudentCard` (course name, professor display name if given, signal
   strength as a 3-bar glyph derived from beacon/BLE-hint recency — not a
   raw dBm number).
-  Tap → straight into `mark/waiting`(existing behavior: typed-IP is a field
+  Tap → straight into the `waiting` phase (existing behavior: typed-IP is a field
   on this screen per `SCREEN_MAP.md`; visually it becomes the
   `FallbackButton` "Enter IP manually" opening a one-field sheet — the
   screen itself shows only the discovered list).
@@ -694,7 +693,7 @@ from added copy or clutter.
 - Broadcast-blocked banner: thin top banner, dismissible, plain language,
   not a modal.
 
-### 6.2 `mark/waiting` → `mark/face`
+### 6.2 `waiting` → `faceCheck` (in-tab Mark phases, not routes)
 
 - Waiting: a single centered presence indicator (pulsing ring, with
   `effect.glow.live` behind it per §2.5) with `Connected` / `Not connected`
@@ -704,42 +703,29 @@ from added copy or clutter.
   animated as the ring **morphing into the camera viewfinder frame**
   (shared-element transition, ~300ms) rather than a hard cut — this is the
   first "big" moment of the flow.
-- **Face scan overlay — HARD REQUIREMENT, supersedes the corner-bracket
-  design originally specified here:** full-bleed camera preview with
-  exactly two overlay elements, nothing else:
-  - **Small oval** — a live head-position target. The user is told once,
-    briefly (not persistent copy), to rotate their head; the small oval
-    tracks/indicates the target direction in sync with the current
-    capture angle in the sequence. This is the only element telling the
-    user *what to do right now*.
-  - **Large oval** — a progress ring around the capture frame showing
-    *overall* progress through the angle sequence (filling as each angle
-    is captured). This is the only element telling the user *how far
-    along they are*.
-  - No other overlay of any kind: no corner brackets, no separate
-    progress bar, no per-angle text labels stacked on screen, no extra
-    chrome. The camera preview renders without additional graphics that
-    could distort or obscure it beyond these two ovals.
-  - Inconclusive vs. mismatch are communicated by color change **on these
-    same two ovals** (neutral pulse vs. `status.error` flash) plus one
+- **Face scan overlay — SUPERSEDED (single oval + beacon, per the overlay
+  redesign):** full-bleed camera preview. Enrollment shows one framing
+  oval + orbiting beacon/comet + progress bar + prompt line (5 guided
+  angles: centre/left/right/up/down); marking (`faceCheck`) shows one
+  STATIC framing oval + the single prompt line only (`showProgress:false,
+  showBeacon:false` — no rotation instruction, no progress, no beacon).
+  - Inconclusive vs. mismatch are communicated by the oval signal
+  (neutral pulse vs. `status.error` flash) plus one
     short line of copy, never a dialog/modal — modals interrupt a flow
     that must keep listening on radio. This preserves the original
     intent of "communicated by frame color," just carried by the ovals
     instead of a bracket frame.
   - Zero-tap auto-scan is unchanged; `Scan` fallback button only appears
     if auto-scan hasn't resolved after a short delay, unchanged.
-  - **Applies identically to `enroll/capture`** (the enrollment-side
-    version of this same capture UI) — one overlay design, not two.
-  - **Open gap, flagged rather than resolved here:** `README.md`
-    describes enrollment capture as 3 stills (Centre/Left/Right);
-    `SCREEN_MAP.md` describes it as 5 angles (centre/left/right/up/down).
-    This is a pre-existing mismatch between the source docs, not
-    introduced by this requirement. Build the two-oval overlay to match
-    whatever the actual capture-controller code does, and report which
-    count/sequence it turned out to be — the two-oval design itself works
-    identically regardless of which is correct.
+  - **Applies to `enroll/capture`** (the enrollment-side version of this
+    same capture UI) with the guided beacon + progress (see above) — one
+    overlay family, two modes.
+  - **Counts resolved:** enrollment captures 5 stills
+    (centre/left/right/up/down) per the capture controller
+    (`faceEnrollSlots.length`); marking captures a 5-still burst
+    (`kMarkingLivenessCaptures`).
 
-### 6.3 `mark/proving` → `mark/verdict`
+### 6.3 `listening` → verdict (in-tab Mark phases, not routes)
 
 - Proving: no countdown (preserved). Visual is a **step tracker**, not a
   spinner — three ambient states rendered as a horizontal progress of dots
@@ -768,8 +754,8 @@ from added copy or clutter.
 
 | Fallback | Where it lives | Trigger |
 |---|---|---|
-| Enter IP manually | `mark/browse`, low-emphasis text button below the list/empty state | Opens 1-field bottom sheet |
-| Manual attendance request | `mark/verdict` (non-Marked states only) | Opens confirmation sheet |
+| Enter IP manually | `browsing`, low-emphasis text button below the list/empty state | Opens 1-field bottom sheet |
+| Manual attendance request | `verdict` (non-Marked states only) | Opens confirmation sheet |
 | Manual student add (professor) | `live/<course>/add`, icon button in app bar, not inline fields on roster | Opens `ManualAddForm` sheet |
 | Bluetooth-off prompt | Inline thin banner with a single "Turn on" tap-target, not a modal | Appears contextually |
 
@@ -787,14 +773,14 @@ is unbundled here:**
 
 - `live/<course>` — the always-on control cluster (Start/Stop, elapsed,
   present/waiting counts) as a fixed header; `roster`/`inbox`/`add`/`setup`
-  reached via a lightweight segmented sub-nav under that header (per
-  `SCREEN_MAP.md` split), each rendered as a plain list of `StudentCard`s
+  reached via a lightweight segmented sub-nav under that header (in-tab
+  sections of the one host, not sub-routes — see §3.1a), each rendered as a plain list of `StudentCard`s
   with hold-and-tap selection where bulk action applies (`inbox`, session
   multi-delete on the course page). Header background is `gradient.brand`
   while state is `LIVE`, flat `surface.raised` while `IDLE` (§2.5) — the
   one piece of visual flourish this pass gives the professor surface,
   since it directly answers "is this actually running" at a glance.
-- `live/<course>/inbox` and `live/<course>/add` — **composed from the
+- The inbox/add sections are **composed from the
   `features/manual_attendance/` module (§4.8)** rather than owning
   bespoke approve/reject or add-form UI inline.
 - **Nothing under `Live` is reachable from `Courses`** (§3.1a) —
@@ -803,8 +789,8 @@ is unbundled here:**
 
 ### 7.2 `Courses` tab — records-only
 
-`prof/courses`, `prof/courses/<course>`, `export`, `sessions/<id>`,
-`sessions/<id>/edit` — standard list/detail screens, same tokens, no
+`prof/courses`, `prof/courses/<course>`, `export`, session detail +
+session edit (in-tab pushes, not named routes) — standard list/detail screens, same tokens, no
 special treatment, and **no Start/Stop or hosting-setup affordance
 anywhere in this tab** (§3.1a) — registering/managing a course is a
 different action from going live with one, and this pass separates them
@@ -823,11 +809,10 @@ named `Records`; it's `Courses` now (§3.1) and is explicitly confirmed
 records-only (§3.1a) — no join/mark affordance renders here even for a
 course with an open window.
 
-- `courses/mine` (was `records/mine`): course cards (`x/y days attended`,
+- `records/mine` (tab label `Courses`): course cards (`x/y days attended`,
   progress ring instead of a raw fraction as the primary visual, fraction
   as caption beneath).
-- Drill-down `courses/course/<course>` (was `records/course/<course>`):
-  totals header (same progress ring, larger), then a plain vertical list
+- Drill-down `records/mine/<course>`: totals header (same progress ring, larger), then a plain vertical list
   of session tiles (date, verdict badge reused from §4.2) — no
   calendar-grid gimmick, a scroll list reads faster.
 - Offline: "last synced <time>" as a caption under the header via
@@ -867,10 +852,10 @@ course with an open window.
   card padding drops from 16→12, `StudentCard` third line (round trail)
   wraps instead of overflowing.
 - Wide/tablet breakpoint (≥ 600dp): list screens (`records`, `live` roster,
-  `mark/browse`) gain a max content width (560dp) and center, rather than
+  `browsing`) gain a max content width (560dp) and center, rather than
   stretching cards edge-to-edge — prevents absurd line lengths, no
   new layout code path needed beyond a `ConstrainedBox`.
-- Camera preview screen (`mark/face`) always fills available height first,
+- Camera preview screen (`faceCheck`) always fills available height first,
   letterboxing width if the device is unusually wide (foldable/tablet),
   never cropping the capture-frame overlay off-screen.
 - Long emails/course names always truncate with ellipsis + full value on
@@ -914,7 +899,7 @@ tends to reappear screen-by-screen if left to each author's judgment:
   has an `errorBuilder`/fallback that renders the initials-avatar, so a
   failed image load never leaves a broken-image icon or blank circle in
   the nav bar or Account header.
-- Orientation/rotation: only the camera preview screen (`mark/face`) has
+- Orientation/rotation: only the camera preview screen (`faceCheck`) has
   any orientation-specific layout; every other screen uses the same
   portrait layout rules as the wide/tablet breakpoint above rather than a
   bespoke landscape path, to avoid doubling the screens that need testing.

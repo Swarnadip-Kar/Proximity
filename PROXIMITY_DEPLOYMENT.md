@@ -30,7 +30,7 @@ Companions: `PROXIMITY_SECURITY.md` §9 (why the floor event exists),
   **Not yet set** — set in §2 (Console, admin bypass; rules deny client writes).
 - App Check: Android `proximity (org.iitbhilai.proximity)` **Registered**
   (Play Integrity). iOS + web rows **Not registered** (intentional — see §3).
-- `Tl=0.85` + directory `pkS` write make old builds fail closed
+- `Tl=0.70` + directory `pkS` write make old builds fail closed
   (`liveness-unbound` / `unknown-pkS`) — that is the intended floor event.
   Ship rules + floor WITH the build, never silently after.
 
@@ -430,7 +430,7 @@ are pure distribution plumbing, closable later without rebuilds of logic.
 - **Classroom crypto (identical binaries, identical air):** 10 s
   challenge rotation, 17 s acceptance, single-use `(windowID,ID,j)`,
   Ed25519 proofs under pinned `pkS`, TLS channel binding, BLE sighting
-  with RSSI gates, face ticket ≥ 0.70 + 5-min freshness, liveness ≥ 0.85
+  with RSSI gates, face ticket ≥ 0.70 + 5-min freshness, liveness ≥ 0.70
   with allowlisted versions, HW `dSig` chain-vs-pinned-roots. The
   professor's phone verifies a pilot proof byte-for-byte like a store
   proof — there is no "pilot mode" on the air.

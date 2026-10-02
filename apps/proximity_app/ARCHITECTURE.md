@@ -26,9 +26,9 @@ lib/
     ip_join.dart / clock.dart / selection_toolbar.dart / ...
   routes.dart        # IA route table + web guards + ProxRouteObserver (NAV log);
                       # entry/records deep-links + web records-only redirects
-  screens/           # thin hosts (landing/setup_flow/student_home/
-                      # take_attendance/face_capture — orchestration stays,
-                      # rendering lives in features/)
+  screens/           # thin hosts (landing/setup_flow_screen/shells/
+                      # student_home/take_attendance/face_capture —
+                      # orchestration stays, rendering lives in features/)
   features/          # IA bundles, one dir per flow (account/debug/entry/
                       # face_identity/live/manual_attendance/mark/records/
                       # setup); hosts compose sections from here
@@ -221,7 +221,11 @@ extend the shared widget instead of copying it):
     (`Start`, `Join`, `✓ Marked`, …) and field keys (`ipfield`, `direct-*`,
     `edit-*`, `prof-search`). Keep those strings/keys stable.
 
-## Visual identity (Phase 1)
+## Visual identity (Phase 1 — legacy, superseded)
+
+> Superseded by `PROXIMITY_UI_REDESIGN.md` §2 + `design/tokens.dart`
+> (`ProxType.family = Inter` single family; `ProxSpacing.cardPadding` 16→12;
+> `ProximityColors` dark-first surfaces). Kept below as the Phase-1 record.
 
 - **Fonts:** Space Grotesk (display/headings/hero) + Inter (body/labels).
 - **Palette:** indigo primary `#4340D6`, teal live accent `#0E9F8A`, paper
