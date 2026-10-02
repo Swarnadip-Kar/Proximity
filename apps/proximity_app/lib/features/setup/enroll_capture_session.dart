@@ -244,6 +244,13 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// sees dim-light dips live instead of silent retries.
   double? _lastVitality;
 
+  /// Bar the last probe was measured against (per-slot: Tl for centre,
+  /// [kEnrollSideLivenessThreshold] otherwise). Stored alongside
+  /// [_lastVitality] so the readout names the bar that judged the shown
+  /// score (not the current target's bar after advancing). Null until the
+  /// first probe lands.
+  double? _lastBar;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -559,10 +566,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
           }
           if (_done || _finished) return;
           if (mounted) {
-            // Readout tracks every measured probe (pass or fail); an
-            // unreadable probe clears it back to the placeholder.
+            // Readout tracks every measured probe (pass or fail) with the
+            // bar that judged it; an unreadable probe clears the score
+            // back to the placeholder but keeps its bar, so the holder
+            // still sees what the next probe must clear.
             final v = vitality;
-            setState(() => _lastVitality = v < 0 ? null : v);
+            setState(() {
+              _lastVitality = v < 0 ? null : v;
+              _lastBar = bar;
+            });
           }
           if (vitality < bar) {
             EnrollLog.face('slot $target vitality '
@@ -726,15 +738,20 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     return from + (to - from) * e;
   }
 
-  /// Bottom-bar live readout: latest measured vitality + guided target
-  /// (e.g. `LIVE 0.93 · DOWN`). Placeholders until the first probe/read
-  /// lands. No match score exists mid-walk (the matcher first runs at the
-  /// terminal self-check — its boundary score lands on the result
-  /// screen), so this line never invents one.
+  /// Bottom-bar live readout: latest measured vitality + the bar that
+  /// judged it + guided target (e.g. `LIVE 0.93/0.70 · DOWN`). Placeholders
+  /// until the first probe/read lands. No match score exists mid-walk (the
+  /// matcher first runs at the terminal self-check — its boundary score
+  /// lands on the result screen), so this line never invents one.
+  /// Non-blocking presentation only: the bar text never gates anything.
   String get liveReadout {
     final v = _lastVitality;
     final score = v == null ? '—' : v.toStringAsFixed(2);
-    return 'LIVE $score · ${_currentTarget.toUpperCase()}';
+    final bar = _lastBar ??
+        (_currentTarget == 'centre'
+            ? kLivenessThreshold
+            : kEnrollSideLivenessThreshold);
+    return 'LIVE $score/${bar.toStringAsFixed(2)} · ${_currentTarget.toUpperCase()}';
   }
 
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
