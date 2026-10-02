@@ -98,15 +98,15 @@ class AccountEnrollmentSection extends ConsumerWidget {
 
 /// business addition; overrides the gap-2 read-only verdict).
 ///
-/// Flow: validate non-empty → uniqueness-check via the existing directory
-/// ID search scoped to org (`searchStudents(rollPrefix:, org:)`; an exact
-/// roll held by another Gmail → friendly "already held" copy, no overwrite)
-/// → write via the NEW `CloudSync.updateStudentRoll` (fake + firestore;
+/// Flow: validate non-empty → online check → write via
+/// `CloudSync.updateStudentRoll` keyed by our own Gmail (fake + firestore;
 /// client-side only — production needs the rules deploy noted on that
 /// method; rules-denied → friendly error, never raw text) → on success
 /// update local enrollment roll ([EnrollmentController.updateLocalRoll]) +
 /// linked identity (+ the ID display reads both, so they stay consistent).
-/// Historical session rolls/names untouched by design.
+/// No directory search: this box edits OUR row (keyed by Gmail), it never
+/// looks anybody up — the old pre-search broke saving wherever directory
+/// reads are rules-denied. Historical session rolls/names untouched.
 class AccountIdRow extends ConsumerStatefulWidget {
   final SignedAccount acct;
   const AccountIdRow({required this.acct, super.key});
@@ -128,9 +128,6 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
     super.dispose();
   }
 
-  String _myOrg(SignedAccount acct) =>
-      acct.org.isNotEmpty ? acct.org : orgOf(acct.email);
-
   Future<void> _save(String currentRoll) async {
     final acct = widget.acct;
     final want = (_ctrl?.text ?? '').trim();
@@ -150,45 +147,18 @@ class _AccountIdRowState extends ConsumerState<AccountIdRow> {
         return;
       }
       final cloud = ref.read(cloudSyncProvider);
-      final org = _myOrg(acct);
-      // Uniqueness-check via the existing directory ID search, scoped to
-      // org. Exact-roll match held by another Gmail → friendly copy, no
-      // overwrite. Self-match (same Gmail) is fine — it is our own row.
-      List<StudentDirectoryEntry> hits = const [];
-      try {
-        final online = cloud.available && await cloud.isOnline();
-        if (!mounted) return;
-        if (!online) {
-          setState(() => _status =
-              'You appear offline — connect to the internet to update your ID.');
-          return;
-        }
-        hits = await cloud.searchStudents(
-            rollPrefix: want, org: org, limit: 10);
-        if (!mounted) return;
-      } on StateError catch (e) {
-        if (!mounted) return;
-        final msg = '$e'.replaceFirst('StateError: ', '');
-        if (isRulesDenialMessage(e.message)) {
-          setState(() => _status = e.message);
-        } else {
-          setState(() => _status = msg);
-        }
-        BleLog.log('SYNC', 'id edit directory check failed');
+      // Online gate first (the write below needs the network; the local
+      // roll updates only after the cloud write lands).
+      final online = cloud.available && await cloud.isOnline();
+      if (!mounted) return;
+      if (!online) {
+        setState(() => _status =
+            'You appear offline — connect to the internet to update your ID.');
         return;
       }
       final me = acct.email.toLowerCase();
-      for (final h in hits) {
-        if (h.roll.trim() == want &&
-            h.email.trim().toLowerCase() != me) {
-          setState(() => _status =
-              'This ID is already held by another student in your organization — check the number and try again.');
-          BleLog.log('SYNC', 'id edit collision — no overwrite');
-          return;
-        }
-      }
-      // Cloud write via the new method (client-side only — see its docs
-      // for the rules-deploy requirement; denied → friendly, never raw).
+      // Cloud write keyed by our own Gmail (see its docs for the
+      // rules-deploy requirement; denied → friendly, never raw).
       try {
         await cloud.updateStudentRoll(emailLower: me, newRoll: want);
       } on StateError catch (e) {

@@ -347,7 +347,11 @@ void main() {
       expect((await store.readEnrollment())!.roll, 'R1001');
     });
 
-    testWidgets('collision shows already-held copy, no overwrite', (t) async {
+    testWidgets('no directory search: save writes our row, theirs untouched',
+        (t) async {
+      // Another student in the same org holds R2002 in the directory —
+      // the box edits OUR Gmail-keyed row, it never looks anybody up, so
+      // saving R2002 succeeds locally and remotely without touching them.
       final store = await _enrolledStore();
       final cloud = _boundCloud();
       // Another student in the same org holds R2002.
@@ -387,9 +391,11 @@ void main() {
       await t.tap(find.byKey(const Key('account-id-save')));
       await _drain(t, 10);
 
-      expect(find.textContaining('already held'), findsOneWidget);
-      expect(cloud.devices[_email]!.roll, 'R1001');
-      expect((await store.readEnrollment())!.roll, 'R1001');
+      expect(find.textContaining('already held'), findsNothing);
+      expect(find.textContaining('security rules'), findsNothing);
+      expect(cloud.devices[_email]!.roll, 'R2002');
+      expect((await store.readEnrollment())!.roll, 'R2002');
+      expect(cloud.devices[_otherEmail]!.roll, 'R2002');
     });
 
     testWidgets('rules-denied shows friendly error, never raw text', (t) async {
