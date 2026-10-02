@@ -180,6 +180,20 @@ class SecureDeviceStore implements DeviceStore {
   static const _kTierPref = 'prox.secure.tier.v1';
   static const _kTierCred = 'cred';
   bool _preferCredSlot = false;
+  // Proven-emptiness hints (unencrypted SharedPrefs, same best-effort
+  // standing as the tier hint): whether a gated value is KNOWN present or
+  // KNOWN absent. Null = unknown (pre-hint installs, never yet proven).
+  // A `false` lets auto reads report empty WITHOUT a biometric prompt —
+  // fresh-install sign-in must not pop fingerprint for data that cannot
+  // exist (the field phantom-prompt → dismiss → locked-accounts loop).
+  // Set on every proven result (hit → true, clean miss → false) and every
+  // write; explicit retries always scan regardless (tier-wipe recovery:
+  // prefs and secure storage can diverge, and a false hint must never
+  // hide data an explicit retry could serve).
+  static const _kHasEnroll = 'prox.secure.hasEnroll.v1';
+  static const _kHasInstall = 'prox.secure.hasInstall.v1';
+  bool? _hasEnrollHint;
+  bool? _hasInstallHint;
   // Single-flight tier load: concurrent gated reads on a fresh process
   // must share one prefs read. The old bool flag let the second reader
   // skip the load and use the default (strong) while the first was still
@@ -193,6 +207,8 @@ class SecureDeviceStore implements DeviceStore {
       try {
         final prefs = await _prefs();
         _preferCredSlot = prefs.getString(_kTierPref) == _kTierCred;
+        _hasEnrollHint = prefs.getBool(_kHasEnroll);
+        _hasInstallHint = prefs.getBool(_kHasInstall);
       } catch (_) {
         _preferCredSlot = false;
       }
@@ -204,6 +220,25 @@ class SecureDeviceStore implements DeviceStore {
       final prefs = await _prefs();
       await prefs.setString(
           _kTierPref, _preferCredSlot ? _kTierCred : 'strong');
+    } catch (_) {}
+  }
+
+  /// Records a proven emptiness result (see [_kHasEnroll]/[_kHasInstall]).
+  /// Memory first, then the prefs sidecar (best-effort like the tier).
+  Future<void> _noteHasEnroll(bool present) async {
+    _hasEnrollHint = present;
+    try {
+      final prefs = await _prefs();
+      await prefs.setBool(_kHasEnroll, present);
+    } catch (_) {}
+  }
+
+  /// Records a proven install-id result (see [_noteHasEnroll]).
+  Future<void> _noteHasInstall(bool present) async {
+    _hasInstallHint = present;
+    try {
+      final prefs = await _prefs();
+      await prefs.setBool(_kHasInstall, present);
     } catch (_) {}
   }
 
@@ -279,6 +314,12 @@ class SecureDeviceStore implements DeviceStore {
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
     }
+    await _ensureTierLoaded();
+    // Proven-empty installs skip the gated read entirely: no phantom
+    // biometric prompt for data known absent (fresh-install sign-in).
+    // Unknown (null — pre-hint installs) still probes; explicit retries
+    // always scan (tier-wipe recovery, see _noteHasEnroll).
+    if (_hasEnrollHint == false) return null;
     // Auto path: preferred slot only on clean miss (one prompt max for
     // the empty case). The full both-slot scan lives behind explicit
     // retry (see readEnrollmentRetry) for the tier-wiped reinstall shape.
@@ -354,12 +395,18 @@ class SecureDeviceStore implements DeviceStore {
       if (!scanAll) {
         _enrollmentCache = null;
         _enrollmentLoaded = true;
+        // Proven empty on the preferred slot: future auto reads skip the
+        // prompt (see readEnrollment); explicit retries still scan.
+        await _noteHasEnroll(false);
         return null;
       }
       missSlot ??= slot;
     }
     if (raw != null) {
       await _adoptTier(identical(hitSlot, _fallbackSecure));
+      // Proven present (parse may still reject a corrupt doc below — the
+      // data exists, so future auto reads keep probing).
+      await _noteHasEnroll(true);
       // fall through to parse below
     } else {
       if (sawAuthFailure) {
@@ -376,6 +423,8 @@ class SecureDeviceStore implements DeviceStore {
       }
       _enrollmentCache = null;
       _enrollmentLoaded = true;
+      // Full-scan proven empty: future auto reads skip the prompt.
+      await _noteHasEnroll(false);
       return null;
     }
     late final Map<String, dynamic> doc;
@@ -438,6 +487,7 @@ class SecureDeviceStore implements DeviceStore {
       await _adoptTier(usedCred);
       _enrollmentCache = e;
       _enrollmentLoaded = true;
+      await _noteHasEnroll(true);
       return;
     }
     // Both slots refused with auth/key failures (e.g. the field
@@ -458,6 +508,7 @@ class SecureDeviceStore implements DeviceStore {
     await _adoptTier(false);
     _enrollmentCache = null;
     _enrollmentLoaded = true;
+    await _noteHasEnroll(false);
   }
 
   @override
@@ -830,6 +881,11 @@ class SecureDeviceStore implements DeviceStore {
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
     }
+    await _ensureTierLoaded();
+    // Proven-empty install: skip the gated read (same phantom-prompt law
+    // as readEnrollment — a missing id mints fresh downstream, so this
+    // answers null fast; explicit callers still retry through the store).
+    if (_hasInstallHint == false) return null;
     return _behindPromptGate(() => _readInstallIdCold());
   }
 
@@ -898,6 +954,10 @@ class SecureDeviceStore implements DeviceStore {
     if (v != null) {
       await _adoptTier(identical(hitSlot, _fallbackSecure));
     }
+    // Proven result either way (hit or clean miss): future auto reads
+    // skip the prompt when absent. Auth-failure dismissals above leave
+    // the hint untouched (unknown, never empty).
+    await _noteHasInstall(v != null);
     _installIdCache = v;
     _installIdLoaded = true;
     return v;
@@ -924,6 +984,7 @@ class SecureDeviceStore implements DeviceStore {
       await _adoptTier(usedCred);
       _installIdCache = id;
       _installIdLoaded = true;
+      await _noteHasInstall(true);
       return;
     }
     throw _secureStorePersistError();
