@@ -342,7 +342,8 @@ void main() {
   });
 
   group('chrome avoids the notch (SafeArea overlays)', () {
-    testWidgets('overlay top bar rides in a SafeArea', (t) async {
+    testWidgets('overlay bottom bar is full-bleed, needs no SafeArea',
+        (t) async {
       await t.pumpWidget(_themed(const CaptureOverlay(
         progress: 0.4,
         currentAngle: 1,
@@ -350,11 +351,20 @@ void main() {
       )));
       await t.pump();
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      // Full-bleed gauge pinned to the preview bottom edge (not floating
+      // chrome): no SafeArea, no margins — the preview area already ends
+      // above the bottom chrome.
+      final overlayBox = t.getRect(find.byType(CaptureOverlay).first);
+      final barRect = t.getRect(find.byType(LinearProgressIndicator));
+      expect(barRect.left, moreOrLessEquals(overlayBox.left, epsilon: 1));
+      expect(barRect.right, moreOrLessEquals(overlayBox.right, epsilon: 1));
+      expect(barRect.bottom,
+          moreOrLessEquals(overlayBox.bottom, epsilon: 1));
       expect(
           find.ancestor(
               of: find.byType(LinearProgressIndicator),
               matching: find.byType(SafeArea)),
-          findsWidgets);
+          findsNothing);
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });
@@ -401,7 +411,12 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
 
-    test('overlay chrome is SafeArea-aware (source pin)', () {
+    test('chrome SafeArea contract (source pin)', () {
+      // Terminal chrome (bottom bar, Scan fallback) seats itself in
+      // SafeAreas where it lives (sections + face_check). The overlay's
+      // own filling gauge is intentionally full-bleed (no SafeArea): a
+      // progress line at the preview edge — not tappable chrome, not
+      // text — so notch insets must not shrink it.
       final overlay = _codeOf(
           File('lib/widgets/capture_overlay.dart').readAsStringSync());
       final sections = _codeOf(File(
@@ -409,9 +424,10 @@ void main() {
           .readAsStringSync());
       final face = _codeOf(
           File('lib/features/mark/face_check.dart').readAsStringSync());
-      for (final src in [overlay, sections, face]) {
+      for (final src in [sections, face]) {
         expect(src.contains('SafeArea('), isTrue);
       }
+      expect(overlay.contains('SafeArea('), isFalse);
       // Additive inset exists with a byte-identical default.
       expect(overlay.contains('topInset = 0.0'), isTrue);
       expect(sections.contains('overlayTopInset = 0.0'), isTrue);

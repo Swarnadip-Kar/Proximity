@@ -117,7 +117,8 @@ void main() {
   });
 
   group('CaptureOverlay three elements', () {
-    testWidgets('bar + oval + one prompt, bar above oval', (t) async {
+    testWidgets('bar + oval + one prompt, bar fills the bottom edge',
+        (t) async {
       await t.pumpWidget(_app(const CaptureOverlay(
         progress: 0.4,
         currentAngle: 1,
@@ -127,23 +128,25 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.byType(CustomPaint), findsWidgets);
       expect(find.text(captureGuidePrompt), findsOneWidget);
-      // Placement: bar floats above the oval, prompt below it.
+      // Placement: edge-to-edge filling gauge along the preview bottom,
+      // prompt below the oval. Still overlay-only (inside the Stack).
       final overlayBox =
           t.getRect(find.byType(CaptureOverlay).first);
       final barRect = t.getRect(find.byType(LinearProgressIndicator));
       final promptRect = t.getRect(find.text(captureGuidePrompt));
-      final oval = CaptureOverlay.guideRectForAspect(
-          overlayBox.size, null);
-      expect(barRect.bottom, lessThanOrEqualTo(oval.top + 1));
-      expect(barRect.center.dy, lessThan(overlayBox.center.dy));
+      expect(barRect.left, moreOrLessEquals(overlayBox.left, epsilon: 1));
+      expect(barRect.right, moreOrLessEquals(overlayBox.right, epsilon: 1));
+      expect(barRect.bottom,
+          moreOrLessEquals(overlayBox.bottom, epsilon: 1));
       expect(promptRect.center.dy, greaterThan(overlayBox.center.dy));
       // Slim bar.
       expect(barRect.height, lessThanOrEqualTo(8));
-      // Pill radius token on the bar clip, no raw colors anywhere new.
-      final clip = t.widget<ClipRRect>(find.ancestor(
-          of: find.byType(LinearProgressIndicator),
-          matching: find.byType(ClipRRect)));
-      expect(clip.borderRadius, ProxRadii.chipRadius);
+      // No pill clip anymore: full-bleed gauge, no rounded ends.
+      expect(
+          find.ancestor(
+              of: find.byType(LinearProgressIndicator),
+              matching: find.byType(ClipRRect)),
+          findsNothing);
       await t.pumpWidget(const SizedBox());
     });
 

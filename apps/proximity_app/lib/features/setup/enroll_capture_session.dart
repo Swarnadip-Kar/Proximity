@@ -279,17 +279,20 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
 
   /// Beats since the last bucket fill (any wasted beat — off-target,
   /// unreadable, failing — increments it; a fill resets it). Reaches
-  /// [fillStall] at 15 (~10s of spinning), which promotes the overlay
+  /// [fillStall] at 8 (~5s of spinning), which promotes the overlay
   /// prompt to the stall nudge. This is the reported dark-room failure:
   /// dozens of wasted beats with zero guidance, where no scored probe
   /// ever runs so brightness-based hints cannot fire. Presentation only,
   /// never a gate — a slow-but-fine user just sees a nudge line.
   int _staleBeats = 0;
 
-  /// Beat budget with no fill before the stall nudge (~10s at the steady
+  /// Beat budget with no fill before the stall nudge (~5s at the steady
   /// 600ms cadence). Normal enrollments fill every 1-3 beats, so this
-  /// never fires for a cooperating holder in workable conditions.
-  static const _stallBeats = 15;
+  /// never fires for a cooperating holder in workable conditions — but a
+  /// dark-room spin with no scorable probes reaches it fast enough to
+  /// guide instead of spinning silently (field: 35 wasted beats before
+  /// the first probe).
+  static const _stallBeats = 8;
 
   /// True once [_staleBeats] beats passed with no bucket fill. The
   /// composer swaps the overlay prompt for the stall nudge.

@@ -215,11 +215,15 @@ void main() {
         brightness: brightness,
       ));
       await openSession(t);
-      final ring = find.byKey(const Key('flash-ring'));
-      for (var i = 0; i < 40 && ring.evaluate().isEmpty; i++) {
+      Finder overlay() => find.byType(CaptureOverlay);
+      for (var i = 0;
+          i < 40 &&
+              !(overlay().evaluate().isNotEmpty &&
+                  t.widget<CaptureOverlay>(overlay()).flashRing);
+          i++) {
         await t.pump(const Duration(milliseconds: 200));
       }
-      expect(ring, findsOneWidget);
+      expect(t.widget<CaptureOverlay>(overlay()).flashRing, isTrue);
       expect(brightness.sets, [1.0]);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
@@ -245,7 +249,9 @@ void main() {
       ));
       await openSession(t);
       await t.pump(const Duration(milliseconds: 1500));
-      expect(find.byKey(const Key('flash-ring')), findsNothing);
+      expect(
+          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashRing,
+          isFalse);
       expect(brightness.sets, isEmpty);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
@@ -254,11 +260,13 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('ring is a sibling, never a wrapper around the frame',
+    testWidgets('ring paints inside the overlay, frame stays bare',
         (t) async {
       // Squish-fix guard for the assist path: with the ring on, the seam
       // frame is still a direct Stack child (loose + centered) with no
-      // Container/decoration/fit/transform between it and the Stack.
+      // Container/decoration/fit/transform between it and the Stack — the
+      // ring lives inside the overlay painter (above the scrim, uniform
+      // light), never as a sibling widget.
       const seam = Key('assist-seam');
       await t.pumpWidget(MaterialApp(
         theme: proxLightTheme(),
@@ -286,7 +294,9 @@ void main() {
         ),
       ));
       await t.pump();
-      expect(find.byKey(const Key('flash-ring')), findsOneWidget);
+      expect(
+          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashRing,
+          isTrue);
       final stack = find.byWidgetPredicate((w) =>
           w is Stack &&
           w.fit == StackFit.loose &&
@@ -311,6 +321,15 @@ void main() {
       }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
+    });
+
+    test('flash ring frame hugs the preview edges', () {
+      // Pure geometry: full area deflated by a small margin so stroke +
+      // glow stay inside the video.
+      final rrect = CaptureOverlay.flashRingRRectFor(const Size(800, 400));
+      expect(rrect.outerRect,
+          (Offset.zero & const Size(800, 400)).deflate(10));
+      expect(rrect.tlRadiusX, moreOrLessEquals(26));
     });
   });
 }

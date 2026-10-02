@@ -82,12 +82,12 @@ void main() {
         expect(beacon.width, greaterThan(0));
         expect(beacon.height, greaterThan(0));
         // Phone portrait follows the shared enrollment-guide fractions
-        // (0.64w x 0.58h, no clamp) — one face size on both flows.
+        // (0.58w x 0.52h, no clamp) — one face size on both flows.
         if (size == const Size(390, 844)) {
           expect(beacon.width,
-              moreOrLessEquals(size.width * 0.64, epsilon: 0.01));
+              moreOrLessEquals(size.width * 0.58, epsilon: 0.01));
           expect(beacon.height,
-              moreOrLessEquals(size.height * 0.58, epsilon: 0.01));
+              moreOrLessEquals(size.height * 0.52, epsilon: 0.01));
         }
       }
     });
@@ -187,14 +187,18 @@ void main() {
       expect(promptRect.top,
           greaterThanOrEqualTo(ovalShifted.bottom + ProxSpacing.md - 2.0),
           reason: 'prompt $promptRect overlaps oval $ovalShifted @${w}x$h');
-      expect(barRect.bottom, lessThanOrEqualTo(ovalShifted.top),
+      // Bottom filling gauge: full-bleed at the preview edge, below the
+      // oval, never overlapping it or the prompt.
+      expect(barRect.top, greaterThanOrEqualTo(ovalShifted.bottom - 1.0),
           reason: 'bar $barRect overlaps oval $ovalShifted @${w}x$h');
+      expect(barRect.bottom,
+          moreOrLessEquals(overlayBox.bottom, epsilon: 1.5));
       expect(promptRect.overlaps(barRect), isFalse);
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     }
 
-    testWidgets('phone 390x844 portrait sensor: bar above, prompt below',
+    testWidgets('phone 390x844 portrait sensor: bar fills bottom, prompt below',
         (t) async {
       await checkChrome(t, w: 390, h: 844, aspect: 9 / 16);
     });

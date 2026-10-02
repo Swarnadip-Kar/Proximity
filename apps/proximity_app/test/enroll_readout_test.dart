@@ -300,7 +300,7 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('fifteen wasted beats promote the stall nudge', (t) async {
+    testWidgets('eight wasted beats promote the stall nudge', (t) async {
       // The reported dark-room spin: pose never reads the target, no probe
       // ever runs, brightness hints cannot fire — after ~10s with no fill
       // the overlay prompt becomes the stall nudge instead of silence.
