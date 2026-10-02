@@ -198,31 +198,24 @@ class _OvalOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Dimmed surround (cheap fill, no blend ops — stays 60fps on low-end).
+    // Whisper surround (matches the shared capture scrim — raw feed shows
+    // through; the old 45% dim dulled the preview).
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = const Color(0x73000000),
+      Paint()..color = const Color(0x40000000),
     );
-    // Flash-assist edge ring first (directly above the surround, uniform
-    // light): flat bands, no blur — the feed stays raw, the wide faint
-    // band under the bright core reads as glow without any effect.
+    // Flash-assist edge ring first (directly above the surround): ONE
+    // thin bright stroke on the preview border — no stacked bands (the
+    // layered look read messy). The small deflate clears the stroke top
+    // and bottom so the ring never touches the prompt or button panel.
     if (assist) {
-      // Contained edge ring (see CaptureOverlay.flashRingRRectFor): the
-      // deflate clears the glow bleed top and bottom so the ring never
-      // touches the prompt line or the button panel.
-      final edge = (Offset.zero & size).deflate(34);
+      final edge = (Offset.zero & size).deflate(12);
       canvas.drawOval(
           edge,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 60
-            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35));
-      canvas.drawOval(
-          edge,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 28
-            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
+            ..strokeWidth = 8
+            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.90));
     }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
     // Flat halo behind the crisp ring (framing rect, neutral — unchanged).

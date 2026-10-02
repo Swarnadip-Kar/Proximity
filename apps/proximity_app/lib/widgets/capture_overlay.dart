@@ -36,8 +36,10 @@
 // reduce-motion behavior are unchanged.
 //
 // Overlay-only: pointer-transparent, zero layout effect on the preview.
-// Glow + scrim stay token-sourced (§2.5): scrim via `gradientScrim`, beacon
-// halo via `glowMarked` blur/opacity, no hand-authored gradients.
+// Flat paint, no blur anywhere (the feed stays raw). The scrim is the
+// whisper [captureScrim], not the theme scrim — white guides still read
+// while sensor pixels show through. Beacon tone stays token-sourced
+// (§2.5); glow is flat discs, never blur.
 // Reduce-motion: the beacon holds static at the target direction (the
 // sweep timer never advances it — callers pass null under reduce-motion,
 // and the widget ignores [sweepAngle] when `ProxMotion.reduced`).
@@ -259,12 +261,12 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Flash-ring frame (see [flashLevel]): the rounded-rect border the ring
-  /// light paints — full preview area deflated past the outer glow width
-  /// so no paint ever touches the bottom progress bar or the top edge
-  /// (the glow stroke is 60px wide, i.e. 30px of bleed each side).
+  /// light paints — a single thin stroke hugging the preview border. The
+  /// small deflate clears the stroke bleed top and bottom so the ring
+  /// never touches the bottom progress bar or the top edge.
   /// Pure for unit tests.
   static RRect flashRingRRectFor(Size size) => RRect.fromRectAndRadius(
-        (Offset.zero & size).deflate(34),
+        (Offset.zero & size).deflate(12),
         const Radius.circular(26),
       );
 
@@ -376,6 +378,17 @@ class CaptureOverlay extends StatefulWidget {
   State<CaptureOverlay> createState() => _CaptureOverlayState();
 }
 
+/// Capture scrim: a whisper over the raw feed (transparent → 25% black
+/// at the bottom) — just enough for the white guides and prompt to read,
+/// everywhere else the sensor pixels show through untouched. The theme
+/// scrim (up to 72%) dulled the preview; capture uses this instead on
+/// both flows. Pure paint, no blur, no filter — zero effect on capture.
+const captureScrim = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [Color(0x00000000), Color(0x40000000)],
+);
+
 class _CaptureOverlayState extends State<CaptureOverlay> {
   Timer? _pulse;
   var _dim = false;
@@ -420,8 +433,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final c = ProximityColors.of(context);
-    final reduced = ProxMotion.reduced(context);
+    final c = ProximityColors.of(context);    final reduced = ProxMotion.reduced(context);
     final direction = widget.targetDirection ??
         CaptureOverlay.directionForAngle(
           widget.currentAngle,
@@ -475,7 +487,9 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
             children: [
               CustomPaint(
                 painter: _CaptureOverlayPainter(
-                  scrim: c.gradientScrim,
+                  // Whisper scrim (see [captureScrim]) — the theme scrim
+                  // dulled the feed; white guides still read on this.
+                  scrim: captureScrim,
                   // On-scrim chrome is ALWAYS white: both themes use a
                   // near-black scrim, so theme text (near-black in light
                   // mode) vanishes on it. Camera overlay ignores app theme.
@@ -855,12 +869,11 @@ class _CaptureOverlayPainter extends CustomPainter {
     );
   }
 
-  /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): bright
-  /// rounded-rect stroke hugging the preview edges with a soft outer
-  /// band — thicker than the first iteration because the lit area IS the
-  /// light output. Glow tracks the graded level (darker room → brighter
-  /// ring). Flat paint only (no blur — the feed stays raw; the wide faint
-  /// band under the bright core reads as glow without any effect).
+  /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): ONE thin
+  /// bright stroke on the preview border — no stacked bands, no halo, no
+  /// blur (the layered look read messy and swallowed the guidance
+  /// wheels). Glow still tracks the graded level (darker room → brighter
+  /// ring) through alpha alone. Flat paint only, raw feed untouched.
   /// Defined after the wheels methods (not paint order — paint()
   /// calls it first thing after the scrim) so the oval-landing source pin
   /// keeps holding: `drawRRect` appears only inside the wheels painters
@@ -869,21 +882,11 @@ class _CaptureOverlayPainter extends CustomPainter {
   void _paintFlashRing(Canvas canvas, Size size) {
     final level = flashLevel.clamp(0.0, 1.0);
     if (level <= 0) return;
-    final rrect = CaptureOverlay.flashRingRRectFor(size);
-    // Outer band first (under the core stroke).
     canvas.drawRRect(
-      rrect,
+      CaptureOverlay.flashRingRRectFor(size),
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 60
-        ..color = Colors.white.withValues(alpha: 0.20 + 0.45 * level),
-    );
-    // Bright core stroke.
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 28
+        ..strokeWidth = 8
         ..color = Colors.white.withValues(alpha: 0.55 + 0.40 * level),
     );
   }

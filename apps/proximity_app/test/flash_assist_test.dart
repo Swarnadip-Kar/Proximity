@@ -417,12 +417,12 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
 
-    test('flash ring frame hugs the preview edges', () {
-      // Contained geometry: the deflate clears the 30px glow bleed on all
+    test('flash ring frame hugs the preview border', () {
+      // Single thin stroke: the small deflate clears its bleed on all
       // sides so the ring never touches the bottom bar or the top edge.
       final rrect = CaptureOverlay.flashRingRRectFor(const Size(800, 400));
       expect(rrect.outerRect,
-          (Offset.zero & const Size(800, 400)).deflate(34));
+          (Offset.zero & const Size(800, 400)).deflate(12));
       expect(rrect.tlRadiusX, moreOrLessEquals(26));
     });
 
