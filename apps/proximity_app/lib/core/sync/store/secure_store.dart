@@ -75,8 +75,10 @@ class SecureDeviceStore implements DeviceStore {
 
   /// True for every secure-store failure that must try the OTHER slot
   /// instead of surfacing raw platform text:
-  /// - pre-auth unavailability (no strong biometric enrolled, no hardware,
-  ///   prompt cancelled/dismissed);
+  /// - pre-auth unavailability (no strong biometric enrolled, no hardware);
+  /// - user-skipped prompts (`user_cancel`/`auth_canceled` — kept here
+  ///   for the WRITE path only: saves fall through to the other slot;
+  ///   READS check [_isPromptDismissal] first and stop, never fall through);
   /// - POST-AUTH key/blob mismatch: the prompt succeeded but the stored
   ///   Keystore-wrapped app-key blob cannot be unwrapped with the unlocked
   ///   key (`IllegalBlockSizeException` / `BadPaddingException` /
@@ -85,6 +87,12 @@ class SecureDeviceStore implements DeviceStore {
   ///   blob by OS design);
   /// - iOS keychain lockout/invalidation (`biometryCurrentSet` items die
   ///   with the enrolled set: err -34018/-25300).
+  ///
+  /// Deliberately EXCLUDES bare `canceled`/`cancelled`: system cancels
+  /// (overlapping prompts, activity destroy) carry those words with no
+  /// user marker and must degrade to transient/retry
+  /// ([SecureStoreUnavailable]) — never a slot switch (which would prompt
+  /// again) and never a dismissal park.
   ///
   /// Non-matching errors (I/O, Firestore, programming bugs) rethrow
   /// untouched — they are never a signal to switch slots.
@@ -115,8 +123,6 @@ class SecureDeviceStore implements DeviceStore {
         s.contains('auth_canceled') ||
         s.contains('authcanceled') ||
         s.contains('user_cancel') ||
-        s.contains('canceled') ||
-        s.contains('cancelled') ||
         s.contains('keychain') ||
         s.contains('-34018') ||
         s.contains('-25300') ||
@@ -135,6 +141,14 @@ class SecureDeviceStore implements DeviceStore {
   /// Key/blob-mismatch signals (crypto, invalidated, keychain codes)
   /// are NOT dismissals — the slot genuinely cannot serve, so the scan
   /// still continues to the other slot (cred-slot recovery preserved).
+  ///
+  /// Deliberately NARROW: bare `canceled`/`cancelled` are NOT matched.
+  /// The platform also reports system cancels with those words
+  /// (overlapping BiometricPrompts, activity destroy, screen-off), which
+  /// must degrade to transient/retry — never park as a user dismissal.
+  /// Genuine user skips carry `user_cancel`/`auth_canceled`/
+  /// `negative_button`/`dismiss` markers (plus the `user cancel` spaced
+  /// form), all matched here.
   bool _isPromptDismissal(Object e) {
     final s = '$e'.toLowerCase();
     return s.contains('user_cancel') ||
@@ -142,10 +156,9 @@ class SecureDeviceStore implements DeviceStore {
         s.contains('user cancel') ||
         s.contains('auth_canceled') ||
         s.contains('authcanceled') ||
-        s.contains('canceled') ||
-        s.contains('cancelled') ||
         s.contains('negative_button') ||
-        s.contains('negativebutton');
+        s.contains('negativebutton') ||
+        s.contains('dismiss');
   }
 
   /// Honest, prompt-free copy for an unrecoverable secure-store write (both
@@ -165,17 +178,23 @@ class SecureDeviceStore implements DeviceStore {
   static const _kTierPref = 'prox.secure.tier.v1';
   static const _kTierCred = 'cred';
   bool _preferCredSlot = false;
-  bool _tierLoaded = false;
+  // Single-flight tier load: concurrent gated reads on a fresh process
+  // must share one prefs read. The old bool flag let the second reader
+  // skip the load and use the default (strong) while the first was still
+  // awaiting prefs — a persisted cred hint then served strong-first,
+  // costing a miss-prompt + hit-prompt (the unpredictable second prompt
+  // on cold open). Sharing the future keeps steady state at one prompt.
+  Future<void>? _tierLoad;
 
-  Future<void> _ensureTierLoaded() async {
-    if (_tierLoaded) return;
-    _tierLoaded = true;
-    try {
-      final prefs = await _prefs();
-      _preferCredSlot = prefs.getString(_kTierPref) == _kTierCred;
-    } catch (_) {
-      _preferCredSlot = false;
-    }
+  Future<void> _ensureTierLoaded() {
+    return _tierLoad ??= () async {
+      try {
+        final prefs = await _prefs();
+        _preferCredSlot = prefs.getString(_kTierPref) == _kTierCred;
+      } catch (_) {
+        _preferCredSlot = false;
+      }
+    }();
   }
 
   Future<void> _persistTier() async {

@@ -306,6 +306,23 @@ void main() {
     expect(SecureStoreOptions.usedCredentialFallback, isFalse);
   });
 
+  test('system cancel (no user marker) is transient, never a dismissal park',
+      () async {
+    // Overlapping BiometricPrompts / activity destroy report bare
+    // `canceled` with no user marker. That must NOT park as a user
+    // dismissal (5s cooldown + unlock nudge) — it retries transiently.
+    final strong = _ScriptedSecure()
+      ..readError = StateError('Authentication canceled by system');
+    final cred = _ScriptedSecure()
+      ..readError = StateError('Authentication canceled by system');
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    await expectLater(
+      store.readEnrollment(),
+      throwsA(isA<SecureStoreUnavailable>()),
+    );
+  });
+
   test('tier sticks to the live slot (one prompt in steady state)', () async {
     final strong = _ScriptedSecure()..writeError = StateError(_fieldError);
     final cred = _ScriptedSecure();
