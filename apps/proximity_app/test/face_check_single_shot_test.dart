@@ -277,16 +277,14 @@ void main() {
       expect(stack.fit, StackFit.loose);
       expect(stack.alignment, Alignment.center);
       expect(find.byType(CaptureOverlay), findsOneWidget);
-      // Zero treatment outside the overlay's own chrome.
-      expect(
-          find.descendant(
-              of: _previewStackFinder(),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Container ||
-                  w is ColoredBox ||
-                  w is DecoratedBox ||
-                  w is FittedBox)),
-          findsNothing);
+      // Zero treatment on the FRAME path: every direct Stack child that
+      // is not the overlay chrome must be the bare frame itself (prompt
+      // pill and friends live inside CaptureOverlay, never around video).
+      for (final child in stack.children) {
+        if (child is CaptureOverlay) continue;
+        expect(child, isA<SizedBox>(),
+            reason: 'wrapper in frame path: ${child.runtimeType}');
+      }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });

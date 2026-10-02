@@ -251,15 +251,14 @@ void main() {
       )));
       await t.pump();
       expect(_previewStackFinder(), findsOneWidget);
-      expect(
-          find.descendant(
-              of: _previewStackFinder(),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Container ||
-                  w is ColoredBox ||
-                  w is DecoratedBox ||
-                  w is FittedBox)),
-          findsNothing);
+      final stack = t.element(_previewStackFinder()).widget as Stack;
+      // Frame-path pin (chrome lives inside CaptureOverlay, never around
+      // video): non-overlay direct children are the bare frame.
+      for (final child in stack.children) {
+        if (child is CaptureOverlay) continue;
+        expect(child, isA<SizedBox>(),
+            reason: 'wrapper in frame path: ${child.runtimeType}');
+      }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });
@@ -284,15 +283,12 @@ void main() {
       final stack = t.element(_previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
       expect(stack.children.whereType<Positioned>(), isEmpty);
-      expect(
-          find.descendant(
-              of: _previewStackFinder(),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Container ||
-                  w is ColoredBox ||
-                  w is DecoratedBox ||
-                  w is FittedBox)),
-          findsNothing);
+      // Same frame-path pin as mark above.
+      for (final child in stack.children) {
+        if (child is CaptureOverlay) continue;
+        expect(child, isA<SizedBox>(),
+            reason: 'wrapper in frame path: ${child.runtimeType}');
+      }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });

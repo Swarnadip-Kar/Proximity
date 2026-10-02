@@ -200,17 +200,14 @@ void main() {
       expect(_previewStackFinder(), findsOneWidget);
       final stack = t.element(_previewStackFinder()).widget as Stack;
       expect(stack.children.first, isA<SizedBox>());
-      // Zero treatment: no decoration/fill anywhere in the preview Stack
-      // subtree outside the overlay's own chrome (bar clip + text).
-      expect(
-          find.descendant(
-              of: _previewStackFinder(),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Container ||
-                  w is ColoredBox ||
-                  w is DecoratedBox ||
-                  w is FittedBox)),
-          findsNothing);
+      // Zero treatment on the frame path: every direct Stack child that
+      // is not the overlay chrome must be the bare frame itself (prompt
+      // pill and friends live inside CaptureOverlay, never around video).
+      for (final child in stack.children) {
+        if (child is CaptureOverlay) continue;
+        expect(child, isA<SizedBox>(),
+            reason: 'wrapper in frame path: ${child.runtimeType}');
+      }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });
@@ -227,15 +224,12 @@ void main() {
       expect(stack.children.first, isA<SizedBox>());
       expect(find.byType(CaptureOverlay), findsOneWidget);
       expect(find.text('Scan face'), findsOneWidget);
-      expect(
-          find.descendant(
-              of: _previewStackFinder(),
-              matching: find.byWidgetPredicate((w) =>
-                  w is Container ||
-                  w is ColoredBox ||
-                  w is DecoratedBox ||
-                  w is FittedBox)),
-          findsNothing);
+      // Same frame-path pin as enroll above (chrome lives in the overlay).
+      for (final child in stack.children) {
+        if (child is CaptureOverlay) continue;
+        expect(child, isA<SizedBox>(),
+            reason: 'wrapper in frame path: ${child.runtimeType}');
+      }
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });

@@ -30,6 +30,7 @@ import '../features/face_identity/liveness_gate.dart';
 import '../features/setup/enroll_capture_sections.dart'
     show displayedPreviewAspect;
 import '../features/setup/flash_assist.dart';
+import '../widgets/capture_overlay.dart';
 import '../routes.dart';
 
 /// Still-capture seam (navigation plumbing, NOT face math): production
@@ -205,17 +206,19 @@ class _OvalOverlayPainter extends CustomPainter {
       Paint()..color = const Color(0x40000000),
     );
     // Flash-assist edge ring first (directly above the surround): ONE
-    // bold bright band maximized to the preview border — a filled
-    // even-odd band (not a stroke), so outer and inner curves match.
-    // Matches the enrollment ring widths; no progress bar lives in this
-    // preview, so the frame is symmetric.
+    // bold bright band on the preview edges — a filled even-odd band
+    // (never a stroke) with square outer corners and a rounded inner
+    // edge, matching the enrollment ring. No progress bar lives in this
+    // preview, so the band runs the full height here.
     if (assist) {
-      final outer = Rect.fromLTRB(
-          20, 20, size.width - 20, size.height - 20);
+      final outer = Offset.zero & size;
       canvas.drawPath(
           Path()
-            ..addOval(outer)
-            ..addOval(outer.deflate(30))
+            ..addRect(outer)
+            ..addRRect(RRect.fromRectAndRadius(
+              outer.deflate(CaptureOverlay.ringBandWidth),
+              const Radius.circular(CaptureOverlay.ringInnerRadius),
+            ))
             ..fillType = PathFillType.evenOdd,
           Paint()
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.90));
@@ -498,11 +501,9 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cams.first,
       );
-      // Medium resolution: the preset drives BOTH preview + stills.
-      // Max (8-12MP on old phones) stalled takePicture/decode/ML Kit and
-      // OOMed low-RAM devices for zero matcher gain (FaceNet embeds at
-      // ~160px). Layout/overlays untouched.
-      final ctl = CameraController(front, ResolutionPreset.medium,
+      // High resolution for a crisp preview + full-detail stills (the
+      // feed is the product here — medium visibly softened it).
+      final ctl = CameraController(front, ResolutionPreset.high,
           enableAudio: false);
       await ctl.initialize();
       if (_done) {

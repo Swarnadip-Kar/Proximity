@@ -118,6 +118,15 @@ void main() {
         expect(top, lessThanOrEqualTo(oval.top - ProxSpacing.md + 0.01),
             reason: 'prompt must clear the face zone: ${c.$1} @${c.$2}');
         expect(top, greaterThanOrEqualTo(0.0));
+        // Chip slot shares the text geometry (paint and widget agree).
+        final slot = CaptureOverlay.promptSlotFor(c.$1, oval);
+        expect(slot.left,
+            moreOrLessEquals(CaptureOverlay.promptSideMargin));
+        expect(slot.right,
+            moreOrLessEquals(c.$1.width - CaptureOverlay.promptSideMargin));
+        expect(slot.bottom,
+            moreOrLessEquals(oval.top - ProxSpacing.md, epsilon: 0.01));
+        expect(slot.top, moreOrLessEquals(top, epsilon: 0.01));
       }
     });
 

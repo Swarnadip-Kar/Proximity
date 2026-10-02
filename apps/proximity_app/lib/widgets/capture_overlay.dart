@@ -260,14 +260,33 @@ class CaptureOverlay extends StatefulWidget {
     );
   }
 
-  /// Flash-ring frame (see [flashLevel]): the rounded-rect border the ring
-  /// light paints — one bold stroke whose outer edge hugs the preview
-  /// border on the sides + top for maximum glow area, dropping clear of
-  /// the bottom progress bar. Pure for unit tests.
-  static RRect flashRingRRectFor(Size size) => RRect.fromRectAndRadius(
-        Rect.fromLTRB(20, 20, size.width - 20, size.height - 28),
-        const Radius.circular(26),
-      );
+  /// Flash-ring frame (see [flashLevel]): the full preview rect — edge
+  /// to edge with square outer corners and a rounded inner edge, running
+  /// under the bottom progress bar with no gap. Pure for unit tests.
+  static const double ringBandWidth = 30;
+
+  /// Inner-corner radius of the ring band (the outer corners are square).
+  static const double ringInnerRadius = 12;
+
+  static Rect flashRingRectFor(Size size) => Offset.zero & size;
+
+  /// Prompt chip slot: the dark pill behind the prompt line — one pure
+  /// rect shared by the painter (fill) and the build (text position), so
+  /// paint and widget can never drift. Flat painter fill, never a widget
+  /// backdrop (the video-path source pins ban backdrop widgets outright).
+  /// Above the oval with the prompt; [Rect.zero] when no room (the
+  /// painter skips empties, the text keeps its clamped top). Pure for
+  /// unit tests.
+  static double get promptSideMargin =>
+      ProxSpacing.screenMargin + ProxSpacing.lg;
+
+  static Rect promptSlotFor(Size size, Rect oval) {
+    final top = promptTopFor(size, oval);
+    final bottom = oval.top - ProxSpacing.md;
+    if (bottom <= top) return Rect.zero;
+    return Rect.fromLTRB(
+        promptSideMargin, top, size.width - promptSideMargin, bottom);
+  }
 
   /// Prompt line top: a two-line slot + a clear gap ABOVE the oval (the
   /// lower line must never touch the oval, but the line should not float
@@ -480,6 +499,12 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
           final promptTop = bounded
               ? CaptureOverlay.promptTopFor(size, oval)
               : null;
+          // Chip slot shared with the painter (see promptSlotFor): hidden
+          // line/error slot in the fallback branch below gets no chip.
+          final promptPill = bounded &&
+                  (widget.errorBanner != null || widget.showStatusLine)
+              ? CaptureOverlay.promptSlotFor(size, oval)
+              : Rect.zero;
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -504,6 +529,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   posePitch: widget.posePitch,
                   poseTargetSlot: widget.poseTargetSlot,
                   flashLevel: widget.flashLevel,
+                  promptPill: promptPill,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -535,36 +561,25 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
               if (widget.errorBanner != null && promptTop != null)
                 Positioned(
                   top: promptTop,
-                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
-                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  left: CaptureOverlay.promptSideMargin,
+                  right: CaptureOverlay.promptSideMargin,
                   child: widget.errorBanner!,
                 )
               else if (widget.errorBanner != null)
                 Positioned(
-                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
-                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  left: CaptureOverlay.promptSideMargin,
+                  right: CaptureOverlay.promptSideMargin,
                   bottom: ProxSpacing.xl,
                   child: widget.errorBanner!,
                 )
               else if (widget.showStatusLine && promptTop != null)
                 Positioned(
                   top: promptTop,
-                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
-                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  left: CaptureOverlay.promptSideMargin,
+                  right: CaptureOverlay.promptSideMargin,
                   child: Text(
                     line,
-                    style: ProxType.label(color: Colors.white).copyWith(
-                      // Soft dark edge (text paint only — the feed stays
-                      // untouched): the whisper scrim alone lets white copy
-                      // wash out on bright feeds.
-                      shadows: const [
-                        Shadow(
-                          color: Color(0xBF000000),
-                          offset: Offset(0, 1),
-                          blurRadius: 4,
-                        ),
-                      ],
-                    ),
+                    style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
@@ -572,20 +587,12 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 )
               else if (widget.showStatusLine)
                 Positioned(
-                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
-                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  left: CaptureOverlay.promptSideMargin,
+                  right: CaptureOverlay.promptSideMargin,
                   bottom: ProxSpacing.xl,
                   child: Text(
                     line,
-                    style: ProxType.label(color: Colors.white).copyWith(
-                      shadows: const [
-                        Shadow(
-                          color: Color(0xBF000000),
-                          offset: Offset(0, 1),
-                          blurRadius: 4,
-                        ),
-                      ],
-                    ),
+                    style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
@@ -650,6 +657,10 @@ class _CaptureOverlayPainter extends CustomPainter {
   /// Ring-light assist (see [CaptureOverlay.flashLevel]). Paint-only.
   final double flashLevel;
 
+  /// Prompt chip behind the status text (see
+  /// [CaptureOverlay.promptSlotFor]). Paint-only; empty hides it.
+  final Rect promptPill;
+
   _CaptureOverlayPainter({
     required this.scrim,
     required this.guideRing,
@@ -665,6 +676,7 @@ class _CaptureOverlayPainter extends CustomPainter {
     this.posePitch,
     this.poseTargetSlot,
     this.flashLevel = 0.0,
+    this.promptPill = Rect.zero,
   });
 
   @override
@@ -680,6 +692,7 @@ class _CaptureOverlayPainter extends CustomPainter {
     // keeps its brightness uniform — the scrim gradient dimmed the old
     // sibling ring into a top-bright/bottom-dim gradient.
     if (flashLevel > 0) _paintFlashRing(canvas, size);
+    _paintPromptPill(canvas);
 
     final alpha = dim ? 0.55 : 1.0;
     // (2a) ONE static face-guide oval (always drawn — the single-shot
@@ -766,7 +779,8 @@ class _CaptureOverlayPainter extends CustomPainter {
       old.poseYaw != poseYaw ||
       old.posePitch != posePitch ||
       old.poseTargetSlot != poseTargetSlot ||
-      old.flashLevel != flashLevel;
+      old.flashLevel != flashLevel ||
+      old.promptPill != promptPill;
 
   /// Guidance wheels: yaw rail just below the oval + pitch rail just
   /// right of it (both hug the guide instead of the screen edges, so the
@@ -885,32 +899,42 @@ class _CaptureOverlayPainter extends CustomPainter {
   }
 
   /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): ONE bold
-  /// bright band on the preview border — no stacked strokes, no halo, no
-  /// blur. A filled even-odd band (not a stroke), so the outer and inner
-  /// corner curves match exactly — a thick stroke's inner corners pinch
-  /// tighter than its outer ones. Glow tracks the graded level (darker
-  /// room → brighter ring) through alpha alone, resting faint in good
-  /// light. Flat paint only, raw feed untouched.
+  /// bright band on the preview edges — a filled even-odd band (never a
+  /// stroke) with square outer corners and a rounded inner edge, no halo,
+  /// no blur. The bottom progress bar stays clear of it. Glow tracks the
+  /// graded level (darker room → brighter ring) through alpha alone,
+  /// barely there in good light. Flat paint only, raw feed untouched.
   /// Defined after the wheels methods (not paint order — paint()
   /// calls it first thing after the scrim) so the oval-landing source pin
-  /// keeps holding: `drawRRect` appears only inside the wheels painters
-  /// and this ring painter, never around the face-guide oval (which stays
-  /// `drawOval`).
+  /// keeps holding: `drawRRect` appears only inside the wheels painters,
+  /// never around the face-guide oval (which stays `drawOval`).
   void _paintFlashRing(Canvas canvas, Size size) {
     final level = flashLevel.clamp(0.0, 1.0);
     if (level <= 0) return;
-    final outer = CaptureOverlay.flashRingRRectFor(size);
+    final outer = CaptureOverlay.flashRingRectFor(size);
     final band = Path()
-      ..addRRect(outer)
+      ..addRect(outer)
       ..addRRect(RRect.fromRectAndRadius(
-        outer.outerRect.deflate(30),
-        outer.tlRadius,
+        outer.deflate(CaptureOverlay.ringBandWidth),
+        const Radius.circular(CaptureOverlay.ringInnerRadius),
       ))
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(
       band,
       Paint()
-        ..color = Colors.white.withValues(alpha: 0.25 + 0.70 * level),
+        ..color = Colors.white.withValues(alpha: 0.12 + 0.83 * level),
+    );
+  }
+
+  /// Prompt chip (see [CaptureOverlay.promptSlotFor]): flat dark pill so
+  /// white copy reads on bright feeds. Skipped when the slot is empty
+  /// (tiny screens). Defined down here with the ring painter (not paint
+  /// order) so the oval-landing source pin keeps holding.
+  void _paintPromptPill(Canvas canvas) {
+    if (promptPill.isEmpty) return;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(promptPill, const Radius.circular(16)),
+      Paint()..color = const Color(0x73000000),
     );
   }
 }

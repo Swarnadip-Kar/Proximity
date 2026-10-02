@@ -417,12 +417,13 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
 
-    test('flash ring frame maximizes the border, clears the bar', () {
-      // Bold band (35px) with its outer edge at the border sides + top;
-      // the bottom drops clear of the 6px progress bar with room to spare.
-      final rrect = CaptureOverlay.flashRingRRectFor(const Size(800, 400));
-      expect(rrect.outerRect, const Rect.fromLTRB(20, 20, 780, 372));
-      expect(rrect.tlRadiusX, moreOrLessEquals(26));
+    test('flash ring frame hugs the edges, clears the bar', () {
+      // Full-bleed rect (the bottom bar paints over the band — no gap);
+      // inner corners stay rounded (see ringInnerRadius).
+      expect(CaptureOverlay.flashRingRectFor(const Size(800, 400)),
+          Offset.zero & const Size(800, 400));
+      expect(CaptureOverlay.ringBandWidth, moreOrLessEquals(30));
+      expect(CaptureOverlay.ringInnerRadius, greaterThan(0));
     });
 
     testWidgets('capture scaffold ignores keyboard insets', (t) async {

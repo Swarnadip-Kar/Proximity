@@ -121,9 +121,9 @@ class RealEnrollSessionCamera implements EnrollSessionCamera {
       orElse: () => cams.first,
     );
     final ctl =
-        // Medium resolution (see face_capture: max stalled old phones for
-        // zero matcher gain — FaceNet embeds at ~160px).
-        CameraController(front, ResolutionPreset.medium, enableAudio: false);
+        // High resolution for a crisp preview + full-detail stills (the
+        // feed is the product here — medium visibly softened it).
+        CameraController(front, ResolutionPreset.high, enableAudio: false);
     try {
       await ctl.initialize();
     } catch (e) {
