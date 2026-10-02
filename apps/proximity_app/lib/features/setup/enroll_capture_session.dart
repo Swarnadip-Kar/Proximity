@@ -668,13 +668,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _livenessPlan = EnrollLivenessPlan.fresh();
     EnrollLog.face(
         'liveness walk: ${_livenessPlan!.order.map((a) => a.name).join(' → ')}');
-    _startAmbient();
     _startLoop();
   }
 
   void _startLoop() {
     if (_loopStarted) return;
     _loopStarted = true;
+    // Live room feed rides every loop start (open + slot-recapture restart
+    // alike — the save path stops it, so the restart must re-arm it).
+    _startAmbient();
     // Marker easing follows the motion setting (the sweep timer that
     // repaints between beats never starts under reduced motion, so eased
     // getters would lag a full beat there — jump instead).
