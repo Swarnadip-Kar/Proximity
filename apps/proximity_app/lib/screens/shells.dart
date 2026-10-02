@@ -583,6 +583,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// resolve conclusion; consumed once by [_applyResolved].
   var _unlockDismissed = false;
 
+  /// Email a dismissal park belongs to: while a park is set for the
+  /// current account, automatic re-resolves (account arrival, listener
+  /// echoes) never touch the store — no second prompt uninvited after a
+  /// skip (the skip-then-prompt-again defect). Only an explicit user
+  /// retry (Retry, locked-tab re-tap) re-prompts. Cleared on unlock, on
+  /// account change (a different email gets a fresh attempt), and on
+  /// any non-dismissed conclusion.
+  var _dismissParkEmail = '';
+
   /// Hides the unlock nudge banner for this park (dismiss X). Reset on
   /// every non-dismissed resolve; locked-tab taps still re-resolve
   /// (re-prompt) as the retry path.
@@ -829,10 +838,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     }
     if (_linkedMatchesAccount(acct, linked)) {
       _unlockDismissed = false;
+      _dismissParkEmail = '';
       return _GateResolve.enrolled;
     }
     if (acct == null) {
       _unlockDismissed = false;
+      _dismissParkEmail = '';
       // Signed-out after enrollment parks (never pushes); a cold-start
       // gap with no history yet simply waits for the account listener.
       return _wasEnrolled
@@ -840,6 +851,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
           : _GateResolve.unknown;
     }
     final want = acct.email.trim().toLowerCase();
+    // Dismissal park: this account already parked on a skipped prompt
+    // with retry UI — an automatic re-resolve (account arrival after a
+    // slow restore, listener echoes) must never prompt again uninvited.
+    // Only an explicit user retry re-prompts. The live linked fast-path
+    // above already ran, so a locked park here stays silent unknown.
+    // A different email always gets a fresh attempt (park is per-email).
+    if (!userInitiated && _unlockDismissed && _dismissParkEmail == want) {
+      return _GateResolve.unknown;
+    }
     // Async gap: the store read + provider touch below may outlive a
     // rapid switch or disposal. [attemptUnlockIdentity] is fail-soft
     // (never throws, swallows dead-screen touches), so awaiting it is
@@ -859,6 +879,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     // locked-tab taps retry.
     if (outcome == UnlockOutcome.error) {
       _unlockDismissed = false;
+      _dismissParkEmail = '';
       if (mounted) {
         setState(() => _storeError = true);
       }
@@ -876,7 +897,14 @@ class _StudentShellState extends ConsumerState<StudentShell> {
     if (freshWant != want) return _GateResolve.unknown;
     final matched = _linkedMatchesAccount(freshAcct, freshLinked);
     _unlockDismissed = !matched && outcome == UnlockOutcome.dismissed;
-    if (!_unlockDismissed) _unlockNudgeHidden = false;
+    if (_unlockDismissed) {
+      // Parked for this account: later automatic re-resolves stay silent
+      // (see the park check above) until the user retries explicitly.
+      _dismissParkEmail = want;
+    } else {
+      _unlockNudgeHidden = false;
+      _dismissParkEmail = '';
+    }
     return matched ? _GateResolve.enrolled : _GateResolve.unenrolled;
   }
 

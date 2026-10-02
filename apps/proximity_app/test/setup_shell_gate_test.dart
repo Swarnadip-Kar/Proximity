@@ -284,10 +284,10 @@ void main() {
       // Cold-open race pin: while locked, the Account tab entry must not
       // fire its own biometric-gated read — it raced the shell resolve's
       // unlock prompt (overlapping prompts cancel; the scanned prompt
-      // did nothing and the banner stayed). Exactly two reads happen
-      // here, both shell-owned: the mount resolve + the account-arrival
-      // re-resolve (stream loads after the sync fallback). A third read
-      // would be the entry racing again.
+      // did nothing and the banner stayed). Exactly one read happens
+      // here (the mount resolve): the account-arrival re-resolve hits
+      // the dismissal park and stays silent (no second prompt uninvited),
+      // and the entry never reads while locked.
       final store = _CountingDismissStore();
       await t.pumpWidget(helpers.testScope(
           store: store,
@@ -297,7 +297,7 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
-      expect(store.reads, 2);
+      expect(store.reads, 1);
       expect(find.byType(SetupFlowScreen), findsNothing);
       expect(find.text('Unlock to continue — approve the phone prompt.'),
           findsOneWidget);
@@ -306,7 +306,19 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
+      expect(store.reads, 1);
+      // Explicit retry still re-prompts past the park (the park only
+      // silences AUTOMATIC re-resolves): reads climb, banner persists
+      // while the store keeps dismissing.
+      await t.tap(find.widgetWithText(TextButton, 'Retry'));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
       expect(store.reads, 2);
+      expect(find.text('Unlock to continue — approve the phone prompt.'),
+          findsOneWidget);
+      expect(t.takeException(), isNull);
     });
 
     testWidgets('stale dismiss never re-locks an unlocked shell',
