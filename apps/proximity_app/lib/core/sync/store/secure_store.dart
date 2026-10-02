@@ -277,7 +277,10 @@ class SecureDeviceStore implements DeviceStore {
       _lastSecureFailAt = now;
       throw const SecureStoreDismissed();
     }
-    return _behindPromptGate(() => _readEnrollmentCold());
+    // Auto path: preferred slot only on clean miss (one prompt max for
+    // the empty case). The full both-slot scan lives behind explicit
+    // retry (see readEnrollmentRetry) for the tier-wiped reinstall shape.
+    return _behindPromptGate(() => _readEnrollmentCold(scanAll: false));
   }
 
   /// Gated enrollment scan (one prompt-chain turn): re-checks the warm
@@ -286,7 +289,16 @@ class SecureDeviceStore implements DeviceStore {
   /// behind a failure stays dismissed with no second prompt (a
   /// just-dismissed user is never re-prompted by someone else's stale
   /// overlap).
-  Future<StoredEnrollment?> _readEnrollmentCold() async {
+  ///
+  /// [scanAll]: explicit-retry full scan (both slots, clean miss keeps
+  /// scanning) for the tier-wiped reinstall shape (unencrypted prefs hint
+  /// gone, live doc in the other slot). Auto reads pass false: a clean
+  /// miss on the preferred slot reports empty WITHOUT prompting the
+  /// second slot — every fresh/empty cold open used to pay two prompts
+  /// (miss + miss) for one answer. Auth/key failures ALWAYS fall through
+  /// (crypto recovery preserved on both paths); dismissals always stop;
+  /// a clean miss with no failure anywhere leaves the tier untouched.
+  Future<StoredEnrollment?> _readEnrollmentCold({required bool scanAll}) async {
     if (_enrollmentLoaded) return _enrollmentCache;
     final now = DateTime.now().toUtc();
     if (_inSecureCooldown(now)) {
@@ -296,12 +308,9 @@ class SecureDeviceStore implements DeviceStore {
     await _ensureTierLoaded();
     // Fail-open: unsigned simulator builds have no keychain (err -34018);
     // a missing enrollment just means "enroll".
-    // Both slots are always scanned: a clean miss on the preferred slot
-    // never stops the scan (the tier hint is unencrypted prefs — a
-    // reinstall wipes it, so the live data may sit in the other slot; a
-    // first-slot miss used to report empty and push a phantom enrollment
-    // over existing data). First hit wins; dismissed needs an auth/key
-    // failure with no hit anywhere; empty needs two clean misses.
+    // First hit wins; dismissed needs an auth/key failure with no hit
+    // anywhere; empty needs clean miss(es) with no failure anywhere
+    // (one miss on auto, two on explicit retry).
     String? raw;
     var sawAuthFailure = false;
     FlutterSecureStorage? hitSlot;
@@ -331,15 +340,19 @@ class SecureDeviceStore implements DeviceStore {
         continue;
       }
       // The hitting slot becomes the preferred slot, so steady state
-      // costs one prompt. A clean miss keeps scanning — but when the
-      // other slot failed behind the prompt gate, the answering (miss)
-      // slot is adopted below for the same one-prompt steady state, and
-      // a clean miss on the preferred slot with no failure anywhere
-      // leaves the tier untouched (fresh installs must not flip it).
+      // costs one prompt. On the auto path a clean miss on the preferred
+      // slot reports empty immediately (no second prompt); the explicit
+      // retry keeps scanning for the reinstall shape and adopts the
+      // answering miss slot below for the same one-prompt steady state.
       if (v != null) {
         raw = v;
         hitSlot = slot;
         break;
+      }
+      if (!scanAll) {
+        _enrollmentCache = null;
+        _enrollmentLoaded = true;
+        return null;
       }
       missSlot ??= slot;
     }
@@ -379,12 +392,21 @@ class SecureDeviceStore implements DeviceStore {
   }
 
   @override
-  Future<StoredEnrollment?> readEnrollmentRetry() {
+  Future<StoredEnrollment?> readEnrollmentRetry() async {
     // Explicit user retry: clear the dismissal anti-hammer cooldown so
-    // the prompt shows again instead of replaying the dismissal. Cached
-    // proven values still shortcut above (no prompt when unneeded).
+    // the prompt shows again instead of replaying the dismissal, and run
+    // the FULL both-slot scan (clean miss keeps scanning) for the
+    // tier-wiped reinstall shape. Auto reads (mount, listeners) use
+    // [readEnrollment] (preferred slot only on clean miss: one prompt
+    // for empty, never two uninvited). Cached PROVEN values still
+    // shortcut with no prompt; a cached auto-empty re-scans full (the
+    // auto miss was single-slot, so it cannot stand for the other slot).
     _lastSecureFailAt = null;
-    return readEnrollment();
+    if (_enrollmentLoaded && _enrollmentCache == null) {
+      _enrollmentLoaded = false;
+    }
+    if (_enrollmentLoaded) return _enrollmentCache;
+    return _behindPromptGate(() => _readEnrollmentCold(scanAll: true));
   }
 
   @override
@@ -808,6 +830,14 @@ class SecureDeviceStore implements DeviceStore {
   /// Gated install-id scan (one prompt-chain turn — same cache + cooldown
   /// re-check contract as [_readEnrollmentCold], so overlaps cost one
   /// prompt total and never re-prompt a just-dismissed user).
+  ///
+  /// Unlike enrollment, BOTH slots are always scanned on clean miss: a
+  /// null here makes getOrCreateInstallId mint a FRESH install over
+  /// existing data (identity fork: orphaned faceId, phantom device move),
+  /// which is worse than a second prompt. This path never runs on shell
+  /// mount (the resolve reads enrollment only) — it runs in explicit /
+  /// setup contexts (claim, enroll restore) where the extra prompt has
+  /// user context, so the cost is predictable, never a cold-open ambush.
   Future<String?> _readInstallIdCold() async {
     if (_installIdLoaded) return _installIdCache;
     final now = DateTime.now().toUtc();
@@ -816,10 +846,10 @@ class SecureDeviceStore implements DeviceStore {
       throw const SecureStoreDismissed();
     }
     await _ensureTierLoaded();
-    // Both slots always scanned (same law as readEnrollment above): a
-    // clean miss on the preferred slot never stops the scan, or a wiped
-    // tier hint resolves to null here and getOrCreateInstallId mints a
-    // FRESH install over existing data (identity fork).
+    // Both slots always scanned (unlike enrollment auto reads): a clean
+    // miss on the preferred slot never stops the scan, or a wiped tier
+    // hint resolves to null here and getOrCreateInstallId mints a FRESH
+    // install over existing data (identity fork — see above).
     String? v;
     var sawAuthFailure = false;
     FlutterSecureStorage? hitSlot;

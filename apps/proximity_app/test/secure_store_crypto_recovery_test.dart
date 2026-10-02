@@ -142,20 +142,36 @@ void main() {
     expect(strong.readKeys, hasLength(1)); // the first failed attempt only
   });
 
-  test('clean miss on the preferred slot still serves the other slot',
-      () async {
+  test('auto read stops at a clean miss (one prompt for empty)', () async {
+    // Cold-open empty shape: nothing in either slot. The AUTO path
+    // (shell mount, listeners) must report empty after the preferred
+    // slot alone — prompting the second slot too doubled every
+    // fresh/empty open (miss + miss = two prompts for one answer).
+    final strong = _ScriptedSecure();
+    final cred = _ScriptedSecure();
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    expect(await store.readEnrollment(), isNull);
+    expect(strong.readKeys, contains('prox.enrollment.v1'));
+    expect(cred.readKeys, isEmpty);
+  });
+
+  test('explicit retry scans both slots (reinstall recovery)', () async {
     // Reinstall shape: the unencrypted tier hint is wiped (prefers
-    // strong) but the live doc sits in cred. A first-slot miss must not
-    // report empty (that pushes a phantom enrollment over existing
-    // data) — the scan continues and adopts the hitting slot.
+    // strong) but the live doc sits in cred. AUTO reports empty without
+    // a second prompt (see above); EXPLICIT retry runs the full scan so
+    // it never pushes a phantom enrollment over existing data — and
+    // adopts the hitting slot for one-prompt steady state after.
     final strong = _ScriptedSecure();
     final cred = _ScriptedSecure()
       ..backend['prox.enrollment.v1'] = jsonEncode(_doc().toJson());
     final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
 
-    final got = await store.readEnrollment();
+    expect(await store.readEnrollment(), isNull);
+    expect(cred.readKeys, isEmpty);
+
+    final got = await store.readEnrollmentRetry();
     expect(got?.email, 'a@x.in');
-    expect(strong.readKeys, contains('prox.enrollment.v1'));
     expect(cred.readKeys, contains('prox.enrollment.v1'));
     // Tier flipped AND persisted: a fresh process leads with cred and
     // never touches the dead strong slot (one prompt in steady state).
