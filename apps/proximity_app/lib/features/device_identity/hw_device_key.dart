@@ -381,7 +381,7 @@ abstract class HwSealStore {
 
 /// Production [HwSealStore] over `flutter_secure_storage` (already a direct
 /// app dep; prompt-free hardened options — NOT the biometric-gated
-/// `SecureStoreOptions.storage`, which would prompt on every prove).
+/// `SecureStoreOptions.aOpts`, which would prompt on every prove).
 ///
 /// Android `storageNamespace: 'prox_seal'` isolates this instance from the
 /// enrollment store (`SecureStoreOptions.aOpts`, namespace `'prox_enroll'`,

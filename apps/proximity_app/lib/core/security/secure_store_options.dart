@@ -30,13 +30,11 @@
 //   iOS) — use is already gated by the 4h HW-key grant
 //   (`UserAuthPolicy.timeBound(4h)`) + the face check, and a per-read prompt
 //   would strand every 10s prove rotation.
-// - Desktop/web fail-closed: [newStorage]/[requireSupportedPlatform] throw
-//   [StateError] off Android/iOS (mirrors `requireMobileFace`). Records-only
-//   targets must never silently persist enrollment secrets in weak storage.
+// - Desktop/web fail-closed by construction: [SecureDeviceStore] is only
+//   wired on mobile (see main.dart provider setup); records-only targets
+//   get the fail-closed stubs and never persist enrollment secrets.
 library;
 
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Public API for 1B secure storage (handoff: callers depend on this class,
@@ -121,65 +119,5 @@ class SecureStoreOptions {
     accessibility: KeychainAccessibility.first_unlock_this_device,
     // No biometric flag → iOS falls back to device passcode.
   );
-
-  /// Prebuilt hardened instance for callers that already gated on
-  /// [isSupportedPlatform]. Prefer [newStorage], which enforces the gate.
-  static const storage = FlutterSecureStorage(
-    aOptions: aOpts,
-    iOptions: iOpts,
-  );
-
-  /// True only where HW-backed secure storage exists (Android/iOS).
-  static bool get isSupportedPlatform =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
-
-  /// Fail-closed gate for records-only targets (desktop/web).
-  static void requireSupportedPlatform() {
-    if (!isSupportedPlatform) {
-      throw StateError(
-        'Secure enrollment storage needs the mobile app (Android/iOS) — '
-        'this device is records-only.',
-      );
-    }
-  }
-
-  /// Hardened storage, fail-closed off mobile.
-  static FlutterSecureStorage newStorage() {
-    requireSupportedPlatform();
-    return storage;
-  }
-
-  /// Whether [usedCredentialFallback] was set on the last
-  /// [newStorageWithFallback] call. Callers (enrollment, attestation)
-  /// check this to stamp the appropriate tier — never silent.
-  static bool usedCredentialFallback = false;
-
-  /// Capability-gated storage: tries strong-biometric first, falls back
-  /// to device-credential (PIN/pattern/password) when no Class-3
-  /// biometric is enrolled. Returns the appropriate storage instance and
-  /// sets [usedCredentialFallback] so callers can stamp the tier honestly.
-  ///
-  /// [hasBiometrics]: injectable check for testability. Production passes
-  /// a `local_auth` or platform-channel probe; null uses the strong-first
-  /// default (no fallback — existing behavior preserved for callers that
-  /// don't opt in).
-  static FlutterSecureStorage newStorageWithFallback({
-    bool? hasBiometrics,
-  }) {
-    requireSupportedPlatform();
-    // When biometric availability is unknown (null), assume strong first
-    // (same as existing behavior). Only explicit false triggers fallback.
-    if (hasBiometrics == false) {
-      usedCredentialFallback = true;
-      return const FlutterSecureStorage(
-        aOptions: aOptsFallback,
-        iOptions: iOptsFallback,
-      );
-    }
-    usedCredentialFallback = false;
-    return storage;
-  }
 }
 

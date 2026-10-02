@@ -1,6 +1,4 @@
 // 1B: hardened secure-storage options compile + carry the §3 values.
-import 'package:flutter/foundation.dart'
-    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/security/secure_store_options.dart';
@@ -35,16 +33,6 @@ void main() {
     expect(iOpts.accessControlFlags, contains(AccessControlFlag.biometryCurrentSet));
   });
 
-  test('prebuilt storage carries the hardened options', () {
-    const storage = SecureStoreOptions.storage;
-    expect(storage.aOptions.toMap(), SecureStoreOptions.aOpts.toMap());
-    expect(storage.iOptions.synchronizable, isFalse);
-    expect(
-      storage.iOptions.accessibility,
-      KeychainAccessibility.first_unlock_this_device,
-    );
-  });
-
   test('credential fallback uses a DISTINCT namespace (no alias clobber)', () {
     // Field root cause (IllegalBlockSizeException after biometric auth):
     // two FSS configs with different biometricType sharing one
@@ -60,15 +48,5 @@ void main() {
     expect(fallback['storageNamespace'], isNot(equals('prox_seal')));
     expect(fallback['biometricType'],
         AndroidBiometricType.biometricOrDeviceCredential.name);
-  });
-
-  test('desktop/web fail closed', () {    // Unit tests run with an Android default platform; override to a
-    // records-only target: the gate must throw rather than hand out storage
-    // that silently persists secrets weakly.
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    expect(SecureStoreOptions.isSupportedPlatform, isFalse);
-    expect(SecureStoreOptions.newStorage, throwsStateError);
-    expect(SecureStoreOptions.requireSupportedPlatform, throwsStateError);
   });
 }

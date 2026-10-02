@@ -252,9 +252,8 @@ Future<void> main() async {
     faceVerifier = const UnavailableFaceVerifier();
     deviceKey = const UnavailableDeviceKey();
   }
-  // Identity preseed is ALWAYS null at launch now (see above): the shell
+  // Identity preseed is ALWAYS null at launch (see above): the shell
   // resolve unlocks on entering the student area.
-  final LinkedIdentity? initialLinked = null;
   final im = initialMode;
   // Preseed enrollment with the signed-in account so the enroll screen
   // doesn't ask for Google twice after landing sign-in.
@@ -299,8 +298,6 @@ Future<void> main() async {
                 },
               )),
         bleEngineProvider.overrideWithValue(bleEngine),
-        if (initialLinked != null)
-          linkedIdentityProvider.overrideWith((ref) => initialLinked),
         if (im != null) appModeProvider.overrideWith((ref) => im),
         enrollmentControllerProvider.overrideWith(
           (ref) => EnrollmentController(

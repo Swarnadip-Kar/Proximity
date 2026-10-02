@@ -110,11 +110,10 @@ StoredEnrollment _doc() => StoredEnrollment(
 
 void main() {
   setUp(() {
-    SecureStoreOptions.usedCredentialFallback = false;
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('strong-slot IllegalBlockSize write falls back and stays honest',
+  test('strong-slot IllegalBlockSize write falls back to the live slot',
       () async {
     final strong = _ScriptedSecure()..writeError = StateError(_fieldError);
     final cred = _ScriptedSecure();
@@ -123,7 +122,6 @@ void main() {
     await store.writeEnrollment(_doc());
 
     expect(cred.backend['prox.enrollment.v1'], isNotNull);
-    expect(SecureStoreOptions.usedCredentialFallback, isTrue);
     // Corrupted entry best-effort cleared before switching slots.
     expect(strong.deletedKeys, contains('prox.enrollment.v1'));
   });
@@ -319,7 +317,6 @@ void main() {
       ),
     );
     expect(cred.writtenKeys, isEmpty);
-    expect(SecureStoreOptions.usedCredentialFallback, isFalse);
   });
 
   test('system cancel (no user marker) is transient, never a dismissal park',
@@ -364,7 +361,6 @@ void main() {
 
     expect(strong.writtenKeys, isEmpty);
     expect(cred.writtenKeys, hasLength(1));
-    expect(SecureStoreOptions.usedCredentialFallback, isTrue);
   });
 
   test('clearEnrollment wipes both slots and resets tier', () async {
@@ -372,7 +368,6 @@ void main() {
     final cred = _ScriptedSecure();
     final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
     await store.writeEnrollment(_doc());
-    expect(SecureStoreOptions.usedCredentialFallback, isTrue);
 
     strong.writeError = null;
     await store.clearEnrollment();

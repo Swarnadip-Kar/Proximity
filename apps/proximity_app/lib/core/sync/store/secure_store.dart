@@ -429,7 +429,6 @@ class SecureDeviceStore implements DeviceStore {
       }
       final usedCred = identical(slot, _fallbackSecure);
       await _adoptTier(usedCred);
-      SecureStoreOptions.usedCredentialFallback = usedCred;
       _enrollmentCache = e;
       _enrollmentLoaded = true;
       return;
@@ -912,7 +911,6 @@ class SecureDeviceStore implements DeviceStore {
       }
       final usedCred = identical(slot, _fallbackSecure);
       await _adoptTier(usedCred);
-      SecureStoreOptions.usedCredentialFallback = usedCred;
       _installIdCache = id;
       _installIdLoaded = true;
       return;
