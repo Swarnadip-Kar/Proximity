@@ -266,7 +266,8 @@ class _NullStillCapturer implements StillCapturer {
           Future<bool> Function(List<String> paths)? accept,
           Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
-          Duration acceptGap = const Duration(seconds: 1)}) async =>
+          Duration acceptGap = const Duration(seconds: 1),
+          bool assist = false}) async =>
       null;
 }
 

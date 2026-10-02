@@ -29,6 +29,7 @@ import '../features/face_identity/face_verifier.dart';
 import '../features/face_identity/liveness_gate.dart';
 import '../features/setup/enroll_capture_sections.dart'
     show displayedPreviewAspect;
+import '../features/setup/flash_assist.dart';
 import '../routes.dart';
 
 /// Still-capture seam (navigation plumbing, NOT face math): production
@@ -44,6 +45,12 @@ import '../routes.dart';
 /// window pops with the last burst so the caller resolves it terminally.
 /// Null [accept] keeps the legacy single-burst pop. Failures of `accept`
 /// itself accept (pop) — verification errors must never trap the sheet.
+///
+/// [assist] (dark retry only): paints the flash-assist edge ring and maxes
+/// the window brightness while the sheet is up (restored after) — the
+/// host sets it when the previous verdict read dim, so the retry captures
+/// lit instead of spinning dark again. Default off: bright sessions never
+/// touch brightness.
 abstract class StillCapturer {
   Future<List<String>?> capture(BuildContext context,
       {required int captures,
@@ -52,7 +59,8 @@ abstract class StillCapturer {
       Future<bool> Function(List<String> paths)? accept,
       Future<bool> Function(String path)? acceptStill,
       Duration acceptWindow = const Duration(seconds: 10),
-      Duration acceptGap = const Duration(seconds: 1)});
+      Duration acceptGap = const Duration(seconds: 1),
+      bool assist = false});
 }
 
 class RealStillCapturer implements StillCapturer {
@@ -65,7 +73,8 @@ class RealStillCapturer implements StillCapturer {
           Future<bool> Function(List<String> paths)? accept,
           Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
-          Duration acceptGap = const Duration(seconds: 1)}) =>
+          Duration acceptGap = const Duration(seconds: 1),
+          bool assist = false}) =>
       Navigator.of(context).push<List<String>>(MaterialPageRoute(
           settings: const RouteSettings(name: ProxRoutes.faceCapture),
           builder: (_) => FaceCaptureScreen(
@@ -75,7 +84,8 @@ class RealStillCapturer implements StillCapturer {
               accept: accept,
               acceptStill: acceptStill,
               acceptWindow: acceptWindow,
-              acceptGap: acceptGap)));
+              acceptGap: acceptGap,
+              assist: assist)));
 }
 
 /// Test-only: returns [captures] canned paths (or [result] verbatim).
@@ -93,7 +103,8 @@ class FakeStillCapturer implements StillCapturer {
           Future<bool> Function(List<String> paths)? accept,
           Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
-          Duration acceptGap = const Duration(seconds: 1)}) async =>
+          Duration acceptGap = const Duration(seconds: 1),
+          bool assist = false}) async =>
       result?.call(captures) ??
       List.generate(captures, (i) => 'test-still-$i.jpg');
 }
@@ -116,7 +127,13 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   /// the framing ring. Pure display — capture never gates on it.
   final double progress;
 
-  const FaceCaptureOvalOverlay({super.key, this.progress = 0});
+  /// Flash-assist edge ring (dark retry only — default off): two bright
+  /// oval strokes hugging the preview edges, painted above the dim
+  /// surround for uniform light. Ovals only (never a rounded rect — see
+  /// the oval-landing source pin); static, no animation (settle-safe).
+  final bool assist;
+
+  const FaceCaptureOvalOverlay({super.key, this.progress = 0, this.assist = false});
 
   /// Framing oval fractions of the preview size. Same as the shared
   /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.58w x 0.52h)
@@ -154,6 +171,7 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
         painter: _OvalOverlayPainter(
           progress: progress,
           color: Theme.of(context).colorScheme.primary,
+          assist: assist,
         ),
         child: const SizedBox.expand(),
       ),
@@ -164,7 +182,9 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
 class _OvalOverlayPainter extends CustomPainter {
   final double progress;
   final Color color;
-  _OvalOverlayPainter({required this.progress, required this.color});
+  final bool assist;
+  _OvalOverlayPainter(
+      {required this.progress, required this.color, this.assist = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -173,6 +193,24 @@ class _OvalOverlayPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..color = const Color(0x73000000),
     );
+    // Flash-assist edge ring first (directly above the surround, uniform
+    // light): fatter strokes because the lit area IS the light output.
+    if (assist) {
+      final edge = (Offset.zero & size).deflate(12);
+      canvas.drawOval(
+          edge,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 36
+            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+      canvas.drawOval(
+          edge,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 16
+            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
+    }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
     // Soft glow behind the crisp ring (framing rect, neutral — unchanged).
     canvas.drawOval(
@@ -208,7 +246,7 @@ class _OvalOverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_OvalOverlayPainter old) =>
-      old.progress != progress || old.color != color;
+      old.progress != progress || old.color != color || old.assist != assist;
 }
 
 /// Orientation-adjusted sensor ratio for the cover box below (same
@@ -296,6 +334,11 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
   /// Pause between in-preview retry bursts (the holder keeps holding
   /// still; the status line says so).
   final Duration acceptGap;
+
+  /// Flash assist for a dark retry (see [StillCapturer.assist]): ring
+  /// light + maxed window brightness while up, restored after. The host
+  /// sets it when the previous verdict read dim. Default off.
+  final bool assist;
   const FaceCaptureScreen(
       {super.key,
       this.captures = 1,
@@ -304,7 +347,8 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
       this.accept,
       this.acceptStill,
       this.acceptWindow = const Duration(seconds: 10),
-      this.acceptGap = const Duration(seconds: 1)});
+      this.acceptGap = const Duration(seconds: 1),
+      this.assist = false});
 
   @override
   ConsumerState<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
@@ -649,6 +693,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
       ),
       body: Column(
         children: [
+          // Brightness shell for a flash-assisted retry: maxes the window
+          // while up, restores after (renders nothing itself).
+          FlashAssistSync(
+            active: widget.assist,
+            control: ref.read(enrollScreenBrightnessProvider),
+          ),
           Expanded(
             child: Container(
               color: Colors.black,
@@ -701,6 +751,7 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
                                 progress: widget.captures <= 1
                                     ? 1.0
                                     : _taken / widget.captures,
+                                assist: widget.assist,
                               ),
                             ),
                           ],

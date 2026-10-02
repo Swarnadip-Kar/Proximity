@@ -233,6 +233,27 @@ void main() {
         t.view.resetDevicePixelRatio();
       }
     });
+
+    testWidgets('assist flag wires the edge ring (default off)', (t) async {
+      for (final assist in [false, true]) {
+        await t.pumpWidget(MaterialApp(
+          theme: proxLightTheme(),
+          home: Scaffold(
+            body: FaceCaptureOvalOverlay(progress: 0.5, assist: assist),
+          ),
+        ));
+        await t.pump();
+        expect(
+            t
+                .widget<FaceCaptureOvalOverlay>(
+                    find.byType(FaceCaptureOvalOverlay))
+                .assist,
+            assist);
+        expect(find.byType(CustomPaint), findsWidgets);
+        expect(t.takeException(), isNull);
+        await t.pumpWidget(const SizedBox());
+      }
+    });
   });
 
   group('landing arrangement (token-asserted, not pixels)', () {

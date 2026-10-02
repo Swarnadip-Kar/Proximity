@@ -174,6 +174,63 @@ void main() {
     });
   });
 
+  group('checkFaceAny liveness hint evidence (marking dim UI)', () {
+    test('all-unreadable-dim names dim, brightness stays null', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = FakeLivenessGate(
+          throwOnDetect: true, throwReason: LivenessUnreadableReason.dim);
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg', 'b.jpg']);
+      expect(res.match, FaceMatch.inconclusive);
+      expect(d.lastLivenessUnreadableReason, LivenessUnreadableReason.dim);
+      expect(d.lastLivenessBrightness, isNull);
+    });
+
+    test('all-unreadable-blurry names blurry (not dim)', () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = FakeLivenessGate(
+          throwOnDetect: true, throwReason: LivenessUnreadableReason.blurry);
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg']);
+      expect(res.match, FaceMatch.inconclusive);
+      expect(d.lastLivenessUnreadableReason, LivenessUnreadableReason.blurry);
+      expect(d.lastLivenessBrightness, isNull);
+    });
+
+    test('winner carries brightness, reason clears, stale never leaks',
+        () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = FakeLivenessGate(
+          score: 0.93, scriptedBrightness: 120.0);
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      // First a dim stall (reason dim), then a scored winner on the same
+      // driver: the second call must clear the stale dim flag and carry
+      // the winner's brightness instead.
+      live.throwOnDetect = true;
+      live.throwReason = LivenessUnreadableReason.dim;
+      expect((await d.checkFaceAny(['a.jpg'])).match,
+          FaceMatch.inconclusive);
+      expect(d.lastLivenessUnreadableReason, LivenessUnreadableReason.dim);
+      live.throwOnDetect = false;
+      final res = await d.checkFaceAny(['b.jpg']);
+      expect(res.match, FaceMatch.pass);
+      expect(d.lastLivenessUnreadableReason, isNull);
+      expect(d.lastLivenessBrightness, 120.0);
+    });
+  });
+
   group('checkFaceAny best-of burst (max vitality decides)', () {
     test('one dip + one pass → pass on the winning still', () async {
       final verifier = FakeFaceVerifier(match: true, score: 0.85);

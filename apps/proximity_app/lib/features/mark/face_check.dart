@@ -66,6 +66,11 @@ import '../../widgets/prox_buttons.dart';
 const faceCheckPrompt = 'Look at the camera — hold still.';
 
 class FaceCheckView extends StatelessWidget {
+  /// Short pre-capture prompt for a flash-assisted retry sheet (dark
+  /// room): the sheet shows this under the preview instead of the default
+  /// copy.
+  static const markDimPrompt = 'Too dark — move to brighter light';
+
   final String faceNotice;
   final bool canScan;
   final VoidCallback onScan;
@@ -125,16 +130,35 @@ class FaceCheckView extends StatelessWidget {
   });
 
   /// Frame signal from the host's notice line: unreadable-frame notices
-  /// (auto-retry + could-not-read) pulse neutral; re-enroll/records-only
-  /// guidance holds neutral. Mismatch never renders here (it routes to
-  /// needs-review).
+  /// (auto-retry + could-not-read + too-dark) pulse neutral; re-enroll/
+  /// records-only guidance holds neutral. Mismatch never renders here (it
+  /// routes to needs-review).
   static CaptureSignal signalForNotice(String notice) {
     if (notice.isEmpty) return CaptureSignal.neutral;
     if (notice.contains('retrying automatically') ||
-        notice.contains('Could not read that scan')) {
+        notice.contains('Could not read that scan') ||
+        notice.contains('Too dark')) {
       return CaptureSignal.inconclusive;
     }
     return CaptureSignal.neutral;
+  }
+
+  /// Inconclusive notice copy (marking): the dim-aware variant names the
+  /// light — and drives the flash-assisted retry sheet — while the legacy
+  /// copy stays byte-identical for every other stall. Single-sourced here
+  /// (not in the host) so copy stays testable without the host harness.
+  /// The dim retrying copy keeps the 'retrying automatically' marker so
+  /// [signalForNotice] still pulses inconclusive.
+  static String inconclusiveNotice(
+      {required bool dim, required bool retrying}) {
+    if (dim) {
+      return retrying
+          ? 'Too dark — move to brighter light, retrying automatically…'
+          : 'Too dark — move to brighter light and tap Scan to try again.';
+    }
+    return retrying
+        ? 'Scan unclear — hold still, retrying automatically…'
+        : 'Could not read that scan — adjust light and tap Scan to try again.';
   }
 
   @override

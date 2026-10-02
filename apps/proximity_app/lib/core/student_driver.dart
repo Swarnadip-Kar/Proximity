@@ -235,6 +235,16 @@ abstract class StudentDriver {
   /// Empty list → inconclusive (never a throw, never a pass).
   Future<FaceCheckResult> checkFaceAny(List<String> imagePaths);
 
+  /// Decisive liveness evidence from the last [checkFaceAny] call (hint
+  /// only — verdicts never read it): the winning still's crop brightness
+  /// (0-255, null when nothing scored), and the unreadable reason when NO
+  /// still scored (null otherwise). The marking UI names darkness from
+  /// these without parsing log text. Defaults null (fakes, stale builds).
+  double? get lastLivenessBrightness => null;
+
+  /// See [lastLivenessBrightness].
+  LivenessUnreadableReason? get lastLivenessUnreadableReason => null;
+
   /// Listens until marked. There is no round clock: the window stays open
   /// until the professor stops it, so every fresh challenge is signed,
   /// announced and POSTed until a verdict lands. [onStatus] reports the
@@ -426,6 +436,20 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   /// pass's (stamp, score, ver). Consumed by [listenAndProve]/[_prove].
   _LivenessStamp? _lastLiveness;
 
+  /// Hint-only evidence from the last [checkFaceAny] (see the
+  /// [StudentDriver] getters): winning still's brightness, and the
+  /// unreadable reason when nothing scored. Reset on every call so a
+  /// stale dark flag can never leak into a later verdict.
+  double? _lastLivenessBrightness;
+  LivenessUnreadableReason? _lastLivenessUnreadableReason;
+
+  @override
+  double? get lastLivenessBrightness => _lastLivenessBrightness;
+
+  @override
+  LivenessUnreadableReason? get lastLivenessUnreadableReason =>
+      _lastLivenessUnreadableReason;
+
   /// Resolves the liveness ticket for one listen: explicit args win, else
   /// the checkFace cache on stamp equality, else legacy (0.0/'') — which
   /// the server still confirms during migration (requireLiveness:false)
@@ -477,6 +501,11 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
 
   @override
   Future<FaceCheckResult> checkFaceAny(List<String> imagePaths) async {
+    // Hint evidence is per-call (see [lastLivenessBrightness]): reset
+    // first so every return below — including the early fail-closed ones
+    // — leaves coherent values, never a previous call's darkness.
+    _lastLivenessBrightness = null;
+    _lastLivenessUnreadableReason = null;
     // L1 domain gate first: records-only devices never reach the plugin —
     // guidance (blocked), never an attempt, SK never signs.
     try {
@@ -520,21 +549,32 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // skip that still (no evidence either way, never a pass); nothing
     // scoreable at all → inconclusive (rescan, burns nothing). The matcher
     // then runs ONCE on the winning still.
-    Future<LivenessResult?> scoreOne(String p) async {
-      try {
-        return await _liveness.detectPassive(p);
-      } catch (e) {
-        BleLog.log('SEC', 'liveness check ERROR (still skipped): $e');
-        return null;
-      }
-    }
-
     final candidates = [
       for (final p in imagePaths)
         if (p.trim().isNotEmpty) p
     ];
+    // Hint evidence slots, parallel to [candidates] (filled by [scoreOne]
+    // below; declared first — a local function cannot capture a later
+    // local).
+    final reasons =
+        List<LivenessUnreadableReason?>.filled(candidates.length, null);
+    Future<LivenessResult?> scoreOne(String p, int i) async {
+      try {
+        return await _liveness.detectPassive(p);
+      } catch (e) {
+        BleLog.log('SEC', 'liveness check ERROR (still skipped): $e');
+        // Hint evidence (see [lastLivenessUnreadableReason]): first
+        // reason in input order wins when nothing scores — deterministic
+        // under the concurrent Future.wait above.
+        reasons[i] = e is LivenessUnreadable
+            ? e.reason
+            : LivenessUnreadableReason.unknown;
+        return null;
+      }
+    }
+
     final scored = await Future.wait(
-        [for (final p in candidates) scoreOne(p)]);
+        [for (var i = 0; i < candidates.length; i++) scoreOne(candidates[i], i)]);
     LivenessResult? best;
     String? bestPath;
     for (var i = 0; i < candidates.length; i++) {
@@ -549,8 +589,19 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     final winPath = bestPath;
     if (win == null || winPath == null) {
       BleLog.log('SEC', 'face check: no scoreable still — rescan');
+      // Hint evidence: nothing scored, so the first unreadable reason in
+      // input order names the stall (dark room reads dim here).
+      for (final r in reasons) {
+        if (r != null) {
+          _lastLivenessUnreadableReason = r;
+          break;
+        }
+      }
       return const FaceCheckResult(FaceMatch.inconclusive);
     }
+    // Hint evidence: the winning still's brightness rides along for the
+    // UI (dark-but-readable guidance); the unreadable slot stays null.
+    _lastLivenessBrightness = win.meanBrightness;
     if (win.score < kLivenessThreshold - kLivenessNearMissBand) {
       // Readable spoof territory (field probes ≤0.31): consumes one
       // attempt like matching somebody else — never auto-present, SK
@@ -1803,6 +1854,15 @@ class FakeStudentDriver implements StudentDriver {
 
   @override
   ClockDriftTracker get clockDrift => ClockDriftTracker();
+
+  /// Hint-only liveness evidence (see [StudentDriver]): the fake always
+  /// passes bright, so both stay null — the dim-notice path is pinned
+  /// through [RealStudentDriver] instead.
+  @override
+  double? get lastLivenessBrightness => null;
+
+  @override
+  LivenessUnreadableReason? get lastLivenessUnreadableReason => null;
 
   @override
   Future<FaceCheckResult> checkFace(String imagePath) async =>

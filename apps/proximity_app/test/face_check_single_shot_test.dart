@@ -172,6 +172,31 @@ void main() {
           FaceCheckView.signalForNotice(
               'Could not read that scan — adjust light and try again.'),
           CaptureSignal.inconclusive);
+      expect(
+          FaceCheckView.signalForNotice(
+              'Too dark — move to brighter light, retrying automatically…'),
+          CaptureSignal.inconclusive);
+      expect(
+          FaceCheckView.signalForNotice(
+              'Too dark — move to brighter light and tap Scan to try again.'),
+          CaptureSignal.inconclusive);
+    });
+
+    test('inconclusive copy is dim-aware, legacy otherwise', () {
+      expect(
+          FaceCheckView.inconclusiveNotice(dim: false, retrying: true),
+          'Scan unclear — hold still, retrying automatically…');
+      expect(
+          FaceCheckView.inconclusiveNotice(dim: false, retrying: false),
+          'Could not read that scan — adjust light and tap Scan to try again.');
+      expect(
+          FaceCheckView.inconclusiveNotice(dim: true, retrying: true),
+          'Too dark — move to brighter light, retrying automatically…');
+      expect(
+          FaceCheckView.inconclusiveNotice(dim: true, retrying: false),
+          'Too dark — move to brighter light and tap Scan to try again.');
+      expect(FaceCheckView.markDimPrompt,
+          'Too dark — move to brighter light');
     });
   });
 

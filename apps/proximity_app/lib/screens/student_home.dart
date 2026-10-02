@@ -29,6 +29,8 @@ import '../core/relay_policy.dart';
 import '../core/student_driver.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
+import '../features/face_identity/liveness_gate.dart'
+    show LivenessUnreadableReason;
 import '../features/account/account_common.dart';
 import '../features/entry/entry_flow.dart';
 import '../features/mark/browse_classes.dart';
@@ -311,6 +313,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   bool _modalExhausted = false;
   // Transient verdict note on the face-check screen (inconclusive scans).
   String faceNotice = '';
+
+  /// Flash assist for the next marking sheet: true when the last verdict
+  /// read dim (see the inconclusive arm below), so the retry captures lit
+  /// instead of spinning dark again. Assigned on every inconclusive (true
+  /// or false per latest evidence) and cleared on terminal verdicts +
+  /// fresh joins — a stale dark flag can never leak into a later session.
+  bool _dimAssist = false;
 
   // BLE-hint listings (professor host:port heard over radio, probed once,
   // listed on answer). Merged with broadcast beacons in [_allLive].
@@ -1309,6 +1318,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     setState(() {
       joinError = '';
       phase = StudentPhase.faceCheck;
+      _dimAssist = false;
       _faceAttempts = 0;
       _faceMismatchLiveness = false;
       _resetFaceRetryBudget();
@@ -1767,6 +1777,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       context,
       captures: kMarkingLivenessCaptures,
       autoFire: true,
+      // Flash-assisted retry: the previous verdict read dim, so this sheet
+      // captures lit (ring + max brightness, restored after) with the dim
+      // prompt instead of the default copy.
+      assist: _dimAssist,
+      prompt: _dimAssist ? FaceCheckView.markDimPrompt : null,
       // Per-still early exit: each still is liveness-probed + verified
       // while the next capture runs (serial scoring gate in the sheet —
       // at most one plugin call in flight, ever). A full pass pops after
@@ -1916,12 +1931,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       case FaceMatch.pass:
         BleLog.log(ProxLogTags.face, 'face pass — continuing to proving');
         if (!mounted) return;
+        _dimAssist = false;
         setState(() => faceNotice = '');
         // C5: holder evidence travels as the check object, never raw
         // doubles — the SK-use gate was stamped ONLY by the [checkFace]
         // above, and the listen binds this object's scores.
         await _listenWithCheck(target, fresh, res);
       case FaceMatch.mismatch:
+        // Terminal verdict (burns below): a stale dark flag must not leak
+        // into any later sheet.
+        _dimAssist = false;
         // Low-vitality legacy path (no in-modal stay): don't burn on the
         // first low burst — retry hands-free in the 7s window like
         // inconclusive. Spent windows (in-modal _modalExhausted, or the
@@ -1972,6 +1991,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _faceMismatchLiveness = res.livenessFailed;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
+        // Dim-aware stall (see the driver hint getters): when no still
+        // scored and the stall read dim, the notices name the light and
+        // the next sheet captures flash-assisted. Assigned (not OR-ed) so
+        // a bright stall clears a stale dark flag. Gates untouched — this
+        // only changes copy + capture illumination.
+        final dimHint = ref
+                .read(studentDriverProvider)
+                .lastLivenessUnreadableReason ==
+            LivenessUnreadableReason.dim;
+        _dimAssist = dimHint;
         // No readable verdict (attempt kept). The open sheet already
         // retried in place until its window spent ([_modalExhausted]) —
         // park on the manual Scan button then. Legacy capturers (no
@@ -1982,8 +2011,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           BleLog.log(ProxLogTags.face,
               'face inconclusive — window spent in place, manual Scan');
           if (!mounted) return;
-          setState(() => faceNotice =
-              'Could not read that scan — adjust light and tap Scan to try again.');
+          setState(() => faceNotice = FaceCheckView.inconclusiveNotice(
+              dim: dimHint, retrying: false));
           return;
         }
         // No readable verdict (attempt kept): keep re-scanning hands-free
@@ -2005,8 +2034,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
             'face inconclusive — auto-retry ($_autoFaceTries)');
         if (gap != null) {
           if (!mounted) return;
-          setState(() => faceNotice =
-              'Scan unclear — hold still, retrying automatically…');
+          setState(() => faceNotice = FaceCheckView.inconclusiveNotice(
+              dim: dimHint, retrying: true));
           Future.delayed(gap, () {
             if (!mounted || phase != StudentPhase.faceCheck) return;
             final retryLinked = _readLinked();
@@ -2021,8 +2050,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         } else {
           _autoFaceDeadline = null;
           if (!mounted) return;
-          setState(() => faceNotice =
-              'Could not read that scan — adjust light and tap Scan to try again.');
+          setState(() => faceNotice = FaceCheckView.inconclusiveNotice(
+              dim: dimHint, retrying: false));
         }
       case FaceMatch.staleTemplate:
         // FaceId predates the plugin pipeline: matching against it would
