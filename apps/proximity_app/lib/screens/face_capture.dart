@@ -5,7 +5,8 @@
 // shell + flow position: front-camera preview (with a positioning oval
 // overlay) → capture N stills to files → pop List<String> (image paths)
 // for the FaceVerifier (enrollment takes 1 per guided angle, marking takes
-// 1). Cancel pops null.
+// a multi-still burst for the marking passive-liveness gate).
+// Cancel pops null.
 //
 // Mobile-only (L2): records-only devices see the blocked card, never a
 // camera. Capture cadence: one tap (or the auto-fire on open) grabs the
@@ -372,10 +373,19 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
 class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     with WidgetsBindingObserver {
   CameraController? _ctl;
+  // Controller generation: bumped every time the controller is torn down
+  // (backgrounding) or replaced (resume/fallback retry), so an in-flight
+  // [_captureAll] on a disposed handle aborts instead of capturing into a
+  // dead sensor (takePicture-vs-dispose race).
+  int _ctlGen = 0;
   String _status = 'Starting camera…';
   bool _busy = false;
   int _taken = 0;
   bool _denied = false;
+  // True when the denial is final (permanently denied / restricted): the
+  // sheet offers Open Settings instead of a re-request that can never
+  // succeed. False keeps the Try-again re-request path.
+  bool _permanentlyDenied = false;
   bool _failed = false;
   // Single-flight for the auto-fire scan: the 500ms delayed auto-fire in
   // [_start] fires at most once per mount, so a manual tap racing the delay
@@ -405,13 +415,21 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_cancelled || !mounted) return;
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    // Foreground-required UX (matches the mark host, which also ignores
+    // `inactive`): only a REAL backgrounding parks the preview. `inactive`
+    // is transient (notification shade, call UI, PiP) and must not black
+    // the preview or churn the sensor.
+    final backgrounded = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+    if (backgrounded) {
       // Park the preview while backgrounded (a live controller keeps the
       // sensor locked and the OS may kill the surface anyway). setState so
       // build() drops the preview instead of holding a disposed handle.
+      // The generation bump aborts any in-flight capture on this handle.
       final ctl = _ctl;
       _ctl = null;
+      _ctlGen++;
       if (ctl != null) {
         setState(() => _status = 'Paused — returning…');
         unawaited(ctl.dispose());
@@ -446,10 +464,46 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     setState(() {
       _failed = false;
       _denied = false;
+      _permanentlyDenied = false;
       _status = 'Starting camera…';
       if (widget.autoFire) _autoFired = false;
     });
     unawaited(_start());
+  }
+
+  /// Opens the front camera: high first, medium fallback when the sensor
+  /// rejects high. Every initialize is bounded (15s) with a dispose before
+  /// throwing, so a hung init lands on the failed branch with Try-again
+  /// instead of stranding the sheet on the spinner — and never orphans a
+  /// live controller holding the sensor lock.
+  Future<CameraController> _openController(CameraDescription front) async {
+    CameraController ctl = CameraController(front, ResolutionPreset.high,
+        enableAudio: false);
+    try {
+      await ctl.initialize().timeout(const Duration(seconds: 15));
+      return ctl;
+    } on CameraException {
+      // Sensor rejected high — fall through to medium below.
+      try {
+        await ctl.dispose();
+      } catch (_) {}
+    } on TimeoutException {
+      try {
+        await ctl.dispose();
+      } catch (_) {}
+      throw StateError('Camera timed out starting — try again.');
+    }
+    ctl = CameraController(front, ResolutionPreset.medium,
+        enableAudio: false);
+    try {
+      await ctl.initialize().timeout(const Duration(seconds: 15));
+      return ctl;
+    } catch (_) {
+      try {
+        await ctl.dispose();
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   Future<void> _start() async {
@@ -482,7 +536,10 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     if (!perm.isGranted) {
       setState(() {
         _denied = true;
-        _status = 'Camera permission is needed for the face check.';
+        _permanentlyDenied = perm.isPermanentlyDenied || perm.isRestricted;
+        _status = _permanentlyDenied
+            ? 'Camera permission is needed for the face check — open Settings to allow it, then come back.'
+            : 'Camera permission is needed for the face check — allow it, then try again.';
       });
       return;
     }
@@ -490,9 +547,7 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
       // Bounded camera list: a hung plugin call used to strand the sheet
       // on the spinner forever (white page). Past the budget it throws
       // into the failed branch below, where Try-again re-runs the open.
-      // Side-effect-free (no controller yet), so timing out is safe —
-      // initialize() below stays unbounded (a timeout there could orphan
-      // a live controller holding the sensor lock).
+      // Side-effect-free (no controller yet), so timing out is safe.
       final cams =
           await availableCameras().timeout(const Duration(seconds: 15));
       if (_done) return;
@@ -502,10 +557,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
         orElse: () => cams.first,
       );
       // High resolution for a crisp preview + full-detail stills (the
-      // feed is the product here — medium visibly softened it).
-      final ctl = CameraController(front, ResolutionPreset.high,
-          enableAudio: false);
-      await ctl.initialize();
+      // feed is the product here — medium visibly softened it), with a
+      // medium fallback: low-end sensors that reject high land on medium
+      // instead of stranding on the failed branch. Initialize stays
+      // bounded too (15s): past the budget the controller is disposed
+      // before throwing, so no orphan holds the sensor lock.
+      final ctl = await _openController(front);
       if (_done) {
         await ctl.dispose();
         return;
@@ -515,6 +572,9 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
       if (WidgetsBinding.instance.lifecycleState !=
           AppLifecycleState.resumed) {
         await ctl.dispose();
+        if (!_done) {
+          setState(() => _status = 'Paused — returning…');
+        }
         return;
       }
       setState(() {
@@ -538,7 +598,12 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
 
   Future<void> _captureAll() async {
     final ctl = _ctl;
+    final gen = _ctlGen;
     if (_busy || ctl == null || _done) return;
+    // Staleness latch for the takePicture-vs-dispose race: backgrounding
+    // disposes this handle mid-capture (generation bump above) — every
+    // await below re-checks it so no work runs on the dead sensor.
+    bool stale() => _done || gen != _ctlGen;
     setState(() {
       _busy = true;
       // A transient takePicture error set _failed and disabled this very
@@ -556,23 +621,23 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
         accept == null ? null : DateTime.now().add(widget.acceptWindow);
     try {
       while (true) {
-        if (_done) return;
+        if (stale()) return;
         final paths = <String>[];
         // In-flight per-still verdict (see [FaceCaptureScreen.acceptStill]:
         // at most one scoring call runs at a time — the serial plugin
         // gate — while the next capture overlaps it).
         Future<bool>? scoring;
         for (var i = 0; i < widget.captures; i++) {
-          if (_done) return;
+          if (stale()) return;
           final shot = await ctl.takePicture();
-          if (_done) return;
+          if (stale()) return;
           // Blank-frame guard: a capture that produced no path never leaves
           // this screen (the plugin crashes on empty bytes below its catch).
           if (shot.path.trim().isEmpty) {
             throw StateError('Capture produced no image — try again.');
           }
           paths.add(shot.path);
-          if (_done) return;
+          if (stale()) return;
           // Settle the previous still first (serial scoring gate), then
           // score this still while the next capture runs. A settled pass
           // pops immediately with the paths so far — the common genuine
@@ -583,7 +648,7 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
               done = await scoring;
             } catch (_) {}
             scoring = null;
-            if (_done) return;
+            if (stale()) return;
             if (done) {
               if (!mounted) return;
               Navigator.of(context).pop(paths);
@@ -597,9 +662,10 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
           setState(() => _taken = i + 1);
           if (i + 1 < widget.captures) {
             await Future.delayed(const Duration(milliseconds: 350));
+            if (stale()) return;
           }
         }
-        if (_done) return;
+        if (stale()) return;
         // Drain the last still's verdict before the whole-burst accept.
         if (scoring != null) {
           var done = false;
@@ -607,14 +673,14 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
             done = await scoring;
           } catch (_) {}
           scoring = null;
-          if (_done) return;
+          if (stale()) return;
           if (done) {
             if (!mounted) return;
             Navigator.of(context).pop(paths);
             return;
           }
         }
-        if (_done) return;
+        if (stale()) return;
         if (accept == null) {
           if (!mounted) return;
           Navigator.of(context).pop(paths);
@@ -630,7 +696,7 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
           // never trap the sheet in a retry loop.
           accepted = true;
         }
-        if (_done) return;
+        if (stale()) return;
         if (accepted) {
           if (!mounted) return;
           Navigator.of(context).pop(paths);
@@ -644,15 +710,16 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
           Navigator.of(context).pop(paths);
           return;
         }
-        if (_done) return;
+        if (stale()) return;
         setState(() {
           _taken = 0;
           _status = 'Scan unclear — hold still, retrying automatically…';
         });
         await Future.delayed(widget.acceptGap);
+        if (stale()) return;
       }
     } catch (e) {
-      if (_done) return;
+      if (stale()) return;
       setState(() {
         _busy = false;
         _failed = true;
@@ -746,6 +813,30 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
                                 label: const Text('Try again'),
                                 onPressed: _starting ? null : _retryStart,
                               ),
+                            ],
+                            // A denied permission used to dead-end here too
+                            // (Capture stays disabled with no controller, and
+                            // the host read a bare Cancel as a silent skip):
+                            // temporary denials re-request on Try-again,
+                            // permanent ones deep-link to Settings.
+                            if (_denied) ...[
+                              const SizedBox(height: 12),
+                              if (_permanentlyDenied)
+                                FilledButton.icon(
+                                  icon: const Icon(Icons.settings),
+                                  label: const Text('Open Settings'),
+                                  onPressed: () async {
+                                    try {
+                                      await openAppSettings();
+                                    } catch (_) {}
+                                  },
+                                )
+                              else
+                                FilledButton.icon(
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Try again'),
+                                  onPressed: _starting ? null : _retryStart,
+                                ),
                             ],
                           ],
                         ),

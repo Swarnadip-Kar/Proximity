@@ -16,6 +16,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_transport/transport.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -259,7 +260,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // FaceCheckResult.livenessFailed). Reset on every face-check entry.
   bool _faceMismatchLiveness = false;
   // Automatic re-scans after unreadable/low-score verdicts: time-boxed
-  // (7s window, ~1s between bursts of 10 stills — the holder just keeps
+  // (7s window, ~0.6s between bursts of 5 stills — the holder just keeps
   // holding still, never taps retry), with a try-count backstop;
   // Cancel/back exits via the teardown guards. The retries run INSIDE the
   // open camera sheet (same preview, same controller — see the [accept]
@@ -294,6 +295,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _autoFaceDeadline = null;
     _modalExhausted = false;
     _modalResult = null;
+    _autoFaceTimer?.cancel();
+    _autoFaceTimer = null;
     faceNotice = '';
   }
   // Single-flight for still-capture auto-fire + manual taps: concurrent
@@ -301,6 +304,36 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // camera sheets). Second caller no-ops; Scan stays as fallback after
   // the in-flight scan settles.
   bool _scanBusy = false;
+  // Tracked hands-free re-push timer (legacy capturers without in-modal
+  // [accept] support only): cancelled on every teardown/dispose/reset so
+  // no stale re-push fires after Cancel/Back/dispose (the in-modal path
+  // owns its own window and never uses this).
+  Timer? _autoFaceTimer;
+  // True while the still-capture sheet is on the navigator (set around
+  // the awaited [StillCapturer.capture] call): the backgrounding handler
+  // pops it best-effort so the camera never keeps running behind Paused.
+  bool _faceSheetOpen = false;
+  // Tracked hands-free re-push (legacy capturers only — see
+  // [_autoFaceTimer]): run-guarded + identity-guarded like every other
+  // timer in this host, so a stale retry can never scan after Cancel,
+  // rejoin, account switch, or dispose.
+  void _scheduleFaceRetry(
+      Duration gap, ClassBeacon target, String scanEmail, int run) {
+    _autoFaceTimer?.cancel();
+    _autoFaceTimer = Timer(gap, () {
+      if (!mounted || run != _runId || phase != StudentPhase.faceCheck) {
+        return;
+      }
+      final retryLinked = _readLinked();
+      final retryAcct = _readAccount();
+      if (retryLinked == null ||
+          retryLinked.gmail.trim().toLowerCase() != scanEmail ||
+          !_identityMatchesCurrent(retryAcct, retryLinked)) {
+        return;
+      }
+      _scanFace(target, retryLinked);
+    });
+  }
   // In-modal verify handoff (see _scanFace): the open camera sheet runs
   // checkFaceAny per burst via its [accept] callback and caches the latest
   // verdict here, so the preview never tears down between auto-retries.
@@ -769,6 +802,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (!mounted) return;
     _dropInnerBackEntry();
     _stopRoomTimers();
+    _autoFaceTimer?.cancel();
+    _autoFaceTimer = null;
     _waitingTarget = null;
     _roomWindowOpen = false;
     _connected = false;
@@ -1057,6 +1092,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _runId++;
     _refreshTimer?.cancel();
     _sessionTimer?.cancel();
+    _autoFaceTimer?.cancel();
+    _autoFaceTimer = null;
     for (final t in _hintRetryTimers) {
       t.cancel();
     }
@@ -1122,7 +1159,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (backgrounded &&
         (phase == StudentPhase.listening || phase == StudentPhase.faceCheck)) {
       _runId++;
+      _autoFaceTimer?.cancel();
+      _autoFaceTimer = null;
       BleLog.log(ProxLogTags.state, 'backgrounded during $phase → paused');
+      // The still-capture sheet is a pushed route above this state machine:
+      // phase guards alone would leave the camera running behind Paused
+      // until the burst ends. Pop it best-effort — the awaiting capture
+      // resolves null and the teardown guards drop the result.
+      if (_faceSheetOpen) {
+        _faceSheetOpen = false;
+        try {
+          if (mounted) unawaited(Navigator.of(context).maybePop());
+        } catch (_) {}
+      }
       if (mounted) setState(() => phase = StudentPhase.paused);
     }
     // Sync-on-reconnect trigger: a resume may be a reconnect (the app-wide
@@ -1737,7 +1786,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   Future<void> _scanFace(ClassBeacon target, LinkedIdentity linked) async {
     // Single-flight: concurrent auto-fire + manual taps never overlap
     // captures (double-push would stack two camera sheets).
-    if (_scanBusy) return;
+    if (_scanBusy) {
+      BleLog.log(ProxLogTags.face, 'face scan already running — tap ignored');
+      return;
+    }
     _scanBusy = true;
     try {
       // Manual tap before the post-frame callback must not double-push.
@@ -1784,7 +1836,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         brightness: drv.lastLivenessBrightness,
       );
     }
-    final paths = await ref.read(stillCapturerProvider).capture(
+    // The sheet push itself can throw (dead context, plugin channel
+    // error): without this try the throw escapes as an unhandled async
+    // error AND skips the readout dispose below. Failed opens park on a
+    // retry notice — nothing consumed, nothing signed.
+    List<String>? paths;
+    _faceSheetOpen = true;
+    try {
+      paths = await ref.read(stillCapturerProvider).capture(
       context,
       captures: kMarkingLivenessCaptures,
       autoFire: true,
@@ -1802,7 +1861,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       // budget, where the whole-burst [accept] below resolves terminally
       // exactly as before — same verdicts, same single attempt burn.
       acceptStill: (path) async {
-        if (!mounted || phase != StudentPhase.faceCheck) return false;
+        // Phase left (background → paused, Cancel/Back): pop with the
+        // paths so far instead of capturing behind the next screen — the
+        // teardown guards below drop the burst. Identity mismatches keep
+        // capturing (transient provider reads must not kill the burst).
+        if (!mounted || phase != StudentPhase.faceCheck) return true;
         var inModal = _readLinked();
         var inModalAcct = _readAccount();
         if (inModal == null ||
@@ -1817,10 +1880,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         } on StateError {
           _modalResult = const FaceCheckResult(FaceMatch.blocked);
           return true;
+        } catch (_) {
+          // Transient non-StateError (never the records-only block):
+          // keep capturing — the burst budget still bounds the sheet.
+          return false;
         }
         // Live line for the open sheet (score + brightness of this still).
         markReadout();
-        if (!mounted || phase != StudentPhase.faceCheck) return false;
+        if (!mounted || phase != StudentPhase.faceCheck) return true;
         inModal = _readLinked();
         inModalAcct = _readAccount();
         if (inModal == null ||
@@ -1849,6 +1916,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         } on StateError {
           _modalResult = const FaceCheckResult(FaceMatch.blocked);
           return true;
+        } catch (_) {
+          // Transient non-StateError (never the records-only block):
+          // keep capturing — the burst budget still bounds the sheet.
+          return false;
         }
         // Live line for the open sheet (winning still of this burst).
         markReadout();
@@ -1903,15 +1974,43 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       },
       acceptWindow: _autoFaceWindow,
       acceptGap: _autoFaceGap,
-    );
-    // Sheet popped (or never opened): the live line has no listeners left.
-    liveReadout.dispose();
+      );
+    } catch (e) {
+      BleLog.log(ProxLogTags.face, 'face capture open failed: $e');
+      if (mounted && phase == StudentPhase.faceCheck) {
+        setState(() => faceNotice =
+            'Could not open the camera — tap Scan to try again.');
+      }
+      return;
+    } finally {
+      // Sheet popped (or never opened): the live line has no listeners
+      // left. Finally, so failed opens never leak the notifier.
+      _faceSheetOpen = false;
+      liveReadout.dispose();
+    }
     // Mounted-before-ref + back/teardown guard: Cancel/Back/system-back
     // leaves faceCheck during the camera UI — never verify or prove after it.
+    // A null burst is Cancel OR a denied permission (both pop null): a
+    // denied permission names the fix, a plain Cancel stays silent.
     if (paths == null ||
         paths.isEmpty ||
         !mounted ||
         phase != StudentPhase.faceCheck) {
+      if (paths == null && mounted && phase == StudentPhase.faceCheck) {
+        PermissionStatus? camStatus;
+        try {
+          camStatus = await Permission.camera.status;
+        } catch (_) {
+          camStatus = null;
+        }
+        if (camStatus != null &&
+            !camStatus.isGranted &&
+            mounted &&
+            phase == StudentPhase.faceCheck) {
+          setState(() => faceNotice =
+              'Camera permission is needed for the face check — allow it in settings, then tap Scan.');
+        }
+      }
       return;
     }
     // Capture gap may have outlived a switch/sign-out: never verify or prove
@@ -1934,6 +2033,15 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       if (!mounted) return;
       setState(() => faceNotice =
           'Marking needs the mobile app (Android/iOS) — this device is records-only.');
+      return;
+    } catch (e) {
+      // Non-StateError (channel/platform failure outside the driver's
+      // fail-closed mapping): park on an inconclusive-grade retry notice —
+      // never a crash, never an attempt burn.
+      BleLog.log(ProxLogTags.face, 'face verify ERROR: $e');
+      if (!mounted || phase != StudentPhase.faceCheck) return;
+      setState(() => faceNotice =
+          FaceCheckView.inconclusiveNotice(dim: false, retrying: false));
       return;
     }
     // CheckFace gap may have outlived Cancel/Back — same teardown guard.
@@ -1981,17 +2089,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
             if (!mounted) return;
             setState(() => faceNotice =
                 'Scan unclear — hold still, retrying automatically…');
-            Future.delayed(lowGap, () {
-              if (!mounted || phase != StudentPhase.faceCheck) return;
-              final retryLinked = _readLinked();
-              final retryAcct = _readAccount();
-              if (retryLinked == null ||
-                  retryLinked.gmail.trim().toLowerCase() != scanEmail ||
-                  !_identityMatchesCurrent(retryAcct, retryLinked)) {
-                return;
-              }
-              _scanFace(target, retryLinked);
-            });
+            _scheduleFaceRetry(lowGap, target, scanEmail, _runId);
             break;
           }
           _autoFaceDeadline = null;
@@ -2038,7 +2136,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           return;
         }
         // No readable verdict (attempt kept): keep re-scanning hands-free
-        // inside a 7s window (~1s apart) with a steady prompt, then fall
+        // inside a 7s window (~0.6s apart) with a steady prompt, then fall
         // back to the manual Scan button. Cancel/back exits via the
         // teardown guards below; an account switch mid-gap never scans as
         // the stale identity.
@@ -2058,17 +2156,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           if (!mounted) return;
           setState(() => faceNotice = FaceCheckView.inconclusiveNotice(
               dim: dimHint, retrying: true));
-          Future.delayed(gap, () {
-            if (!mounted || phase != StudentPhase.faceCheck) return;
-            final retryLinked = _readLinked();
-            final retryAcct = _readAccount();
-            if (retryLinked == null ||
-                retryLinked.gmail.trim().toLowerCase() != scanEmail ||
-                !_identityMatchesCurrent(retryAcct, retryLinked)) {
-              return;
-            }
-            _scanFace(target, retryLinked);
-          });
+          _scheduleFaceRetry(gap, target, scanEmail, _runId);
         } else {
           _autoFaceDeadline = null;
           if (!mounted) return;
@@ -2532,6 +2620,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _dropInnerBackEntry();
     _runId++;
     _stopRoomTimers();
+    _autoFaceTimer?.cancel();
+    _autoFaceTimer = null;
     _rewaitTimer?.cancel();
     _rewaitTimer = null;
     _setWake(false);
