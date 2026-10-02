@@ -566,8 +566,10 @@ class RealHostDriver implements HostDriver {
     // now (Firestore-independent HTTPS, never blocks hosting — failure
     // degrades to the `revocation-stale` review flag) plus a periodic
     // refresh for long-lived sessions (no-op unless stale; cancelled on
-    // teardown). Hash reads prefer the secure-store backend when the
-    // device store serves one (see DeviceStore.revocationHashStore).
+    // teardown). Prompt-free by design: the hash travels in the prefs
+    // sidecar (see DeviceStore.revocationHashStore — null on every
+    // backend), never behind a BiometricPrompt that could race the
+    // unlock below.
     unawaited(RevocationCache.refreshBestEffort(
         hashStore: _store.revocationHashStore));
     _crlRefresh?.cancel();

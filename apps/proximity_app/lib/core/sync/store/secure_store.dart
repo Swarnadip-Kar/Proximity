@@ -1008,12 +1008,18 @@ class SecureDeviceStore implements DeviceStore {
         jsonEncode(records.map((e) => e.toJson()).toList()));
   }
 
-  /// H8 secure hash backend: the CRL integrity hash lives in the
-  /// biometric-bound secure store (same instance/options as the
-  /// enrollment doc), never the prefs sidecar.
+  /// H8 hash backend: intentionally the prefs sidecar (null), never the
+  /// biometric-bound secure store. A secure hash read/write costs its own
+  /// BiometricPrompt outside the unlock single-flight — on enroll/host
+  /// setup it fires alongside (and cancels) the enrollment unlock prompt,
+  /// the unpredictable second prompt. The CRL verdict is fail-open
+  /// advisory anyway (mismatch forces stale, never blocks marking), so
+  /// the prefs sidecar detection suffices; the secure copy is hardening
+  /// not worth a prompt fight. Deleted `SecureRevocationHashStore` with
+  /// this override (no callers need changing — they already pass this
+  /// nullable getter straight into `RevocationCache`).
   @override
-  RevocationHashStore get revocationHashStore =>
-      SecureRevocationHashStore(_secure);
+  RevocationHashStore? get revocationHashStore => null;
 
   static const _kProfPins = 'prox.profPins.v1';
 
@@ -1118,30 +1124,3 @@ class SecureDeviceStore implements DeviceStore {
   }
 }
 
-/// H8 [RevocationHashStore] backend (secure-store wiring): the CRL body
-/// hash lives in `flutter_secure_storage` under a dedicated key, so a
-/// prefs-only edit cannot go undetected (mismatch forces stale on load).
-/// Fail-open like every revocation path: read/write never throw (a locked
-/// keychain degrades to the prefs sidecar — detection preserved, the
-/// secure copy is best-effort hardening, not a gate).
-class SecureRevocationHashStore implements RevocationHashStore {
-  static const key = 'prox.revocation.v1.sha256.secure';
-  final FlutterSecureStorage _secure;
-  const SecureRevocationHashStore(this._secure);
-
-  @override
-  Future<String?> readHash() async {
-    try {
-      return await _secure.read(key: key);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  @override
-  Future<void> writeHash(String sha256Hex) async {
-    try {
-      await _secure.write(key: key, value: sha256Hex);
-    } catch (_) {}
-  }
-}
