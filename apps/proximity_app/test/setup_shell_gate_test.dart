@@ -265,6 +265,36 @@ void main() {
       }
     });
 
+    testWidgets('locked account fires no entry read (no prompt race)',
+        (t) async {
+      // Cold-open race pin: while locked, the Account tab entry must not
+      // fire its own biometric-gated read — it raced the shell resolve's
+      // unlock prompt (overlapping prompts cancel; the scanned prompt
+      // did nothing and the banner stayed). Exactly two reads happen
+      // here, both shell-owned: the mount resolve + the account-arrival
+      // re-resolve (stream loads after the sync fallback). A third read
+      // would be the entry racing again.
+      final store = _CountingDismissStore();
+      await t.pumpWidget(helpers.testScope(
+          store: store,
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(store.reads, 2);
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(find.text('Unlock to continue — approve the phone prompt.'),
+          findsOneWidget);
+      expect(t.takeException(), isNull);
+      // Drain stagger one-shots (stepped: lets each tick settle).
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(store.reads, 2);
+    });
+
     testWidgets('stale dismiss never re-locks an unlocked shell',
         (t) async {
       // Pass-then-banner flake: the shell unlocks (prompt passed), then a
@@ -445,6 +475,19 @@ void main() {
     });
 
   });
+}
+
+/// Enrollment store that always replays a prompt dismissal while counting
+/// reads (cold-open race pin: while locked, only the shell resolve itself
+/// may read — display entries must stay silent).
+class _CountingDismissStore extends InMemoryDeviceStore {
+  int reads = 0;
+
+  @override
+  Future<StoredEnrollment?> readEnrollment() async {
+    reads++;
+    throw const SecureStoreDismissed();
+  }
 }
 
 /// Enrollment store whose first read serves the doc (prompt passed) and
