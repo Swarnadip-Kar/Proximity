@@ -184,9 +184,11 @@ void main() {
         store.readEnrollment(),
         throwsA(isA<SecureStoreDismissed>()),
       );
-      // Both slots prompted exactly once each.
+      // One read call costs at most one prompt: the skipped first slot
+      // STOPS the scan instead of falling through to the other slot's
+      // prompt (the skip-then-prompt-again defect).
       expect(strong.reads, 1);
-      expect(cred.reads, 1);
+      expect(cred.reads, 0);
 
       // Immediate retry: still dismissed, no new prompts (anti-hammer).
       await expectLater(
@@ -194,7 +196,7 @@ void main() {
         throwsA(isA<SecureStoreDismissed>()),
       );
       expect(strong.reads, 1);
-      expect(cred.reads, 1);
+      expect(cred.reads, 0);
     });
 
     test('readInstallId throws dismissed instead of resolving null',
@@ -279,24 +281,29 @@ void main() {
       final store =
           SecureDeviceStore(secure: strong, fallbackSecure: cred);
 
-      // First read prompts (both slots) then dismisses + coolstamps.
+      // First read prompts once (skip stops the scan) then dismisses +
+      // coolstamps.
       await expectLater(
         store.readEnrollment(),
         throwsA(isA<SecureStoreDismissed>()),
       );
       expect(strong.reads, 1);
+      expect(cred.reads, 0);
       // Auto re-read inside the cooldown: silent replay, no new prompt.
       await expectLater(
         store.readEnrollment(),
         throwsA(isA<SecureStoreDismissed>()),
       );
       expect(strong.reads, 1);
-      // Explicit user retry: cooldown cleared, prompts again.
+      expect(cred.reads, 0);
+      // Explicit user retry: cooldown cleared, prompts again (once —
+      // the skip stops the scan again).
       await expectLater(
         store.readEnrollmentRetry(),
         throwsA(isA<SecureStoreDismissed>()),
       );
       expect(strong.reads, 2);
+      expect(cred.reads, 0);
     });
   });
 }

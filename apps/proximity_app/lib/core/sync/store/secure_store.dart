@@ -124,6 +124,30 @@ class SecureDeviceStore implements DeviceStore {
         s.contains('authentication failed');
   }
 
+  /// User-dismissal signals: the user actively killed THIS prompt
+  /// (back/cancel/negative button). A dismissal STOPS the slot scan
+  /// immediately (see both read loops) — falling through to the other
+  /// slot would pop a SECOND prompt milliseconds after the skip (the
+  /// skip-then-prompt-again defect: pass-or-fail, it only re-parks).
+  /// One read call costs at most one prompt, ever. Checked BEFORE
+  /// [_isSecureStoreAuthOrKeyFailure], which keeps matching these
+  /// strings for the write path (unchanged: saves fall through).
+  /// Key/blob-mismatch signals (crypto, invalidated, keychain codes)
+  /// are NOT dismissals — the slot genuinely cannot serve, so the scan
+  /// still continues to the other slot (cred-slot recovery preserved).
+  bool _isPromptDismissal(Object e) {
+    final s = '$e'.toLowerCase();
+    return s.contains('user_cancel') ||
+        s.contains('usercancel') ||
+        s.contains('user cancel') ||
+        s.contains('auth_canceled') ||
+        s.contains('authcanceled') ||
+        s.contains('canceled') ||
+        s.contains('cancelled') ||
+        s.contains('negative_button') ||
+        s.contains('negativebutton');
+  }
+
   /// Honest, prompt-free copy for an unrecoverable secure-store write (both
   /// slots refused with an auth/key failure). Never leaks the raw
   /// `PlatformException(...javax.crypto...)` + Java stack to the UI banner.
@@ -268,6 +292,14 @@ class SecureDeviceStore implements DeviceStore {
       try {
         v = await slot.read(key: _kEnroll);
       } catch (e) {
+        // User skipped THIS prompt: stop the scan now (coolstamp fresh —
+        // the loop may already have spanned a prompt) and report
+        // dismissed — data may sit behind the lock, never empty. Never
+        // fall through: the other slot would prompt again immediately.
+        if (_isPromptDismissal(e)) {
+          _lastSecureFailAt = DateTime.now().toUtc();
+          throw const SecureStoreDismissed();
+        }
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
           // Non-auth failure (I/O, detached channel, programming bug):
           // never a slot signal and never an empty report — a transient
@@ -778,6 +810,12 @@ class SecureDeviceStore implements DeviceStore {
       try {
         got = await slot.read(key: _kInstall);
       } catch (e) {
+        // Same one-prompt law as the enrollment scan above: a skipped
+        // prompt stops here instead of prompting again on the other slot.
+        if (_isPromptDismissal(e)) {
+          _lastSecureFailAt = DateTime.now().toUtc();
+          throw const SecureStoreDismissed();
+        }
         if (!_isSecureStoreAuthOrKeyFailure(e)) {
           // Non-auth failure: never a slot signal and never an empty
           // report — resolving null here would make getOrCreateInstallId

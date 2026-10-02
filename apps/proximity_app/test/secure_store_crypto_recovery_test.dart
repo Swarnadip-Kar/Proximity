@@ -225,16 +225,45 @@ void main() {
     for (final o in outcomes) {
       expect(o, contains('dismissed'));
     }
-    // One prompt total: the queued reader never re-touched the slots.
+    // One prompt total: the first skip stops its scan (no fall-through
+    // to the other slot), and the queued reader respects the cooldown.
     expect(strong.readKeys, hasLength(1));
-    expect(cred.readKeys, hasLength(1));
-    // Explicit retry still runs the slots (chain unwedged).
+    expect(cred.readKeys, isEmpty);
+    // Explicit retry still runs the slots (chain unwedged) — once.
     await expectLater(
       store.readEnrollmentRetry(),
       throwsA(isA<SecureStoreDismissed>()),
     );
     expect(strong.readKeys, hasLength(2));
-    expect(cred.readKeys, hasLength(2));
+    expect(cred.readKeys, isEmpty);
+  });
+
+  test('crypto mismatch still falls through to the live slot on read',
+      () async {
+    // Dismissal-stop must not break recovery: a slot that genuinely
+    // cannot unwrap (post-auth cipher failure, NOT a user skip) still
+    // hands off to the other slot, which serves.
+    final strong = _ScriptedSecure()..readError = StateError(_fieldError);
+    final cred = _ScriptedSecure()
+      ..backend['prox.enrollment.v1'] = jsonEncode(_doc().toJson());
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    expect((await store.readEnrollment())?.email, 'a@x.in');
+  });
+
+  test('install-id skip stops the scan (no second prompt)', () async {
+    final strong = _ScriptedSecure()
+      ..readError = StateError('user canceled');
+    final cred = _ScriptedSecure()
+      ..backend['prox.install.v1'] = 'ab12cd34ef56ab78';
+    final store = SecureDeviceStore(secure: strong, fallbackSecure: cred);
+
+    await expectLater(
+      store.readInstallId(),
+      throwsA(isA<SecureStoreDismissed>()),
+    );
+    expect(strong.readKeys, hasLength(1));
+    expect(cred.readKeys, isEmpty);
   });
 
   test('both slots failing throws sanitized copy, no raw stack', () async {
