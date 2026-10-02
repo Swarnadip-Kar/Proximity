@@ -194,7 +194,8 @@ class _OvalOverlayPainter extends CustomPainter {
       Paint()..color = const Color(0x73000000),
     );
     // Flash-assist edge ring first (directly above the surround, uniform
-    // light): fatter strokes because the lit area IS the light output.
+    // light): flat bands, no blur — the feed stays raw, the wide faint
+    // band under the bright core reads as glow without any effect.
     if (assist) {
       // Contained edge ring (see CaptureOverlay.flashRingRRectFor): the
       // deflate clears the glow bleed top and bottom so the ring never
@@ -205,8 +206,7 @@ class _OvalOverlayPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 60
-            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22));
+            ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35));
       canvas.drawOval(
           edge,
           Paint()
@@ -215,15 +215,13 @@ class _OvalOverlayPainter extends CustomPainter {
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
     }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
-    // Soft glow behind the crisp ring (framing rect, neutral — unchanged).
+    // Flat halo behind the crisp ring (framing rect, neutral — unchanged).
     canvas.drawOval(
         beaconRect,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 10
-          ..color = color.withValues(alpha: 0.22)
-          ..maskFilter =
-              const MaskFilter.blur(BlurStyle.normal, 10));
+          ..color = color.withValues(alpha: 0.22));
     // Base ring (framing guide, neutral white — unchanged).
     canvas.drawOval(
         beaconRect,

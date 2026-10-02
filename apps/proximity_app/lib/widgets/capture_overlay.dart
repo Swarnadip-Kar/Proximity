@@ -708,13 +708,12 @@ class _CaptureOverlayPainter extends CustomPainter {
       );
     }
     final halo = beaconGlow.copyWith(color: beaconColor);
+    // Flat halo disc (no blur — raw feed): the tone-matched disc under the
+    // bright head reads as glow without any effect paint.
     canvas.drawCircle(
       at,
       14,
-      Paint()
-        ..color = halo.glowColor.withValues(alpha: halo.opacity * alpha)
-        ..maskFilter =
-            MaskFilter.blur(BlurStyle.normal, halo.blurSigma / 3),
+      Paint()..color = halo.glowColor.withValues(alpha: halo.opacity * alpha),
     );
     canvas.drawCircle(
       at,
@@ -840,12 +839,11 @@ class _CaptureOverlayPainter extends CustomPainter {
       at = Offset(rail.center.dx, rail.bottom - rail.height * f);
     }
     if (aligned) {
+      // Flat aligned halo (no blur — raw feed).
       canvas.drawCircle(
         at,
         8,
-        Paint()
-          ..color = beaconColor.withValues(alpha: 0.35 * alpha)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+        Paint()..color = beaconColor.withValues(alpha: 0.35 * alpha),
       );
     }
     canvas.drawCircle(
@@ -859,9 +857,11 @@ class _CaptureOverlayPainter extends CustomPainter {
 
   /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): bright
   /// rounded-rect stroke hugging the preview edges with a soft outer
-  /// glow — thicker than the first iteration because the lit area IS the
+  /// band — thicker than the first iteration because the lit area IS the
   /// light output. Glow tracks the graded level (darker room → brighter
-  /// ring). Defined after the wheels methods (not paint order — paint()
+  /// ring). Flat paint only (no blur — the feed stays raw; the wide faint
+  /// band under the bright core reads as glow without any effect).
+  /// Defined after the wheels methods (not paint order — paint()
   /// calls it first thing after the scrim) so the oval-landing source pin
   /// keeps holding: `drawRRect` appears only inside the wheels painters
   /// and this ring painter, never around the face-guide oval (which stays
@@ -870,15 +870,13 @@ class _CaptureOverlayPainter extends CustomPainter {
     final level = flashLevel.clamp(0.0, 1.0);
     if (level <= 0) return;
     final rrect = CaptureOverlay.flashRingRRectFor(size);
-    // Outer glow first (under the core stroke).
+    // Outer band first (under the core stroke).
     canvas.drawRRect(
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 60
-        ..color = Colors.white.withValues(alpha: 0.20 + 0.45 * level)
-        ..maskFilter = MaskFilter.blur(
-            BlurStyle.normal, 14 + 8 * level),
+        ..color = Colors.white.withValues(alpha: 0.20 + 0.45 * level),
     );
     // Bright core stroke.
     canvas.drawRRect(
