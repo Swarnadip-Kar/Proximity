@@ -65,10 +65,11 @@ presentation (screens/, features/, widgets/)
 
 ## Logging discipline
 
-One ring buffer (`BleLog`, 500 entries, coalesced flush, adb-logcat
-mirror). Tags from `ProxLogTags`, colors from `ProxLogColors` (single
-source for the full-screen debug log — the embedded `BleLogView` was
-removed Track 5 as a one-off; `debug/log` is the one terminal):
+One ring buffer (`BleLog`, 50k entries, 500-row render window, coalesced
+flush, adb-logcat mirror). Tags from `ProxLogTags`, colors from
+`ProxLogColors` (single source for the full-screen debug log — the
+embedded `BleLogView` was removed Track 5 as a one-off; `debug/log` is
+the one terminal):
 
 - BLE / MESH / LAN / SEC / NET — radio + drivers (pre-existing; beacon
   and relay repeats stay deduped by packet key so the terminal survives
@@ -98,6 +99,13 @@ window (see the BLE `_loud` keys and the manual-add 10s failure gate);
 clears to hide state. Both log views are reduced-motion safe (toggle and
 chips use `ProxMotion.effective`; autoscroll jumps, never animates) and
 cheap under load (capped buffer, plain-Text rows, flush coalescing).
+View modes (`widgets/log_filter.dart`): Quiet (default — all tags except
+BLE/MESH) vs All (everything); an explicit tag chip always wins over the
+mode. Copy carries the tag selection only, so field reports include
+BLE/MESH even from Quiet. Console mirror (`BleLog.echoToConsole`,
+default on in debug/test, off in release) is forceable per build with
+`--dart-define=PROX_LOG_CONSOLE=true|false` for release field
+debugging (release echo reaches logcat — pilot builds only).
 
 ## Core modules (snapshot, not a contract)
 

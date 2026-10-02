@@ -1,6 +1,6 @@
 // LogDrawer — the contextual quick-peek system-log drawer (§4.5).
 //
-// Data contract unchanged (`BleLog` stream, same tags, 500-entry ring —
+// Data contract unchanged (`BleLog` stream, same tags, 50k-entry ring —
 // restyle only):
 // - Collapsible drawer from the bottom edge: peek ~30% of screen
 //   ([showLogDrawer] uses `initialChildSize: 0.3`), draggable to full

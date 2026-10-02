@@ -74,7 +74,6 @@ void main() {
       required bool locked,
       required int Function() onRetry,
     }) {
-      var calls = 0;
       return t.pumpWidget(MaterialApp(
         theme: proxLightTheme(),
         home: Scaffold(
@@ -94,7 +93,6 @@ void main() {
             saveMessage: '',
             restoreLocked: locked,
             onRetryRestore: () async {
-              calls++;
               onRetry();
             },
           ),
