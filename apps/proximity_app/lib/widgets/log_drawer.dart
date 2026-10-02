@@ -31,6 +31,7 @@ import 'package:proximity_ble/ble.dart';
 import '../design/tokens.dart';
 import '../features/debug/debug_log_screen.dart';
 import 'log_category.dart';
+import 'log_filter.dart';
 
 /// Opens the log drawer (peek ~30%, draggable full). Tag selection made
 /// here carries into `Expand`.
@@ -152,6 +153,10 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
   /// Empty = show all tags.
   late final Set<String> _only = {...?widget.initialTags};
 
+  /// View density: quiet (default, BLE/MESH hidden) vs all (everything).
+  /// An explicit tag selection always wins over the mode.
+  var _mode = LogViewMode.quiet;
+
   @override
   void initState() {
     super.initState();
@@ -206,18 +211,12 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
     });
   }
 
-  List<BleLogEntry> get _filtered {
-    final base = _only.isEmpty
-        ? _entries
-        : _entries.where((e) => _only.contains(e.tag)).toList();
-    // Quiet by default (same rule as the full screen): radio chatter
-    // hides until the reader taps its chip; an explicit selection shows
-    // exactly that.
-    if (_only.isEmpty) {
-      return base.where((e) => !BleLog.mutedTags.contains(e.tag)).toList();
-    }
-    return base;
-  }
+  List<BleLogEntry> get _filtered => filterLogEntries(
+        _entries,
+        only: _only,
+        mode: _mode,
+        mutedTags: BleLog.mutedTags,
+      );
 
   /// Render window over [_filtered] (the 50k ring never renders whole).
   List<BleLogEntry> get _visible {
@@ -228,8 +227,9 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
         : all;
   }
 
-  /// True while the quiet default applies (no inclusive chip selection).
-  bool get _quiet => _only.isEmpty;
+  /// True while the quiet default applies (no inclusive chip selection
+  /// and the Quiet mode is armed).
+  bool get _quiet => _only.isEmpty && _mode == LogViewMode.quiet;
 
   void _toggleTag(String tag) {
     setState(() {
@@ -252,19 +252,22 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
     // (replacing would eat the tab root), so close the sheet first, then
     // push — back still goes tab-ward in a single step. Named via
     // settings (same `debug/log` as the route table) while carrying the
-    // drawer's tag selection via constructor — no table change needed.
+    // drawer's tag selection + view mode via constructor — no table change
+    // needed.
     // The Navigator is captured before the close (the sheet subtree
     // unmounts under it).
     final tags = Set<String>.of(_only);
+    final showAll = _mode == LogViewMode.all;
     final nav = Navigator.of(context);
     widget.onClose?.call();
     nav.push(
       MaterialPageRoute(
         settings: RouteSettings(
           name: 'debug/log',
-          arguments: {'initialTags': tags.toList()},
+          arguments: {'initialTags': tags.toList(), 'showAll': showAll},
         ),
-        builder: (_) => DebugLogScreen(initialTags: tags),
+        builder: (_) =>
+            DebugLogScreen(initialTags: tags, initialShowAll: showAll),
       ),
     );
   }
@@ -321,7 +324,9 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
                       ? '${visible.length} of ${_filtered.length} (+$_dropped dropped)'
                       : _quiet
                           ? '${visible.length} of ${_filtered.length} · BLE, MESH hidden'
-                          : '${visible.length} of ${_filtered.length}',
+                          : _only.isEmpty
+                              ? '${visible.length} of ${_filtered.length} · all incl. BLE, MESH'
+                              : '${visible.length} of ${_filtered.length}',
                   style: ProxType.caption(color: c.contentSecondary),
                 ),
                 TextButton(
@@ -368,9 +373,27 @@ class _LogDrawerContentState extends State<LogDrawerContent> {
                   padding:
                       const EdgeInsets.only(right: ProxSpacing.xs),
                   child: FilterChip(
+                    label: const Text('Quiet'),
+                    tooltip: 'All except BLE/MESH radio chatter',
+                    selected:
+                        _only.isEmpty && _mode == LogViewMode.quiet,
+                    onSelected: (_) => setState(() {
+                      _only.clear();
+                      _mode = LogViewMode.quiet;
+                    }),
+                  ),
+                ),
+                Padding(
+                  padding:
+                      const EdgeInsets.only(right: ProxSpacing.xs),
+                  child: FilterChip(
                     label: const Text('All'),
-                    selected: _only.isEmpty,
-                    onSelected: (_) => setState(_only.clear),
+                    tooltip: 'Everything, including BLE/MESH',
+                    selected: _only.isEmpty && _mode == LogViewMode.all,
+                    onSelected: (_) => setState(() {
+                      _only.clear();
+                      _mode = LogViewMode.all;
+                    }),
                   ),
                 ),
                 for (final tag in ProxLogTags.all)

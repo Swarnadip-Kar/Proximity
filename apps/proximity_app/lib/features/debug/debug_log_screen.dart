@@ -8,8 +8,10 @@
 // rows are plain monospace Text (SelectableText regions cost real
 // frames under beacon load — the Copy button is the copy path);
 // autoscroll jumps once per flush and only while pinned near the bottom.
-// BLE/MESH chatter is muted BY DEFAULT (stored, just not shown — tap a
-// chip to include it); an explicit chip selection shows exactly that.
+// BLE/MESH chatter is muted in the default Quiet mode (stored, just not
+// shown — tap All or a radio chip to include it); an explicit chip
+// selection shows exactly that. Copy always carries BLE/MESH, even from
+// Quiet (tag selection only).
 // Filter chips narrow by tag (dots colored by category via
 // logCategoryColor, §4.5); no entrance animation (a terminal must never
 // replay motion), so this screen is reduced-motion safe by construction.
@@ -33,12 +35,18 @@ import '../../design/app_theme.dart';
 import '../../design/tokens.dart';
 import '../../main.dart';
 import '../../widgets/log_category.dart';
+import '../../widgets/log_filter.dart';
 
 class DebugLogScreen extends StatefulWidget {
   /// Pre-selected tag filter (empty = show all tags).
   final Set<String> initialTags;
 
-  const DebugLogScreen({super.key, this.initialTags = const {}});
+  /// Starts in the All mode (radio chatter shown). Defaults to the Quiet
+  /// mode (BLE/MESH hidden until the reader asks).
+  final bool initialShowAll;
+
+  const DebugLogScreen(
+      {super.key, this.initialTags = const {}, this.initialShowAll = false});
 
   @override
   State<DebugLogScreen> createState() => _DebugLogScreenState();
@@ -69,6 +77,11 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
   /// Empty = show all tags.
   late final Set<String> _only = {...widget.initialTags};
 
+  /// View density: quiet (default, BLE/MESH hidden) vs all (everything).
+  /// An explicit tag selection always wins over the mode.
+  late LogViewMode _mode =
+      widget.initialShowAll ? LogViewMode.all : LogViewMode.quiet;
+
   /// True once named-route arguments have been merged (once per mount).
   var _routeTagsApplied = false;
 
@@ -87,6 +100,9 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
         final tags =
             (args['initialTags'] as List).whereType<String>().toSet();
         if (tags.isNotEmpty) _only.addAll(tags);
+        if (args['showAll'] == true) {
+          setState(() => _mode = LogViewMode.all);
+        }
       } else if (args is Set<String> && args.isNotEmpty) {
         _only.addAll(args);
       }
@@ -136,18 +152,12 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
     });
   }
 
-  List<BleLogEntry> get _filtered {
-    final base = _only.isEmpty
-        ? _entries
-        : _entries.where((e) => _only.contains(e.tag)).toList();
-    // Quiet by default: radio chatter hides until the reader taps its
-    // chip. An explicit chip selection shows exactly that (mute never
-    // overrides a choice).
-    if (_only.isEmpty) {
-      return base.where((e) => !BleLog.mutedTags.contains(e.tag)).toList();
-    }
-    return base;
-  }
+  List<BleLogEntry> get _filtered => filterLogEntries(
+        _entries,
+        only: _only,
+        mode: _mode,
+        mutedTags: BleLog.mutedTags,
+      );
 
   /// Render window over [_filtered] (newest slice, never the whole ring).
   List<BleLogEntry> get _visible {
@@ -157,8 +167,9 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
         : all;
   }
 
-  /// True while the quiet default applies (no inclusive chip selection).
-  bool get _quiet => _only.isEmpty;
+  /// True while the quiet default applies (no inclusive chip selection
+  /// and the Quiet mode is armed).
+  bool get _quiet => _only.isEmpty && _mode == LogViewMode.quiet;
 
   Color _colorFor(String tag) => ProxLogColors.of(tag);
 
@@ -178,10 +189,12 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
     setState(_entries.clear);
   }
 
-  /// Copies the filtered buffer (bounded — newest slice + truncation
+  /// Copies the tag-filtered buffer (bounded — newest slice + truncation
   /// note, never a 50k-line paste) to the clipboard for field reports.
+  /// The view mute never applies here: Copy always carries BLE/MESH, even
+  /// from the Quiet mode.
   Future<void> _copy() async {
-    final all = _filtered;
+    final all = copyLogEntries(_entries, only: _only);
     final take = all.length > _copyCap
         ? all.sublist(all.length - _copyCap)
         : all;
@@ -235,9 +248,25 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
                 Padding(
                   padding: const EdgeInsets.only(right: ProxSpacing.xs),
                   child: FilterChip(
+                    label: const Text('Quiet'),
+                    tooltip: 'All except BLE/MESH radio chatter',
+                    selected: _only.isEmpty && _mode == LogViewMode.quiet,
+                    onSelected: (_) => setState(() {
+                      _only.clear();
+                      _mode = LogViewMode.quiet;
+                    }),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: ProxSpacing.xs),
+                  child: FilterChip(
                     label: const Text('All'),
-                    selected: _only.isEmpty,
-                    onSelected: (_) => setState(_only.clear),
+                    tooltip: 'Everything, including BLE/MESH',
+                    selected: _only.isEmpty && _mode == LogViewMode.all,
+                    onSelected: (_) => setState(() {
+                      _only.clear();
+                      _mode = LogViewMode.all;
+                    }),
                   ),
                 ),
                 for (final tag in _tags)
@@ -266,9 +295,9 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
             ),
             child: Text(
               _quiet
-                  ? 'showing latest ${visible.length} of $total events · BLE, MESH hidden — tap a chip to show'
+                  ? 'showing latest ${visible.length} of $total events · BLE, MESH hidden — tap All to show'
                   : 'showing latest ${visible.length} of $total events'
-                      '${_only.isEmpty ? '' : ' · ${_only.join(', ')}'}',
+                      '${_only.isEmpty ? ' · all incl. BLE, MESH' : ' · ${_only.join(', ')}'}',
               style: proxTabular(
                 context,
                 Theme.of(context).textTheme.bodySmall?.copyWith(
