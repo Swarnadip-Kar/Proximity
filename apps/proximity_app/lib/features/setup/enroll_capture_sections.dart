@@ -140,6 +140,11 @@ class EnrollCapturePreview extends StatelessWidget {
   /// branch is active).
   final Future<void> Function()? onRetryRestore;
 
+  /// Ring-light flash assist (dark session only — see flash_assist.dart).
+  /// False (default) paints nothing extra: the bare-surface preview +
+  /// overlay contract is byte-identical to the no-assist path.
+  final bool flashAssist;
+
   const EnrollCapturePreview({
     super.key,
     required this.controller,
@@ -162,6 +167,7 @@ class EnrollCapturePreview extends StatelessWidget {
     this.livePitch,
     this.restoreLocked = false,
     this.onRetryRestore,
+    this.flashAssist = false,
   });
 
   @override
@@ -249,6 +255,13 @@ class EnrollCapturePreview extends StatelessWidget {
       fit: StackFit.loose,
       children: [
         surface,
+        // Flash-assist ring light (dark session only): a bright border
+        // hugging the Stack edges — real light on the holder's face while
+        // the phone is held close. Sibling of the bare surface, never a
+        // wrapper (the squish-fix bare-surface chain above is untouched);
+        // painted, never a Container/decoration (the breakup pin forbids
+        // those in this Stack). The oval/comet/prompt paint above it.
+        if (flashAssist) const _FlashRing(),
         // The overlay ACTUALLY renders above the preview: this
         // overlay is inside the preview Stack (not beside
         // it), pointer-transparent, repainting per shot.
@@ -294,6 +307,62 @@ class EnrollCapturePreview extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Ring-light assist border (see flash_assist.dart): a bright rounded-rect
+/// stroke hugging the preview edges with a soft outer glow — the only
+/// overlay element allowed to emit "light". Painted ([CustomPaint], never
+/// a Container/decoration — the breakup pin forbids those in the preview
+/// Stack), pointer-transparent, static (no animation state, so
+/// reduced-motion is unaffected). Sibling of the bare surface and below
+/// the oval overlay: the guide, comet, wheels and prompt stay fully
+/// visible above it.
+class _FlashRing extends StatelessWidget {
+  const _FlashRing();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Positioned.fill(
+      child: IgnorePointer(
+        child: CustomPaint(
+          key: Key('flash-ring'),
+          painter: _FlashRingPainter(),
+        ),
+      ),
+    );
+  }
+}
+
+class _FlashRingPainter extends CustomPainter {
+  const _FlashRingPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(
+      (Offset.zero & size).deflate(8),
+      const Radius.circular(24),
+    );
+    // Outer glow first (under the core stroke).
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 22
+        ..color = Colors.white.withValues(alpha: 0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
+    );
+    // Bright core stroke.
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 10
+        ..color = Colors.white.withValues(alpha: 0.95),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FlashRingPainter oldDelegate) => false;
 }
 
 /// Full-bleed camera surface: explicit cover box, zero transforms.

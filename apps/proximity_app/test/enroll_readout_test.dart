@@ -17,6 +17,7 @@ import 'package:proximity_app/features/face_identity/liveness_gate.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
+import 'package:proximity_app/features/setup/flash_assist.dart';
 import 'package:proximity_app/routes.dart';
 
 class _CleanProbe implements IntegrityProbe {
@@ -43,7 +44,8 @@ Future<EnrollmentController> _keyReady() async {
 Widget _harness(
         {required EnrollmentController ctl,
         PoseGate? gate,
-        LivenessGate? sessionLiveness}) =>
+        LivenessGate? sessionLiveness,
+        ScreenBrightnessControl? brightness}) =>
     ProviderScope(
       overrides: [
         enrollmentControllerProvider.overrideWith((ref) => ctl),
@@ -52,6 +54,12 @@ Widget _harness(
         poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
         enrollSessionLivenessProvider.overrideWithValue(
             sessionLiveness ?? FakeLivenessGate()),
+        // Brightness seam (same rule as camera/pose/liveness above): the
+        // real channel's timeout timers never settle under FakeAsync (see
+        // HardwareDeviceIds), so session tests always drive the fake —
+        // the fail-soft channel path is pinned by unit tests instead.
+        enrollScreenBrightnessProvider.overrideWithValue(
+            brightness ?? FakeScreenBrightnessControl()),
       ],
       child: MaterialApp(
         theme: proxLightTheme(),

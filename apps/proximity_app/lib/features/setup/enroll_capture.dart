@@ -63,6 +63,7 @@ import 'enroll_capture_sections.dart';
 import 'enroll_capture_session.dart';
 import 'enroll_flow.dart';
 import 'enroll_widgets.dart';
+import 'flash_assist.dart';
 import 'setup_step_scope.dart';
 
 export 'enroll_capture_session.dart';
@@ -157,6 +158,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
         : restoreLocked
             ? 'Couldn’t unlock this device’s key — approve the phone prompt, then try again.'
             : 'Generate the device key on the previous screen first — the face capture seals to it.';
+    // Flash assist (dark session): ring-light border in the preview +
+    // maxed window brightness via the sync shell below (restored after).
+    // Pure derivation from the driver's stall state — no new timers here.
+    final assist = flashAssist;
     // Fail-closed preview states (frozen copy): denied / failed / no-key
     // replace the feed; the opening spinner shows until open completes.
     final failMessage =
@@ -182,6 +187,12 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
       ),
       body: Column(
         children: [
+          // Brightness shell for the flash assist: maxes the window while
+          // the session is dark, restores after (renders nothing itself).
+          FlashAssistSync(
+            active: assist,
+            control: ref.read(enrollScreenBrightnessProvider),
+          ),
           // Preview region (below the opaque app bar — no SafeArea in
           // either camera path (no double-apply); the body starts under
           // the bar so the feed never slides under chrome.
@@ -242,6 +253,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               // re-runs restore + camera open (re-prompts past cooldown).
               restoreLocked: restoreLocked && failMessage != null,
               onRetryRestore: () => retryRestoreAndOpen(),
+              // Ring-light border while the session believes it is dark
+              // (see [flashAssist] — sibling layer, preview geometry
+              // untouched).
+              flashAssist: assist,
               // The toast owns the message on error — hide the rotating
               // prompt so the two never stack on small preview areas.
               promptVisible: !saveError,

@@ -295,6 +295,13 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// composer swaps the overlay prompt for the stall nudge.
   bool get fillStall => _staleBeats >= _stallBeats;
 
+  /// Flash-assist switch for the dark session (see flash_assist.dart):
+  /// true while the loop believes it is dark (unreadable-dark streak or
+  /// no-fill stall). The composer paints the ring-light border and maxes
+  /// the window brightness while true (restored after). Pure derivation —
+  /// no side effects here (application lives in [FlashAssistSync]).
+  bool get flashAssist => darkStall || fillStall;
+
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
   /// probes clearing the bar at or above [_confirmMargin] in non-dim
   /// light accept immediately; anything weaker (below the margin) or

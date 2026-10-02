@@ -30,6 +30,7 @@ import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
 import 'package:proximity_app/features/setup/enroll_result.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/flash_assist.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/liveness_gate.dart';
@@ -99,6 +100,11 @@ Widget _captureHarness(
         enrollSessionCameraProvider
             .overrideWithValue(camera ?? FakeEnrollSessionCamera()),
         poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
+        // Brightness seam: the real channel's timeout timers never settle
+        // under FakeAsync (see HardwareDeviceIds + enroll_readout_test),
+        // so session tests always drive the fake.
+        enrollScreenBrightnessProvider
+            .overrideWithValue(FakeScreenBrightnessControl()),
         // Session vitality pre-check: scripted pass by default (the
         // terminal enrollFace gate pins scoring itself); pass a low-score
         // gate to prove non-live stills are discarded in-loop.
@@ -422,11 +428,14 @@ void main() {
       expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
       // The composer wires the per-target guided prompt into the preview,
       // overridden by the move-to-light line on a dark stall and the
-      // stall nudge after wasted beats (both warn-only).
+      // stall nudge after wasted beats (both warn-only). Flash assist
+      // rides the same stall state (ring border + brightness shell).
       expect(screenLib().contains('enrollTargetPrompt(targetSlot)'), isTrue);
       expect(screenLib().contains('Too dark — move to brighter light'),
           isTrue);
       expect(screenLib().contains('No good capture yet'), isTrue);
+      expect(screenLib().contains('FlashAssistSync'), isTrue);
+      expect(screenLib().contains('flashAssist'), isTrue);
     });
 
     test('exactly the documented breakup deltas, nothing else', () {
