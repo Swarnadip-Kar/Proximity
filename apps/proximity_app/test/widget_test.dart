@@ -14,6 +14,7 @@ import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/host_driver.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
+import 'package:proximity_app/features/setup/flash_assist.dart';
 import 'package:proximity_app/widgets/capture_overlay.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -81,6 +82,10 @@ ProviderScope testScope(
           .overrideWithValue(FakeEnrollSessionCamera()),
       poseGateProvider.overrideWithValue(FakePoseGate()),
       enrollSessionLivenessProvider.overrideWithValue(FakeLivenessGate()),
+      // Brightness seam (same rule as the other session harnesses): the
+      // real channel's timeout timers never settle under FakeAsync.
+      enrollScreenBrightnessProvider
+          .overrideWithValue(FakeScreenBrightnessControl()),
       hostDriverProvider.overrideWithValue(hostDriver ?? FakeHostDriver()),
       studentDriverProvider.overrideWithValue(
           studentDriver ?? FakeStudentDriver(windowOpenProbe: probeOpen)),

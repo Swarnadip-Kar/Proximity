@@ -197,9 +197,10 @@ void main() {
 
     testWidgets('dark session rings, maxes, and restores on cancel',
         (t) async {
-      // Every beat throws dim: the dark streak stalls at the third probe,
-      // the ring paints, brightness maxes; cancel pops the screen and the
-      // previous value is restored.
+      // Every beat throws dim: the fast glow stalls at the second probe,
+      // the graded ring fades in, brightness maxes; cancel pops the screen
+      // and the previous value is restored. Brightness evidence is absent
+      // (throws carry none), so the stall fallback level (0.5) applies.
       const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
       final gate =
           FakePoseGate(readings: List<PoseReading?>.filled(6, down));
@@ -219,11 +220,13 @@ void main() {
       for (var i = 0;
           i < 40 &&
               !(overlay().evaluate().isNotEmpty &&
-                  t.widget<CaptureOverlay>(overlay()).flashRing);
+                  t.widget<CaptureOverlay>(overlay()).flashLevel > 0.05);
           i++) {
         await t.pump(const Duration(milliseconds: 200));
       }
-      expect(t.widget<CaptureOverlay>(overlay()).flashRing, isTrue);
+      final level = t.widget<CaptureOverlay>(overlay()).flashLevel;
+      expect(level, greaterThan(0.05));
+      expect(level, lessThanOrEqualTo(0.5));
       expect(brightness.sets, [1.0]);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
@@ -250,13 +253,87 @@ void main() {
       await openSession(t);
       await t.pump(const Duration(milliseconds: 1500));
       expect(
-          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashRing,
-          isFalse);
+          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashLevel,
+          0.0);
       expect(brightness.sets, isEmpty);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);
       expect(brightness.sets, isEmpty);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('graded level tracks measured darkness', (t) async {
+      // Scored-dark probes (bright 45 of hint 70) grade the ring to
+      // (70-45)/70 ≈ 0.36 — darker would glow brighter, brighter lower.
+      // Fixed pump: beats 1-2 fill down (stash, confirm), beats 3-5 miss
+      // centre — brightness stays fresh throughout, so the level settles
+      // at the measured mapping instead of the stall fallback.
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      final gate =
+          FakePoseGate(readings: List<PoseReading?>.filled(6, down));
+      final ctl = await keyReady();
+      final brightness = FakeScreenBrightnessControl();
+      await t.pumpWidget(harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.95, scriptedBrightness: 45.0),
+        brightness: brightness,
+      ));
+      await openSession(t);
+      await t.pump(const Duration(milliseconds: 3000));
+      final level =
+          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashLevel;
+      expect(level, moreOrLessEquals(0.36, epsilon: 0.08));
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('faceless beats stall with assist, then recover',
+        (t) async {
+      // Pose reads nothing four beats running (dark-room signature): the
+      // stall nudge + assist fire with no probe evidence at all. A later
+      // readable frame fills and clears both back to guidance.
+      final gate = FakePoseGate(readings: [
+        null,
+        null,
+        null,
+        null,
+        null,
+        const PoseReading(yaw: 0, pitch: -15, roll: 0),
+        const PoseReading(yaw: 0, pitch: -15, roll: 0),
+      ]);
+      final ctl = await keyReady();
+      final brightness = FakeScreenBrightnessControl();
+      await t.pumpWidget(harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(score: 0.95),
+        brightness: brightness,
+      ));
+      await openSession(t);
+      final stalled = find.text(
+          'No good capture yet — face the lens in brighter light');
+      for (var i = 0; i < 40 && stalled.evaluate().isEmpty; i++) {
+        await t.pump(const Duration(milliseconds: 200));
+      }
+      expect(stalled, findsOneWidget);
+      expect(
+          t
+              .widget<CaptureOverlay>(find.byType(CaptureOverlay))
+              .flashLevel,
+          greaterThan(0.05));
+      expect(brightness.sets, [1.0]);
+      // Readable frames resume the walk: the stall line yields back to
+      // the guided prompt (down fills on the confirming beat).
+      await t.pump(const Duration(milliseconds: 2500));
+      expect(stalled, findsNothing);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
       expect(t.takeException(), isNull);
     });
 
@@ -288,15 +365,15 @@ void main() {
               saveMessage: '',
               preview: SizedBox(key: seam),
               previewAspectRatio: 3 / 4,
-              flashAssist: true,
+              flashLevel: 0.5,
             ),
           ),
         ),
       ));
       await t.pump();
       expect(
-          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashRing,
-          isTrue);
+          t.widget<CaptureOverlay>(find.byType(CaptureOverlay)).flashLevel,
+          0.5);
       final stack = find.byWidgetPredicate((w) =>
           w is Stack &&
           w.fit == StackFit.loose &&
@@ -330,6 +407,79 @@ void main() {
       expect(rrect.outerRect,
           (Offset.zero & const Size(800, 400)).deflate(10));
       expect(rrect.tlRadiusX, moreOrLessEquals(26));
+    });
+
+    testWidgets('capture scaffold ignores keyboard insets', (t) async {
+      final ctl = await keyReady();
+      await t.pumpWidget(harness(ctl: ctl));
+      await openSession(t);
+      expect(t.takeException(), isNull);
+      // The capture screen owns its Scaffold (builds it below itself —
+      // hence descendant, not ancestor: the home shell's Scaffold is a
+      // sibling route, correctly excluded).
+      final scaffold = find.descendant(
+          of: find.byType(EnrollCaptureScreen),
+          matching: find.byType(Scaffold));
+      expect(t.widget<Scaffold>(scaffold).resizeToAvoidBottomInset, isFalse);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('capture entry drops keyboard focus', (t) async {
+      // ID-field stand-in with autofocus (keyboard up on the previous
+      // step): entering capture must drop ITS focus so the preview never
+      // inherits the keyboard resize (backed by resizeToAvoidBottomInset
+      // above — no editable text lives on the capture screen itself).
+      // Note the modal route scope itself takes focus on push (correct) —
+      // what matters is the field losing it.
+      final ctl = await keyReady();
+      final fieldNode = FocusNode();
+      addTearDown(fieldNode.dispose);
+      await t.pumpWidget(ProviderScope(
+        overrides: [
+          enrollmentControllerProvider.overrideWith((ref) => ctl),
+          enrollSessionCameraProvider
+              .overrideWithValue(FakeEnrollSessionCamera()),
+          poseGateProvider.overrideWithValue(FakePoseGate()),
+          enrollSessionLivenessProvider
+              .overrideWithValue(FakeLivenessGate()),
+          enrollScreenBrightnessProvider
+              .overrideWithValue(FakeScreenBrightnessControl()),
+        ],
+        child: MaterialApp(
+          theme: proxLightTheme(),
+          routes: buildProxRoutes(),
+          onGenerateRoute: proxOnGenerateRoute,
+          onUnknownRoute: proxOnUnknownRoute,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Column(
+                children: [
+                  TextField(autofocus: true, focusNode: fieldNode),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const EnrollCaptureScreen()),
+                    ),
+                    child: const Text('open-capture'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 100));
+      expect(fieldNode.hasFocus, isTrue);
+      await openSession(t);
+      expect(fieldNode.hasFocus, isFalse);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(t.takeException(), isNull);
     });
   });
 }

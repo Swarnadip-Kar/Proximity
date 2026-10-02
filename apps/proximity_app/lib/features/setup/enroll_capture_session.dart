@@ -32,6 +32,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -298,12 +299,113 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// composer swaps the overlay prompt for the stall nudge.
   bool get fillStall => _staleBeats >= _stallBeats;
 
+  /// Consecutive beats with no readable face (pose gate returned null —
+  /// detector saw nothing, the dark-room signature when even garbage
+  /// boxes stop coming). Reaches [blindStall] at 4 (~3s): faster than the
+  /// no-fill stall because facelessness IS light evidence, while a mere
+  /// dry spell may just be a slow holder. Reset by any successful read.
+  /// Presentation only, never a gate.
+  int _blindBeats = 0;
+
+  /// Faceless-beat budget before the stall nudge + flash assist (~3s).
+  static const _blindThreshold = 4;
+
+  /// True once [_blindBeats] faceless beats in a row. Drives the stall
+  /// prompt and the flash assist alongside [fillStall].
+  bool get blindStall => _blindBeats >= _blindThreshold;
+
+  /// Fast assist trigger (see [flashAssist]): two consecutive dark probes
+  /// (~1-2s) light the ring immediately, while the prompt override waits
+  /// for the stabler three-probe [darkStall] so transient shadows never
+  /// flicker the instruction line.
+  bool get _darkGlow => _darkStreak >= 2;
+
+  /// Total loop beats so far (every iteration, fills included) plus the
+  /// beat index of the last scored probe. Brightness evidence goes stale:
+  /// a bright probe from seconds ago must not veto a ring the room now
+  /// needs (holder walked into a closet mid-session), so the graded level
+  /// below only trusts brightness younger than [_brightFreshBeats].
+  int _beats = 0;
+  int _brightBeat = -1000000;
+
+  /// Freshness window for brightness evidence (~2s at the steady cadence).
+  static const _brightFreshBeats = 3;
+
+  /// Eased ring intensity actually painted (see [flashLevel]): advances
+  /// toward [_flashTarget] on every repaint beat so the ring breathes in
+  /// over ~300ms instead of popping, and fades out the same way. Snaps
+  /// under reduced motion (no sweep ticks there to ease on).
+  double _flashShown = 0.0;
+
+  /// Last measured level (see [_levelForBrightness]), held across beats
+  /// with no fresh probe so the ring freezes at the last known darkness
+  /// instead of jumping to the canned stall fallback mid-fade. Overwritten
+  /// on every scored probe; reset on recapture.
+  double _flashHeld = 0.0;
+
+  /// Ease rate per repaint (~300ms to settle — responsive without a pop).
+  static const _flashEase = 0.3;
+
+  /// Snap threshold: closer than this to target counts as arrived (hides
+  /// the ring fully instead of hovering near-invisible).
+  static const _flashSnap = 0.02;
+
+  /// Graded ring intensity 0..1 actually painted (0 = hidden): the darker
+  /// the measured crop, the brighter the ring glows. Eased, never jumped.
+  double get flashLevel => _flashShown;
+
   /// Flash-assist switch for the dark session (see flash_assist.dart):
-  /// true while the loop believes it is dark (unreadable-dark streak or
-  /// no-fill stall). The composer paints the ring-light border and maxes
-  /// the window brightness while true (restored after). Pure derivation —
-  /// no side effects here (application lives in [FlashAssistSync]).
-  bool get flashAssist => darkStall || fillStall;
+  /// true once the eased ring level is visibly on. Single source of truth
+  /// for ring + window brightness so the two never disagree (maxed screen
+  /// with no ring, or ring with no light). The window max applies as soon
+  /// as the fade starts (~one repaint) and restores as it finishes — light
+  /// first, glow follows, both settle together. Pure derivation — no side
+  /// effects here (application lives in [FlashAssistSync]).
+  bool get flashAssist => _flashShown > 0.05;
+
+  /// Darkness target the eased [flashLevel] chases: fresh measured
+  /// brightness maps linearly below the warn hint (bright 70 → 0,
+  /// near-black → ~1); without fresh evidence a stalled session holds the
+  /// last measured level ([_flashHeld]) — or glows mid (0.5) when nothing
+  /// was ever measured — and a readable session shows nothing.
+  double _flashTarget() {
+    final b = _lastBrightness;
+    if (b != null && b.isFinite && (_beats - _brightBeat) <= _brightFreshBeats) {
+      return _levelForBrightness(b);
+    }
+    if (_darkGlow || blindStall || fillStall) {
+      return _flashHeld > 0 ? _flashHeld : 0.5;
+    }
+    return 0.0;
+  }
+
+  /// Pure brightness→level mapping (see [_flashTarget]): 0 at/above the
+  /// warn hint, linear to 1 at black. Null/non-finite/bright reads 0
+  /// (unknown brightness is never darkness evidence).
+  double _levelForBrightness(double? b) {
+    if (b == null || !b.isFinite || b >= kLivenessDimHintBrightness) {
+      return 0.0;
+    }
+    return ((kLivenessDimHintBrightness - b) / kLivenessDimHintBrightness)
+        .clamp(0.0, 1.0);
+  }
+
+  /// One ease step toward [target] (or a snap under reduced motion).
+  double _stepFlash(double shown, double target, {required bool snap}) {
+    if (snap) return target;
+    final next = shown + (target - shown) * _flashEase;
+    return (next - target).abs() < _flashSnap ? target : next;
+  }
+
+  /// True when the ring must jump instead of ease (no sweep ticks under
+  /// reduced motion to ease on — beats snap, same as the markers).
+  bool _snapFlash() {
+    try {
+      return ProxMotion.reduced(context);
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
   /// probes clearing the bar at or above [_confirmMargin] in non-dim
@@ -550,6 +652,9 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         if (_sweep > 2 * 3.141592653589793) {
           _sweep -= 2 * 3.141592653589793;
         }
+        // Ring fade lives on this tick (absent under reduced motion, where
+        // beats snap instead — see [_flashShown]).
+        _flashShown = _stepFlash(_flashShown, _flashTarget(), snap: false);
         setState(() {});
       });
     }
@@ -583,6 +688,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
       if (_doneCount == _paths.length) break;
       final target = _currentTarget;
       var filledThisBeat = false;
+      var blindBeat = false;
       final still = await _captureOne();
       if (_done || _finished || _failed) return;
       if (still != null) {
@@ -608,7 +714,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             _liveYaw = r.yaw;
             _livePitch = r.pitch;
             _liveStamp = DateTime.now();
+            _blindBeats = 0;
           });
+        } else {
+          // No readable face (or the unreachable L1 throw): a faceless
+          // beat for the stall logic — and it breaks confirmation
+          // consecutiveness (see [_confirmSlot]: a look-away between
+          // sightings restarts the park).
+          blindBeat = true;
+          _confirmSlot = null;
         }
         final pass = r != null &&
             EnrollPoseWindows.check(
@@ -673,6 +787,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
               _lastQuality = v < 0 ? q : null;
               _lastBrightness = v < 0 ? null : b;
               _darkStreak = darkProbe ? _darkStreak + 1 : (resetStreak ? 0 : _darkStreak);
+              if (v >= 0) {
+                _brightBeat = _beats;
+                _flashHeld = _levelForBrightness(b);
+              }
+              _flashShown = _stepFlash(_flashShown, _flashTarget(),
+                  snap: _snapFlash());
             });
           }
           if (vitality < bar) {
@@ -711,6 +831,8 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
               setState(() {
                 _paths[faceEnrollSlots.indexOf(target)] = still;
                 _staleBeats = 0;
+                _flashShown = _stepFlash(_flashShown, _flashTarget(),
+                    snap: _snapFlash());
               });
               _advanceTarget(target);
               _livenessPlan?.acknowledgeFill();
@@ -736,13 +858,22 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         await _saveAll();
         return;
       }
-      // Stale-beat accounting for the stall nudge (see [fillStall]): a
-      // beat that filled nothing counts; a fill beat resets above and is
-      // excluded here. setState per wasted beat matches the loop's
-      // existing paint cost (the beacon already repaints far more often)
-      // and keeps the prompt switch responsive under reduced-motion too
-      // (no sweep timer there to repaint for us).
-      if (!filledThisBeat && mounted) setState(() => _staleBeats++);
+      // Stale-beat accounting for the stall nudge (see [fillStall]) +
+      // ring fade (see [_flashShown]): a beat that filled nothing counts;
+      // a fill beat resets above and is excluded here. setState per wasted
+      // beat matches the loop's existing paint cost (the beacon already
+      // repaints far more often) and keeps the prompt switch responsive
+      // under reduced-motion too (no sweep timer there to repaint or ease
+      // on — beats snap instead).
+      _beats++;
+      if (!filledThisBeat && mounted) {
+        setState(() {
+          _staleBeats++;
+          if (blindBeat) _blindBeats++;
+          _flashShown = _stepFlash(_flashShown, _flashTarget(),
+              snap: _snapFlash());
+        });
+      }
       await Future.delayed(_frameBeat);
     }
   }
@@ -868,20 +999,20 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
-  /// judged it + guided target + measured crop brightness (e.g.
-  /// `LIVE 0.93/0.70 · DOWN · B139`, or `LIVE —/0.70 · DOWN · DIM` after
-  /// an unreadable dim probe, or `LIVE 0.99/0.70 · DOWN · B58 · DIM` for
-  /// a passing-but-dark probe). Placeholders until the first probe/read
-  /// lands. No match score exists mid-walk (the matcher first runs at the
-  /// terminal self-check — its boundary score lands on the result
-  /// screen), so this line never invents one. The DIM/BLURRY/NO FACE
-  /// suffix is warn-only presentation — it never gates anything, and
+  /// judged it + measured crop brightness + guided target (e.g.
+  /// `LIVE 0.93/0.70 B139 · DOWN`, or `LIVE —/0.70 · DOWN · DIM` after an
+  /// unreadable dim probe, or `LIVE 0.99/0.70 B58 · DOWN · DIM` for a
+  /// passing-but-dark probe). The brightness sits in the same line as the
+  /// score (same probe the native gate logs as `bright=`) so the holder
+  /// sees the number, not just the verdict. Placeholders until the first
+  /// probe/read lands. No match score exists mid-walk (the matcher first
+  /// runs at the terminal self-check — its boundary score lands on the
+  /// result screen), so this line never invents one. The DIM/BLURRY/NO
+  /// FACE suffix is warn-only presentation — it never gates anything, and
   /// file/timeout/unknown failures stay silent (no wrong hint). The
   /// scored-probe DIM comes from [kLivenessDimHintBrightness] (warn-only);
   /// the unreadable-probe DIM comes from the throw reason at the 12.0
-  /// block floor. The `B<n>` token is the raw 0-255 crop mean (same probe
-  /// the native gate logs as `bright=`), shown whenever a scored probe
-  /// carried it — the holder sees the number, not just the verdict.
+  /// block floor.
   String get liveReadout {
     final v = _lastVitality;
     final score = v == null ? '—' : v.toStringAsFixed(2);
@@ -891,7 +1022,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             : kEnrollSideLivenessThreshold);
     final bright = _lastBrightness;
     final bTok = bright != null && bright.isFinite
-        ? ' · B${bright.round()}'
+        ? ' B${bright.round()}'
         : '';
     String? hint;
     if (v == null) {
@@ -906,8 +1037,8 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     }
     final target = _currentTarget.toUpperCase();
     return hint == null
-        ? 'LIVE $score/${bar.toStringAsFixed(2)} · $target$bTok'
-        : 'LIVE $score/${bar.toStringAsFixed(2)} · $target$bTok · $hint';
+        ? 'LIVE $score/${bar.toStringAsFixed(2)}$bTok · $target'
+        : 'LIVE $score/${bar.toStringAsFixed(2)}$bTok · $target · $hint';
   }
 
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
@@ -981,6 +1112,8 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _lastQuality = null;
     _lastBrightness = null;
     _darkStreak = 0;
+    _blindBeats = 0;
+    _flashHeld = 0.0;
     // A parked confirmation names the old target — recapture restarts it.
     _confirmSlot = null;
     _finished = false;
@@ -992,6 +1125,11 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// Verbatim excerpt of the pre-split initState body (minus `super`).
   /// The screen calls this from its own initState.
   void initCaptureSession() {
+    // Keyboard-first entry (ID field on the account step): drop any open
+    // keyboard before the camera opens, or the resize squishes the preview
+    // on the first beats. Backed by resizeToAvoidBottomInset:false on the
+    // screen Scaffold (belt-and-braces — no editable text lives here).
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!canUseFace()) return; // build() shows the blocked card.
     _camera = ref.read(enrollSessionCameraProvider);
     unawaited(_openCamera());

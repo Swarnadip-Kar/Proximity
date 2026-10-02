@@ -7,8 +7,7 @@
 //   enroll_capture_session.dart — camera seam + session driver (open/close,
 //     classify-fill loop, save, dispose, timers; relocated verbatim).
 //   enroll_capture_sections.dart — section widgets (bare preview
-//     surface, bottom bar, slot top-up, blocked card).
-// No driver state, no timers, no camera calls live here: the State mixes
+//     surface, bottom bar, slot top-up, blocked card).// No driver state, no timers, no camera calls live here: the State mixes
 // in [EnrollCaptureSessionDriver] and reads it through its public getters.
 //
 // Preview fidelity (squish fix, hardened 2026-09-10 — see
@@ -26,7 +25,8 @@
 // inset + SafeArea; toast + bottom bar are SafeArea-seated).
 //
 // Overlay contract (see `## Overlay redesign` in INTEGRATION_LOG): ONE
-// slim progress bar pinned below the app bar (overall completion), ONE static oval + ONE glowing green comet —
+// slim progress bar filling the preview bottom edge (overall completion),
+// ONE static oval + ONE glowing green comet —
 // bright head plus short fading tail —
 // (live head-position target for the next unfilled angle), ONE prompt
 // below the oval (rotate slowly, follow the glow) — no dots, no labels,
@@ -34,8 +34,8 @@
 // (one imperative + rim progress) and Tobii "follow the target"
 // calibration (one target, 5 points, repeat missing).
 // Under the paint, buckets keep filling opportunistically
-// (EnrollBucketFill.classifyInto on one readPose per still); the top bar
-// is the sole completion indicator. Rejects stay SILENT in-UI
+// (EnrollBucketFill.classifyInto on one readPose per still); the bottom
+// bar is the sole completion indicator. Rejects stay SILENT in-UI
 // (BleLog only). Under reduced motion the sweep timer never starts and
 // the comet parks statically at the target with a minimal tail.
 //
@@ -158,19 +158,23 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
         : restoreLocked
             ? 'Couldn’t unlock this device’s key — approve the phone prompt, then try again.'
             : 'Generate the device key on the previous screen first — the face capture seals to it.';
-    // Flash assist (dark session): ring-light border in the preview +
-    // maxed window brightness via the sync shell below (restored after).
-    // Pure derivation from the driver's stall state — no new timers here.
+    // Flash assist (dark session): graded ring-light level + window
+    // brightness via the sync shell below (restored after). Pure
+    // derivation from the driver's stall state — no new timers here.
     final assist = flashAssist;
+    final level = flashLevel;
     // Fail-closed preview states (frozen copy): denied / failed / no-key
     // replace the feed; the opening spinner shows until open completes.
     final failMessage =
         isDenied || isFailed || (!isOpening && noKey) ? previewMessage : null;
     // Preview sits BELOW the app bar (opaque, default theme bar — the
-    // feed never paints under chrome): body starts under the bar, the
-    // overlay top bar needs no inset, and the oval is derived from the
-    // undistorted video box only. Cancel stays wired to [_cancel].
+    // feed never paints under chrome): body starts under the bar, and the
+    // oval is derived from the undistorted video box only. Cancel stays
+    // wired to [_cancel].
     return Scaffold(
+      // No editable text lives on this screen (and entry unfocuses on the
+      // way in): the keyboard must never resize/squish the preview.
+      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: false,
       extendBody: true,
       appBar: AppBar(
@@ -204,8 +208,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
           // (c) Null-controller placeholder (test fake only, never on-device).
           // (d) THE shared single-oval overlay + save-error toast — no
           //     dots, no per-angle labels.
-          // (e) Mid-flow chrome lives in the overlay (top bar + oval +
-          //     single prompt); the bottom bar stays empty mid-flow.
+          // (e) Mid-flow chrome lives in the overlay (bottom fill bar +
+          //     oval + single prompt); the bottom bar stays empty mid-flow.
           // (f) Validated Continue / save-error Try-again + shared hidden
           //     top-up (back-nav stable).
           // (g) Blocked path uses ProxScreen (no camera, shared shell).
@@ -231,13 +235,12 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               // Dark stall (3 consecutive dark probes): the overlay prompt
               // becomes the move-to-light line — a dark room needs an
               // unmissable instruction, not the angle guidance (which
-              // returns as soon as a bright probe lands). Fill stall (15
-              // wasted beats, e.g. pose never reading in the dark): the
-              // nudge below — spinning with zero guidance was the reported
-              // failure. Bright/unknown sessions never take either branch.
+              // returns as soon as a bright probe lands). Faceless/no-fill
+              // stall (pose blind, or spinning with no fills): the nudge
+              // below. Bright/unknown sessions never take any branch.
               statusLine: darkStall
                   ? 'Too dark — move to brighter light'
-                  : (fillStall
+                  : ((fillStall || blindStall)
                       ? 'No good capture yet — face the lens in brighter light'
                       : enrollTargetPrompt(targetSlot)),
               sweepAngle: reduced ? null : sweepValue,
@@ -253,10 +256,10 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               // re-runs restore + camera open (re-prompts past cooldown).
               restoreLocked: restoreLocked && failMessage != null,
               onRetryRestore: () => retryRestoreAndOpen(),
-              // Ring-light border while the session believes it is dark
-              // (see [flashAssist] — sibling layer, preview geometry
-              // untouched).
-              flashAssist: assist,
+              // Ring-light level while the session believes it is dark
+              // (graded by measured darkness — see [flashLevel]; preview
+              // geometry untouched).
+              flashLevel: level,
               // The toast owns the message on error — hide the rotating
               // prompt so the two never stack on small preview areas.
               promptVisible: !saveError,

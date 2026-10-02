@@ -1,7 +1,7 @@
 // Overlay redesign contracts (PRODUCT-OWNER OVERRIDE 2026-09-10 — see
 // INTEGRATION_LOG.md `## Overlay redesign`): fullscreen preview, exactly
-// three overlay elements (slim top progress bar, single oval + beacon, one
-// prompt), both consumers render them, auto-capture driver semantics
+// three overlay elements (bottom filling progress bar, single oval +
+// beacon, one prompt), both consumers render them, auto-capture driver semantics
 // untouched (pinned by enroll_guided + student_driver suites, not here).
 // NOTE (2026-09-10 `## Face-check single-shot`, tester-directed): mark/face
 // is now single-shot — static oval + one look-at-the-camera line only (no
@@ -17,7 +17,6 @@ import 'package:proximity_app/core/enrollment.dart';
 import 'package:proximity_app/core/security/user_presence.dart';
 import 'package:proximity_app/core/security/integrity.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
 import 'package:proximity_app/features/face_identity/pose_gate.dart';

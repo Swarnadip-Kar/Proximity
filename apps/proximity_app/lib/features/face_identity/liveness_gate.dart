@@ -642,9 +642,8 @@ enum LivenessUnreadableReason { noFace, blurry, dim, timeout, unknown }
 /// see the message as before.
 class LivenessUnreadable extends StateError {
   final LivenessUnreadableReason reason;
-  LivenessUnreadable(String message,
-      [this.reason = LivenessUnreadableReason.unknown])
-      : super(message);
+  LivenessUnreadable(super.message,
+      [this.reason = LivenessUnreadableReason.unknown]);
 
   /// Short bottom-bar token for the readout (null = no hint: file,
   /// timeout and unknown failures stay silent, never a wrong light hint).

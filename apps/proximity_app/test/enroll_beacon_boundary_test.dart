@@ -28,6 +28,7 @@ import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/setup/enroll_capture.dart';
 import 'package:proximity_app/features/setup/enroll_flow.dart';
 import 'package:proximity_app/features/setup/enroll_widgets.dart';
+import 'package:proximity_app/features/setup/flash_assist.dart';
 import 'package:proximity_app/routes.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
 import 'package:proximity_app/features/face_identity/face_verifier.dart';
@@ -70,6 +71,10 @@ Widget _captureHarness({required EnrollmentController ctl}) =>
         enrollSessionCameraProvider
             .overrideWithValue(FakeEnrollSessionCamera()),
         poseGateProvider.overrideWithValue(FakePoseGate()),
+        // Brightness seam (same rule as the other session harnesses): the
+        // real channel's timeout timers never settle under FakeAsync.
+        enrollScreenBrightnessProvider
+            .overrideWithValue(FakeScreenBrightnessControl()),
         // Session vitality pre-check: scripted pass (scoring itself is
         // pinned in enroll_guided_test + enroll_liveness_gate_test).
         enrollSessionLivenessProvider.overrideWithValue(FakeLivenessGate()),
@@ -155,10 +160,11 @@ void main() {
       await _openSession(t);
       final scaffold =
           t.element(find.byType(Scaffold).last).widget as Scaffold;
-      // Below-app-bar layout (supersedes the 2026-09-10 edge-to-edge
-      // capture): keyboard-aware body starting under the opaque app bar —
-      // the feed never paints under chrome.
-      expect(scaffold.resizeToAvoidBottomInset ?? true, isTrue);
+      // Keyboard-proof body (supersedes the keyboard-aware layout): entry
+      // unfocuses (no editable text lives on this screen) and the Scaffold
+      // ignores bottom insets, so a lingering keyboard can never squish
+      // the preview — the feed never paints under chrome either way.
+      expect(scaffold.resizeToAvoidBottomInset, isFalse);
       expect(scaffold.extendBody, isTrue);
       expect(scaffold.extendBodyBehindAppBar, isFalse);
       // Same AppBar height (default toolbar, no custom preferredSize).

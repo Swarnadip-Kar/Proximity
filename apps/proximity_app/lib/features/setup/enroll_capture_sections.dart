@@ -121,8 +121,9 @@ class EnrollCapturePreview extends StatelessWidget {
   /// message, so the two never stack on small preview areas.
   final bool promptVisible;
 
-  /// Edge-to-edge top inset forwarded to the overlay's top bar so it
-  /// clears the transparent overlay app bar (composer passes the app-bar
+  /// Edge-to-edge top inset (additive option, kept for any future
+  /// overlay-bar caller with a byte-identical default): the bottom filling
+  /// gauge needs no inset.
   final double overlayTopInset;
 
   /// Live head-pose wheels (all null = hidden): the guided target slot +
@@ -140,12 +141,12 @@ class EnrollCapturePreview extends StatelessWidget {
   /// branch is active).
   final Future<void> Function()? onRetryRestore;
 
-  /// Ring-light flash assist (dark session only — see flash_assist.dart).
-  /// Wired straight into the shared overlay's own ring painter (uniform
-  /// light above the scrim — never a Stack sibling, which the scrim
-  /// gradiented). False (default) paints nothing extra: the bare-surface
-  /// preview + overlay contract is byte-identical to the no-assist path.
-  final bool flashAssist;
+  /// Ring-light flash assist level (dark session only — see flash_assist
+  /// + the driver's graded [flashLevel]). Wired straight into the shared
+  /// overlay's own ring painter (uniform light above the scrim). 0.0
+  /// (default) paints nothing extra: the bare-surface preview + overlay
+  /// contract is byte-identical to the no-assist path.
+  final double flashLevel;
 
   const EnrollCapturePreview({
     super.key,
@@ -169,7 +170,7 @@ class EnrollCapturePreview extends StatelessWidget {
     this.livePitch,
     this.restoreLocked = false,
     this.onRetryRestore,
-    this.flashAssist = false,
+    this.flashLevel = 0.0,
   });
 
   @override
@@ -260,8 +261,8 @@ class EnrollCapturePreview extends StatelessWidget {
         // The overlay ACTUALLY renders above the preview: this
         // overlay is inside the preview Stack (not beside
         // it), pointer-transparent, repainting per shot.
-        // THE shared single-oval overlay (override 2026-09-10 — top bar =
-        // overall progress, oval + comet = live head target for the next
+        // THE shared single-oval overlay (override 2026-09-10 — bottom
+        // bar = overall progress, oval + comet = live head target for the next
         // unfilled angle, one prompt below the oval; totalAngles comes from
         // the controller's own slot list, verified 5 via faceEnrollSlots,
         // never hardcoded).
@@ -281,7 +282,7 @@ class EnrollCapturePreview extends StatelessWidget {
           poseYaw: liveYaw,
           posePitch: livePitch,
           poseTargetSlot: targetSlot,
-          flashRing: flashAssist,
+          flashLevel: flashLevel,
           // Save-error banner takes the prompt slot inside the overlay
           // (same geometry, zero layout effect on the feed). SafeArea
           // ancestor pinned (notch-aware) with all sides off: the slot is

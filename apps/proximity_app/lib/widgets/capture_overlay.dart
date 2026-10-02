@@ -5,7 +5,7 @@
 // Full-bleed camera preview with exactly three overlay elements, nothing
 // else — shared by `mark/face` and `enroll/capture` (one overlay design,
 // not two):
-//  1. ONE slim progress bar floating a little above the oval (angle
+//  1. ONE slim progress bar filling the preview bottom edge (angle
 //     completion 0..1).
 //  2. ONE static oval centered as the face guide with ONE glowing green
 //     COMET that travels along/around it indicating the current target
@@ -148,13 +148,15 @@ class CaptureOverlay extends StatefulWidget {
   final double? posePitch;
   final String? poseTargetSlot;
 
-  /// Flash-assist ring light (enroll dark session only — default hidden,
-  /// zero change for mark/face): when true the painter draws a bright
-  /// border ring directly above the scrim (uniform light — the earlier
-  /// Stack-sibling ring read bright on top and dim below because the
-  /// scrim covered it unevenly). System brightness is maxed alongside by
-  /// [FlashAssistSync] (see flash_assist.dart); this flag is paint only.
-  final bool flashRing;
+  /// Flash-assist ring light level 0..1 (enroll dark session only —
+  /// default 0 = hidden, zero change for mark/face): the painter draws a
+  /// bright border ring directly above the scrim whose glow tracks
+  /// measured darkness (darker crop → brighter ring — see the session
+  /// driver's graded level). Uniform light: painting above the scrim is
+  /// what fixed the old sibling ring's top-bright/bottom-dim gradient.
+  /// System brightness is maxed alongside by [FlashAssistSync] (see
+  /// flash_assist.dart); this flag is paint only.
+  final double flashLevel;
 
   const CaptureOverlay({
     super.key,
@@ -174,7 +176,7 @@ class CaptureOverlay extends StatefulWidget {
     this.poseYaw,
     this.posePitch,
     this.poseTargetSlot,
-    this.flashRing = false,
+    this.flashLevel = 0.0,
   });
 
   /// Default target direction for angle [index] of [total]: spread around
@@ -230,7 +232,7 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Face-guide oval derived from the ACTUAL preview box (see
-  /// [previewRectFor]): the same 0.58w x 0.52h fractions applied to the
+  /// [previewRectFor]): the same 0.60w x 0.55h fractions applied to the
   /// video rect, not the full Stack size. Null aspect == [guideRectFor]
   /// legacy behavior. Pure for unit tests.
   ///
@@ -246,8 +248,8 @@ class CaptureOverlay extends StatefulWidget {
 
   static Rect guideRectForAspect(Size size, double? aspectRatio) {
     final preview = previewRectFor(size, aspectRatio);
-    var w = preview.width * 0.58;
-    final h = preview.height * 0.52;
+    var w = preview.width * 0.60;
+    final h = preview.height * 0.55;
     if (w >= h) w = h * faceWidthToHeight;
     return Rect.fromCenter(
       center: preview.center,
@@ -256,7 +258,7 @@ class CaptureOverlay extends StatefulWidget {
     );
   }
 
-  /// Flash-ring frame (see [flashRing]): the rounded-rect border the ring
+  /// Flash-ring frame (see [flashLevel]): the rounded-rect border the ring
   /// light paints — full preview area deflated by a small margin so the
   /// stroke + glow stay inside the video. Pure for unit tests.
   static RRect flashRingRRectFor(Size size) => RRect.fromRectAndRadius(
@@ -487,7 +489,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                   poseYaw: widget.poseYaw,
                   posePitch: widget.posePitch,
                   poseTargetSlot: widget.poseTargetSlot,
-                  flashRing: widget.flashRing,
+                  flashLevel: widget.flashLevel,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -507,8 +509,11 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                     tone: tone,
                   ),
                 ),
-              // (3) ONE short guiding prompt line below the oval. White
-              // for the same on-scrim reason as the guide ring above.
+              // (3) ONE short guiding prompt below the oval (two lines max
+              // so long stall/dark lines wrap instead of truncating — short
+              // copies still take exactly one line, so existing layouts
+              // never move). White for the same on-scrim reason as the
+              // guide ring above.
               // Error banner XOR prompt: on save-error the banner takes
               // this exact slot (the rotating instruction is meaningless
               // once the loop stopped; rendering both stacked them on
@@ -537,7 +542,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                     style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                    maxLines: 2,
                   ),
                 )
               else if (widget.showStatusLine)
@@ -550,7 +555,7 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                     style: ProxType.label(color: Colors.white),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                    maxLines: 2,
                   ),
                 ),
             ],
@@ -583,7 +588,8 @@ class _ProgressBar extends StatelessWidget {
   }
 }
 
-class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim;
+class _CaptureOverlayPainter extends CustomPainter {
+  final LinearGradient scrim;
   final Color guideRing;
 
   /// Head-position guide halo: concentric pulse rings around the oval in
@@ -608,8 +614,8 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
   final double? posePitch;
   final String? poseTargetSlot;
 
-  /// Ring-light assist (see [CaptureOverlay.flashRing]). Paint-only.
-  final bool flashRing;
+  /// Ring-light assist (see [CaptureOverlay.flashLevel]). Paint-only.
+  final double flashLevel;
 
   _CaptureOverlayPainter({
     required this.scrim,
@@ -625,7 +631,7 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
     this.poseYaw,
     this.posePitch,
     this.poseTargetSlot,
-    this.flashRing = false,
+    this.flashLevel = 0.0,
   });
 
   @override
@@ -640,7 +646,7 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
     // everything else): painting it here instead of as a Stack sibling
     // keeps its brightness uniform — the scrim gradient dimmed the old
     // sibling ring into a top-bright/bottom-dim gradient.
-    if (flashRing) _paintFlashRing(canvas, size);
+    if (flashLevel > 0) _paintFlashRing(canvas, size);
 
     final alpha = dim ? 0.55 : 1.0;
     // (2a) ONE static face-guide oval (always drawn — the single-shot
@@ -728,7 +734,7 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
       old.poseYaw != poseYaw ||
       old.posePitch != posePitch ||
       old.poseTargetSlot != poseTargetSlot ||
-      old.flashRing != flashRing;
+      old.flashLevel != flashLevel;
 
   /// Guidance wheels: yaw rail just below the oval + pitch rail just
   /// right of it (both hug the guide instead of the screen edges, so the
@@ -751,10 +757,10 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
 
     // Yaw rail: below the oval, 15%-85% of the width, slim (6px) so the
     // video keeps priority; the band + marker carry the signal. Sits
-    // between the oval and the prompt line (prompt clears the face zone
-    // one md gap below the oval — the rail's 12..18px slot fits inside).
-    final yawRect = Rect.fromLTRB(size.width * 0.15, oval.bottom + 12,
-        size.width * 0.85, oval.bottom + 18);
+    // between the oval and the prompt line with breathing room on both
+    // sides (prompt clears the face zone one md gap below the oval).
+    final yawRect = Rect.fromLTRB(size.width * 0.15, oval.bottom + 20,
+        size.width * 0.85, oval.bottom + 26);
     _paintWheelTrack(
       canvas,
       yawRect,
@@ -766,9 +772,10 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
       active: yawBand != null,
       alpha: alpha,
     );
-    // Pitch rail: right of the oval, spanning its height.
+    // Pitch rail: right of the oval, spanning its height, with the same
+    // breathing room as the yaw rail.
     final pitchRect = Rect.fromLTRB(
-        oval.right + 12, oval.top, oval.right + 18, oval.bottom);
+        oval.right + 20, oval.top, oval.right + 26, oval.bottom);
     _paintWheelTrack(
       canvas,
       pitchRect,
@@ -847,32 +854,36 @@ class _CaptureOverlayPainter extends CustomPainter {  final LinearGradient scrim
     );
   }
 
-  /// Flash-assist ring light (see [CaptureOverlay.flashRing]): bright
+  /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): bright
   /// rounded-rect stroke hugging the preview edges with a soft outer
-  /// glow — fatter than the first Stack-sibling iteration because the
-  /// lit area IS the light output. Defined after the wheels methods (not
-  /// paint order — paint() calls it first thing after the scrim) so the
-  /// oval-landing source pin keeps holding: `drawRRect` appears only
-  /// inside the wheels painters and this ring painter, never around the
-  /// face-guide oval (which stays `drawOval`).
+  /// glow — thicker than the first iteration because the lit area IS the
+  /// light output. Glow tracks the graded level (darker room → brighter
+  /// ring). Defined after the wheels methods (not paint order — paint()
+  /// calls it first thing after the scrim) so the oval-landing source pin
+  /// keeps holding: `drawRRect` appears only inside the wheels painters
+  /// and this ring painter, never around the face-guide oval (which stays
+  /// `drawOval`).
   void _paintFlashRing(Canvas canvas, Size size) {
+    final level = flashLevel.clamp(0.0, 1.0);
+    if (level <= 0) return;
     final rrect = CaptureOverlay.flashRingRRectFor(size);
     // Outer glow first (under the core stroke).
     canvas.drawRRect(
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 36
-        ..color = Colors.white.withValues(alpha: 0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
+        ..strokeWidth = 44
+        ..color = Colors.white.withValues(alpha: 0.20 + 0.45 * level)
+        ..maskFilter = MaskFilter.blur(
+            BlurStyle.normal, 14 + 8 * level),
     );
     // Bright core stroke.
     canvas.drawRRect(
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 16
-        ..color = Colors.white.withValues(alpha: 0.95),
+        ..strokeWidth = 20
+        ..color = Colors.white.withValues(alpha: 0.55 + 0.40 * level),
     );
   }
 }

@@ -428,14 +428,16 @@ void main() {
       expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
       // The composer wires the per-target guided prompt into the preview,
       // overridden by the move-to-light line on a dark stall and the
-      // stall nudge after wasted beats (both warn-only). Flash assist
-      // rides the same stall state (ring border + brightness shell).
+      // stall nudge after wasted/faceless beats (all warn-only). Flash
+      // assist rides the same stall state (graded ring level + brightness
+      // shell).
       expect(screenLib().contains('enrollTargetPrompt(targetSlot)'), isTrue);
       expect(screenLib().contains('Too dark — move to brighter light'),
           isTrue);
       expect(screenLib().contains('No good capture yet'), isTrue);
       expect(screenLib().contains('FlashAssistSync'), isTrue);
       expect(screenLib().contains('flashAssist'), isTrue);
+      expect(screenLib().contains('flashLevel'), isTrue);
     });
 
     test('exactly the documented breakup deltas, nothing else', () {

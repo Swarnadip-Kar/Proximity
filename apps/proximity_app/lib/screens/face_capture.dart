@@ -136,11 +136,11 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   const FaceCaptureOvalOverlay({super.key, this.progress = 0, this.assist = false});
 
   /// Framing oval fractions of the preview size. Same as the shared
-  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.58w x 0.52h)
+  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.60w x 0.55h)
   /// so the marking capture frames faces at the identical size —
   /// one face size everywhere, never a bigger oval here.
-  static const beaconWidthFraction = 0.58;
-  static const beaconHeightFraction = 0.52;
+  static const beaconWidthFraction = 0.60;
+  static const beaconHeightFraction = 0.55;
 
   /// Face width/height for the portrait clamp below (human-face
   /// proportion — width < height). Phone portrait previews already satisfy
@@ -201,14 +201,14 @@ class _OvalOverlayPainter extends CustomPainter {
           edge,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 36
+            ..strokeWidth = 44
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22));
       canvas.drawOval(
           edge,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 16
+            ..strokeWidth = 20
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
     }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);
@@ -378,6 +378,11 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Keyboard-first entry (manual Scan after typing elsewhere): drop any
+    // open keyboard before the camera opens, or the resize squishes the
+    // preview. Backed by resizeToAvoidBottomInset:false below (no editable
+    // text lives on this sheet).
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!canUseFace()) return; // build() shows the blocked card.
     unawaited(_start());
   }
@@ -667,6 +672,9 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
     final ctl = _ctl;
     final prompt = widget.prompt ?? 'Position your face in the oval';
     return Scaffold(
+      // No editable text lives on this sheet: the keyboard must never
+      // resize/squish the preview (entry unfocuses in initState too).
+      resizeToAvoidBottomInset: false,
       // Camera-black chrome: the preview COVERS its area (no letterbox
       // bars) and every non-preview state (spinner, denied, failed)
       // renders on black, so a slow bind never reads as a white page

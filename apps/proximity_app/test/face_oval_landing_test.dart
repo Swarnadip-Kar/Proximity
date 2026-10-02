@@ -82,12 +82,12 @@ void main() {
         expect(beacon.width, greaterThan(0));
         expect(beacon.height, greaterThan(0));
         // Phone portrait follows the shared enrollment-guide fractions
-        // (0.58w x 0.52h, no clamp) — one face size on both flows.
+        // (0.60w x 0.55h, no clamp) — one face size on both flows.
         if (size == const Size(390, 844)) {
           expect(beacon.width,
-              moreOrLessEquals(size.width * 0.58, epsilon: 0.01));
+              moreOrLessEquals(size.width * 0.60, epsilon: 0.01));
           expect(beacon.height,
-              moreOrLessEquals(size.height * 0.52, epsilon: 0.01));
+              moreOrLessEquals(size.height * 0.55, epsilon: 0.01));
         }
       }
     });
