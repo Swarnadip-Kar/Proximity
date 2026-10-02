@@ -264,6 +264,19 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// hint would never appear in a real dark room.
   double? _lastBrightness;
 
+  /// Consecutive dark probes (scored below [kLivenessDimHintBrightness]
+  /// or unreadable-with-dim-reason). Reaches [darkStall] at 3, which
+  /// promotes the hint from the small bottom-bar suffix to the overlay
+  /// prompt — a dark room needs an unmissable line, not a mono caption.
+  /// Resets on any bright scored probe (or unknown-brightness probe, which
+  /// is tests-only — production always carries brightness); non-dim
+  /// unreadable probes leave it unchanged. Presentation only, never a gate.
+  int _darkStreak = 0;
+
+  /// True once [_darkStreak] shows the holder is capturing in the dark.
+  /// The composer swaps the overlay prompt for the move-to-light line.
+  bool get darkStall => _darkStreak >= 3;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -594,11 +607,22 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             final v = vitality;
             final b = brightness;
             final q = quality;
+            // Dark streak for the stall prompt: scored-dark and dim-thrown
+            // probes extend it, bright/unknown scored probes reset it,
+            // other unreadable probes leave it (a no-face miss in good
+            // light is not light evidence either way).
+            final darkProbe = v < 0
+                ? q == LivenessUnreadableReason.dim
+                : (b != null &&
+                    b.isFinite &&
+                    b < kLivenessDimHintBrightness);
+            final resetStreak = v >= 0 && !darkProbe;
             setState(() {
               _lastVitality = v < 0 ? null : v;
               _lastBar = bar;
               _lastQuality = v < 0 ? q : null;
               _lastBrightness = v < 0 ? null : b;
+              _darkStreak = darkProbe ? _darkStreak + 1 : (resetStreak ? 0 : _darkStreak);
             });
           }
           if (vitality < bar) {
@@ -868,6 +892,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _lastBar = null;
     _lastQuality = null;
     _lastBrightness = null;
+    _darkStreak = 0;
     _finished = false;
     if (mounted) setState(() => _saving = false);
     _loopStarted = false;

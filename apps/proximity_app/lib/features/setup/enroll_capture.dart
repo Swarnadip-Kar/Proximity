@@ -217,7 +217,14 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               nextAngle: nextAngle,
               // Verified 5 via faceEnrollSlots, never hardcoded.
               totalAngles: faceEnrollSlots.length,
-              statusLine: enrollTargetPrompt(targetSlot),
+              // Dark stall (3 consecutive dark probes): the overlay prompt
+              // becomes the move-to-light line — a dark room needs an
+              // unmissable instruction, not the angle guidance (which
+              // returns as soon as a bright probe lands). Bright/unknown
+              // sessions never take this branch (see darkStall).
+              statusLine: darkStall
+                  ? 'Too dark — move to brighter light'
+                  : enrollTargetPrompt(targetSlot),
               sweepAngle: reduced ? null : sweepValue,
               saveError: saveError,
               saveMessage: st.message,

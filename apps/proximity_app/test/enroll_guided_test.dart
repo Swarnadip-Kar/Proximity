@@ -420,8 +420,10 @@ void main() {
       ]);
       expect(screenLib().contains('previewMessage'), isTrue);
       expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
-      // The composer wires the per-target guided prompt into the preview.
-      expect(screenLib().contains('statusLine: enrollTargetPrompt(targetSlot)'),
+      // The composer wires the per-target guided prompt into the preview,
+      // overridden by the move-to-light line on a dark stall (warn-only).
+      expect(screenLib().contains('enrollTargetPrompt(targetSlot)'), isTrue);
+      expect(screenLib().contains('Too dark — move to brighter light'),
           isTrue);
     });
 

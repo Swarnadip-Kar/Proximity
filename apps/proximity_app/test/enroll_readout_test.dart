@@ -94,9 +94,11 @@ void main() {
     testWidgets('unreadable dim probe shows DIM hint with the bar',
         (t) async {
       // Walk asks down first: serve down so the vitality probe runs
-      // (off-target stills never reach the scorer).
+      // (off-target stills never reach the scorer). Two scripted downs =
+      // two dim throws (streak 2, below the 3-stall), then the default
+      // cycle misses down, so the guided prompt stays put for this test
+      // (the stall promotion has its own test below).
       final gate = FakePoseGate(readings: const [
-        PoseReading(yaw: 0, pitch: -15, roll: 0),
         PoseReading(yaw: 0, pitch: -15, roll: 0),
         PoseReading(yaw: 0, pitch: -15, roll: 0),
       ]);
@@ -142,6 +144,53 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
+    testWidgets('three dark probes promote the overlay prompt', (t) async {
+      // Dark room, passing probes: buckets still fill (warn-only, never a
+      // gate) but the overlay prompt becomes the move-to-light line so the
+      // holder cannot miss it.
+      final gate = FakePoseGate(readings: const [
+        PoseReading(yaw: 0, pitch: -15, roll: 0),
+        PoseReading(yaw: 0, pitch: 0, roll: 0),
+        PoseReading(yaw: 0, pitch: 15, roll: 0),
+      ]);
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.95, scriptedBrightness: 45.0),
+      ));
+      await _openSession(t);
+      final dark = find.text('Too dark — move to brighter light');
+      for (var i = 0; i < 30 && dark.evaluate().isEmpty; i++) {
+        await t.pump(const Duration(milliseconds: 200));
+      }
+      expect(dark, findsOneWidget);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('bright session keeps the guided prompt', (t) async {
+      final gate = FakePoseGate(readings: const [
+        PoseReading(yaw: 0, pitch: -15, roll: 0),
+      ]);
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.95, scriptedBrightness: 90.0),
+      ));
+      await _openSession(t);
+      await t.pump(const Duration(milliseconds: 1500));
+      expect(find.text('Too dark — move to brighter light'), findsNothing);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
     testWidgets('passing-but-dark probe warns DIM without blocking',
         (t) async {
       // Auto-exposed dark-room frame that still scores: the bucket fills

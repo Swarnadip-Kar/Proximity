@@ -418,15 +418,18 @@ double liveScoreFromProbs(List<double> probs) {
 const double kLivenessMinSharpness = 10.0;
 
 /// Warn-only dim hint level for the enroll readout (mean 0-255 grayscale
-/// of the scored crop, same probe as the block bounds). Initial 60.0 from
-/// the 2026 field session (normal-room scored crops read bright 80-100, so
-/// 60 fires only when clearly darker than a normal pass). WARN ONLY: it
-/// appends DIM to the bottom-bar readout, never blocks or rejects — the
-/// fail-closed block stays at [kLivenessMinMeanBrightness] (12.0). Tune
-/// from field `bright=` logs; still-brightness rides phone auto-exposure
-/// (dark rooms get exposure-compensated), so this is guidance, not a
-/// darkness detector.
-const double kLivenessDimHintBrightness = 60.0;
+/// of the scored crop, same probe as the block bounds). Initial 70.0 from
+/// two field sessions on one phone: normal room scored 80-100, dark room
+/// scored 58-78 with dark passes at bright 58 (0.84) and 61 (0.87) — 70
+/// sits between the rooms. WARN ONLY: it appends DIM / drives the dark
+/// prompt, never blocks or rejects — the fail-closed block stays at
+/// [kLivenessMinMeanBrightness] (12.0). Freely tunable from field
+/// `bright=` logs (no blocking effect, no ROC needed); still-brightness
+/// rides phone auto-exposure (dark rooms get exposure-compensated), so
+/// this is guidance, not a darkness detector. Kept clear of genuine
+/// dark-skin-in-good-light means (well above 70 across a 2.7x-context
+/// crop) — and even a false fire only shows a hint, never a refusal.
+const double kLivenessDimHintBrightness = 70.0;
 
 /// Exposure bounds for the vitality pass (mean 0-255 grayscale of the SAME
 /// scored crop [livenessCropRect] hands the packer — see
