@@ -147,12 +147,12 @@ void main() {
     testWidgets('three dark probes promote the overlay prompt', (t) async {
       // Dark room, passing probes: buckets still fill (warn-only, never a
       // gate) but the overlay prompt becomes the move-to-light line so the
-      // holder cannot miss it.
-      final gate = FakePoseGate(readings: const [
-        PoseReading(yaw: 0, pitch: -15, roll: 0),
-        PoseReading(yaw: 0, pitch: 0, roll: 0),
-        PoseReading(yaw: 0, pitch: 15, roll: 0),
-      ]);
+      // holder cannot miss it. Doubled readings per slot: dark 0.95 parks
+      // for confirmation (below-margin shaping), so each slot needs two
+      // consecutive probes — three dark probes land by the third beat.
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      const centre = PoseReading(yaw: 0, pitch: 0, roll: 0);
+      final gate = FakePoseGate(readings: const [down, down, centre]);
       final ctl = await _keyReady();
       await t.pumpWidget(_harness(
         ctl: ctl,
@@ -212,6 +212,57 @@ void main() {
       await t.pump(const Duration(milliseconds: 1500));
       expect(find.textContaining('DIM'), findsOneWidget);
       expect(find.textContaining('0.95/0.70'), findsOneWidget);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+    testWidgets('marginal then failing never fills', (t) async {
+      // Confirmation shaping: a marginal first sighting (0.75) parks, the
+      // failing follow-up (0.40) clears the park — the bucket never fills
+      // on a lone lucky single, and the session just continues.
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      final gate = FakePoseGate(
+          readings: List<PoseReading?>.filled(12, down));
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.40, scriptedScores: [0.75]),
+      ));
+      await _openSession(t);
+      for (var i = 0; i < 12; i++) {
+        await t.pump(const Duration(milliseconds: 300));
+      }
+      expect(find.text('Save enrollment'), findsNothing);
+      expect(ctl.state.phase, EnrollPhase.keyReady);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('two marginals confirm and fill with the fresh still',
+        (t) async {
+      // Back-to-back marginal passes fill the bucket carrying the SECOND
+      // probe's score (the parked still is discarded, the fresh one kept).
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      final gate = FakePoseGate(
+          readings: List<PoseReading?>.filled(6, down));
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.78, scriptedScores: [0.75]),
+      ));
+      await _openSession(t);
+      for (var i = 0; i < 10; i++) {
+        await t.pump(const Duration(milliseconds: 300));
+      }
+      // Confirming probe's score rides the readout (not the parked one's).
+      expect(find.textContaining('0.78/0.70'), findsOneWidget);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);

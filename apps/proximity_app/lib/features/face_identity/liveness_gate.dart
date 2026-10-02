@@ -732,12 +732,17 @@ class FakeLivenessGate implements LivenessGate {
   /// tests drive the DIM warn path on scoring probes deterministically).
   /// Null (default) carries none — readout shows no brightness hint.
   double? scriptedBrightness;
+  /// Scripted per-call scores (shifted in order; falls back to [score]
+  /// when exhausted). Lets tests drive marginal→fail→marginal sequences
+  /// for the confirmation shaping without touching the bar.
+  List<double>? scriptedScores;
   FakeLivenessGate({
     this.score = 0.92,
     this.ver = kLivenessVer,
     this.throwOnDetect = false,
     this.throwReason = LivenessUnreadableReason.unknown,
     this.scriptedBrightness,
+    this.scriptedScores,
   });
 
   @override
@@ -748,8 +753,11 @@ class FakeLivenessGate implements LivenessGate {
           'Liveness check did not read clearly — adjust light and try again.',
           throwReason);
     }
+    final s = (scriptedScores != null && scriptedScores!.isNotEmpty)
+        ? scriptedScores!.removeAt(0)
+        : score;
     return LivenessResult(
-        score: score, ver: ver, meanBrightness: scriptedBrightness);
+        score: s, ver: ver, meanBrightness: scriptedBrightness);
   }
 }
 

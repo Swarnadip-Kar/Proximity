@@ -277,6 +277,24 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// The composer swaps the overlay prompt for the move-to-light line.
   bool get darkStall => _darkStreak >= 3;
 
+  /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
+  /// probes clearing the bar at or above [_confirmMargin] in non-dim
+  /// light accept immediately; anything weaker (below the margin) or
+  /// dark (below the warn hint) only PARKS its slot here and discards
+  /// the still. The bucket fills on the next consecutive passing probe
+  /// for the SAME slot (with the fresh still); any intervening
+  /// off-target / failing / unreadable probe clears the park. Dark-room
+  /// lucky singles (field: 0.70-0.84 sightings) no longer fill on their
+  /// own, while genuine bright passes (field 0.87-0.99) never park — good
+  /// light costs zero extra beats. Unknown brightness (tests-only fakes;
+  /// production always carries it) never counts as dim.
+  String? _confirmSlot;
+
+  /// Strong-pass line for [_confirmSlot]: at/above accepts immediately
+  /// (with non-dim light). Sits between the 0.70 bar and genuine field
+  /// passes; shaping only, never a ticket break.
+  static const _confirmMargin = 0.85;
+
   /// Beacon head angle (radians, east = 0, clockwise on screen). Advanced
   /// by the beacon timer; paint-only (never guidance state — buckets fill
   /// opportunistically regardless of where the beacon is).
@@ -519,7 +537,10 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// CURRENT guided target when the still passes it — then score vitality
   /// on the candidate BEFORE accepting it (same per-slot bar enrollFace
   /// enforces; non-live candidates are discarded silently and the loop
-  /// continues, so the holder never taps Recapture mid-flow). Targets walk
+  /// continues, so the holder never taps Recapture mid-flow). Marginal
+  /// passes (below [_confirmMargin]) and dark passes additionally need a
+  /// back-to-back confirmation for the same slot (see [_confirmSlot]) —
+  /// single lucky sightings in marginal light never fill alone. Targets walk
   /// [EnrollCaptureOrder.order] (bottom → centre → top → left → right),
   /// one angle at a time — never opportunistic: an off-target still is a
   /// quiet retry, and every successful pose read moves the wheel markers
@@ -626,6 +647,9 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             });
           }
           if (vitality < bar) {
+            // A miss clears any parked confirmation (confirmation needs
+            // back-to-back passes — a failure in between restarts it).
+            _confirmSlot = null;
             EnrollLog.face('slot $target vitality '
                 '${vitality < 0 ? 'unreadable' : vitality.toStringAsFixed(2)} '
                 '< ${bar.toStringAsFixed(2)} (silent, continuing)');
@@ -636,20 +660,38 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             // temp still is harmless (cache dir, overwritten next run).
             unawaited(File(still).delete().then((_) {}, onError: (_) {}));
           } else {
-            // The challenge this fill walks (logged before advancing, so
-            // the record names the acknowledged challenge, not the next).
-            final walked = _livenessPlan?.current;
-            setState(() {
-              _paths[faceEnrollSlots.indexOf(target)] = still;
-            });
-            _advanceTarget(target);
-            _livenessPlan?.acknowledgeFill();
-            EnrollLog.face(
-                'bucket $target filled ($_doneCount/${_paths.length})'
-                ' vitality=${vitality.toStringAsFixed(2)}'
-                '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
+            // Confirmation shaping (see [_confirmSlot]): strong bright
+            // passes accept at once; marginal/dark passes park and need
+            // the next consecutive pass for the same slot.
+            final dim = brightness != null &&
+                brightness.isFinite &&
+                brightness < kLivenessDimHintBrightness;
+            final strong = vitality >= _confirmMargin && !dim;
+            if (_confirmSlot != target && !strong) {
+              _confirmSlot = target;
+              EnrollLog.face('slot $target marginal vitality '
+                  '${vitality.toStringAsFixed(2)} '
+                  '(awaiting confirm — silent, continuing)');
+              unawaited(File(still).delete().then((_) {}, onError: (_) {}));
+            } else {
+              // The challenge this fill walks (logged before advancing, so
+              // the record names the acknowledged challenge, not the next).
+              final walked = _livenessPlan?.current;
+              _confirmSlot = null;
+              setState(() {
+                _paths[faceEnrollSlots.indexOf(target)] = still;
+              });
+              _advanceTarget(target);
+              _livenessPlan?.acknowledgeFill();
+              EnrollLog.face(
+                  'bucket $target filled ($_doneCount/${_paths.length})'
+                  ' vitality=${vitality.toStringAsFixed(2)}'
+                  '${walked == null ? '' : ' — challenge ${walked.name} walked'}');
+            }
           }
         } else {
+          // Looking away breaks consecutiveness (see [_confirmSlot]).
+          _confirmSlot = null;
           EnrollLog.face('still off-target $target (silent, continuing)');
         }
       }
@@ -893,6 +935,8 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _lastQuality = null;
     _lastBrightness = null;
     _darkStreak = 0;
+    // A parked confirmation names the old target — recapture restarts it.
+    _confirmSlot = null;
     _finished = false;
     if (mounted) setState(() => _saving = false);
     _loopStarted = false;
