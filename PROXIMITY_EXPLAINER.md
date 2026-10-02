@@ -259,10 +259,10 @@ Read each block the same way: **Does → Why this one → Good → Bad → Preve
 
 ### 4.16 `flutter_secure_storage` (vault on the phone)
 
-- **Does:** Hardware-backed vault (biometric Class-3 on Android, this-device-only on iOS, backups disabled) for keys, install ID, session state.
-- **Why:** OS keystores beat any app-level hiding.
-- **Good:** Survives restarts; clones/dual-apps get separate IDs (one enrollment per install enforced both client- and server-side).
-- **Bad:** History/outbox JSON stays in plaintext prefs (rooted-read residual — the seal key itself never lives there).
+- **Does:** Hardware-backed vault (prompt-free Keystore/Keychain, this-device-only, backups disabled) for keys, install ID, session state. Explicit user presence (`local_auth`, biometric-or-PIN) fires only at enrollment Save — never per-read, on any device.
+- **Why:** OS keystores beat any app-level hiding; and auth-bound reads crash KeyStore2-strict phones (2026-10-02 field FATAL), so gating lives at Save + in the HW signing key, not in storage reads.
+- **Good:** Survives restarts; clones/dual-apps get separate IDs (one enrollment per install enforced both client- and server-side); identical behavior on every phone (no biometric hardware needed to read).
+- **Bad:** History/outbox JSON stays in plaintext prefs (rooted-read residual — the seal key itself never lives there). Enrollment metadata is at-rest readable on an unlocked device; signing still needs the HW key + face.
 - **Prevents:** Backup-restore identity theft; casual file-copy clones.
 
 ### 4.17 `flutter_riverpod` (state plumbing)

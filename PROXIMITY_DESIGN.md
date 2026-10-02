@@ -764,8 +764,9 @@ Key packages: `universal_ble` (scan/connect all incl. Linux/Win), BlueZ
 `face_verification` plugin (bundled FaceNet, offline — replaces the
 vendored BlazeFace/EdgeFace stack on every OS; web gets throwing stubs
 — records only), `flutter_secure_storage`,
-`permission_handler`, `riverpod` (no `local_auth` — OS biometric gate is
-future work). The web build compiles the
+`permission_handler`, `local_auth` (explicit biometric-or-credential
+presence at enrollment Save only — never per-read), `riverpod`.
+The web build compiles the
 same closure through conditional exports (transport client/discovery/
 server, BlueZ shim, face plugin stub, file saving, interface enumeration)
 plus `platformx` OS flags; `flutter build web` guards it. History is JSON
