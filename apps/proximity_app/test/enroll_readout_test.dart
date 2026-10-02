@@ -268,5 +268,54 @@ void main() {
       await _drain(t);
       expect(t.takeException(), isNull);
     });
+
+    testWidgets('readout shows numeric brightness when known', (t) async {
+      // The holder sees the measured number (same probe the native gate
+      // logs as `bright=`), not just the DIM verdict.
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      final gate = FakePoseGate(
+          readings: List<PoseReading?>.filled(4, down));
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(
+            score: 0.95, scriptedBrightness: 139.0),
+      ));
+      await _openSession(t);
+      await t.pump(const Duration(milliseconds: 1500));
+      expect(find.textContaining('B139'), findsOneWidget);
+      expect(find.textContaining('DIM'), findsNothing);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('fifteen wasted beats promote the stall nudge', (t) async {
+      // The reported dark-room spin: pose never reads the target, no probe
+      // ever runs, brightness hints cannot fire — after ~10s with no fill
+      // the overlay prompt becomes the stall nudge instead of silence.
+      const centre = PoseReading(yaw: 0, pitch: 0, roll: 0);
+      final gate = FakePoseGate(
+          readings: List<PoseReading?>.filled(18, centre));
+      final ctl = await _keyReady();
+      await t.pumpWidget(_harness(
+        ctl: ctl,
+        gate: gate,
+        sessionLiveness: FakeLivenessGate(score: 0.95),
+      ));
+      await _openSession(t);
+      final stall = find.text(
+          'No good capture yet — face the lens in brighter light');
+      for (var i = 0; i < 60 && stall.evaluate().isEmpty; i++) {
+        await t.pump(const Duration(milliseconds: 200));
+      }
+      expect(stall, findsOneWidget);
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await _drain(t);
+      expect(t.takeException(), isNull);
+    });
   });
 }

@@ -421,10 +421,12 @@ void main() {
       expect(screenLib().contains('previewMessage'), isTrue);
       expect(screenLib().contains('EnrollCaptureBlocked'), isTrue);
       // The composer wires the per-target guided prompt into the preview,
-      // overridden by the move-to-light line on a dark stall (warn-only).
+      // overridden by the move-to-light line on a dark stall and the
+      // stall nudge after wasted beats (both warn-only).
       expect(screenLib().contains('enrollTargetPrompt(targetSlot)'), isTrue);
       expect(screenLib().contains('Too dark — move to brighter light'),
           isTrue);
+      expect(screenLib().contains('No good capture yet'), isTrue);
     });
 
     test('exactly the documented breakup deltas, nothing else', () {

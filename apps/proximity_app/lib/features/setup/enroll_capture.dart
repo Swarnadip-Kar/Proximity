@@ -220,11 +220,15 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
               // Dark stall (3 consecutive dark probes): the overlay prompt
               // becomes the move-to-light line — a dark room needs an
               // unmissable instruction, not the angle guidance (which
-              // returns as soon as a bright probe lands). Bright/unknown
-              // sessions never take this branch (see darkStall).
+              // returns as soon as a bright probe lands). Fill stall (15
+              // wasted beats, e.g. pose never reading in the dark): the
+              // nudge below — spinning with zero guidance was the reported
+              // failure. Bright/unknown sessions never take either branch.
               statusLine: darkStall
                   ? 'Too dark — move to brighter light'
-                  : enrollTargetPrompt(targetSlot),
+                  : (fillStall
+                      ? 'No good capture yet — face the lens in brighter light'
+                      : enrollTargetPrompt(targetSlot)),
               sweepAngle: reduced ? null : sweepValue,
               saveError: saveError,
               saveMessage: st.message,

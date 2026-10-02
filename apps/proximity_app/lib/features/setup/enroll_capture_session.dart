@@ -277,6 +277,24 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// The composer swaps the overlay prompt for the move-to-light line.
   bool get darkStall => _darkStreak >= 3;
 
+  /// Beats since the last bucket fill (any wasted beat — off-target,
+  /// unreadable, failing — increments it; a fill resets it). Reaches
+  /// [fillStall] at 15 (~10s of spinning), which promotes the overlay
+  /// prompt to the stall nudge. This is the reported dark-room failure:
+  /// dozens of wasted beats with zero guidance, where no scored probe
+  /// ever runs so brightness-based hints cannot fire. Presentation only,
+  /// never a gate — a slow-but-fine user just sees a nudge line.
+  int _staleBeats = 0;
+
+  /// Beat budget with no fill before the stall nudge (~10s at the steady
+  /// 600ms cadence). Normal enrollments fill every 1-3 beats, so this
+  /// never fires for a cooperating holder in workable conditions.
+  static const _stallBeats = 15;
+
+  /// True once [_staleBeats] beats passed with no bucket fill. The
+  /// composer swaps the overlay prompt for the stall nudge.
+  bool get fillStall => _staleBeats >= _stallBeats;
+
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
   /// probes clearing the bar at or above [_confirmMargin] in non-dim
   /// light accept immediately; anything weaker (below the margin) or
@@ -554,6 +572,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     while (!_done && !_finished && !_failed) {
       if (_doneCount == _paths.length) break;
       final target = _currentTarget;
+      var filledThisBeat = false;
       final still = await _captureOne();
       if (_done || _finished || _failed) return;
       if (still != null) {
@@ -678,8 +697,10 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
               // the record names the acknowledged challenge, not the next).
               final walked = _livenessPlan?.current;
               _confirmSlot = null;
+              filledThisBeat = true;
               setState(() {
                 _paths[faceEnrollSlots.indexOf(target)] = still;
+                _staleBeats = 0;
               });
               _advanceTarget(target);
               _livenessPlan?.acknowledgeFill();
@@ -705,6 +726,13 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         await _saveAll();
         return;
       }
+      // Stale-beat accounting for the stall nudge (see [fillStall]): a
+      // beat that filled nothing counts; a fill beat resets above and is
+      // excluded here. setState per wasted beat matches the loop's
+      // existing paint cost (the beacon already repaints far more often)
+      // and keeps the prompt switch responsive under reduced-motion too
+      // (no sweep timer there to repaint for us).
+      if (!filledThisBeat && mounted) setState(() => _staleBeats++);
       await Future.delayed(_frameBeat);
     }
   }
@@ -830,17 +858,20 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
-  /// judged it + guided target (e.g. `LIVE 0.93/0.70 · DOWN`, or
-  /// `LIVE —/0.70 · DOWN · DIM` after an unreadable dim probe, or
-  /// `LIVE 0.99/0.70 · DOWN · DIM` for a passing-but-dark probe).
-  /// Placeholders until the first probe/read lands. No match score exists
-  /// mid-walk (the matcher first runs at the terminal self-check — its
-  /// boundary score lands on the result screen), so this line never
-  /// invents one. The DIM/BLURRY/NO FACE suffix is warn-only presentation
-  /// — it never gates anything, and file/timeout/unknown failures stay
-  /// silent (no wrong hint). The scored-probe DIM comes from
-  /// [kLivenessDimHintBrightness] (warn-only); the unreadable-probe DIM
-  /// comes from the throw reason at the 12.0 block floor.
+  /// judged it + guided target + measured crop brightness (e.g.
+  /// `LIVE 0.93/0.70 · DOWN · B139`, or `LIVE —/0.70 · DOWN · DIM` after
+  /// an unreadable dim probe, or `LIVE 0.99/0.70 · DOWN · B58 · DIM` for
+  /// a passing-but-dark probe). Placeholders until the first probe/read
+  /// lands. No match score exists mid-walk (the matcher first runs at the
+  /// terminal self-check — its boundary score lands on the result
+  /// screen), so this line never invents one. The DIM/BLURRY/NO FACE
+  /// suffix is warn-only presentation — it never gates anything, and
+  /// file/timeout/unknown failures stay silent (no wrong hint). The
+  /// scored-probe DIM comes from [kLivenessDimHintBrightness] (warn-only);
+  /// the unreadable-probe DIM comes from the throw reason at the 12.0
+  /// block floor. The `B<n>` token is the raw 0-255 crop mean (same probe
+  /// the native gate logs as `bright=`), shown whenever a scored probe
+  /// carried it — the holder sees the number, not just the verdict.
   String get liveReadout {
     final v = _lastVitality;
     final score = v == null ? '—' : v.toStringAsFixed(2);
@@ -848,20 +879,25 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         (_currentTarget == 'centre'
             ? kLivenessThreshold
             : kEnrollSideLivenessThreshold);
+    final bright = _lastBrightness;
+    final bTok = bright != null && bright.isFinite
+        ? ' · B${bright.round()}'
+        : '';
     String? hint;
     if (v == null) {
       hint = LivenessUnreadable.shortLabel(
           _lastQuality ?? LivenessUnreadableReason.unknown);
     } else {
-      final b = _lastBrightness;
-      if (b != null && b.isFinite && b < kLivenessDimHintBrightness) {
+      if (bright != null &&
+          bright.isFinite &&
+          bright < kLivenessDimHintBrightness) {
         hint = 'DIM';
       }
     }
     final target = _currentTarget.toUpperCase();
     return hint == null
-        ? 'LIVE $score/${bar.toStringAsFixed(2)} · $target'
-        : 'LIVE $score/${bar.toStringAsFixed(2)} · $target · $hint';
+        ? 'LIVE $score/${bar.toStringAsFixed(2)} · $target$bTok'
+        : 'LIVE $score/${bar.toStringAsFixed(2)} · $target$bTok · $hint';
   }
 
   /// Slot count (== [faceEnrollSlots.length]; drives progress + logs).
