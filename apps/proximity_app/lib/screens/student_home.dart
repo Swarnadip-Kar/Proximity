@@ -91,6 +91,22 @@ bool mayAutoFaceFor({String? markedDisplay, required String display}) {
   return true;
 }
 
+/// Browse-ordinal refresh rule for one gated /window probe (pure):
+/// cumulative Class N when the host serves it, else the live round —
+/// the same number the prof roster header shows. 0/unknown never
+/// refreshes (the caller keeps the previous number, never writes 0),
+/// and unreachable probes never refresh (a dead tick must not clobber
+/// a known number; the anonymous-clear stays the clearer).
+int? gatedProbeClassNoForTile({
+  required bool reachable,
+  required int classNo,
+  required int windowNo,
+}) {
+  if (!reachable) return null;
+  final n = classNo > 0 ? classNo : windowNo;
+  return n > 0 ? n : null;
+}
+
 class StudentHomeScreen extends ConsumerStatefulWidget {
   const StudentHomeScreen({super.key});
 
@@ -187,8 +203,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // round — the same number the prof roster header shows), not the raw
   // round: the server sends `classNo` on open AND idle windows (legacy
   // hosts fall back to `windowNo`). Refreshed on every backfill while
-  // reachable, even when the host serves no identity (anonymous) — the
-  // round number never depends on the email.
+  // reachable (even anonymous — the round never depends on the email)
+  // AND on every reachable waiting-room poll (the backfill alone is
+  // 15s-throttled and misses slow enterprise links; the 2s room poll
+  // already succeeds there with its 4s budget).
   final Map<String, int> _windowNoByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
@@ -1615,6 +1633,23 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           _roomDisplay = probe.display.trim();
         }
         if (probe.classLabel.isNotEmpty) _roomClass = probe.classLabel;
+        // Class-number reliability: feed the browse ordinal map from the
+        // 2s room poll too (not just the 15s backfill) — this poll
+        // already succeeds on slow enterprise links with its 4s budget
+        // and holds across 429s. Reachable-known only (see
+        // gatedProbeClassNoForTile); the anonymous-clear above stays the
+        // clearer, so identity-less rooms never resurrect a number here
+        // (the backfill keeps its anonymous-tolerant browse behavior).
+        if (email.isNotEmpty) {
+          final tileNo = gatedProbeClassNoForTile(
+            reachable: probe.reachable,
+            classNo: probe.classNo,
+            windowNo: probe.windowNo,
+          );
+          if (tileNo != null) {
+            _windowNoByHost['${target.host}:${target.port}'] = tileNo;
+          }
+        }
         if (email.isNotEmpty) _roomProfEmail = email;
         if (probe.profPhoto.trim().isNotEmpty) {
           _roomProfPhoto = probe.profPhoto.trim();
