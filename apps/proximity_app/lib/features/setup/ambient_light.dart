@@ -107,3 +107,37 @@ class FakeAmbientLight implements AmbientLight {
 final enrollAmbientLightProvider = Provider<AmbientLight>((ref) {
   return const ChannelAmbientLight();
 });
+
+/// Preview-frame pixel layout for [meanFrameBrightness].
+enum PreviewFrameFormat {
+  /// Single luminance plane (Android YUV420 `planes[0]`).
+  y,
+
+  /// 4 bytes per pixel (iOS BGRA8888 `planes[0]`, byte order B,G,R,A).
+  bgra,
+}
+
+/// Mean brightness 0-255 of a throttled preview frame, sampled with stride
+/// so each call costs well under a millisecond at ~3Hz. Y is luminance
+/// already; BGRA averages Rec.601 luma per sampled pixel. Same 0-255 scale
+/// as the liveness crop mean, so it feeds the same warn-only mapping —
+/// one scale, one threshold, both platforms. Empty input reads NaN
+/// (no evidence, never darkness). Pure for unit tests.
+double meanFrameBrightness(Uint8List bytes, PreviewFrameFormat format) {
+  if (bytes.isEmpty) return double.nan;
+  var sum = 0.0;
+  var n = 0;
+  if (format == PreviewFrameFormat.y) {
+    for (var i = 0; i < bytes.length; i += 16) {
+      sum += bytes[i];
+      n++;
+    }
+  } else {
+    for (var i = 0; i + 2 < bytes.length; i += 64) {
+      sum += 0.299 * bytes[i + 2] + 0.587 * bytes[i + 1] + 0.114 * bytes[i];
+      n++;
+    }
+  }
+  if (n == 0) return double.nan;
+  return (sum / n).clamp(0.0, 255.0);
+}

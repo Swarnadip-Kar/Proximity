@@ -74,6 +74,17 @@ abstract class EnrollSessionCamera {
   /// failure/blank — the loop logs it and takes the next still.
   Future<String> captureStill();
 
+  /// Starts throttled preview-frame brightness sampling: one downsampled
+  /// mean per ~300ms ([meanFrameBrightness] — sub-millisecond per sample).
+  /// Fail-soft: throws when the device refuses (unsupported concurrency);
+  /// the driver falls back to capture brightness. Where a still-during-
+  /// stream capture is refused, the impl stops the stream and retries the
+  /// still once, so the session never strands.
+  Future<void> startPreviewBrightness(void Function(double b) onBrightness);
+
+  /// Stops sampling (idempotent).
+  Future<void> stopPreviewBrightness();
+
   /// Closes the session camera (idempotent; safe to re-[open] after).
   Future<void> close();
 }
@@ -81,6 +92,11 @@ abstract class EnrollSessionCamera {
 class RealEnrollSessionCamera implements EnrollSessionCamera {
   CameraController? _ctl;
   bool _closed = false;
+
+  /// Preview sampler state (see [startPreviewBrightness]): last emitted
+  /// sample for the ~300ms throttle + whether the stream is up.
+  DateTime? _lastSample;
+  bool _streamOn = false;
 
   @override
   CameraController? get controller {
@@ -128,18 +144,85 @@ class RealEnrollSessionCamera implements EnrollSessionCamera {
     if (_closed || ctl == null || !ctl.value.isInitialized) {
       throw StateError('Camera is not ready — try again.');
     }
-    final shot = await ctl.takePicture();
-    // Blank-frame guard: a capture that produced no path never reaches the
-    // pose gate or the plugin (empty bytes crash native below the catch).
-    if (shot.path.trim().isEmpty) {
-      throw StateError('Capture produced no image — try again.');
+    Future<String> take() async {
+      final shot = await ctl.takePicture();
+      // Blank-frame guard: a capture that produced no path never reaches
+      // the pose gate or the plugin (empty bytes crash native below).
+      if (shot.path.trim().isEmpty) {
+        throw StateError('Capture produced no image — try again.');
+      }
+      return shot.path;
     }
-    return shot.path;
+    try {
+      return await take();
+    } on CameraException {
+      // Still-during-stream refused on this device: preview sampling is
+      // unsupported here — stop it for the session and take the still on
+      // the proven path instead of failing every beat.
+      if (!_streamOn) rethrow;
+      await stopPreviewBrightness();
+      return await take();
+    }
+  }
+
+  @override
+  Future<void> startPreviewBrightness(
+      void Function(double b) onBrightness) async {
+    final ctl = _ctl;
+    if (_closed || ctl == null || !ctl.value.isInitialized || _streamOn) {
+      return;
+    }
+    try {
+      await ctl.startImageStream((img) {
+        if (_closed || !_streamOn) return;
+        final now = DateTime.now();
+        final last = _lastSample;
+        if (last != null &&
+            now.difference(last).inMilliseconds < 300) {
+          return;
+        }
+        _lastSample = now;
+        double b;
+        try {
+          if (img.format.group == ImageFormatGroup.yuv420 &&
+              img.planes.isNotEmpty) {
+            b = meanFrameBrightness(
+                img.planes[0].bytes, PreviewFrameFormat.y);
+          } else if (img.format.group == ImageFormatGroup.bgra8888 &&
+              img.planes.isNotEmpty) {
+            b = meanFrameBrightness(
+                img.planes[0].bytes, PreviewFrameFormat.bgra);
+          } else {
+            return;
+          }
+        } catch (_) {
+          return;
+        }
+        if (!b.isFinite) return;
+        try {
+          onBrightness(b);
+        } catch (_) {}
+      });
+      _streamOn = true;
+    } catch (_) {
+      _streamOn = false;
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> stopPreviewBrightness() async {
+    if (!_streamOn) return;
+    _streamOn = false;
+    try {
+      await _ctl?.stopImageStream();
+    } catch (_) {}
   }
 
   @override
   Future<void> close() async {
     _closed = true;
+    await stopPreviewBrightness();
     final ctl = _ctl;
     _ctl = null;
     await ctl?.dispose();
@@ -152,15 +235,44 @@ class RealEnrollSessionCamera implements EnrollSessionCamera {
 class FakeEnrollSessionCamera implements EnrollSessionCamera {
   final List<Object> _script;
   final bool failOpen;
+
+  /// Scripted preview brightness values, replayed once on
+  /// [startPreviewBrightness] (empty = no frames, fallback path).
+  final List<double> previewBrightness;
+
+  /// When true, [startPreviewBrightness] throws (unsupported device).
+  final bool failPreview;
+  int previewStarts = 0;
+  int previewStops = 0;
   int openCount = 0;
   int closeCount = 0;
   int captures = 0;
   FakeEnrollSessionCamera(
-      [List<Object> script = const [], this.failOpen = false])
+      [List<Object> script = const [],
+      this.failOpen = false,
+      this.previewBrightness = const [],
+      this.failPreview = false])
       : _script = List.of(script);
 
   @override
   CameraController? get controller => null;
+
+  @override
+  Future<void> startPreviewBrightness(
+      void Function(double b) onBrightness) async {
+    previewStarts++;
+    if (failPreview) throw StateError('Preview sampling unsupported.');
+    unawaited(Future(() {
+      for (final b in previewBrightness) {
+        onBrightness(b);
+      }
+    }));
+  }
+
+  @override
+  Future<void> stopPreviewBrightness() async {
+    previewStops++;
+  }
 
   @override
   Future<void> open() async {
@@ -450,6 +562,43 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _luxSub = null;
   }
 
+  /// Preview-frame sampler running (set once the camera accepts the
+  /// stream; never reset mid-session — the stream survives recapture
+  /// restarts, stopped only on save/dispose with everything else).
+  bool _previewStreamOn = false;
+
+  /// Starts preview-frame brightness sampling (idempotent). Frames are
+  /// full-frame means (face + background — coarser than the face-crop
+  /// probe, same 0-255 scale) that refresh [_lastBrightness] at ~3Hz, so
+  /// the ring, the readout B token, and the warn-only DIM all track the
+  /// room live on devices with no light sensor (iOS always). Unsupported
+  /// devices throw out of start — caught here, capture path carries on.
+  /// Presentation only, never a gate: vitality, streaks, and confirms
+  /// still come from scored probes alone.
+  void _startPreview() {
+    if (_previewStreamOn) return;
+    final cam = _camera;
+    if (cam == null) return;
+    unawaited(cam.startPreviewBrightness((b) {
+      if (_done || _finished || _failed || !mounted) return;
+      if (!b.isFinite) return;
+      setState(() {
+        _lastBrightness = b;
+        _brightBeat = _beats;
+        _flashHeld = _levelForBrightness(b);
+        _flashShown =
+            _stepFlash(_flashShown, _flashTarget(), snap: _snapFlash());
+      });
+    }).then((_) {
+      _previewStreamOn = true;
+    }, onError: (_) {}));
+  }
+
+  void _stopPreview() {
+    _previewStreamOn = false;
+    unawaited(_camera?.stopPreviewBrightness());
+  }
+
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
   /// probes clearing the bar at or above [_confirmMargin] in non-dim
   /// light accept immediately; anything weaker (below the margin) or
@@ -674,9 +823,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   void _startLoop() {
     if (_loopStarted) return;
     _loopStarted = true;
-    // Live room feed rides every loop start (open + slot-recapture restart
-    // alike — the save path stops it, so the restart must re-arm it).
+    // Live room feeds ride every loop start (open + slot-recapture
+    // restart alike — the save path stops them, so the restart re-arms).
+    // Order: sensor first (pre-AE truth where available), preview frames
+    // fill the same brightness channel live everywhere else.
     _startAmbient();
+    _startPreview();
     // Marker easing follows the motion setting (the sweep timer that
     // repaints between beats never starts under reduced motion, so eased
     // getters would lag a full beat there — jump instead).
@@ -711,6 +863,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
     _sweepTimer?.cancel();
     _sweepTimer = null;
     _stopAmbient();
+    _stopPreview();
   }
 
   /// The no-tap driver: take a still, read its pose ONCE, and fill the

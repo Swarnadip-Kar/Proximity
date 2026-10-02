@@ -160,7 +160,8 @@ class _EnrollCaptureScreenState extends ConsumerState<EnrollCaptureScreen>
             : 'Generate the device key on the previous screen first — the face capture seals to it.';
     // Flash assist (dark room): graded ring-light level + window
     // brightness via the sync shell below (restored after). Live room
-    // reading when a sensor reports (instant), capture-brightness
+    // evidence where available (sensor, else preview frames — same
+    // mapping, same contract, both platforms), capture-brightness
     // fallback otherwise — pure derivation, no new timers here.
     final assist = flashAssist;
     final level = flashLevel;

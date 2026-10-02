@@ -2,6 +2,7 @@
 // provider default, and session wiring (dark room glows + maxes fast with
 // no capture beats; bright room stays quiet; readout always carries B).
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -91,6 +92,31 @@ void main() {
     });
   });
 
+  group('preview-frame brightness', () {
+    test('Y plane mean reads dark and bright', () {
+      final dark = Uint8List.fromList(List.filled(1600, 12));
+      final bright = Uint8List.fromList(List.filled(1600, 230));
+      expect(meanFrameBrightness(dark, PreviewFrameFormat.y), 12.0);
+      expect(meanFrameBrightness(bright, PreviewFrameFormat.y), 230.0);
+    });
+
+    test('BGRA luma reads white and black pixels', () {
+      // Byte order B,G,R,A: white pixel + black pixel.
+      final bytes = Uint8List.fromList([
+        for (var i = 0; i < 16; i++) ...[255, 255, 255, 255],
+        for (var i = 0; i < 16; i++) ...[0, 0, 0, 255],
+      ]);
+      final level = meanFrameBrightness(bytes, PreviewFrameFormat.bgra);
+      expect(level, greaterThan(100));
+      expect(level, lessThan(160));
+    });
+
+    test('empty input is no evidence, never darkness', () {
+      expect(meanFrameBrightness(Uint8List(0), PreviewFrameFormat.y), isNaN);
+      expect(luxToLevel(double.nan), 0.0);
+    });
+  });
+
   group('session tracks the live room', () {
     Future<EnrollmentController> keyReady() async {
       final ctl = EnrollmentController(
@@ -109,15 +135,18 @@ void main() {
     Widget harness(
             {required EnrollmentController ctl,
             AmbientLight? ambient,
+            EnrollSessionCamera? camera,
+            PoseGate? gate,
+            LivenessGate? sessionLiveness,
             ScreenBrightnessControl? brightness}) =>
         ProviderScope(
           overrides: [
             enrollmentControllerProvider.overrideWith((ref) => ctl),
             enrollSessionCameraProvider
-                .overrideWithValue(FakeEnrollSessionCamera()),
-            poseGateProvider.overrideWithValue(FakePoseGate()),
-            enrollSessionLivenessProvider
-                .overrideWithValue(FakeLivenessGate()),
+                .overrideWithValue(camera ?? FakeEnrollSessionCamera()),
+            poseGateProvider.overrideWithValue(gate ?? FakePoseGate()),
+            enrollSessionLivenessProvider.overrideWithValue(
+                sessionLiveness ?? FakeLivenessGate()),
             enrollScreenBrightnessProvider.overrideWithValue(
                 brightness ?? FakeScreenBrightnessControl()),
             enrollAmbientLightProvider
@@ -241,6 +270,79 @@ void main() {
       expect(mid, greaterThan(first));
       expect(last, greaterThan(0.5));
       expect(last, greaterThan(mid));
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('dark preview frames glow with no sensor and no probes',
+        (t) async {
+      // iOS path: no light-sensor side (empty ambient) and the pose gate
+      // never reads, so no probe ever runs — preview frames alone (B12)
+      // grade the ring to (70-12)/70 ≈ 0.83 and max the window on the
+      // first frame. Faceless throughout (no fills, no completion race).
+      final ctl = await keyReady();
+      final brightness = FakeScreenBrightnessControl(scriptedCurrent: 0.35);
+      final blind =
+          FakePoseGate(readings: List<PoseReading?>.filled(40, null));
+      await t.pumpWidget(harness(
+        ctl: ctl,
+        camera: FakeEnrollSessionCamera([], false, [12]),
+        gate: blind,
+        brightness: brightness,
+      ));
+      await openSession(t);
+      await t.pump(const Duration(milliseconds: 800));
+      expect(ringOf(t), moreOrLessEquals(0.83, epsilon: 0.1));
+      expect(brightness.sets, [1.0]);
+      expect(readoutOf(t), contains('B12'));
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(brightness.sets, [1.0, 0.35]);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('bright preview frames stay quiet with a live B token',
+        (t) async {
+      final ctl = await keyReady();
+      final brightness = FakeScreenBrightnessControl(scriptedCurrent: 0.5);
+      final blind =
+          FakePoseGate(readings: List<PoseReading?>.filled(40, null));
+      await t.pumpWidget(harness(
+        ctl: ctl,
+        camera: FakeEnrollSessionCamera([], false, [200]),
+        gate: blind,
+        brightness: brightness,
+      ));
+      await openSession(t);
+      await t.pump(const Duration(milliseconds: 1500));
+      expect(ringOf(t), 0.0);
+      expect(brightness.sets, isEmpty);
+      expect(readoutOf(t), contains('B200'));
+      expect(t.takeException(), isNull);
+      await t.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await drain(t);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('refused sampler falls back to capture brightness',
+        (t) async {
+      // Sampler throws (unsupported concurrency): scored-dark probes still
+      // grade the ring to (70-45)/70 ≈ 0.36 through the capture path.
+      const down = PoseReading(yaw: 0, pitch: -15, roll: 0);
+      final ctl = await keyReady();
+      await t.pumpWidget(harness(
+        ctl: ctl,
+        camera: FakeEnrollSessionCamera([], false, [], true),
+        gate: FakePoseGate(readings: List<PoseReading?>.filled(6, down)),
+        sessionLiveness:
+            FakeLivenessGate(score: 0.95, scriptedBrightness: 45.0),
+      ));
+      await openSession(t);
+      await t.pump(const Duration(milliseconds: 3000));
+      expect(ringOf(t), moreOrLessEquals(0.36, epsilon: 0.08));
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);
