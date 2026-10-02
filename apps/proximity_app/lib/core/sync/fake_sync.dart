@@ -115,6 +115,11 @@ class FakeCloudSync implements CloudSync {
   /// would before a rules deploy.
   bool denyIdUpdate = false;
 
+  /// Test seam for rules-denied directory reads: when true,
+  /// [searchStudents] throws like production rules would on deployments
+  /// without directory read access.
+  bool denyDirectorySearch = false;
+
   @override
   Future<void> updateStudentRoll(
       {required String emailLower, required String newRoll}) async {
@@ -184,6 +189,9 @@ class FakeCloudSync implements CloudSync {
       int limit = 10,
       String org = ''}) async {
     _needOnline();
+    if (denyDirectorySearch) {
+      throw StateError(cloudRulesHint('directory search'));
+    }
     final (email: eq, roll: rq, name: nq) = normalizeSearchPrefixes(
         emailPrefix: emailPrefix,
         rollPrefix: rollPrefix,
