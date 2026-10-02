@@ -84,21 +84,34 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
   bool _busy = false;
 
   Future<StoredEnrollment?> _enrollment() async {
+    // Dismissal/transient rethrown (the section renders Retry); anything
+    // else is genuinely unreadable-as-empty only for unexpected bugs —
+    // those stay null (offline-looking) rather than parking the flow.
     try {
       return await ref.read(deviceStoreProvider).readEnrollment();
+    } on SecureStoreDismissed {
+      rethrow;
+    } on SecureStoreUnavailable {
+      rethrow;
     } catch (_) {
       return null;
     }
   }
 
   /// Move status for the signed-in Gmail, or null when it cannot be
-  /// determined (offline / unavailable / signed out). Never throws.
+  /// determined (offline / unavailable / signed out). Dismissal/transient
+  /// store failures rethrow (the section renders Retry); unexpected
+  /// failures stay null. Never throws otherwise.
   Future<StudentGate?> _gate(String? email) async {
     if (email == null || email.isEmpty || !canUseFace()) return null;
     try {
       final cloud = ref.read(cloudSyncProvider);
       if (!cloud.available || !(await cloud.isOnline())) return null;
       return await entryStudentGate(ref, email);
+    } on SecureStoreDismissed {
+      rethrow;
+    } on SecureStoreUnavailable {
+      rethrow;
     } catch (_) {
       return null;
     }
@@ -157,8 +170,17 @@ class _DeviceIdentityContentState extends ConsumerState<DeviceIdentityContent> {
         // device store + cloud claim + face/device trust stack,
         // none of which exists on web/desktop records builds
         if (canUseFace()) ...[
-          DeviceKeySection(loadEnrollment: _enrollment),
-          DeviceMoveSection(email: acct?.email, loadGate: _gate),
+          DeviceKeySection(
+            loadEnrollment: _enrollment,
+            account: acct,
+            linkedGmail: linked?.gmail,
+          ),
+          DeviceMoveSection(
+            email: acct?.email,
+            loadGate: _gate,
+            unlockAccount: acct,
+            linkedGmail: linked?.gmail,
+          ),
           const SizedBox(height: ProxSpacing.sm),
           const Divider(),
           const DeviceOfflineNote(),

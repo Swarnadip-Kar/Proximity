@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth.dart';
 import '../../core/cloud_sync.dart';
@@ -72,10 +73,74 @@ class DeviceAccountSection extends StatelessWidget {
 }
 
 /// This-device key block: enrollment badge or the no-key note.
-class DeviceKeySection extends StatelessWidget {
+///
+/// Memoized: the future is created once per account (not per build) — an
+/// inline `future: load()` would fire a new biometric-gated read (hence a
+/// new prompt) on every parent rebuild. A locked store (dismissed /
+/// transient failure) renders an explicit Retry that runs the
+/// user-initiated unlock; success flips the linked identity, which is
+/// part of the memo key and refreshes the read from the warmed cache
+/// with no new prompt. Genuine absence still renders the no-key note.
+class DeviceKeySection extends ConsumerStatefulWidget {
   final Future<StoredEnrollment?> Function() loadEnrollment;
 
-  const DeviceKeySection({super.key, required this.loadEnrollment});
+  /// Signed-in account for the explicit unlock retry (null hides Retry).
+  final SignedAccount? account;
+
+  /// Linked-identity Gmail: part of the memo key, so an unlock performed
+  /// anywhere refreshes this read (cache-warmed, prompt-free).
+  final String? linkedGmail;
+
+  const DeviceKeySection(
+      {super.key,
+      required this.loadEnrollment,
+      this.account,
+      this.linkedGmail});
+
+  @override
+  ConsumerState<DeviceKeySection> createState() => _DeviceKeySectionState();
+}
+
+class _DeviceKeySectionState extends ConsumerState<DeviceKeySection> {
+  late Future<StoredEnrollment?> _future;
+  late String _memoKey;
+  var _retryBusy = false;
+
+  String _key() =>
+      '${widget.account?.email.trim().toLowerCase() ?? ''}|${widget.linkedGmail?.trim().toLowerCase() ?? ''}';
+
+  @override
+  void initState() {
+    super.initState();
+    _memoKey = _key();
+    _future = widget.loadEnrollment();
+  }
+
+  @override
+  void didUpdateWidget(DeviceKeySection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final now = _key();
+    if (now != _memoKey) {
+      _memoKey = now;
+      _future = widget.loadEnrollment();
+    }
+  }
+
+  Future<void> _retry() async {
+    final acct = widget.account;
+    if (acct == null || _retryBusy) return;
+    setState(() => _retryBusy = true);
+    try {
+      // Explicit unlock: bypasses the dismissal anti-hammer cooldown and
+      // re-prompts with context (a plain re-read here would silently
+      // replay the dismissal). Success sets linked → memo key flips →
+      // refresh from the warmed cache.
+      await attemptUnlockIdentity(ref, acct, userInitiated: true);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _retryBusy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,10 +150,28 @@ class DeviceKeySection extends StatelessWidget {
       children: [
         const ProxSectionHeader(title: 'This device'),
         FutureBuilder<StoredEnrollment?>(
-          future: loadEnrollment(),
+          future: _future,
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
+            }
+            if (snap.hasError) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const ProxSyncNote(
+                    'Couldn’t check the enrollment on this device.',
+                  ),
+                  const SizedBox(height: ProxSpacing.sm),
+                  TextButton.icon(
+                    icon: const Icon(Icons.lock_open_outlined),
+                    label: Text(_retryBusy ? 'Checking…' : 'Retry unlock'),
+                    onPressed:
+                        (_retryBusy || widget.account == null) ? null : _retry,
+                  ),
+                ],
+              );
             }
             final e = snap.data;
             if (e == null) {
@@ -119,17 +202,76 @@ class DeviceKeySection extends StatelessWidget {
 /// Move-status block: the signed-in Gmail against the one-device rule.
 /// The verdict body is shared with the enroll claim (same reasons the
 /// server refuses); the binding's trust tier rides below every verdict.
-/// The eligible-move sentence is the shared [deviceAllowedMoveNote] (one
-/// definition for the 30-day copy — same words as the account move status).
-class DeviceMoveSection extends StatelessWidget {
+///
+/// Memoized like [DeviceKeySection] (one gate read per account, never
+/// per rebuild — the gate touches the biometric-gated install id). A
+/// locked store renders Retry: the explicit unlock clears the shared
+/// dismissal cooldown, then the gate re-reads with context.
+class DeviceMoveSection extends ConsumerStatefulWidget {
   final String? email;
   final Future<StudentGate?> Function(String? email) loadGate;
+
+  /// Signed-in account for the explicit unlock retry (null disables it).
+  final SignedAccount? unlockAccount;
+
+  /// Linked-identity Gmail: part of the memo key (see [DeviceKeySection]).
+  final String? linkedGmail;
 
   const DeviceMoveSection({
     super.key,
     required this.email,
     required this.loadGate,
+    this.unlockAccount,
+    this.linkedGmail,
   });
+
+  @override
+  ConsumerState<DeviceMoveSection> createState() => _DeviceMoveSectionState();
+}
+
+class _DeviceMoveSectionState extends ConsumerState<DeviceMoveSection> {
+  late Future<StudentGate?> _future;
+  late String _memoKey;
+  var _retryBusy = false;
+
+  String _key() =>
+      '${widget.email?.trim().toLowerCase() ?? ''}|${widget.linkedGmail?.trim().toLowerCase() ?? ''}';
+
+  @override
+  void initState() {
+    super.initState();
+    _memoKey = _key();
+    _future = widget.loadGate(widget.email);
+  }
+
+  @override
+  void didUpdateWidget(DeviceMoveSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final now = _key();
+    if (now != _memoKey) {
+      _memoKey = now;
+      _future = widget.loadGate(widget.email);
+    }
+  }
+
+  Future<void> _retry() async {
+    final acct = widget.unlockAccount;
+    if (acct == null || _retryBusy) return;
+    setState(() => _retryBusy = true);
+    try {
+      await attemptUnlockIdentity(ref, acct, userInitiated: true);
+    } catch (_) {}
+    // Re-read regardless of the unlock outcome: success warmed the
+    // caches (prompt-free refresh, memo key also flips via linked);
+    // another dismissal lands back on the Retry below, never on the
+    // offline-looking "connect" note.
+    if (!mounted) return;
+    setState(() {
+      _retryBusy = false;
+      _memoKey = _key();
+      _future = widget.loadGate(widget.email);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -138,15 +280,35 @@ class DeviceMoveSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const ProxSectionHeader(title: 'Move status'),
-        if (email == null)
+        if (widget.email == null)
           const ProxSyncNote(
               'Sign in to check this Gmail against the one-device rule.')
         else
           FutureBuilder<StudentGate?>(
-            future: loadGate(email),
+            future: _future,
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
+              }
+              if (snap.hasError) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const ProxSyncNote(
+                      'Couldn’t check move status on this device.',
+                    ),
+                    const SizedBox(height: ProxSpacing.sm),
+                    TextButton.icon(
+                      icon: const Icon(Icons.lock_open_outlined),
+                      label:
+                          Text(_retryBusy ? 'Checking…' : 'Retry unlock'),
+                      onPressed: (_retryBusy || widget.unlockAccount == null)
+                          ? null
+                          : _retry,
+                    ),
+                  ],
+                );
               }
               final gate = snap.data;
               if (gate == null) {

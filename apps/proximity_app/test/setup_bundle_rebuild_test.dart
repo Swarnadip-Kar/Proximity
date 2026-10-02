@@ -465,4 +465,64 @@ void main() {
       expect(find.byType(MobileOnlyGuidanceScreen), findsNothing);
     });
   });
+
+  group('setup sections read once per account, locked shows retry', () {
+    Widget sectionApp(
+        Future<StoredEnrollment?> Function() loader, ThemeData theme) {
+      return ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(FakeAuthService(_b)),
+          cloudSyncProvider.overrideWithValue(FakeCloudSync()),
+          deviceStoreProvider.overrideWithValue(InMemoryDeviceStore()),
+        ],
+        child: MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: DeviceKeySection(loadEnrollment: loader, account: _b),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('parent rebuilds never re-fire the gated read', (t) async {
+      // Inline-future shape used to prompt once per rebuild (the phantom
+      // second prompt): the section must read once per account, full stop.
+      var calls = 0;
+      Future<StoredEnrollment?> loader() async {
+        calls++;
+        return null;
+      }
+
+      await t.pumpWidget(sectionApp(loader, ThemeData.light()));
+      await t.pumpAndSettle();
+      expect(calls, 1);
+      // Unrelated ancestor rebuild (theme flip): same account memo key,
+      // so the loader must NOT run again.
+      await t.pumpWidget(sectionApp(loader, ThemeData.dark()));
+      await t.pumpAndSettle();
+      expect(calls, 1);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('locked store shows retry, never the no-key note',
+        (t) async {
+      // A dismissed prompt used to read as "no enrollment on file"
+      // (the loader swallowed to null): the section must name the lock
+      // with an explicit unlock retry instead.
+      Future<StoredEnrollment?> loader() =>
+          Future<StoredEnrollment?>.error(const SecureStoreDismissed());
+      await t.pumpWidget(sectionApp(loader, ThemeData.light()));
+      await t.pumpAndSettle();
+      expect(find.text('Retry unlock'), findsOneWidget);
+      expect(find.textContaining('No student key'), findsNothing);
+      // Retry runs the explicit unlock (no prompt needed against the
+      // memory store) and the lock UI persists honestly — never flips
+      // to the no-key note on a second dismissal.
+      await t.tap(find.text('Retry unlock'));
+      await t.pumpAndSettle();
+      expect(find.text('Retry unlock'), findsOneWidget);
+      expect(find.textContaining('No student key'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+  });
 }
