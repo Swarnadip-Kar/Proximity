@@ -417,12 +417,11 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
 
-    test('flash ring frame hugs the preview border', () {
-      // Single thin stroke: the small deflate clears its bleed on all
-      // sides so the ring never touches the bottom bar or the top edge.
+    test('flash ring frame maximizes the border, clears the bar', () {
+      // Bold band (35px) with its outer edge at the border sides + top;
+      // the bottom drops clear of the 6px progress bar with room to spare.
       final rrect = CaptureOverlay.flashRingRRectFor(const Size(800, 400));
-      expect(rrect.outerRect,
-          (Offset.zero & const Size(800, 400)).deflate(12));
+      expect(rrect.outerRect, const Rect.fromLTRB(20, 20, 780, 372));
       expect(rrect.tlRadiusX, moreOrLessEquals(26));
     });
 

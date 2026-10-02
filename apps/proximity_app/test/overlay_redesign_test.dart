@@ -128,7 +128,7 @@ void main() {
       expect(find.byType(CustomPaint), findsWidgets);
       expect(find.text(captureGuidePrompt), findsOneWidget);
       // Placement: edge-to-edge filling gauge along the preview bottom,
-      // prompt below the oval. Still overlay-only (inside the Stack).
+      // prompt above the oval. Still overlay-only (inside the Stack).
       final overlayBox =
           t.getRect(find.byType(CaptureOverlay).first);
       final barRect = t.getRect(find.byType(LinearProgressIndicator));
@@ -137,7 +137,7 @@ void main() {
       expect(barRect.right, moreOrLessEquals(overlayBox.right, epsilon: 1));
       expect(barRect.bottom,
           moreOrLessEquals(overlayBox.bottom, epsilon: 1));
-      expect(promptRect.center.dy, greaterThan(overlayBox.center.dy));
+      expect(promptRect.center.dy, lessThan(overlayBox.center.dy));
       // Slim bar.
       expect(barRect.height, lessThanOrEqualTo(8));
       // No pill clip anymore: full-bleed gauge, no rounded ends.

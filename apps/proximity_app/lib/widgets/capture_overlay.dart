@@ -12,7 +12,7 @@
 //     direction: a bright head dot plus a short fading tail streaming
 //     behind it (opposite the travel direction). Under reduce-motion the
 //     comet holds static at the target with a minimal tail.
-//  3. ONE short guiding prompt line below the oval (rotate with the beacon).
+//  3. ONE short guiding prompt line above the oval (rotate with the beacon).
 //
 // No dots, no labels, no extra rings/progress arcs stacked on the preview.
 // Inconclusive vs mismatch ride on the beacon + progress-bar tone (neutral
@@ -132,7 +132,7 @@ class CaptureOverlay extends StatefulWidget {
   final bool showStatusLine;
 
   /// Error banner slot (default none): when non-null it takes the prompt
-  /// line's place below the oval (same geometry) instead of stacking a
+  /// line's place above the oval (same geometry) instead of stacking a
   /// second text. Enroll passes its save-error Notice here; mark/face
   /// leave null. Generic widget — the overlay never names enroll copy.
   final Widget? errorBanner;
@@ -234,7 +234,7 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Face-guide oval derived from the ACTUAL preview box (see
-  /// [previewRectFor]): the same 0.60w x 0.55h fractions applied to the
+  /// [previewRectFor]): the same 0.56w x 0.51h fractions applied to the
   /// video rect, not the full Stack size. Null aspect == [guideRectFor]
   /// legacy behavior. Pure for unit tests.
   ///
@@ -250,8 +250,8 @@ class CaptureOverlay extends StatefulWidget {
 
   static Rect guideRectForAspect(Size size, double? aspectRatio) {
     final preview = previewRectFor(size, aspectRatio);
-    var w = preview.width * 0.60;
-    final h = preview.height * 0.55;
+    var w = preview.width * 0.56;
+    final h = preview.height * 0.51;
     if (w >= h) w = h * faceWidthToHeight;
     return Rect.fromCenter(
       center: preview.center,
@@ -261,25 +261,23 @@ class CaptureOverlay extends StatefulWidget {
   }
 
   /// Flash-ring frame (see [flashLevel]): the rounded-rect border the ring
-  /// light paints — a single thin stroke hugging the preview border. The
-  /// small deflate clears the stroke bleed top and bottom so the ring
-  /// never touches the bottom progress bar or the top edge.
-  /// Pure for unit tests.
+  /// light paints — one bold stroke whose outer edge hugs the preview
+  /// border on the sides + top for maximum glow area, dropping clear of
+  /// the bottom progress bar. Pure for unit tests.
   static RRect flashRingRRectFor(Size size) => RRect.fromRectAndRadius(
-        (Offset.zero & size).deflate(12),
+        Rect.fromLTRB(20, 20, size.width - 20, size.height - 28),
         const Radius.circular(26),
       );
 
-  /// Prompt line top: [ProxSpacing.xxl] + two [ProxSpacing.sm] below the
-  /// oval (clears both the face zone and the ring-light edge glow),
-  /// clamped into the Stack so the text stays clear of the face
-  /// zone on small screens (and never leaves the viewport). Pure for unit
-  /// tests.
+  /// Prompt line top: a two-line slot + a clear gap ABOVE the oval (the
+  /// lower line must never touch the oval, but the line should not float
+  /// far either) — clamped into the Stack so it never leaves the viewport
+  /// on small screens. Single-line copy simply floats higher in the slot.
+  /// Pure for unit tests.
   static double promptTopFor(Size size, Rect oval) {
-    final max = size.height - ProxSpacing.xxl;
-    if (max <= 0) return 0.0;
-    return (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm + ProxSpacing.sm)
-        .clamp(0.0, max);
+    if (size.height <= 0) return 0.0;
+    return (oval.top - ProxSpacing.xxl - ProxSpacing.xxl - ProxSpacing.sm)
+        .clamp(0.0, size.height);
   }
 
   /// Beacon position for travel/target [angle] on [oval] (east = 0,
@@ -474,11 +472,11 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
           // are present. Null aspect == legacy full-size behavior.
           final oval = CaptureOverlay.guideRectForAspect(
               size, widget.previewAspectRatio);
-          // Prompt sits one md gap below the oval, clamped into the Stack
-          // so it stays clear of the face zone on small screens. The
-          // travelling comet beacon rides the oval rim itself (see
-          // beaconPointFor); the top progress bar + this below-oval line
-          // are the elements held clear above/below the oval.
+          // Prompt sits one line + a gap above the oval, clamped into the
+          // Stack so it never leaves small screens. The travelling comet
+          // beacon rides the oval rim itself (see beaconPointFor); the
+          // bottom progress bar + this above-oval line are the elements
+          // held clear above/below the oval.
           final promptTop = bounded
               ? CaptureOverlay.promptTopFor(size, oval)
               : null;
@@ -525,11 +523,11 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                     tone: tone,
                   ),
                 ),
-              // (3) ONE short guiding prompt below the oval (two lines max
+              // (3) ONE short guiding prompt ABOVE the oval (two lines max
               // so long stall/dark lines wrap instead of truncating — short
-              // copies still take exactly one line, so existing layouts
-              // never move). White for the same on-scrim reason as the
-              // guide ring above.
+              // copies still take exactly one line). Narrower than the
+              // screen (wraps early, never edge to edge). White for the
+              // same on-scrim reason as the guide ring.
               // Error banner XOR prompt: on save-error the banner takes
               // this exact slot (the rotating instruction is meaningless
               // once the loop stopped; rendering both stacked them on
@@ -537,25 +535,36 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
               if (widget.errorBanner != null && promptTop != null)
                 Positioned(
                   top: promptTop,
-                  left: ProxSpacing.screenMargin,
-                  right: ProxSpacing.screenMargin,
+                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
                   child: widget.errorBanner!,
                 )
               else if (widget.errorBanner != null)
                 Positioned(
-                  left: ProxSpacing.screenMargin,
-                  right: ProxSpacing.screenMargin,
+                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
                   bottom: ProxSpacing.xl,
                   child: widget.errorBanner!,
                 )
               else if (widget.showStatusLine && promptTop != null)
                 Positioned(
                   top: promptTop,
-                  left: ProxSpacing.screenMargin,
-                  right: ProxSpacing.screenMargin,
+                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
                   child: Text(
                     line,
-                    style: ProxType.label(color: Colors.white),
+                    style: ProxType.label(color: Colors.white).copyWith(
+                      // Soft dark edge (text paint only — the feed stays
+                      // untouched): the whisper scrim alone lets white copy
+                      // wash out on bright feeds.
+                      shadows: const [
+                        Shadow(
+                          color: Color(0xBF000000),
+                          offset: Offset(0, 1),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
@@ -563,12 +572,20 @@ class _CaptureOverlayState extends State<CaptureOverlay> {
                 )
               else if (widget.showStatusLine)
                 Positioned(
-                  left: ProxSpacing.screenMargin,
-                  right: ProxSpacing.screenMargin,
+                  left: ProxSpacing.screenMargin + ProxSpacing.lg,
+                  right: ProxSpacing.screenMargin + ProxSpacing.lg,
                   bottom: ProxSpacing.xl,
                   child: Text(
                     line,
-                    style: ProxType.label(color: Colors.white),
+                    style: ProxType.label(color: Colors.white).copyWith(
+                      shadows: const [
+                        Shadow(
+                          color: Color(0xBF000000),
+                          offset: Offset(0, 1),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
@@ -771,9 +788,8 @@ class _CaptureOverlayPainter extends CustomPainter {
         CaptureOverlay.wheelInBand(pitchLive, pitchBand);
 
     // Yaw rail: below the oval, 15%-85% of the width, slim (6px) so the
-    // video keeps priority; the band + marker carry the signal. Sits
-    // between the oval and the prompt line with breathing room on both
-    // sides (prompt clears the face zone one md gap below the oval).
+    // video keeps priority; the band + marker carry the signal. The prompt
+    // lives above the oval now, so this rail owns the below-oval space.
     final yawRect = Rect.fromLTRB(size.width * 0.15, oval.bottom + 20,
         size.width * 0.85, oval.bottom + 26);
     _paintWheelTrack(
@@ -787,11 +803,10 @@ class _CaptureOverlayPainter extends CustomPainter {
       active: yawBand != null,
       alpha: alpha,
     );
-    // Pitch rail: right of the oval, spanning its height, clearing it by
-    // a wider margin than the yaw rail (28px) so the ring-light edge
-    // glow never touches it.
+    // Pitch rail: right of the oval, spanning its height, tucked close
+    // (the thin border ring leaves room again).
     final pitchRect = Rect.fromLTRB(
-        oval.right + 28, oval.top, oval.right + 34, oval.bottom);
+        oval.right + 20, oval.top, oval.right + 26, oval.bottom);
     _paintWheelTrack(
       canvas,
       pitchRect,
@@ -869,11 +884,13 @@ class _CaptureOverlayPainter extends CustomPainter {
     );
   }
 
-  /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): ONE thin
-  /// bright stroke on the preview border — no stacked bands, no halo, no
-  /// blur (the layered look read messy and swallowed the guidance
-  /// wheels). Glow still tracks the graded level (darker room → brighter
-  /// ring) through alpha alone. Flat paint only, raw feed untouched.
+  /// Flash-assist ring light (see [CaptureOverlay.flashLevel]): ONE bold
+  /// bright band on the preview border — no stacked strokes, no halo, no
+  /// blur. A filled even-odd band (not a stroke), so the outer and inner
+  /// corner curves match exactly — a thick stroke's inner corners pinch
+  /// tighter than its outer ones. Glow tracks the graded level (darker
+  /// room → brighter ring) through alpha alone, resting faint in good
+  /// light. Flat paint only, raw feed untouched.
   /// Defined after the wheels methods (not paint order — paint()
   /// calls it first thing after the scrim) so the oval-landing source pin
   /// keeps holding: `drawRRect` appears only inside the wheels painters
@@ -882,12 +899,18 @@ class _CaptureOverlayPainter extends CustomPainter {
   void _paintFlashRing(Canvas canvas, Size size) {
     final level = flashLevel.clamp(0.0, 1.0);
     if (level <= 0) return;
-    canvas.drawRRect(
-      CaptureOverlay.flashRingRRectFor(size),
+    final outer = CaptureOverlay.flashRingRRectFor(size);
+    final band = Path()
+      ..addRRect(outer)
+      ..addRRect(RRect.fromRectAndRadius(
+        outer.outerRect.deflate(30),
+        outer.tlRadius,
+      ))
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(
+      band,
       Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 8
-        ..color = Colors.white.withValues(alpha: 0.55 + 0.40 * level),
+        ..color = Colors.white.withValues(alpha: 0.25 + 0.70 * level),
     );
   }
 }

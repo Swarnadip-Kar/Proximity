@@ -29,7 +29,7 @@
 // ONE static oval + ONE glowing green comet —
 // bright head plus short fading tail —
 // (live head-position target for the next unfilled angle), ONE prompt
-// below the oval (rotate slowly, follow the glow) — no dots, no labels,
+// above the oval (rotate slowly, follow the glow) — no dots, no labels,
 // no extra rings/progress arcs. Provenance: Apple Face ID enrollment
 // (one imperative + rim progress) and Tobii "follow the target"
 // calibration (one target, 5 points, repeat missing).

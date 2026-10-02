@@ -15,7 +15,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/design/app_theme.dart';
-import 'package:proximity_app/design/tokens.dart';
 import 'package:proximity_app/features/live/live_roster.dart';
 import 'package:proximity_app/features/records/session_edit_screen.dart';
 import 'package:proximity_app/features/setup/enroll_capture_sections.dart';
@@ -36,12 +35,12 @@ void main() {
       expect(CaptureOverlay.promptTopFor(const Size(200, 0), oval), 0.0);
     });
 
-    test('normal sizes still clamp below the oval', () {
+    test('normal sizes sit above the oval', () {
       final oval = Rect.fromLTWH(50, 100, 100, 200);
       final top =
           CaptureOverlay.promptTopFor(const Size(400, 800), oval);
-      expect(top, greaterThan(oval.bottom));
-      expect(top, lessThanOrEqualTo(800 - ProxSpacing.xxl));
+      expect(top, lessThan(oval.top));
+      expect(top, greaterThanOrEqualTo(0.0));
     });
 
     test('directionForAngle total 0 returns zero (no division)', () {

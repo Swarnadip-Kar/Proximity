@@ -9,7 +9,7 @@
 // double-apply, no wrapper of any kind, overlay + toast layering, and the
 // researched layering decision (chrome stays overlay — the single-oval
 // overlay paints inside the preview Stack, the prompt rides the overlay
-// below the oval, buttons sit in the bottom bar, never inline above the
+// above the oval, buttons sit in the bottom bar, never inline above the
 // feed, never extra copy inside the Stack). Single-oval tests pin the
 // guide rect + comet geometry and the reduce-motion minimal tail.
 // Clock: the beacon timer is periodic — drive live sessions with bounded

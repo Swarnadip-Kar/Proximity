@@ -137,8 +137,8 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   /// the framing ring. Pure display — capture never gates on it.
   final double progress;
 
-  /// Flash-assist edge ring (dark retry only — default off): two bright
-  /// oval strokes hugging the preview edges, painted above the dim
+  /// Flash-assist edge ring (dark retry only — default off): one bold
+  /// bright oval stroke maximized to the preview edges, painted above the
   /// surround for uniform light. Ovals only (never a rounded rect — see
   /// the oval-landing source pin); static, no animation (settle-safe).
   final bool assist;
@@ -146,11 +146,11 @@ class FaceCaptureOvalOverlay extends StatelessWidget {
   const FaceCaptureOvalOverlay({super.key, this.progress = 0, this.assist = false});
 
   /// Framing oval fractions of the preview size. Same as the shared
-  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.60w x 0.55h)
+  /// enrollment guide ([CaptureOverlay.guideRectForAspect] 0.56w x 0.51h)
   /// so the marking capture frames faces at the identical size —
   /// one face size everywhere, never a bigger oval here.
-  static const beaconWidthFraction = 0.60;
-  static const beaconHeightFraction = 0.55;
+  static const beaconWidthFraction = 0.56;
+  static const beaconHeightFraction = 0.51;
 
   /// Face width/height for the portrait clamp below (human-face
   /// proportion — width < height). Phone portrait previews already satisfy
@@ -205,16 +205,19 @@ class _OvalOverlayPainter extends CustomPainter {
       Paint()..color = const Color(0x40000000),
     );
     // Flash-assist edge ring first (directly above the surround): ONE
-    // thin bright stroke on the preview border — no stacked bands (the
-    // layered look read messy). The small deflate clears the stroke top
-    // and bottom so the ring never touches the prompt or button panel.
+    // bold bright band maximized to the preview border — a filled
+    // even-odd band (not a stroke), so outer and inner curves match.
+    // Matches the enrollment ring widths; no progress bar lives in this
+    // preview, so the frame is symmetric.
     if (assist) {
-      final edge = (Offset.zero & size).deflate(12);
-      canvas.drawOval(
-          edge,
+      final outer = Rect.fromLTRB(
+          20, 20, size.width - 20, size.height - 20);
+      canvas.drawPath(
+          Path()
+            ..addOval(outer)
+            ..addOval(outer.deflate(30))
+            ..fillType = PathFillType.evenOdd,
           Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 8
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.90));
     }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);

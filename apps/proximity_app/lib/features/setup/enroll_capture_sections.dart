@@ -263,7 +263,7 @@ class EnrollCapturePreview extends StatelessWidget {
         // it), pointer-transparent, repainting per shot.
         // THE shared single-oval overlay (override 2026-09-10 — bottom
         // bar = overall progress, oval + comet = live head target for the next
-        // unfilled angle, one prompt below the oval; totalAngles comes from
+        // unfilled angle, one prompt above the oval; totalAngles comes from
         // the controller's own slot list, verified 5 via faceEnrollSlots,
         // never hardcoded).
         CaptureOverlay(

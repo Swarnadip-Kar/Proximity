@@ -3,9 +3,10 @@
 // - Guide is a TRUE portrait oval (taller than wide) via drawOval on every
 //   viewport — phone + desktop, portrait + landscape sensor boxes. Paint,
 //   preview sizing, and thresholds below are untouched (static shape only).
-// - Beacon rides the oval rim; the slim progress bar stays above and the
-//   one prompt line stays below the oval (clear of the face zone, incl.
-//   small screens) — asserted geometrically + on-widget, never by pixels.
+// - Beacon rides the oval rim; the slim progress bar stays at the bottom
+//   and the one prompt line stays above the oval (clear of the face zone,
+//   incl. small screens) — asserted geometrically + on-widget, never by
+//   pixels.
 // - Landing: "Be there / Be marked" gone; "PROXIMITY" in brand purple moved
 //   top -> center with the same treatment; "Campus Attendance System"
 //   header sits at the top in contentSecondary. Colors asserted via design
@@ -82,12 +83,12 @@ void main() {
         expect(beacon.width, greaterThan(0));
         expect(beacon.height, greaterThan(0));
         // Phone portrait follows the shared enrollment-guide fractions
-        // (0.60w x 0.55h, no clamp) — one face size on both flows.
+        // (0.56w x 0.51h, no clamp) — one face size on both flows.
         if (size == const Size(390, 844)) {
           expect(beacon.width,
-              moreOrLessEquals(size.width * 0.60, epsilon: 0.01));
+              moreOrLessEquals(size.width * 0.56, epsilon: 0.01));
           expect(beacon.height,
-              moreOrLessEquals(size.height * 0.55, epsilon: 0.01));
+              moreOrLessEquals(size.height * 0.51, epsilon: 0.01));
         }
       }
     });
@@ -103,7 +104,7 @@ void main() {
       }
     });
 
-    test('prompt top stays clear below the oval on phone + desktop', () {
+    test('prompt top sits above the oval on phone + desktop', () {
       const cases = [
         (Size(390, 844), 9 / 16),
         (Size(360, 640), 9 / 16),
@@ -114,9 +115,9 @@ void main() {
       for (final c in cases) {
         final oval = CaptureOverlay.guideRectForAspect(c.$1, c.$2);
         final top = CaptureOverlay.promptTopFor(c.$1, oval);
-        expect(top, greaterThanOrEqualTo(oval.bottom + ProxSpacing.md - 0.01),
+        expect(top, lessThanOrEqualTo(oval.top - ProxSpacing.md + 0.01),
             reason: 'prompt must clear the face zone: ${c.$1} @${c.$2}');
-        expect(top, lessThanOrEqualTo(c.$1.height - ProxSpacing.xxl));
+        expect(top, greaterThanOrEqualTo(0.0));
       }
     });
 
@@ -184,8 +185,10 @@ void main() {
       final promptRect = t.getRect(find.text(captureGuidePrompt));
       final barRect = t.getRect(find.byType(LinearProgressIndicator));
       final ovalShifted = oval.shift(overlayBox.topLeft);
-      expect(promptRect.top,
-          greaterThanOrEqualTo(ovalShifted.bottom + ProxSpacing.md - 2.0),
+      // Prompt lives above the oval now (a two-line slot + gap): its
+      // bottom must clear the face zone.
+      expect(promptRect.bottom,
+          lessThanOrEqualTo(ovalShifted.top - ProxSpacing.md + 2.0),
           reason: 'prompt $promptRect overlaps oval $ovalShifted @${w}x$h');
       // Bottom filling gauge: full-bleed at the preview edge, below the
       // oval, never overlapping it or the prompt.
@@ -198,7 +201,7 @@ void main() {
       await t.pumpWidget(const SizedBox());
     }
 
-    testWidgets('phone 390x844 portrait sensor: bar fills bottom, prompt below',
+    testWidgets('phone 390x844 portrait sensor: bar fills bottom, prompt above',
         (t) async {
       await checkChrome(t, w: 390, h: 844, aspect: 9 / 16);
     });

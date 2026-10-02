@@ -763,7 +763,7 @@ void main() {
       }
 
       // Prompt path: the guided prompt rides inside the overlay's own
-      // Stack (below the oval) — exactly one instance, never in the
+      // Stack (above the oval) — exactly one instance, never in the
       // bottom bar mid-flow.
       expect(find.text(enrollTargetPrompt('down')), findsOneWidget);
       expect(

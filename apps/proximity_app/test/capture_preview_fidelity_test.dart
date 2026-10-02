@@ -490,7 +490,7 @@ void main() {
       expect(box.center, const Size(400, 800).center(Offset.zero));
     });
 
-    test('guide oval is portrait, centered, 0.60 x 0.55 with wide clamp',
+    test('guide oval is portrait, centered, 0.56 x 0.51 with wide clamp',
         () {
       const aspects = [3 / 4, 4 / 3, 20 / 9, 1.0];
       const sizes = [Size(800, 400), Size(400, 800), Size(600, 600)];
@@ -504,11 +504,11 @@ void main() {
               moreOrLessEquals(preview.center.dx, epsilon: 0.01));
           expect(oval.center.dy,
               moreOrLessEquals(preview.center.dy, epsilon: 0.01));
-          // Height always the 0.55 fraction; width is 0.60 except on
+          // Height always the 0.51 fraction; width is 0.56 except on
           // wide/desktop boxes where the portrait clamp narrows it to
           // h * faceWidthToHeight so the guide stays a face ellipse.
-          final rawW = preview.width * 0.60;
-          final h = preview.height * 0.55;
+          final rawW = preview.width * 0.56;
+          final h = preview.height * 0.51;
           final expectedW =
               rawW >= h ? h * CaptureOverlay.faceWidthToHeight : rawW;
           expect(oval.width, moreOrLessEquals(expectedW, epsilon: 0.01));
@@ -527,7 +527,7 @@ void main() {
       final phoneOval =
           CaptureOverlay.guideRectForAspect(const Size(400, 800), 9 / 16);
       expect(phoneOval.width,
-          moreOrLessEquals(phonePreview.width * 0.60, epsilon: 0.01));
+          moreOrLessEquals(phonePreview.width * 0.56, epsilon: 0.01));
     });
 
     test('different aspects give different ovals (proves derivation)', () {
