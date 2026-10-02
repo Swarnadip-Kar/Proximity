@@ -201,14 +201,14 @@ class _OvalOverlayPainter extends CustomPainter {
           edge,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 44
+            ..strokeWidth = 60
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22));
       canvas.drawOval(
           edge,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 20
+            ..strokeWidth = 28
             ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
     }
     final beaconRect = FaceCaptureOvalOverlay.beaconRectFor(size);

@@ -266,15 +266,15 @@ class CaptureOverlay extends StatefulWidget {
         const Radius.circular(26),
       );
 
-  /// Prompt line top: [ProxSpacing.xxl] + [ProxSpacing.sm] below the oval
-  /// (the scale tops at xxl — this composes tokens rather than inventing
-  /// a step), clamped into the Stack so the text stays clear of the face
+  /// Prompt line top: [ProxSpacing.xxl] + two [ProxSpacing.sm] below the
+  /// oval (clears both the face zone and the ring-light edge glow),
+  /// clamped into the Stack so the text stays clear of the face
   /// zone on small screens (and never leaves the viewport). Pure for unit
   /// tests.
   static double promptTopFor(Size size, Rect oval) {
     final max = size.height - ProxSpacing.xxl;
     if (max <= 0) return 0.0;
-    return (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm)
+    return (oval.bottom + ProxSpacing.xxl + ProxSpacing.sm + ProxSpacing.sm)
         .clamp(0.0, max);
   }
 
@@ -772,10 +772,11 @@ class _CaptureOverlayPainter extends CustomPainter {
       active: yawBand != null,
       alpha: alpha,
     );
-    // Pitch rail: right of the oval, spanning its height, with the same
-    // breathing room as the yaw rail.
+    // Pitch rail: right of the oval, spanning its height, clearing it by
+    // a wider margin than the yaw rail (28px) so the ring-light edge
+    // glow never touches it.
     final pitchRect = Rect.fromLTRB(
-        oval.right + 20, oval.top, oval.right + 26, oval.bottom);
+        oval.right + 28, oval.top, oval.right + 34, oval.bottom);
     _paintWheelTrack(
       canvas,
       pitchRect,
@@ -872,7 +873,7 @@ class _CaptureOverlayPainter extends CustomPainter {
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 44
+        ..strokeWidth = 60
         ..color = Colors.white.withValues(alpha: 0.20 + 0.45 * level)
         ..maskFilter = MaskFilter.blur(
             BlurStyle.normal, 14 + 8 * level),
@@ -882,7 +883,7 @@ class _CaptureOverlayPainter extends CustomPainter {
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 20
+        ..strokeWidth = 28
         ..color = Colors.white.withValues(alpha: 0.55 + 0.40 * level),
     );
   }
