@@ -37,6 +37,7 @@ import 'package:proximity_ble/ble.dart';
 import '../core/auth.dart';
 import '../core/device_store.dart';
 import '../core/platformx.dart';
+import '../core/sync/roles.dart';
 import '../features/entry/entry_flow.dart';
 import '../design/tokens.dart';
 import '../features/account/account_screen.dart';
@@ -609,6 +610,12 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// start; Dismiss hides it until the next failure.
   var _storeError = false;
 
+  /// Copy override for the [_storeError] banner. Null keeps the default
+  /// unreachable-storage copy; the role-contradiction path below sets its
+  /// own words (the store answered, but disagrees with the role cache).
+  /// Cleared together with [_storeError].
+  String? _storeErrorCopy;
+
   /// Latched on any enrolled resolve: distinguishes sign-out (account
   /// gone AFTER enrollment — park locked, never push) from a cold-start
   /// account gap (unknown — do nothing and wait for arrival). Never
@@ -825,8 +832,15 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// Gate resolve outcome: `enrolled` unlocks, `unenrolled` parks +
   /// pushes setup, `signedOut` parks locked WITHOUT pushing (account
   /// vanished after enrollment), `unknown` aborts silently (stale
-  /// generation, transient store failure, or account not known yet —
-  /// never push, never park).
+  /// generation, transient store failure, account not known yet, or the
+  /// role-contradiction below — never push, never park, except the
+  /// contradiction which flags the visible Retry).
+  ///
+  /// Role-contradiction rule: auto reads check the preferred slot alone,
+  /// so a proven-empty from them is only trusted when the prompt-free
+  /// role cache agrees (no student role for this Gmail). Cache says
+  /// student + store said empty = unknown + Retry (the tap full-scans
+  /// and either recovers or then pushes setup honestly).
   Future<_GateResolve> _resolveCurrentEnrollment(int gen,
       {bool userInitiated = false}) async {
     var acct = _readCurrentAccount();
@@ -905,7 +919,39 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       _unlockNudgeHidden = false;
       _dismissParkEmail = '';
     }
-    return matched ? _GateResolve.enrolled : _GateResolve.unenrolled;
+    if (matched) return _GateResolve.enrolled;
+    // Proven empty is only trusted when the scan actually covered both
+    // slots: auto reads check the preferred slot alone (one prompt for
+    // the empty case), so a wiped tier hint (reinstall/clear-data) can
+    // miss a live doc sitting in the other slot. The prompt-free role
+    // cache disambiguates: it says this Gmail holds the student role,
+    // the store just said empty — contradiction, not enrollment. Park
+    // unknown with a visible Retry (the tap runs the explicit full-scan
+    // retry, which recovers a wrong-tier doc or confirms genuinely
+    // empty and only then pushes setup). No-role / unreadable cache
+    // keeps the old push (fresh users must still land in setup).
+    // Explicit retries already full-scanned, so their empty is trusted.
+    if (outcome == UnlockOutcome.empty && !userInitiated) {
+      var roleSaysStudent = false;
+      try {
+        final role = await ref.read(deviceStoreProvider).readRole();
+        roleSaysStudent = roleHas(role, 'student', email: want);
+      } catch (_) {
+        roleSaysStudent = false;
+      }
+      if (!mounted || gen != _gateGen) return _GateResolve.unknown;
+      if (roleSaysStudent) {
+        if (mounted) {
+          setState(() {
+            _storeError = true;
+            _storeErrorCopy =
+                'Enrollment check was inconclusive — tap Retry to unlock and check again.';
+          });
+        }
+        return _GateResolve.unknown;
+      }
+    }
+    return _GateResolve.unenrolled;
   }
 
   /// First-frame resolve: the shell mounts on Accounts (index 2). An
@@ -1121,6 +1167,7 @@ class _StudentShellState extends ConsumerState<StudentShell> {
   /// tap/listener/post-frame contexts (never from build).
   void _beginResolve() {
     _storeError = false;
+    _storeErrorCopy = null;
     _resolving = true;
     if (mounted && _tabsLocked) setState(() {});
   }
@@ -1172,10 +1219,14 @@ class _StudentShellState extends ConsumerState<StudentShell> {
       );
     } else if (_storeError && _tabsLocked) {
       slot = _UnlockNudge(
-        message: 'Couldn’t reach secure storage — try again.',
+        message: _storeErrorCopy ??
+            'Couldn’t reach secure storage — try again.',
         onRetry: () =>
             unawaited(_refreshEnrollmentState(userInitiated: true)),
-        onDismiss: () => setState(() => _storeError = false),
+        onDismiss: () => setState(() {
+          _storeError = false;
+          _storeErrorCopy = null;
+        }),
       );
     }
     if (slot == null) return const SizedBox.shrink();

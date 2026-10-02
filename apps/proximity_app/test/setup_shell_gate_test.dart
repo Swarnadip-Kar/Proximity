@@ -15,6 +15,7 @@ import 'package:proximity_app/core/auth.dart';
 import 'package:proximity_app/core/cloud_sync.dart';
 import 'package:proximity_app/core/device_store.dart';
 import 'package:proximity_app/core/enrollment.dart';
+import 'package:proximity_app/core/sync/device_hardware_id.dart';
 import 'package:proximity_app/design/app_theme.dart';
 import 'package:proximity_app/features/account/account_screen.dart';
 import 'package:proximity_app/features/face_identity/device_key.dart';
@@ -230,6 +231,59 @@ void main() {
       expect(find.byType(SetupFlowScreen), findsOneWidget);
       // Drain stagger one-shots (stepped: lets each tick settle).
       for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+    });
+
+    testWidgets('role/enrollment contradiction parks with retry, pushes nothing',
+        (t) async {
+      // Tier-wiped shape: the role cache says this Gmail holds the
+      // student role but the (single-slot auto) enrollment read missed.
+      // The shell must NOT push a phantom setup flow — park locked with
+      // an inconclusive Retry. The explicit Retry full-scans; the store
+      // here is genuinely empty, so it then pushes setup honestly.
+      //
+      // The pushed flow's move gate awaits the real hardware-id channel
+      // (4s Timer never advances under FakeAsync): stub the injectable
+      // source like the claim suites do, reset afterwards.
+      HardwareDeviceIds.source = () async => '';
+      addTearDown(
+          () => HardwareDeviceIds.source = getStableHardwareDeviceId);
+      final store = InMemoryDeviceStore();
+      await store.writeRole({
+        'roles': 'student',
+        'email': 'student@example.com',
+        'uid': 'test-uid',
+        'displayName': 'Test User',
+        'lastMode': 'student',
+        'org': '',
+      });
+      await t.pumpWidget(helpers.testScope(
+          store: store,
+          home: MaterialApp(
+              theme: proxLightTheme(), home: const StudentShell())));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.byType(SetupFlowScreen), findsNothing);
+      expect(
+          find.text(
+              'Enrollment check was inconclusive — tap Retry to unlock and check again.'),
+          findsOneWidget);
+      expect(
+          find.byType(StudentAccountScreen).hitTestable(), findsOneWidget);
+      await t.tap(find.widgetWithText(TextButton, 'Retry'));
+      await t.pump();
+      for (var i = 0; i < 4; i++) {
+        await t.pump(const Duration(milliseconds: 500));
+      }
+      // Full-scan retry confirmed genuinely empty → setup pushes (once).
+      expect(find.byType(SetupFlowScreen), findsOneWidget);
+      expect(t.takeException(), isNull);
+      // Drain stagger one-shots + the move-gate device-id timeout inside
+      // the pushed flow (stepped: lets each tick settle).
+      for (var i = 0; i < 8; i++) {
         await t.pump(const Duration(milliseconds: 500));
       }
     });
