@@ -30,7 +30,7 @@ import '../core/student_driver.dart';
 import '../core/sync_hook.dart';
 import '../design/tokens.dart';
 import '../features/face_identity/liveness_gate.dart'
-    show LivenessUnreadableReason;
+    show LivenessUnreadableReason, kLivenessAcceptBrightness;
 import '../features/account/account_common.dart';
 import '../features/entry/entry_flow.dart';
 import '../features/mark/browse_classes.dart';
@@ -1773,6 +1773,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     // [accept] support (tests) pop at once and the caller verifies below.
     _modalResult = null;
     _modalExhausted = false;
+    // Marking live line (see [StillCapturer.liveReadout]): host-owned,
+    // updated from each per-still + burst verdict below, disposed after
+    // the sheet pops. Starts empty (the sheet reserves the line).
+    final liveReadout = ValueNotifier<String>('');
+    void markReadout() {
+      final drv = ref.read(studentDriverProvider);
+      liveReadout.value = FaceCheckView.markLiveReadout(
+        vitality: drv.lastLivenessScore,
+        brightness: drv.lastLivenessBrightness,
+      );
+    }
     final paths = await ref.read(stillCapturerProvider).capture(
       context,
       captures: kMarkingLivenessCaptures,
@@ -1782,6 +1793,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       // prompt instead of the default copy.
       assist: _dimAssist,
       prompt: _dimAssist ? FaceCheckView.markDimPrompt : null,
+      liveReadout: liveReadout,
       // Per-still early exit: each still is liveness-probed + verified
       // while the next capture runs (serial scoring gate in the sheet —
       // at most one plugin call in flight, ever). A full pass pops after
@@ -1806,6 +1818,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           _modalResult = const FaceCheckResult(FaceMatch.blocked);
           return true;
         }
+        // Live line for the open sheet (score + brightness of this still).
+        markReadout();
         if (!mounted || phase != StudentPhase.faceCheck) return false;
         inModal = _readLinked();
         inModalAcct = _readAccount();
@@ -1836,6 +1850,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           _modalResult = const FaceCheckResult(FaceMatch.blocked);
           return true;
         }
+        // Live line for the open sheet (winning still of this burst).
+        markReadout();
         if (!mounted || phase != StudentPhase.faceCheck) return true;
         inModal = _readLinked();
         inModalAcct = _readAccount();
@@ -1888,6 +1904,8 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       acceptWindow: _autoFaceWindow,
       acceptGap: _autoFaceGap,
     );
+    // Sheet popped (or never opened): the live line has no listeners left.
+    liveReadout.dispose();
     // Mounted-before-ref + back/teardown guard: Cancel/Back/system-back
     // leaves faceCheck during the camera UI — never verify or prove after it.
     if (paths == null ||
@@ -1991,15 +2009,19 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _faceMismatchLiveness = res.livenessFailed;
         setState(() => phase = StudentPhase.needsReview);
       case FaceMatch.inconclusive:
-        // Dim-aware stall (see the driver hint getters): when no still
-        // scored and the stall read dim, the notices name the light and
-        // the next sheet captures flash-assisted. Assigned (not OR-ed) so
-        // a bright stall clears a stale dark flag. Gates untouched — this
-        // only changes copy + capture illumination.
-        final dimHint = ref
-                .read(studentDriverProvider)
-                .lastLivenessUnreadableReason ==
-            LivenessUnreadableReason.dim;
+        // Dim-aware stall (see the driver hint getters): the notices name
+        // the light and the next sheet captures flash-assisted when the
+        // stall read dim — either nothing scored with a dim reason, or a
+        // winning still refused by the acceptance floor. Assigned (not
+        // OR-ed) so a bright stall clears a stale dark flag. Gates
+        // untouched — this only changes copy + capture illumination.
+        final driver = ref.read(studentDriverProvider);
+        final dimBright = driver.lastLivenessBrightness;
+        final dimHint = driver.lastLivenessUnreadableReason ==
+                LivenessUnreadableReason.dim ||
+            (dimBright != null &&
+                dimBright.isFinite &&
+                dimBright < kLivenessAcceptBrightness);
         _dimAssist = dimHint;
         // No readable verdict (attempt kept). The open sheet already
         // retried in place until its window spent ([_modalExhausted]) —

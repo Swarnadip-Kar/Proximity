@@ -242,6 +242,12 @@ abstract class StudentDriver {
   /// these without parsing log text. Defaults null (fakes, stale builds).
   double? get lastLivenessBrightness => null;
 
+  /// Winning still's vitality score from the last [checkFaceAny] call
+  /// (null when nothing scored). Feeds the marking sheet's live readout
+  /// alongside [lastLivenessBrightness] — presentation only, verdicts
+  /// never read it. Defaults null.
+  double? get lastLivenessScore => null;
+
   /// See [lastLivenessBrightness].
   LivenessUnreadableReason? get lastLivenessUnreadableReason => null;
 
@@ -443,8 +449,15 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
   double? _lastLivenessBrightness;
   LivenessUnreadableReason? _lastLivenessUnreadableReason;
 
+  /// Winning still's vitality for the live readout (see
+  /// [lastLivenessScore]). Reset per call like the brightness above.
+  double? _lastLivenessScore;
+
   @override
   double? get lastLivenessBrightness => _lastLivenessBrightness;
+
+  @override
+  double? get lastLivenessScore => _lastLivenessScore;
 
   @override
   LivenessUnreadableReason? get lastLivenessUnreadableReason =>
@@ -506,6 +519,7 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // — leaves coherent values, never a previous call's darkness.
     _lastLivenessBrightness = null;
     _lastLivenessUnreadableReason = null;
+    _lastLivenessScore = null;
     // L1 domain gate first: records-only devices never reach the plugin —
     // guidance (blocked), never an attempt, SK never signs.
     try {
@@ -602,6 +616,20 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
     // Hint evidence: the winning still's brightness rides along for the
     // UI (dark-but-readable guidance); the unreadable slot stays null.
     _lastLivenessBrightness = win.meanBrightness;
+    _lastLivenessScore = win.score;
+    final winBright = win.meanBrightness;
+    if (winBright != null &&
+        winBright.isFinite &&
+        winBright < kLivenessAcceptBrightness) {
+      // Low-brightness photos are not allowed: free rescan with a dim
+      // retry (attempt kept, assist lit) instead of scoring a dark frame
+      // — a dark live photo must never pass, and must never burn an
+      // attempt as a spoof either. Unknown brightness (tests-only fakes)
+      // skips this and flows to the vitality gates below.
+      BleLog.log('SEC',
+          'face check DARK bright=${winBright.toStringAsFixed(0)} — rescan, attempt kept');
+      return const FaceCheckResult(FaceMatch.inconclusive);
+    }
     if (win.score < kLivenessThreshold - kLivenessNearMissBand) {
       // Readable spoof territory (field probes ≤0.31): consumes one
       // attempt like matching somebody else — never auto-present, SK
@@ -1860,6 +1888,9 @@ class FakeStudentDriver implements StudentDriver {
   /// through [RealStudentDriver] instead.
   @override
   double? get lastLivenessBrightness => null;
+
+  @override
+  double? get lastLivenessScore => null;
 
   @override
   LivenessUnreadableReason? get lastLivenessUnreadableReason => null;

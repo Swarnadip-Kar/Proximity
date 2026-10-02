@@ -205,6 +205,25 @@ void main() {
       expect(d.lastLivenessBrightness, isNull);
     });
 
+    test('dark winner refuses without burning (dim retry, attempt kept)',
+        () async {
+      final verifier = FakeFaceVerifier(match: true, score: 0.85);
+      final live = FakeLivenessGate(
+          score: 0.95, scriptedBrightness: 45.0);
+      final d = _driver(
+          store: await _enrolledStore(),
+          verifier: verifier,
+          liveness: live,
+          engine: ProxBleEngine(radio: FakeBleRadio()));
+      final res = await d.checkFaceAny(['a.jpg']);
+      expect(res.match, FaceMatch.inconclusive);
+      expect(d.lastLivenessBrightness, 45.0);
+      expect(d.lastLivenessScore, 0.95);
+      expect(d.lastLivenessUnreadableReason, isNull);
+      expect(
+          verifier.calls.where((c) => c.startsWith('verify:')), isEmpty);
+    });
+
     test('winner carries brightness, reason clears, stale never leaks',
         () async {
       final verifier = FakeFaceVerifier(match: true, score: 0.85);
@@ -223,11 +242,13 @@ void main() {
       expect((await d.checkFaceAny(['a.jpg'])).match,
           FaceMatch.inconclusive);
       expect(d.lastLivenessUnreadableReason, LivenessUnreadableReason.dim);
+      expect(d.lastLivenessScore, isNull);
       live.throwOnDetect = false;
       final res = await d.checkFaceAny(['b.jpg']);
       expect(res.match, FaceMatch.pass);
       expect(d.lastLivenessUnreadableReason, isNull);
       expect(d.lastLivenessBrightness, 120.0);
+      expect(d.lastLivenessScore, 0.93);
     });
   });
 

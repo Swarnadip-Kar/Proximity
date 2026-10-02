@@ -199,11 +199,11 @@ void main() {
       await _drain(t);
       expect(t.takeException(), isNull);
     });
-    testWidgets('passing-but-dark probe warns DIM without blocking',
-        (t) async {
-      // Auto-exposed dark-room frame that still scores: the bucket fills
-      // (warn-only, never a gate) and the readout names DIM so the holder
-      // moves to brighter light for the remaining slots.
+    testWidgets('dark passing probes park and never fill', (t) async {
+      // Low-brightness photos are not allowed: an auto-exposed dark-room
+      // frame that scores 0.95 still parks (readout names score + DIM so
+      // the holder moves to brighter light) and a back-to-back dark pass
+      // parks again — the bucket only fills on a bright confirm.
       final gate = FakePoseGate(readings: const [
         PoseReading(yaw: 0, pitch: -15, roll: 0),
         PoseReading(yaw: 0, pitch: -15, roll: 0),
@@ -220,6 +220,7 @@ void main() {
       await t.pump(const Duration(milliseconds: 1500));
       expect(find.textContaining('DIM'), findsOneWidget);
       expect(find.textContaining('0.95/0.70'), findsOneWidget);
+      expect(find.text('Save enrollment'), findsNothing);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await _drain(t);
@@ -292,7 +293,7 @@ void main() {
       ));
       await _openSession(t);
       await t.pump(const Duration(milliseconds: 1500));
-      expect(find.textContaining('B139'), findsOneWidget);
+      expect(find.textContaining('Brightness: 139'), findsOneWidget);
       expect(find.textContaining('DIM'), findsNothing);
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));

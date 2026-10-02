@@ -51,6 +51,12 @@ import '../routes.dart';
 /// host sets it when the previous verdict read dim, so the retry captures
 /// lit instead of spinning dark again. Default off: bright sessions never
 /// touch brightness.
+///
+/// [liveReadout] (marking live line): a host-owned notifier the sheet
+/// renders under the prompt (`LIVE <score>/<bar> Brightness: <n>`, same
+/// shape as the enrollment bottom-bar line). The host updates it from its
+/// per-still verdicts; the sheet only listens, never writes or disposes.
+/// Null hides the line (legacy callers render exactly as before).
 abstract class StillCapturer {
   Future<List<String>?> capture(BuildContext context,
       {required int captures,
@@ -60,7 +66,8 @@ abstract class StillCapturer {
       Future<bool> Function(String path)? acceptStill,
       Duration acceptWindow = const Duration(seconds: 10),
       Duration acceptGap = const Duration(seconds: 1),
-      bool assist = false});
+      bool assist = false,
+      ValueNotifier<String>? liveReadout});
 }
 
 class RealStillCapturer implements StillCapturer {
@@ -74,7 +81,8 @@ class RealStillCapturer implements StillCapturer {
           Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
           Duration acceptGap = const Duration(seconds: 1),
-          bool assist = false}) =>
+          bool assist = false,
+          ValueNotifier<String>? liveReadout}) =>
       Navigator.of(context).push<List<String>>(MaterialPageRoute(
           settings: const RouteSettings(name: ProxRoutes.faceCapture),
           builder: (_) => FaceCaptureScreen(
@@ -85,7 +93,8 @@ class RealStillCapturer implements StillCapturer {
               acceptStill: acceptStill,
               acceptWindow: acceptWindow,
               acceptGap: acceptGap,
-              assist: assist)));
+              assist: assist,
+              liveReadout: liveReadout)));
 }
 
 /// Test-only: returns [captures] canned paths (or [result] verbatim).
@@ -104,7 +113,8 @@ class FakeStillCapturer implements StillCapturer {
           Future<bool> Function(String path)? acceptStill,
           Duration acceptWindow = const Duration(seconds: 10),
           Duration acceptGap = const Duration(seconds: 1),
-          bool assist = false}) async =>
+          bool assist = false,
+          ValueNotifier<String>? liveReadout}) async =>
       result?.call(captures) ??
       List.generate(captures, (i) => 'test-still-$i.jpg');
 }
@@ -340,6 +350,10 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
   /// light + maxed window brightness while up, restored after. The host
   /// sets it when the previous verdict read dim. Default off.
   final bool assist;
+
+  /// Marking live line (see [StillCapturer.liveReadout]): host-owned,
+  /// sheet only listens. Null hides the line.
+  final ValueNotifier<String>? liveReadout;
   const FaceCaptureScreen(
       {super.key,
       this.captures = 1,
@@ -349,7 +363,8 @@ class FaceCaptureScreen extends ConsumerStatefulWidget {
       this.acceptStill,
       this.acceptWindow = const Duration(seconds: 10),
       this.acceptGap = const Duration(seconds: 1),
-      this.assist = false});
+      this.assist = false,
+      this.liveReadout});
 
   @override
   ConsumerState<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
@@ -790,6 +805,27 @@ class _FaceCaptureScreenState extends ConsumerState<FaceCaptureScreen>
                       ? 'Captured $_taken of ${widget.captures}… hold still'
                       : _status,
                 ),
+                // Marking live line (see [StillCapturer.liveReadout]):
+                // host-owned notifier, rendered even while empty so the
+                // first update never moves the panel.
+                if (widget.liveReadout != null) ...[
+                  const SizedBox(height: ProxSpacing.xs),
+                  ValueListenableBuilder<String>(
+                    valueListenable: widget.liveReadout!,
+                    builder: (_, line, __) => Text(
+                      line,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                            color: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.color
+                                ?.withValues(alpha: 0.75),
+                          ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   icon: const Icon(Icons.face),

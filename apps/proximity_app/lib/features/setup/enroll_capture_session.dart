@@ -600,16 +600,15 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   }
 
   /// Anti-fluke shaping (NOT a threshold move — the bar is unchanged):
-  /// probes clearing the bar at or above [_confirmMargin] in non-dim
-  /// light accept immediately; anything weaker (below the margin) or
-  /// dark (below the warn hint) only PARKS its slot here and discards
-  /// the still. The bucket fills on the next consecutive passing probe
-  /// for the SAME slot (with the fresh still); any intervening
-  /// off-target / failing / unreadable probe clears the park. Dark-room
-  /// lucky singles (field: 0.70-0.84 sightings) no longer fill on their
-  /// own, while genuine bright passes (field 0.87-0.99) never park — good
-  /// light costs zero extra beats. Unknown brightness (tests-only fakes;
-  /// production always carries it) never counts as dim.
+  /// bright probes clearing the bar at or above [_confirmMargin] accept
+  /// immediately; weaker bright probes only PARK their slot here and the
+  /// bucket fills on the next consecutive passing probe for the SAME slot.
+  /// Dark probes (below [kLivenessAcceptBrightness]) always park and never
+  /// fill — low-brightness photos are not allowed, even back-to-back. Any
+  /// intervening off-target / failing / unreadable probe clears the park.
+  /// Genuine bright passes (field 0.87-0.99) never park — good light costs
+  /// zero extra beats. Unknown brightness (tests-only fakes; production
+  /// always carries it) never counts as dim.
   String? _confirmSlot;
 
   /// Strong-pass line for [_confirmSlot]: at/above accepts immediately
@@ -870,10 +869,12 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
   /// CURRENT guided target when the still passes it — then score vitality
   /// on the candidate BEFORE accepting it (same per-slot bar enrollFace
   /// enforces; non-live candidates are discarded silently and the loop
-  /// continues, so the holder never taps Recapture mid-flow). Marginal
-  /// passes (below [_confirmMargin]) and dark passes additionally need a
-  /// back-to-back confirmation for the same slot (see [_confirmSlot]) —
-  /// single lucky sightings in marginal light never fill alone. Targets walk
+  /// continues, so the holder never taps Recapture mid-flow). Bright
+  /// marginal passes (below [_confirmMargin]) need a back-to-back
+  /// confirmation for the same slot (see [_confirmSlot]) — single lucky
+  /// sightings never fill alone. Dark passes never fill at all
+  /// ([kLivenessAcceptBrightness] acceptance floor — low-brightness photos
+  /// are not allowed). Targets walk
   /// [EnrollCaptureOrder.order] (bottom → centre → top → left → right),
   /// one angle at a time — never opportunistic: an off-target still is a
   /// quiet retry, and every successful pose read moves the wheel markers
@@ -1009,14 +1010,26 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
             // temp still is harmless (cache dir, overwritten next run).
             unawaited(File(still).delete().then((_) {}, onError: (_) {}));
           } else {
-            // Confirmation shaping (see [_confirmSlot]): strong bright
-            // passes accept at once; marginal/dark passes park and need
-            // the next consecutive pass for the same slot.
+            // Confirmation shaping (see [_confirmSlot]): bright passes at
+            // or above [_confirmMargin] accept at once; marginal bright
+            // passes park and need the next consecutive pass for the same
+            // slot. Dark passes (below [kLivenessAcceptBrightness]) always
+            // park and never fill — low-brightness photos are not allowed,
+            // even back-to-back: the stall prompts + flash assist guide to
+            // light instead. Unknown brightness (tests-only fakes;
+            // production always carries it) never counts as dim.
             final dim = brightness != null &&
                 brightness.isFinite &&
-                brightness < kLivenessDimHintBrightness;
-            final strong = vitality >= _confirmMargin && !dim;
-            if (_confirmSlot != target && !strong) {
+                brightness < kLivenessAcceptBrightness;
+            final marginal =
+                !dim && vitality < _confirmMargin && _confirmSlot != target;
+            if (dim) {
+              _confirmSlot = target;
+              EnrollLog.face('slot $target dark '
+                  '${vitality.toStringAsFixed(2)} '
+                  '(awaiting bright confirm — silent, continuing)');
+              unawaited(File(still).delete().then((_) {}, onError: (_) {}));
+            } else if (marginal) {
               _confirmSlot = target;
               EnrollLog.face('slot $target marginal vitality '
                   '${vitality.toStringAsFixed(2)} '
@@ -1200,9 +1213,9 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
 
   /// Bottom-bar live readout: latest measured vitality + the bar that
   /// judged it + live brightness + guided target (e.g.
-  /// `LIVE 0.93/0.70 B139 · DOWN`, or `LIVE —/0.70 B12 · DOWN · DIM` in a
-  /// dark room before any probe scores). The brightness sits in the same
-  /// line as the score: the live room reading when a sensor reports
+  /// `LIVE 0.93/0.70 Brightness: 139 · DOWN`, or
+  /// `LIVE —/0.70 Brightness: 12 · DOWN · DIM` in a dark room before any
+  /// probe scores). The brightness sits in the same line as the score: the live room reading when a sensor reports
   /// (updates every beat, even off-target when no probe runs), else the
   /// last scored probe's crop mean (same probe the native gate logs as
   /// `bright=`). Placeholders until the first read lands. No match score exists mid-walk (the matcher first
@@ -1229,7 +1242,7 @@ mixin EnrollCaptureSessionDriver<T extends ConsumerStatefulWidget>
         ? luxToBrightness(liveLux)
         : _lastBrightness;
     final bTok = bright != null && bright.isFinite
-        ? ' B${bright.round()}'
+        ? ' Brightness: ${bright.round()}'
         : '';
     String? hint;
     if (v == null) {

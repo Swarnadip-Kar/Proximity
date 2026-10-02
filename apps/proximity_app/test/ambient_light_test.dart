@@ -214,7 +214,7 @@ void main() {
       await t.pump(const Duration(milliseconds: 500));
       expect(ringOf(t), greaterThan(0.6));
       expect(brightness.sets, [1.0]);
-      expect(readoutOf(t), contains('B'));
+      expect(readoutOf(t), contains('Brightness:'));
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);
@@ -236,9 +236,9 @@ void main() {
       // 0 lux — what matters is no window-max and a live B token.
       expect(ringOf(t), lessThan(0.05));
       expect(brightness.sets, isEmpty);
-      // Live number still rides the readout (never a stuck lineless B):
-      // lux 400 maps to B246 on the 0-255 token scale.
-      expect(readoutOf(t), contains('B246'));
+      // Live number still rides the readout (never a stuck line without
+      // it): lux 400 maps to Brightness: 246 on the 0-255 scale.
+      expect(readoutOf(t), contains('Brightness: 246'));
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);
@@ -279,9 +279,10 @@ void main() {
     testWidgets('dark preview frames glow with no sensor and no probes',
         (t) async {
       // iOS path: no light-sensor side (empty ambient) and the pose gate
-      // never reads, so no probe ever runs — preview frames alone (B12)
-      // grade the ring to (70-12)/70 ≈ 0.83 and max the window on the
-      // first frame. Faceless throughout (no fills, no completion race).
+      // never reads, so no probe ever runs — preview frames alone
+      // (Brightness: 12) grade the ring to (70-12)/70 ≈ 0.83 and max the
+      // window on the first frame. Faceless throughout (no fills, no
+      // completion race).
       final ctl = await keyReady();
       final brightness = FakeScreenBrightnessControl(scriptedCurrent: 0.35);
       final blind =
@@ -296,7 +297,7 @@ void main() {
       await t.pump(const Duration(milliseconds: 800));
       expect(ringOf(t), moreOrLessEquals(0.83, epsilon: 0.1));
       expect(brightness.sets, [1.0]);
-      expect(readoutOf(t), contains('B12'));
+      expect(readoutOf(t), contains('Brightness: 12'));
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);
@@ -320,7 +321,7 @@ void main() {
       await t.pump(const Duration(milliseconds: 1500));
       expect(ringOf(t), 0.0);
       expect(brightness.sets, isEmpty);
-      expect(readoutOf(t), contains('B200'));
+      expect(readoutOf(t), contains('Brightness: 200'));
       expect(t.takeException(), isNull);
       await t.tap(find.widgetWithText(TextButton, 'Cancel'));
       await drain(t);

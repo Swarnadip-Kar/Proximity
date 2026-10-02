@@ -431,6 +431,18 @@ const double kLivenessMinSharpness = 10.0;
 /// crop) — and even a false fire only shows a hint, never a refusal.
 const double kLivenessDimHintBrightness = 70.0;
 
+/// Acceptance floor for captured photos (mean 0-255 grayscale of the scored
+/// crop — same calibrated value as [kLivenessDimHintBrightness], acting as
+/// a gate where the hint only presents): photos averaging below this are
+/// refused — enrollment parks the slot until a bright confirm lands (dark
+/// passes never fill, even back-to-back), marking returns inconclusive
+/// with a dim retry instead of burning an attempt. Same calibration story
+/// as the hint (dark-skin-in-good-light crops average well above this
+/// across a 2.7x-context crop), so genuine refusal cost is ~nil; null
+/// brightness (tests-only fakes — production always carries it) never
+/// blocks.
+const double kLivenessAcceptBrightness = 70.0;
+
 /// Exposure bounds for the vitality pass (mean 0-255 grayscale of the SAME
 /// scored crop [livenessCropRect] hands the packer — see
 /// [cropMeanBrightnessRgba]). Lens-covered near-black frames and

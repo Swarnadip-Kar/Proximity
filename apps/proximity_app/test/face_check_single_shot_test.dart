@@ -198,6 +198,15 @@ void main() {
       expect(FaceCheckView.markDimPrompt,
           'Too dark — move to brighter light');
     });
+
+    test('marking live line mirrors the enrollment readout shape', () {
+      expect(FaceCheckView.markLiveReadout(vitality: 0.93, brightness: 139),
+          'LIVE 0.93/0.70 Brightness: 139');
+      expect(FaceCheckView.markLiveReadout(vitality: null, brightness: 12),
+          'LIVE —/0.70 Brightness: 12');
+      expect(FaceCheckView.markLiveReadout(vitality: 0.5, brightness: null),
+          'LIVE 0.50/0.70');
+    });
   });
 
   group('no beacon/rotation/progress-angle elements on mark/face', () {

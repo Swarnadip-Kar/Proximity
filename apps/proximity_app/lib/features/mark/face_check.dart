@@ -51,6 +51,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:proximity_protocol/protocol.dart';
 
 import '../../design/tokens.dart';
 import '../../widgets/capture_overlay.dart';
@@ -128,6 +129,18 @@ class FaceCheckView extends StatelessWidget {
     this.previewAspectRatio,
     this.preview,
   });
+
+  /// Marking live line for the still-capture sheet (same shape as the
+  /// enrollment bottom-bar readout, minus the guided target — marking is
+  /// a single hold-still check): `LIVE <score>/0.70 Brightness: <n>`.
+  /// Placeholders when a still has not scored yet. Pure for unit tests.
+  static String markLiveReadout({double? vitality, double? brightness}) {
+    final score = vitality == null ? '—' : vitality.toStringAsFixed(2);
+    final b = brightness != null && brightness.isFinite
+        ? ' Brightness: ${brightness.round()}'
+        : '';
+    return 'LIVE $score/${kLivenessThreshold.toStringAsFixed(2)}$b';
+  }
 
   /// Frame signal from the host's notice line: unreadable-frame notices
   /// (auto-retry + could-not-read + too-dark) pulse neutral; re-enroll/
