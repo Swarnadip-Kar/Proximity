@@ -287,10 +287,11 @@ class ProxServer {
   int sessionClassBase = 0;
 
   /// Cumulative class number both sides render: in-visit round + prior
-  /// sessions. Idle fresh (no rounds, no history) is 0 → both sides hide
-  /// the slot; idle after R1 with 9 priors is 10 on both sides.
-  int get classNo =>
-      _windowNo > 0 ? _windowNo + sessionClassBase : sessionClassBase;
+  /// sessions. The visit counts from the class ABOUT to be hosted: an
+  /// idle-fresh host reads base+1 (never base), so both sides agree before
+  /// the first Start instead of jumping (the reported 19 idle → 20th on
+  /// Start). Brand-new courses idle at 1 — their upcoming first class.
+  int get classNo => (_windowNo > 0 ? _windowNo : 1) + sessionClassBase;
   late final WindowTls tls;
   String _bearer = '';
   late final LiveRoom room;

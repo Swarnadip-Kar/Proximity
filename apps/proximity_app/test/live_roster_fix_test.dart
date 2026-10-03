@@ -259,6 +259,23 @@ void main() {
     )));
     await t.pumpAndSettle();
     expect(find.text('Class 1'), findsOneWidget);
+    // Idle-fresh visits already read the upcoming class (no 9→10 jump on
+    // Start): empty tally + closed window + 9 priors reads Class 10, and
+    // the legacy no-offset visit reads Class 1 instead of hiding.
+    final fresh = TallyStore();
+    await t.pumpWidget(_themed(MarkedRosterSection(
+      tally: fresh,
+      liveWindowNo: 0,
+      sessionOffset: 9,
+    )));
+    await t.pumpAndSettle();
+    expect(find.text('Class 10'), findsOneWidget);
+    await t.pumpWidget(_themed(MarkedRosterSection(
+      tally: fresh,
+      liveWindowNo: 0,
+    )));
+    await t.pumpAndSettle();
+    expect(find.text('Class 1'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 }

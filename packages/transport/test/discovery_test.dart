@@ -371,6 +371,47 @@ void main() {
     }
   });
 
+  test('gated classNo floors at the upcoming class (no idle jump)', () async {
+    // 19 priors, hosting, no round yet: idle must already read 20 (the
+    // class about to be hosted) — never 19-then-20 on Start. Brand-new
+    // courses idle at 1. Rounds add onto the base as before.
+    final prof = ProxCrypto.generateEdKeypair();
+    final server = ProxServer(
+      classLabel: 'CLASSNO-TEST',
+      profSk: prof.privateKey,
+      profPk: prof.publicKey,
+      sightings: ({required peerW, required expectedAirKey, required expectedUuid}) => null,
+      sessionOrg: 'univ.edu',
+    );
+    await server.start(port: 0);
+    final port = server.port;
+    final probeClient = ProxClient(host: '127.0.0.1', port: port);
+    try {
+      final fresh = await probeClient.probeWindow(org: 'univ.edu');
+      expect(fresh.reachable, isTrue);
+      expect(fresh.classNo, 1);
+      server.sessionClassBase = 19;
+      final idle = await probeClient.probeWindow(org: 'univ.edu');
+      expect(idle.classNo, 20);
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'CLASSNO-TEST',
+        ),
+        1,
+      );
+      final r1 = await probeClient.probeWindow(org: 'univ.edu');
+      expect(r1.classNo, 20);
+      expect(r1.windowNo, 1);
+    } finally {
+      probeClient.close();
+      await server.stop();
+    }
+  });
+
   test('gated /window: mismatched org gets silence, never the class', () async {
     final prof = ProxCrypto.generateEdKeypair();
     final server = ProxServer(
