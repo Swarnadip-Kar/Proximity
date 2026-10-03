@@ -196,7 +196,10 @@ Map<String, dynamic> sessionToDoc(
     required String profEmail,
     required String profName,
     required ClassRecord record}) {
-  final emails = record.allEmails.map((e) => e.toLowerCase()).toList()..sort();
+  // Course members only: waiting-room joins alone never sync as students,
+  // so a waiting-only join never pulls as an Absent course on the student
+  // side either. Dup auto-absent flagged rows stay (they did mark).
+  final emails = record.rosterEmails.map((e) => e.toLowerCase()).toList()..sort();
   // Session org = the stamped record org, immutable on update. Full-fresh:
   // no prof-org fallback — an unstamped record writes '' and rules deny
   // the write (fail-closed, never a silent cross-org stamp).

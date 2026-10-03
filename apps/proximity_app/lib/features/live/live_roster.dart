@@ -715,8 +715,26 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
     // Tally rows with no marks at all: dup auto-absent (wins stripped,
     // still grouped) plus ensure-only rows. Listed explicitly — they
     // vanish from presentAny (wins empty).
+    //
+    // Membership rule: waiting-only joins (ensure without a mark) are not
+    // course members until they mark ≥1 round anywhere. Dup-stripped rows
+    // did mark (wins stripped by review) so they stay absent; plain empty
+    // rows count as absent only when they are on the course roster
+    // (marked in a prior class) — otherwise they are just waiting, never
+    // absent.
     final emptyRowsAll =
         tally.search('').where((r) => r.wins.isEmpty).toList();
+    final historyEmails = {for (final m in widget.roster) m.email};
+    final dupEmptyAll = [
+      for (final r in emptyRowsAll)
+        if ((widget.groups[r.email] ?? const {}).isNotEmpty) r,
+    ];
+    final plainEmptyInHistory = [
+      for (final r in emptyRowsAll)
+        if ((widget.groups[r.email] ?? const {}).isEmpty &&
+            historyEmails.contains(r.email))
+          r,
+    ];
     // History-union absentees: on the course roster but marked nowhere
     // this visit (and not already listed as an empty tally row).
     final emptyEmails = {for (final r in emptyRowsAll) r.email};
@@ -730,17 +748,22 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
     final present = presentRowsAll.length;
     final partial = partialRowsAll.length;
     final int absent;
+    // Absent list rows when the roster is known (used by the tab below).
+    final List<AttendanceRecord> emptyAbsentRows;
     if (widget.roster.isNotEmpty) {
-      absent = historyAbsentAll.length + emptyRowsAll.length;
+      emptyAbsentRows = [...dupEmptyAll, ...plainEmptyInHistory];
+      absent = historyAbsentAll.length + emptyAbsentRows.length;
     } else {
-      // Legacy ceiling: history union when the host knows it (absent
-      // starts at class strength), else the live tally size. Maxes
-      // with the live size so newcomers never shrink the ceiling
-      // mid-visit.
+      // No course history: absent starts at class strength (roster:
+      // marked + dup auto-absent), not the live tally size (waiting-only
+      // joins must not inflate it). Maxes with the live roster size so
+      // newcomers never shrink the ceiling mid-visit.
+      emptyAbsentRows = dupEmptyAll;
+      final markedSize = tally.rosterCount;
       final ceiling =
-          widget.rosterTotal != null && widget.rosterTotal! > tally.size
+          widget.rosterTotal != null && widget.rosterTotal! > markedSize
               ? widget.rosterTotal!
-              : tally.size;
+              : markedSize;
       absent = (ceiling - present - partial).clamp(0, 1 << 30);
     }
     // Search narrows each list below (counts stay total). The intersection
@@ -755,17 +778,17 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
         if (_matches(_search, r.email, r.name, r.roll)) r,
     ];
     final dupAbsentRows = [
-      for (final r in emptyRowsAll)
-        if ((widget.groups[r.email] ?? const {}).isNotEmpty &&
-            _matches(_search, r.email, r.name, r.roll))
-          r,
+      for (final r in dupEmptyAll)
+        if (_matches(_search, r.email, r.name, r.roll)) r,
     ];
-    final plainEmptyRows = [
-      for (final r in emptyRowsAll)
-        if ((widget.groups[r.email] ?? const {}).isEmpty &&
-            _matches(_search, r.email, r.name, r.roll))
-          r,
-    ];
+    // Plain waiting-only rows are absent only when on the course roster;
+    // with no roster history there is no absent list beyond dup review.
+    final plainEmptyRows = widget.roster.isNotEmpty
+        ? [
+            for (final r in plainEmptyInHistory)
+              if (_matches(_search, r.email, r.name, r.roll)) r,
+          ]
+        : const <AttendanceRecord>[];
     final historyAbsent = [
       for (final m in historyAbsentAll)
         if (_matches(_search, m.email, m.name, m.roll)) m,

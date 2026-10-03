@@ -261,12 +261,25 @@ void main() {
         names: {'a@x.in': '=EVIL(), Jr', 'b@x.in': 'B'},
         rolls: {'a@x.in': '1', 'b@x.in': '2'},
         windows: [
-          {'a@x.in': true, 'b@x.in': false}
+          {'a@x.in': true, 'b@x.in': true}
         ],
       );
       expect(csv, contains('"\'=EVIL(), Jr"'));
-      expect(csv, contains('B,2,b@x.in,Absent'));
+      expect(csv, contains('B,2,b@x.in,Present'));
       expect(csv, contains(',Present'));
+    });
+
+    test('buildSimpleCsv excludes waiting-only joins (no true anywhere)',
+        () {
+      final csv = buildSimpleCsv(
+        names: {'a@x.in': 'A', 'w@x.in': 'W'},
+        rolls: {'a@x.in': '1', 'w@x.in': '2'},
+        windows: [
+          {'a@x.in': true, 'w@x.in': false}
+        ],
+      );
+      expect(csv, contains('a@x.in'));
+      expect(csv, isNot(contains('w@x.in')));
     });
 
     test('buildDateRangeMatrix hardens identity cells', () {

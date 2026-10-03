@@ -717,7 +717,8 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   /// Archives an autosaved draft to class history under its own record
   /// id/date (this is the "auto-save that session as attendance marked"
-  /// path). No-op when nothing was ever marked.
+  /// path). No-op when nothing was ever marked (waiting-only joins never
+  /// archive — waiting alone is not attendance).
   Future<void> _archiveDraftAsHistory(Map<String, dynamic> d) async {
     try {
       final windows = _boolMaps(d['windows']);
@@ -729,7 +730,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
           rolls: _stringMap(d['rolls']),
           windowNos: _intList(d['windowNos'], windows.length),
         );
-      if (tally.size == 0) return;
+      if (tally.rosterCount == 0) return;
       final now = DateTime.now();
       await ref.read(deviceStoreProvider).upsertHistory(
             tally.toClassRecord(
@@ -741,7 +742,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
             ),
           );
       BleLog.log(
-          ProxLogTags.sync, 'draft archived to history (${tally.size} marked)');
+          ProxLogTags.sync, 'draft archived to history (${tally.rosterCount} marked)');
     } catch (_) {}
   }
 
@@ -822,7 +823,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   }
 
   String _draftSig() =>
-      '$_windowNo|${tally.windowsAsMaps}|${tally.size}|${tally.confirmedCount}';
+      '$_windowNo|${tally.windowsAsMaps}|${tally.rosterCount}|${tally.confirmedCount}';
 
   Map<String, dynamic> _draftJson() {
     // Crash-safe R1: the live-open round is never noted in-memory (so the
@@ -866,11 +867,13 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
 
   /// Writes the draft when marks are absent entirely it clears any stale
   /// draft instead, so untouched courses never show a resume banner.
+  /// Waiting-only joins never create a draft — waiting alone is not
+  /// attendance and must not offer a resume.
   Future<void> _saveDraft() async {
     if (!hosting) return;
     try {
       final store = ref.read(deviceStoreProvider);
-      if (tally.size == 0 && _windowNo == 0) {
+      if (tally.rosterCount == 0 && _windowNo == 0) {
         await store.clearSession(widget.courseName);
       } else {
         await store.writeSession(widget.courseName, _draftJson());
@@ -954,7 +957,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
     // the autosave may not have flushed yet (abnormal teardown without
     // back-nav); the awaited _leave save + per-round snapshots own the
     // normal path. (Ports still close unconditionally below — req 7.)
-    if (tally.size > 0) _saveDraft();
+    if (tally.rosterCount > 0) _saveDraft();
     try {
       ref.read(hostDriverProvider).endHosting();
     } catch (_) {}
@@ -1329,11 +1332,12 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// Upserts the finished-so-far tally into on-device class history under
   /// this visit's stable record id: every round rewrites the SAME record,
   /// so un-closed sessions still leave data and later rounds update it.
-  /// Skipped while nothing is marked (no empty records in history).
+  /// Skipped while nothing is marked (no empty records in history —
+  /// waiting-only joins never snapshot).
   /// The SyncEngine post-live-save hook durably queues + best-effort
   /// pushes (professors, online) — local data never waits on it.
   Future<void> _saveSnapshot([String? dateIso]) async {
-    if (tally.size == 0) return;
+    if (tally.rosterCount == 0) return;
     ClassRecord? record;
     try {
       final now = DateTime.now();

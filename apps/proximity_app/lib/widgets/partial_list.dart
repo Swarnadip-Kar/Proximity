@@ -23,6 +23,11 @@ class RosterEntry {
 
 /// Union of all attendees over [sessions], newest session first so the
 /// freshest name/roll wins. Pure — unit-tested without widgets.
+///
+/// Membership rule: only students marked in ≥1 round of ≥1 session (plus
+/// dup auto-absent flagged rows, which did mark) count. Waiting-room joins
+/// alone (`ensure` without a `mark`) never join the union and never read
+/// as Absent.
 List<RosterEntry> courseRoster(List<ClassRecord> sessions) {
   final names = <String, String>{};
   final rolls = <String, String>{};
@@ -34,7 +39,7 @@ List<RosterEntry> courseRoster(List<ClassRecord> sessions) {
     rolls.addAll(r.rolls);
   }
   final emails = <String>{
-    for (final r in sessions) ...r.allEmails,
+    for (final r in sessions) ...r.rosterEmails,
   };
   final out = [
     for (final e in emails)
@@ -109,7 +114,7 @@ List<PartialEntry> partialsOfCourse(List<ClassRecord> sessions) {
     // Global date rule, display only: with-day DD-MM-YYYY.
     final label =
         r.dateIso.isNotEmpty ? shortDayDateOf(r.dateIso) : r.classLabel;
-    for (final email in r.allEmails) {
+    for (final email in r.rosterEmails) {
       var some = false;
       var all = true;
       for (final w in r.windows) {

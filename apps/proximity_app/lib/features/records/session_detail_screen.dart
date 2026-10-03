@@ -65,11 +65,15 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   }
 
   List<String> get _persons {
-    final out = <String>{
-      for (final w in _record.windows) ...w.keys,
-      ..._record.names.keys,
-    }.toList()
-      ..sort();
+    // Course members only: waiting-only joins (no `true` in any window of
+    // this record) are not students until they mark ≥1 round anywhere.
+    // They never appear as Absent in this session either.
+    final marked = <String>{
+      for (final w in _record.windows)
+        for (final e in w.entries)
+          if (e.value) e.key,
+    };
+    final out = marked.toList()..sort();
     return out;
   }
 
@@ -97,23 +101,12 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   /// Course-mates absent from this session: union over the course (plus
   /// this record, so newcomers here are covered) minus anyone marked in
   /// any round here. A newcomer from a later class reads as absent in
-  /// earlier ones (matching exports + the editor). Falls back to the
-  /// session-local missing list when the course union is unknown.
+  /// earlier ones (matching exports + the editor). Membership needs ≥1
+  /// mark anywhere — waiting-only joins never join the union and never
+  /// read as Absent. Without the course union there is no known absent.
   List<RosterEntry> _absentEntries() {
     final sessions = widget.courseSessions;
-    if (sessions.isEmpty) {
-      final names = _record.names;
-      final rolls = _record.rolls;
-      final out = [
-        for (final email in _persons)
-          if (!_markedAnywhere(email))
-            RosterEntry(
-                email: email,
-                name: names[email] ?? email,
-                roll: rolls[email] ?? ''),
-      ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      return out;
-    }
+    if (sessions.isEmpty) return const [];
     final here = <String>{
       for (final w in _record.windows)
         for (final e in w.entries)

@@ -398,17 +398,18 @@ class _CourseOverviewScreenState extends ConsumerState<CourseOverviewScreen> {
             future: store.readHistory(),
             builder: (context, snap) {
               final sessions = _sessions(snap.data ?? const <ClassRecord>[]);
-              // Roster union: everyone ever seen in any session of this course.
+              // Roster union: everyone marked in ≥1 round of any session of
+              // this course. Waiting-only joins never join the union.
               // Newcomers from later classes read as absent in earlier ones,
               // matching the matrix exports.
               final rosterCount = courseRoster(sessions).length;
-              // Total Students: unique attendees present in ≥1 session.
-              // Present = confirmed (intersection of all windows, trailing
-              // empties trimmed — same as presentCount / export-matrix P);
-              // unioned across sessions (union, not sum) so repeat
+              // Total Students: unique attendees marked in ≥1 round of ≥1
+              // session (present or partial — any `true` mark counts, plus
+              // dup auto-absent flagged rows which did mark).
+              // Unioned across sessions (union, not sum) so repeat
               // attendees count once. Empty course → 0, still rendered.
               final totalStudents = <String>{
-                for (final s in sessions) ...s.confirmedEmails,
+                for (final s in sessions) ...s.rosterEmails,
               }.length;
               return SelectionScope(
                 child: _OverviewBody(
@@ -698,7 +699,7 @@ class _OverviewBodyState extends ConsumerState<_OverviewBody> {
                         child: Builder(
                           builder: (context) {
                             final partial =
-                                partialCountOf(r.windows, r.allEmails);
+                                partialCountOf(r.windows, r.rosterEmails);
                             final absent =
                                 (rosterCount - r.presentCount - partial)
                                     .clamp(0, 1 << 30);

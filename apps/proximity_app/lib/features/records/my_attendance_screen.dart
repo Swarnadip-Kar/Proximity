@@ -359,16 +359,33 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
     final email = acct?.email.toLowerCase() ?? '';
     // Course-wise: buckets A–Z, sessions newest-first inside each (the
     // pull/cache order is newest-first; grouping is stable).
+    // Membership rule: a course appears only when the student marked ≥1
+    // round in ≥1 of its sessions (dup auto-absent flagged rows count —
+    // they did mark) — a waiting-room join alone never creates a course
+    // card and never reads as Absent.
+    bool markedInCourse(List<ClassRecord> sessions, String emailLower) {
+      if (emailLower.isEmpty) return false;
+      for (final s in sessions) {
+        if (s.rosterEmails.any((e) => e.toLowerCase() == emailLower)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     final groups = <String, List<ClassRecord>>{};
     for (final s in _sessions) {
       groups.putIfAbsent(courseOfRecord(s), () => []).add(s);
     }
+    // Drop waiting-only courses (legacy pulls may still contain them via
+    // old `studentEmails` docs — future pushes never include them).
+    groups.removeWhere((_, sessions) => !markedInCourse(sessions, email));
     final courses = groups.keys.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     final summaries = {
       for (final c in courses) c: summarizeCourse(c, groups[c]!, email)
     };
-    final totalTaken = _sessions.length;
+    final totalTaken = groups.values.fold(0, (n, list) => n + list.length);
     final totalAttended =
         summaries.values.fold(0, (n, s) => n + s.present);
     return AdaptiveScaffold(
@@ -421,7 +438,7 @@ class _MyAttendanceScreenState extends ConsumerState<MyAttendanceScreen> {
                   )
                 else if (_error.isNotEmpty)
                   ProxErrorNote(_error)
-                else if (_sessions.isEmpty)
+                else if (_sessions.isEmpty || courses.isEmpty)
                   const ProxEmptyState(
                     message:
                         'No synced classes yet. Professors sync after marking — pull down to refresh when online.',

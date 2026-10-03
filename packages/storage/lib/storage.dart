@@ -248,17 +248,77 @@ class TallyStore {
   Map<String, String> rollMap() =>
       {for (final e in _rows.entries) e.key: e.value.roll};
 
+  /// Marked rows only (≥1 round): waiting-room joins (`ensure` without a
+  /// `mark`) never count as course members. Waiting alone must not create
+  /// an Absent.
+  List<AttendanceRecord> get markedRows =>
+      _rows.values.where((r) => r.wins.isNotEmpty).toList();
+
+  /// Roster rows: marked rows plus dup auto-absent rows (wins stripped for
+  /// review but flagged — they did mark, so they stay Absent, flagged,
+  /// never vanished). Waiting-only joins (empty + unflagged) stay excluded.
+  List<AttendanceRecord> get rosterRows => _rows.values
+      .where((r) => r.wins.isNotEmpty || r.faceFlag)
+      .toList();
+
+  /// Count of students marked in ≥1 round (excludes waiting-only joins).
+  int get markedCount => markedRows.length;
+
+  /// Count of roster members (marked + dup auto-absent). Waiting-only
+  /// joins excluded.
+  int get rosterCount => rosterRows.length;
+
+  /// Windows restricted to marked rows (same round list, waiting-only rows
+  /// dropped). Empty rounds stay as all-false maps so the intersection
+  /// still collapses honestly.
+  List<Map<String, bool>> get markedWindowsAsMaps {
+    final marked = markedRows;
+    if (marked.isEmpty) return const [];
+    return [
+      for (final n in windowNos)
+        {for (final r in marked) r.email: r.wins.contains(n)},
+    ];
+  }
+
+  Map<String, String> markedNameMap() =>
+      {for (final r in markedRows) r.email: r.name};
+
+  Map<String, String> markedRollMap() =>
+      {for (final r in markedRows) r.email: r.roll};
+
+  /// Roster-restricted windows/names/rolls (marked + dup auto-absent).
+  /// Dup-stripped rows persist as all-false (Absent, flagged) instead of
+  /// vanishing; waiting-only rows drop out entirely.
+  List<Map<String, bool>> get rosterWindowsAsMaps {
+    final rows = rosterRows;
+    if (rows.isEmpty) return const [];
+    return [
+      for (final n in windowNos)
+        {for (final r in rows) r.email: r.wins.contains(n)},
+    ];
+  }
+
+  Map<String, String> rosterNameMap() =>
+      {for (final r in rosterRows) r.email: r.name};
+
+  Map<String, String> rosterRollMap() =>
+      {for (final r in rosterRows) r.email: r.roll};
+
   /// Simple CSV without W1/W2: Name,ID Number,Email,Status.
   /// Present = intersection of all windows (or any when lenient).
+  /// Waiting-only joins (no `true` in any window, unflagged) are excluded
+  /// — they are not course members until they mark ≥1 round. Dup
+  /// auto-absent rows (flagged, wins stripped) stay as Absent.
   String exportCsv(
           {required String classLabel,
           required String dateIso,
           bool lenientOneOfTwo = false}) =>
       buildSimpleCsv(
-        names: nameMap(),
-        rolls: rollMap(),
-        windows: windowsAsMaps,
+        names: rosterNameMap(),
+        rolls: rosterRollMap(),
+        windows: rosterWindowsAsMaps,
         lenientOneOfTwo: lenientOneOfTwo,
+        faceFlags: flaggedEmails,
       );
 
   int get size => _rows.length;
@@ -318,35 +378,50 @@ class TallyStore {
           String? timestampIso,
           String? startIso,
           String? id,
-          String org = ''}) =>
-      ClassRecord(
-        id: id ?? '',
-        courseId: courseId,
-        classLabel: classLabel,
-        dateIso: dateIso,
-        timestampIso: timestampIso ?? '',
-        startIso: startIso ?? '',
-        windows: windowsAsMaps.isEmpty ? [const <String, bool>{}] : windowsAsMaps,
-        names: nameMap(),
-        rolls: rollMap(),
-        org: org,
-        faceFlags: flaggedEmails,
-      );
+          String org = ''}) {
+    // Waiting-only rows never persist: only roster rows (≥1 mark, plus
+    // dup auto-absent flagged) become record members, so a waiting join
+    // alone can never read as Absent later.
+    final wins = rosterWindowsAsMaps;
+    return ClassRecord(
+      id: id ?? '',
+      courseId: courseId,
+      classLabel: classLabel,
+      dateIso: dateIso,
+      timestampIso: timestampIso ?? '',
+      startIso: startIso ?? '',
+      windows: wins.isEmpty ? [const <String, bool>{}] : wins,
+      names: rosterNameMap(),
+      rolls: rosterRollMap(),
+      org: org,
+      faceFlags: flaggedEmails,
+    );
+  }
 }
 
 /// Simple per-session CSV: Name,ID Number,Email,Status.
 /// [windows] is the ordered list of window maps (email -> present).
+/// Waiting-only joins (no `true` in any window, unflagged) are excluded —
+/// they are not course members until they mark ≥1 round. Dup auto-absent
+/// rows (in [faceFlags], wins stripped) stay as Absent.
 String buildSimpleCsv({
   required Map<String, String> names,
   Map<String, String> rolls = const {},
   required List<Map<String, bool>> windows,
   bool lenientOneOfTwo = false,
+  List<String> faceFlags = const [],
 }) {
-  final emails = <String>{
-    for (final w in windows) ...w.keys,
-    ...names.keys,
-  }.toList()
-    ..sort();
+  final flagged = {for (final e in faceFlags) e.toLowerCase()};
+  final marked = <String>{
+    for (final w in windows)
+      for (final e in w.entries)
+        if (e.value) e.key,
+    // Dup auto-absent: flagged with no wins left still counts (Absent).
+    for (final w in windows)
+      for (final e in w.entries)
+        if (flagged.contains(e.key.toLowerCase())) e.key,
+  };
+  final emails = marked.toList()..sort();
   // Trim trailing fully-empty windows (no keys) so a fresh single-window
   // session with [w1, {}] still counts w1 alone.
   var wins = windows;
@@ -466,7 +541,28 @@ class ClassRecord {
     return out ?? {};
   }
 
-  /// All emails ever seen in this session (union of windows + names).
+  /// Emails marked in ≥1 round of this session (intersection source for
+  /// Present, union source for course membership). Waiting-room joins
+  /// (`ensure` without a `mark`) are excluded — waiting alone never makes
+  /// anyone a course member and never reads as Absent.
+  Set<String> get markedEmails => {
+        for (final w in windows)
+          for (final e in w.entries)
+            if (e.value) e.key,
+      };
+
+  /// Roster members of this session: marked in ≥1 round, plus dup
+  /// auto-absent rows (wins stripped for review but flagged — they did
+  /// mark, so they stay Absent, flagged, never vanished). Waiting-only
+  /// joins (unflagged, no `true`) stay excluded.
+  Set<String> get rosterEmails => {
+        ...markedEmails,
+        for (final e in faceFlags) e.toLowerCase(),
+      };
+
+  /// All emails ever seen in this session (union of marked + waiting).
+  /// Prefer [markedEmails]/[rosterEmails] for roster/attendance:
+  /// waiting-only joins must not count as students.
   Set<String> get allEmails => {
         for (final w in windows) ...w.keys,
         ...names.keys,
@@ -481,6 +577,7 @@ class ClassRecord {
         rolls: rolls,
         windows: windows,
         lenientOneOfTwo: lenientOneOfTwo,
+        faceFlags: faceFlags,
       );
 
   Map<String, dynamic> toJson() => {
@@ -596,7 +693,7 @@ String buildDateRangeMatrix(List<ClassRecord> sessions) {
   final names = <String, String>{};
   final rolls = <String, String>{};
   for (final s in sorted) {
-    emails.addAll(s.allEmails);
+    emails.addAll(s.rosterEmails);
     names.addAll(s.names);
     rolls.addAll(s.rolls);
   }

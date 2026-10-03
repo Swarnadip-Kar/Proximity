@@ -374,7 +374,7 @@ class _ExportBody extends ConsumerWidget {
                               // overview: callers differ only in title
                               // + tap behavior, never in card chrome.
                               final partial = partialCountOf(
-                                  session.windows, session.allEmails);
+                                  session.windows, session.rosterEmails);
                               final absent =
                                   (union - session.presentCount - partial)
                                       .clamp(0, 1 << 30);
