@@ -136,13 +136,16 @@ class HwKeyHandle {
   /// [AttestedSecureKeysBackend]), else none).
   final AttestationLevel level;
 
-  /// Whether the OS gates use behind biometrics.
+  /// Whether the OS gates use behind biometrics. Live per key from the
+  /// plugin — the Dart layer never branches on it (see the mixed-fleet
+  /// test). Defaults to the fleet posture (ungated since the
+  /// UserAuthPolicy.none switch); pre-update auth-bound keys report true.
   final bool gatedByUserAuth;
 
   const HwKeyHandle({
     required this.pkDRaw,
     required this.level,
-    this.gatedByUserAuth = true,
+    this.gatedByUserAuth = false,
   });
 }
 

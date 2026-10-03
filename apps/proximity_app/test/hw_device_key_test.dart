@@ -16,8 +16,9 @@ class _FakeHwBackend implements HwKeyBackend {
   int attestCalls = 0;
 
   /// Models the fleet mix: true = pre-update auth-bound key, false = new
-  /// ungated key (fleet default UserAuthPolicy.none). The Dart layer must
-  /// never branch on it (the plugin reads OS gating live per key at sign).
+  /// ungated key (fleet default UserAuthPolicy.none — also this fake's
+  /// default). The Dart layer must never branch on it (the plugin reads
+  /// OS gating live per key at sign).
   final bool gated;
 
   /// When true, attest() throws (models a device with no attestation).
@@ -27,7 +28,9 @@ class _FakeHwBackend implements HwKeyBackend {
   bool emptyChain = false;
 
   _FakeHwBackend(
-      {this.level = AttestationLevel.full, Uint8List? pkD, this.gated = true})
+      {this.level = AttestationLevel.full,
+      Uint8List? pkD,
+      this.gated = false})
       : pkD = pkD ?? Uint8List.fromList(List.generate(64, (i) => (i * 3 + 7) & 0xFF));
 
   @override
