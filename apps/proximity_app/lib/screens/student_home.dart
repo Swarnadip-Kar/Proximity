@@ -341,10 +341,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   OverlayEntry? _holdToast;
   Timer? _holdToastTimer;
 
-  /// Shows the already-marked hold as a floating card pinned just below
-  /// the status bar (over the app bar zone, never in the scroll list):
-  /// auto-dismisses in 3s, tap dismisses sooner. Real join errors keep
-  /// using the inline [joinError] banner.
+  /// Shows the already-marked hold as a floating card pinned just above
+  /// the bottom navigation bar (never in the scroll list, never over the
+  /// app bar): auto-dismisses in 3s, tap dismisses sooner. Real join
+  /// errors keep using the inline [joinError] banner.
   void _showMarkedHold() {
     _holdToastTimer?.cancel();
     _holdToast?.remove();
@@ -354,9 +354,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     entry = OverlayEntry(
       builder: (ctx) {
         final c = ProximityColors.of(ctx);
-        final top = MediaQuery.of(ctx).padding.top;
         return Positioned(
-          top: top + 8,
+          // System padding + bar height + margin: floats just above the
+          // shell's bottom navigation, pushing no content.
+          bottom: MediaQuery.of(ctx).padding.bottom +
+              kBottomNavigationBarHeight +
+              16,
           left: ProxSpacing.screenMargin,
           right: ProxSpacing.screenMargin,
           child: GestureDetector(
