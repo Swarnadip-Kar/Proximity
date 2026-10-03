@@ -35,7 +35,7 @@ import '../features/face_identity/liveness_gate.dart'
 import '../features/account/account_common.dart';
 import '../features/entry/entry_flow.dart';
 import '../features/mark/browse_classes.dart';
-import '../features/mark/browse_list.dart' show tileAlreadyMarkedFor;
+import '../features/mark/browse_list.dart' show tileMarkedForRound;
 import '../features/mark/face_check.dart';
 import '../features/mark/manual_status.dart';
 import '../features/mark/mark_flow.dart';
@@ -228,6 +228,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // the server dedupes already-marked re-proves idempotently). Entries
   // drop with their host (see _dropHostEntries); a new mark overwrites.
   final Map<String, String> _markedDisplayByHost = {};
+
+  // Same rounds keyed by cumulative class number (hint-only listings carry
+  // no display code on isolating APs, so the display match alone never
+  // fires there — see tileMarkedForRound). Recorded from the gated round
+  // map at mark time; cleared with the host entries. A retaken round (new
+  // display, reused number) re-arms via the display rule.
+  final Map<String, Set<int>> _markedClassNoByHost = {};
 
   /// Auto-advance gate for [target] showing [display]: false when this is
   /// the round already marked on this host (same display, both known).
@@ -825,6 +832,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _profVerifyByHost.remove(key);
     _profVerifyEmailByHost.remove(key);
     _markedDisplayByHost.remove(key);
+    _markedClassNoByHost.remove(key);
     _windowNoByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
@@ -2509,6 +2517,15 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _markedDisplayByHost['${target.host}:${target.port}'] =
             receipt.display.trim();
       }
+      // Round-number twin of the display record above (mark-page card
+      // rule): listings learned from BLE hints carry no display code, so
+      // the code alone cannot hold the re-tap there. The cumulative class
+      // number is stable within the visit and distinct across visits.
+      final markedHost = '${target.host}:${target.port}';
+      final markedRound = _windowNoByHost[markedHost] ?? 0;
+      if (markedRound > 0) {
+        (_markedClassNoByHost[markedHost] ??= <int>{}).add(markedRound);
+      }
       // Stay for the next round: once THIS round ends, rejoin the waiting
       // room (fast-paths straight back to face if the next window is
       // already open). No taps, face re-checks every round.
@@ -2744,16 +2761,23 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       profVerifyByHost: Map.of(_profVerifyByHost),
       windowNoByHost: Map.of(_windowNoByHost),
       markedDisplayByHost: Map.of(_markedDisplayByHost),
+      markedRoundsByHost: {
+        for (final e in _markedClassNoByHost.entries) e.key: Set.of(e.value),
+      },
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
         final hp = '${c.last.host}:${c.last.port}';
         // Same-round re-tap guard (mark-page card rule): this round is
         // already marked on this host — hold on browsing with the reason
-        // instead of re-facing the same window. Next rounds (fresh code)
-        // and idle tiles fall through to the normal join below.
-        if (tileAlreadyMarkedFor(
+        // instead of re-facing the same window. Display codes decide when
+        // known (a retaken round re-arms); the recorded round number holds
+        // hint-only listings that carry no code. Next rounds and idle tiles
+        // fall through to the normal join below.
+        if (tileMarkedForRound(
           markedDisplay: _markedDisplayByHost[hp],
+          markedRounds: _markedClassNoByHost[hp],
           display: c.last.display,
+          classNo: _windowNoByHost[hp] ?? 0,
         )) {
           BleLog.log(ProxLogTags.face,
               'already marked ${c.last.display} here — tap held (no same-round re-mark)');

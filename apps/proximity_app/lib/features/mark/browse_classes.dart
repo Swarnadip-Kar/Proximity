@@ -100,6 +100,11 @@ class BrowseClassesView extends StatefulWidget {
   /// (unknown display) and next rounds never match.
   final Map<String, String> markedDisplayByHost;
 
+  /// Marked cumulative class numbers by `host:port` (same-round backup for
+  /// hint-only listings, which carry no display code — see
+  /// [tileMarkedForRound]). Cleared with the host entries when hosting ends.
+  final Map<String, Set<int>> markedRoundsByHost;
+
   const BrowseClassesView({
     super.key,
     this.avatarName = '',
@@ -121,6 +126,7 @@ class BrowseClassesView extends StatefulWidget {
     this.profVerifyByHost = const {},
     this.windowNoByHost = const {},
     this.markedDisplayByHost = const {},
+    this.markedRoundsByHost = const {},
   });
 
   @override
@@ -312,10 +318,15 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                     classNo: widget.windowNoByHost[
                             widget.live[i].last.key] ??
                         0,
-                    alreadyMarked: tileAlreadyMarkedFor(
+                    alreadyMarked: tileMarkedForRound(
                       markedDisplay: widget.markedDisplayByHost[
                           widget.live[i].last.key],
+                      markedRounds: widget.markedRoundsByHost[
+                          widget.live[i].last.key],
                       display: widget.live[i].last.display,
+                      classNo: widget.windowNoByHost[
+                              widget.live[i].last.key] ??
+                          0,
                     ),
                     onTap: () => widget.onTapLive(widget.live[i]),
                   ),
