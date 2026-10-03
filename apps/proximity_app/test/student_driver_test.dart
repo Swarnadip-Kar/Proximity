@@ -1315,4 +1315,19 @@ test('bound e2e: FULL attestation without a chain fails device-unproven',
         timeout: const Duration(seconds: 2));
     expect(heard, cj);
   });
+
+  test('markStampOf renders device-local time, not raw UTC', () {
+    // Regression: the mark pill showed the professor's UTC serverTime
+    // verbatim (13:01 IST-evening read 13:01). The stamp must render the
+    // device-local wall time in the frozen 24-hour HH:mm:ss shape.
+    final utc = DateTime.utc(2026, 5, 4, 13, 1, 3);
+    final local = utc.toLocal();
+    final want =
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}:'
+        '${local.second.toString().padLeft(2, '0')}';
+    expect(markStampOf(utc), want);
+    expect(
+        RegExp(r'^\d{2}:\d{2}:\d{2}$').hasMatch(markStampOf(utc)), isTrue);
+  });
 }

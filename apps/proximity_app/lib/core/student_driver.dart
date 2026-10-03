@@ -93,6 +93,18 @@ const int kMarkingLivenessCaptures = 5;
 /// probes (≤0.31) firmly in mismatch territory at Tl=0.70 (0.60 floor).
 const double kLivenessNearMissBand = 0.10;
 
+/// Local-time mark stamp for one prove verdict (pure): the professor's
+/// signed `serverTime` is UTC — rendered here in DEVICE-local 24-hour
+/// HH:mm:ss (`13:01:03 UTC` must read as the local wall time, e.g. IST).
+/// Shape frozen (`KQ7 · 10:04:12` copy in every trail pill + verdict card).
+String markStampOf(DateTime serverTime) {
+  final t = serverTime.toLocal();
+  final hh = t.hour.toString().padLeft(2, '0');
+  final mm = t.minute.toString().padLeft(2, '0');
+  final ss = t.second.toString().padLeft(2, '0');
+  return '$hh:$mm:$ss';
+}
+
 class MarkedReceipt {
   final String detail; // display code · server time
   final StudentResult result;
@@ -1831,9 +1843,9 @@ class RealStudentDriver implements StudentDriver {  final DeviceStore _store;
             myOrg: myOrg,
             attestationLevel: stored.attestationLevel);
       }
-      final time = res.serverTime;
-      final stamp =
-          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
+      // Local wall time: the signed serverTime is UTC (professor clock as
+      // the time authority); the stamp renders device-local.
+      final stamp = markStampOf(res.serverTime);
       return switch (res.decision) {
         ProveDecision.confirmed => MarkedReceipt(
             detail: '${desc.display} · $stamp',
