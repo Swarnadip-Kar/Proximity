@@ -21,6 +21,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:proximity_ble/ble.dart';
 
 import '../../core/app_config/force_update.dart';
@@ -404,12 +405,26 @@ Future<void> entryRequireFreshBuild({
     res = await pending.timeout(timeout);
   } catch (_) {
     // checkNow never throws by contract — timeouts, channel failures and
-    // belt-and-braces all land here: fall through to the cached floor
-    // below (a known-stale floor still blocks; unknown passes).
-    res = const ForceUpdateResult(
+    // belt-and-braces all land here. Resolve the REAL running version
+    // before consulting the cached floor: the old fallback used '' here,
+    // and '' always counts as stale against a known floor
+    // (fail-closed on unknown build) — so a current build on a slow /
+    // blackhole network false-blocked as "too old", then passed on fast
+    // WiFi when the live read verified fresh. A pinned old APK still
+    // blocks (its real version is stale); an unreadable version keeps the
+    // old fail-closed behavior.
+    var current = '';
+    try {
+      current = (await PackageInfo.fromPlatform()
+              .timeout(const Duration(seconds: 3)))
+          .version;
+    } catch (_) {}
+    BleLog.log('SEC',
+        'fresh-build check unchecked (timeout/offline); consulting cached floor (current=${current.isEmpty ? 'unknown' : current})');
+    res = ForceUpdateResult(
       checked: false,
       updateRequired: false,
-      currentVersion: '',
+      currentVersion: current,
     );
   }
   if (res.checked && res.updateRequired) {
