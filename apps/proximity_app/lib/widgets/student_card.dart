@@ -425,6 +425,11 @@ class StudentCard extends StatefulWidget {
   /// Null/empty renders exactly as before (bare disc, same metrics).
   final String? avatarCaption;
 
+  /// Second under-disc line below [avatarCaption] (same column, tighter).
+  /// Mark browse tiles show the in-visit round here ("Round 2").
+  /// Null/empty renders exactly as before (single caption, same metrics).
+  final String? avatarSubCaption;
+
   /// False hides the avatar disc (the export page shows date-only rows).
   /// True (every other caller) keeps the classic avatar.
   final bool showAvatar;
@@ -456,6 +461,7 @@ class StudentCard extends StatefulWidget {
     this.showAvatar = true,
     this.isCourse = false,
     this.avatarCaption,
+    this.avatarSubCaption,
   });
 
   @override
@@ -589,10 +595,12 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
             if (widget.showAvatar)
               SizedBox(
                 // Caption column: fixed width so the ordinal ("12th
-                // Class") fits beside the disc without touching the
-                // title section; the disc stays centered over it. Bare
+                // Class" + "Round 2") fits beside the disc without touching
+                // the title section; the disc stays centered over it. Bare
                 // discs keep the exact legacy width (no content shift).
-                width: (widget.avatarCaption?.trim().isNotEmpty ?? false)
+                width: ((widget.avatarCaption?.trim().isNotEmpty ?? false) ||
+                        (widget.avatarSubCaption?.trim().isNotEmpty ??
+                            false))
                     ? widget.avatarSize + 8
                     : widget.avatarSize,
                 child: Column(
@@ -659,6 +667,18 @@ class _StudentCardState extends State<StudentCard> with HoverGrace {
                       Text(
                         widget.avatarCaption!.trim(),
                         style: ProxType.caption(color: c.contentSecondary),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ],
+                    // In-visit round below the ordinal (same column): quieter
+                    // tertiary so the two lines read as one stacked label.
+                    if (widget.avatarSubCaption?.trim().isNotEmpty ??
+                        false) ...[
+                      Text(
+                        widget.avatarSubCaption!.trim(),
+                        style: ProxType.caption(color: c.contentTertiary),
                         textAlign: TextAlign.center,
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,

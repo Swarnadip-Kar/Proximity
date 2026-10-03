@@ -94,6 +94,10 @@ class BrowseClassesView extends StatefulWidget {
   /// shows). Absent/0 hides the under-disc ordinal (see BrowseTile.classNo).
   final Map<String, int> windowNoByHost;
 
+  /// In-visit round numbers by `host:port` (same unicast, raw round —
+  /// see BrowseTile.roundNo). Absent/0 hides the `Round N` line.
+  final Map<String, int> roundNoByHost;
+
   /// Marked window display codes by `host:port` (this device's own marks —
   /// see the mark-page card rule). A tile whose current display equals its
   /// entry renders the `Marked` pill (same round already done); idle tiles
@@ -125,6 +129,7 @@ class BrowseClassesView extends StatefulWidget {
     this.profPhotoByHost = const {},
     this.profVerifyByHost = const {},
     this.windowNoByHost = const {},
+    this.roundNoByHost = const {},
     this.markedDisplayByHost = const {},
     this.markedRoundsByHost = const {},
   });
@@ -316,6 +321,9 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                             widget.live[i].last.key] ??
                         '',
                     classNo: widget.windowNoByHost[
+                            widget.live[i].last.key] ??
+                        0,
+                    roundNo: widget.roundNoByHost[
                             widget.live[i].last.key] ??
                         0,
                     alreadyMarked: tileMarkedForRound(

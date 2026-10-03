@@ -25,3 +25,8 @@ String ordinalSuffix(int n) {
 /// "1st Class" for live round [n]; '' when the round number is unknown.
 String classOrdinalLabel(int n) =>
     n <= 0 ? '' : '$n${ordinalSuffix(n)} Class';
+
+/// "Round 2" for the in-visit round number; '' when unknown. Pairs with
+/// [classOrdinalLabel] on the student class card (cumulative Class N on
+/// top, in-visit round below — one number per line, never combined).
+String roundOrdinalLabel(int n) => n <= 0 ? '' : 'Round $n';

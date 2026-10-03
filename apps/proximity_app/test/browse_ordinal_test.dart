@@ -2,6 +2,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:proximity_app/features/mark/browse_list.dart';
 import 'package:proximity_app/screens/student_home.dart';
+import 'package:proximity_app/widgets/class_ordinal.dart';
 
 void main() {
   test('reachable probe with Class N refreshes to Class N', () {
@@ -75,5 +76,24 @@ void main() {
         tileMarkedForRound(
             markedDisplay: 'KQ7', display: '', classNo: 0),
         isFalse);
+  });
+
+  test('trail labels the actual round, not the mark count', () {
+    // Missed R1, marked R2: the trail must read R2, not R1.
+    expect(
+        roundTrailLabel(
+            roundNo: 2, fallbackCount: 1, detail: 'HXK · 18:31:03'),
+        'R2 · HXK · 18:31:03');
+    // Unknown round: count fallback (never worse than before).
+    expect(
+        roundTrailLabel(
+            roundNo: 0, fallbackCount: 1, detail: 'HXK · 18:31:03'),
+        'R1 · HXK · 18:31:03');
+  });
+
+  test('round ordinal pairs with the class ordinal', () {
+    expect(roundOrdinalLabel(2), 'Round 2');
+    expect(roundOrdinalLabel(0), isEmpty);
+    expect(roundOrdinalLabel(-1), isEmpty);
   });
 }

@@ -95,6 +95,20 @@ bool mayAutoFaceFor({String? markedDisplay, required String display}) {
   return true;
 }
 
+/// Per-round trail label for one mark (pure): `R2 · HXK · 18:31:03`.
+/// [roundNo] is the ACTUAL in-visit round at mark time (gated probe) —
+/// never the count of marks so far, which mislabeled R2 as R1 whenever an
+/// earlier round was missed. [fallbackCount] (marks so far + 1) covers the
+/// unknown-round edge only.
+String roundTrailLabel({
+  required int roundNo,
+  required int fallbackCount,
+  required String detail,
+}) {
+  final n = roundNo > 0 ? roundNo : fallbackCount;
+  return 'R$n · $detail';
+}
+
 /// Browse-ordinal refresh rule for one gated /window probe (pure):
 /// cumulative Class N when the host serves it, else the live round —
 /// the same number the prof roster header shows. 0/unknown never
@@ -123,9 +137,10 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   StudentPhase phase = StudentPhase.browsing;
   String listenStatus = '';
   String ackDetail = '';
-  // Marks collected this join, oldest first ('R1 · KQ7 · 10:04:12'):
-  // the waiting room shows the per-round trail, and the rewait uses the
-  // count for the next round label. Cleared on every fresh join.
+  // Marks collected this join, oldest first ('R2 · HXK · 18:31:03'):
+  // the waiting room shows the per-round trail. Each entry carries its
+  // ACTUAL in-visit round (see roundTrailLabel), never the mark count.
+  // Cleared on every fresh join.
   final List<String> _roundMarks = [];
   String infoDetail = '';
   // Wrong-org orgs from the latest receipt (feed the verdict card).
@@ -212,6 +227,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // 15s-throttled and misses slow enterprise links; the 2s room poll
   // already succeeds there with its 4s budget).
   final Map<String, int> _windowNoByHost = {};
+
+  // In-visit round numbers by `host:port` (same unicast, raw `windowNo` —
+  // 1-based within the visit). Browse tiles render `Round N` under the
+  // Class-N ordinal from these, and the per-round trail labels its R-number
+  // from the value at mark time (never the count of marks so far).
+  // 0/absent hides the line. Cleared with the host entries.
+  final Map<String, int> _roundNoByHost = {};
   // Email backfill throttle: one gated /window fetch per host per 15s
   // (same budget as the session heartbeat — solicitation stays cheap).
   final Map<String, DateTime> _emailFetchThrottle = {};
@@ -560,6 +582,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     List<LiveClass> live,
     Map<String, String> verifyByHost,
     Map<String, int> windowNoByHost,
+    Map<String, int> roundNoByHost,
     Map<String, String> emailByHost,
     Map<String, String> photoByHost,
   ) {
@@ -568,6 +591,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final k = c.last.key;
       sb.write('$k:${c.last.windowOpen}:'
           '${verifyByHost[k] ?? ''}:${windowNoByHost[k] ?? 0}:'
+          '${roundNoByHost[k] ?? 0}:'
           '${emailByHost[k] ?? ''}:${photoByHost[k] ?? ''};');
     }
     return sb.toString();
@@ -579,8 +603,13 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// rebuilt the list until an unrelated join/leave. Folds every rendered
   /// tile field in so any of them rebuilds the list within one tick, with
   /// no pull-to-refresh.
-  String _liveFp(List<LiveClass> live) => _liveFpForTestOnly(live,
-      _profVerifyByHost, _windowNoByHost, _gatedEmailByHost, _gatedPhotoByHost);
+  String _liveFp(List<LiveClass> live) => _liveFpForTestOnly(
+      live,
+      _profVerifyByHost,
+      _windowNoByHost,
+      _roundNoByHost,
+      _gatedEmailByHost,
+      _gatedPhotoByHost);
 
   Future<void> _loadLastHost() async {
     // Last joined IP pre-fills the field (nothing to re-tap): it opens
@@ -737,11 +766,15 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       final classNo =
           probe.classNo > 0 ? probe.classNo : probe.windowNo;
       var changed = false;
-      // The round number never depends on identity: update it even when
-      // the host serves NO email (anonymous/legacy) so the ordinal matches
+      // The round numbers never depend on identity: update them even when
+      // the host serves NO email (anonymous/legacy) so the ordinals match
       // the prof header instead of vanishing.
       if (_windowNoByHost[key] != classNo) {
         _windowNoByHost[key] = classNo;
+        changed = true;
+      }
+      if (_roundNoByHost[key] != probe.windowNo) {
+        _roundNoByHost[key] = probe.windowNo;
         changed = true;
       }
       if (email.isEmpty) {
@@ -834,6 +867,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _markedDisplayByHost.remove(key);
     _markedClassNoByHost.remove(key);
     _windowNoByHost.remove(key);
+    _roundNoByHost.remove(key);
     _emailFetchThrottle.remove(key);
   }
 
@@ -1739,6 +1773,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _profVerifyByHost.remove(key);
         _profVerifyEmailByHost.remove(key);
         _windowNoByHost.remove(key);
+        _roundNoByHost.remove(key);
         BleLog.log(ProxLogTags.lan,
             'host $key went anonymous — room identity cleared');
       }
@@ -1779,6 +1814,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           );
           if (tileNo != null) {
             _windowNoByHost['${target.host}:${target.port}'] = tileNo;
+          }
+          // In-visit round for the tile + trail (same reachable-known gate
+          // as the class number above).
+          if (probe.reachable && probe.windowNo > 0) {
+            _roundNoByHost['${target.host}:${target.port}'] =
+                probe.windowNo;
           }
         }
         if (email.isNotEmpty) _roomProfEmail = email;
@@ -2459,8 +2500,15 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _setWake(false);
     if (receipt.result == StudentResult.marked ||
         receipt.result == StudentResult.late) {
-      // Per-round trail for the waiting-room card (R1, R2, … this join).
-      _roundMarks.add('R${_roundMarks.length + 1} · ${receipt.detail}');
+      // Per-round trail for the waiting-room card: labeled with the ACTUAL
+      // in-visit round at mark time (gated probe), never the count of marks
+      // so far — a missed R1 used to mislabel the R2 mark as R1.
+      final trailHost = '${target.host}:${target.port}';
+      _roundMarks.add(roundTrailLabel(
+        roundNo: _roundNoByHost[trailHost] ?? 0,
+        fallbackCount: _roundMarks.length + 1,
+        detail: receipt.detail,
+      ));
     }
     BleLog.log(ProxLogTags.state,
         'verdict ${receipt.result.name} (${receipt.detail})');
@@ -2760,6 +2808,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       profPhotoByHost: Map.of(_gatedPhotoByHost),
       profVerifyByHost: Map.of(_profVerifyByHost),
       windowNoByHost: Map.of(_windowNoByHost),
+      roundNoByHost: Map.of(_roundNoByHost),
       markedDisplayByHost: Map.of(_markedDisplayByHost),
       markedRoundsByHost: {
         for (final e in _markedClassNoByHost.entries) e.key: Set.of(e.value),

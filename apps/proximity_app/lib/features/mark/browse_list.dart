@@ -138,6 +138,11 @@ class BrowseTile extends StatelessWidget {
   /// renders exactly as before, no caption.
   final int classNo;
 
+  /// In-visit round number for the second under-disc line (`Round N`,
+  /// below the class ordinal — same number the prof round pills and the
+  /// per-round trail use). 0/negative hides the line.
+  final int roundNo;
+
   /// True when this device already marked the currently-open round on this
   /// host (same window display code — see the mark-page card rule). Renders
   /// a `Marked` pill in the footer and is purely presentational: the tap
@@ -151,6 +156,7 @@ class BrowseTile extends StatelessWidget {
     this.profPhotoUrl = '',
     this.verifyLabel = '',
     this.classNo = 0,
+    this.roundNo = 0,
     this.alreadyMarked = false,
     required this.onTap,
   });
@@ -198,6 +204,7 @@ class BrowseTile extends StatelessWidget {
       // column only ("1st Class") — never the title section.
       avatarSize: 56,
       avatarCaption: classOrdinalLabel(classNo),
+      avatarSubCaption: roundOrdinalLabel(roundNo),
       photoUrl: profPhotoUrl,
       name: a.classLabel,
       // No host IP, no org on the card (join + org gate still use them
