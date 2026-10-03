@@ -647,6 +647,7 @@ class RealHostDriver implements HostDriver {
         _applyDupFaceToken(email, reason);
         _applyIntegrityFlag(email, reason);
         _applyUnverifiedKeyFlag(email, reason);
+        _clearStaleReviewFlag(email, decision, reason);
         _noteUnknownPkSForPinRefresh(email, reason);
       },
       tally: _tally,
@@ -1057,15 +1058,44 @@ class RealHostDriver implements HostDriver {
   }
 
   /// Test seam: applies the same parsing as the live `onProve`
-  /// callback (dup + integrity + unverified-key + unknown-pkS pin-refresh
-  /// trigger) without needing a full HTTPS prove round.
+  /// callback (dup + integrity + unverified-key + stale-flag clearing +
+  /// unknown-pkS pin-refresh trigger) without needing a full HTTPS prove
+  /// round.
   /// The tally must already hold the email (server marks before flagging);
   /// unknown emails no-op, exactly like the live path.
-  void applyProveFlagsForTest(String email, String reason) {
+  void applyProveFlagsForTest(String email, String reason,
+      [String decision = 'confirmed']) {
     _applyDupFaceToken(email, reason);
     _applyIntegrityFlag(email, reason);
     _applyUnverifiedKeyFlag(email, reason);
+    _clearStaleReviewFlag(email, decision, reason);
     _noteUnknownPkSForPinRefresh(email, reason);
+  }
+
+  /// Live Verified convergence (roster realtime fix): a marked prove
+  /// (`confirmed`/`late`) carrying NONE of the review tokens
+  /// (`integrity-flagged`, `unverified-student-key`, `dupface:`) proves the
+  /// current device + key clean — so a previously-flagged row flips back to
+  /// Verified on this prove, with no manual refresh, no re-resolve, no
+  /// re-tap. Previously flags only ever SET here, so Unverified stuck
+  /// forever even after the student re-enrolled and marked cleanly.
+  /// Dup-group members are excluded: their red Duplicate state is owned by
+  /// [_dupGroups] + the professor's 1-tap override, never auto-cleared.
+  /// Pure tally effect (clearFaceFlag no-ops without a row); the 1s/2s
+  /// roster tick already rebuilds on the fingerprint flip.
+  void _clearStaleReviewFlag(String email, String decision, String reason) {
+    if (decision != 'confirmed' && decision != 'late') return;
+    if (isIntegrityFlaggedReason(reason)) return;
+    if (reason.contains('unverified-student-key')) return;
+    for (final seg in reason.split('|')) {
+      if (seg.trim().startsWith('dupface:')) {
+        return;
+      }
+    }
+    final me = email.trim().toLowerCase();
+    if (me.isEmpty) return;
+    if ((_dupGroups[me] ?? const <String>{}).isNotEmpty) return;
+    _tally.clearFaceFlag(me);
   }
 
   /// Re-key review flag: a pinned email that marked under a new key

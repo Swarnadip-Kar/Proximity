@@ -542,7 +542,10 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       final waitingChanged = _logWaitingDelta();
       final manualChanged = _logManualDelta();
       final tallyChanged = _logTallyDelta();
-      if (waitingChanged || manualChanged || tallyChanged) setState(() {});
+      final dupChanged = _logDupDelta();
+      if (waitingChanged || manualChanged || tallyChanged || dupChanged) {
+        setState(() {});
+      }
     });
     if (widget.autoStart) _startNext();
   }
@@ -550,6 +553,32 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   Set<String> _prevWaiting = {};
   Set<String> _prevManual = {};
   String _prevTallyFp = '';
+
+  /// Dup-group delta (roster live-update fix, rebuild trigger only): new
+  /// duplicate-face flags arrive via [HostDriver.dupGroups], not the tally —
+  /// so a flag planted on an unmarked peer (no tally row to flip) never
+  /// moved the tally fingerprint and the red card stayed invisible until
+  /// the next count change. Compares a sorted groups fingerprint and stays
+  /// silent. Orchestration untouched.
+  String _prevDupFp = '';
+  bool _logDupDelta() {
+    String cur = '';
+    try {
+      final g = _driver?.dupGroups ?? const <String, Set<String>>{};
+      final keys = g.keys.toList()..sort();
+      final sb = StringBuffer();
+      for (final k in keys) {
+        final peers = g[k]!.toList()..sort();
+        sb.write('$k:${peers.join(',')};');
+      }
+      cur = sb.toString();
+    } catch (_) {
+      return false;
+    }
+    final changed = cur != _prevDupFp;
+    _prevDupFp = cur;
+    return changed;
+  }
 
   /// Logs waiting-room joins/leaves (student entered or backed out) so the
   /// count changes are visible in the system log, not just the list.
@@ -1055,11 +1084,14 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       // Elapsed-up only: nothing auto-closes. Stop ends acceptance
       // (after a short grace for proofs already on the wire). The timer
       // label updates via _elapsedN (no full rebuild); the roster
-      // rebuilds when present/waiting moved OR any row's content did
-      // (tally fingerprint — unverified→verified flips no count).
+      // rebuilds when present/waiting moved, any row's content did
+      // (tally fingerprint — unverified→verified flips no count), or
+      // dup flags did (groups fingerprint — unmarked-peer flags move
+      // no tally field).
       _setElapsed(elapsed + const Duration(seconds: 1));
       final waitingChanged = _logWaitingDelta();
       final tallyChanged = _logTallyDelta();
+      final dupChanged = _logDupDelta();
       int presentNow = 0;
       int waitingNow = 0;
       try {
@@ -1068,6 +1100,7 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       } catch (_) {}
       if (waitingChanged ||
           tallyChanged ||
+          dupChanged ||
           presentNow != _lastPresent ||
           waitingNow != _lastWaitingN) {
         _lastPresent = presentNow;

@@ -501,7 +501,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       try {
         if (phase == StudentPhase.browsing) {
           final live = _allLive();
-          if (_liveKeys(live) != _liveKeys(_live)) {
+          if (_liveFp(live) != _liveFp(_live)) {
             setState(() => _live = live);
           }
           // Browse scan watchdog: a platform scan can die silently while
@@ -546,8 +546,33 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     });
   }
 
-  static String _liveKeys(List<LiveClass> live) =>
-      live.map((c) => '${c.last.key}:${c.last.windowOpen}').join(',');
+  /// Pure core of [_liveFp] (same field order, injected maps) so the
+  /// fingerprint rule stays unit-testable without a widget harness.
+  static String _liveFpForTestOnly(
+    List<LiveClass> live,
+    Map<String, String> verifyByHost,
+    Map<String, int> windowNoByHost,
+    Map<String, String> emailByHost,
+    Map<String, String> photoByHost,
+  ) {
+    final sb = StringBuffer();
+    for (final c in live) {
+      final k = c.last.key;
+      sb.write('$k:${c.last.windowOpen}:'
+          '${verifyByHost[k] ?? ''}:${windowNoByHost[k] ?? 0}:'
+          '${emailByHost[k] ?? ''}:${photoByHost[k] ?? ''};');
+    }
+    return sb.toString();
+  }
+
+  /// Browse-list fingerprint for the 2s live-refresh (verify/class realtime
+  /// fix): the old key (host + open flag) missed in-place tile updates, so
+  /// Verified flips, class-number increments and email/photo arrivals never
+  /// rebuilt the list until an unrelated join/leave. Folds every rendered
+  /// tile field in so any of them rebuilds the list within one tick, with
+  /// no pull-to-refresh.
+  String _liveFp(List<LiveClass> live) => _liveFpForTestOnly(live,
+      _profVerifyByHost, _windowNoByHost, _gatedEmailByHost, _gatedPhotoByHost);
 
   Future<void> _loadLastHost() async {
     // Last joined IP pre-fills the field (nothing to re-tap): it opens
@@ -893,8 +918,17 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
 
   /// Offline-first auto-verify drain: first-seen prof emails queued while
   /// offline get a live direct fetch (online only) and their tile captions
-  /// flip to verified without a rejoin. Never throws; no-ops offline.
+  /// flip to verified without a rejoin. Runs in EVERY phase (the 15s
+  /// session timer + resume both funnel here, browsing and waiting alike),
+  /// never throws; no-ops offline. When the waiting room's email verifies,
+  /// its provisional unverified banner clears live too — the honest
+  /// pre-prove state with cached pins is silence, never a verified claim
+  /// (the prove-time Sig_p check owns verified). Single-flight: room entry,
+  /// the session timer and resume can overlap.
+  bool _drainBusy = false;
   Future<void> _drainProfVerifyQueue() async {
+    if (_drainBusy) return;
+    _drainBusy = true;
     try {
       final driver = ref.read(studentDriverProvider);
       if (driver is! RealStudentDriver) return;
@@ -914,16 +948,34 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           }
         }
       }
-      if (changed && phase == StudentPhase.browsing && mounted) {
+      // Waiting-room convergence: the provisional first-seen banner for
+      // this room's email clears now that pins are cached (prove-time
+      // verdicts still win when present — see _waitingVerification).
+      final roomEmail = _roomProfEmail.trim().toLowerCase();
+      if (roomEmail.isNotEmpty && verdicts.containsKey(roomEmail)) {
+        if (_waitingCacheVerdict != null) {
+          _waitingCacheVerdict = null;
+          changed = true;
+        }
+      }
+      if (changed &&
+          mounted &&
+          (phase == StudentPhase.browsing ||
+              phase == StudentPhase.waiting)) {
         setState(() => _live = _allLive());
       }
     } catch (_) {}
+    finally {
+      _drainBusy = false;
+    }
   }
 
   Future<void> _refreshSessions() async {
+    // Auto-verify runs in every phase (a waiting room converges without a
+    // rejoin); the heartbeat probes below stay browse-only.
+    unawaited(_drainProfVerifyQueue());
     if (!mounted || phase != StudentPhase.browsing) return;
     // 15s backstop also drains the prof auto-verify queue (online only).
-    unawaited(_drainProfVerifyQueue());
     // Drop stale pending hints (heard >2 min ago, never answered).
     final now0 = DateTime.now().toUtc();
     _pendingHints
@@ -1485,6 +1537,9 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     if (entryEmail.isNotEmpty) {
       _waitingCacheEmail = entryEmail;
       unawaited(_refreshWaitingCacheVerdict(entryEmail, run, target));
+      // Verify now instead of at the next 15s tick (single-flight inside):
+      // a queued first-seen email flips within seconds of joining the room.
+      unawaited(_drainProfVerifyQueue());
     }
     // Join identity for stale-switch guards below: timers/probes must never
     // file presence or flip state as a previous account after a rapid
