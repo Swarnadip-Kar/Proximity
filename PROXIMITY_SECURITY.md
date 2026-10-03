@@ -59,10 +59,10 @@
 
 ## 2. HW-bound device keys (`HwDeviceKey`)
 
-**Research:** Android Keystore StrongBox→TEE + key attestation (`developer.android.com/privacy-and-security/security-key-attestation`, AOSP `source.android.com/docs/security/features/keystore/attestation`, KeyMint/StrongBox CDD 9.11.2); `KeyGenParameterSpec.setUserAuthenticationRequired(true)+setInvalidatedByBiometricEnrollment(true)` + `BiometricPrompt.CryptoObject` (`developer.android.com/identity/sign-in/biometric-auth`); iOS Secure Enclave + App Attest/DeviceCheck; Flutter plugin `attested_secure_keys ^0.1.1` (StrongBox→TEE / Secure Enclave, P-256 ES256, challenge-bound, chain passthrough — pubspec pins `^0.1.1`; `^0.1.0` references elsewhere in older notes are stale). M1 gap (in-app biometric CryptoObject prompt + server-nonce-as-challenge) → bind `challenge=SHA256(emailLower||installId||pkS32)` client-side for now.
+**Research:** Android Keystore StrongBox→TEE + key attestation (`developer.android.com/privacy-and-security/security-key-attestation`, AOSP `source.android.com/docs/security/features/keystore/attestation`, KeyMint/StrongBox CDD 9.11.2); `KeyGenParameterSpec.setUserAuthenticationRequired(true)+setInvalidatedByBiometricEnrollment(true)` + `BiometricPrompt.CryptoObject` (`developer.android.com/identity/sign-in/biometric-auth`) — the RETIRED auth-bound mechanism (fleet default is now `UserAuthPolicy.none`: HW-bound + attested + challenge-bound, use-time ungated; rationale + LSKF failure record in `docs/hw-device-key-auth-policy-research.md`); iOS Secure Enclave + App Attest/DeviceCheck; Flutter plugin `attested_secure_keys ^0.1.1` (StrongBox→TEE / Secure Enclave, P-256 ES256, challenge-bound, chain passthrough — pubspec pins `^0.1.1`; `^0.1.0` references elsewhere in older notes are stale). M1 gap (server-nonce-as-challenge) → bind `challenge=SHA256(emailLower||installId||pkS32)` client-side for now.
 
 **New file (only importer of the plugin):**
-- `apps/proximity_app/lib/features/device_identity/hw_device_key.dart` — `class HwDeviceKey implements DeviceKey` (P-256, non-exportable, ES256; Android StrongBox→TEE with `setUserAuthenticationRequired`, iOS Secure Enclave `biometryCurrentSet`; exposes `pkDHex+chainDER+level/window`; `Software=no enroll`).
+- `apps/proximity_app/lib/features/device_identity/hw_device_key.dart` — `class HwDeviceKey implements DeviceKey` (P-256, non-exportable, ES256; Android StrongBox→TEE with `UserAuthPolicy.none` (use-time ungated — the `setUserAuthenticationRequired` 4h grant is retired fleet-wide), iOS Secure Enclave (no biometric access-control flag — `biometryCurrentSet` gating retired with it); exposes `pkDHex+chainDER+level/window`; `Software=no enroll`).
 
 **Diffs:**
 - `features/face_identity/device_key.dart`: delete prod `SoftwareDeviceKey` (keep test-only behind `kDebugMode` assert); keep `UnavailableDeviceKey` (desktop/web fail-closed); `deviceKeyProvider` wired to `HwDeviceKey` on mobile.
@@ -85,8 +85,9 @@ biometric-or-credential via `LocalAuthentication.authenticate`), fired
 only at enrollment Save — never on cold start, never on background
 paths (prove-time rebind, roll edits stay silent). Signing authority is
 unchanged and stays hardware-bound: HW DKey (StrongBox→TEE / Secure
-Enclave, biometric grant, Signature-CryptoObject pattern that works on
-strict devices) + live face per marking + server-side single-device
+Enclave, HW-bound + attested + challenge-bound, use-time ungated
+fleet-wide — the biometric-grant / Signature-CryptoObject pattern is
+retired) + live face per marking + server-side single-device
 claim; the enrollment doc is sealed-only, so at-rest readability
 confers no signing ability.
 
