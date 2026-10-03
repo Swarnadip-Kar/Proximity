@@ -961,6 +961,29 @@ class FirestoreCloudSync implements CloudSync {
           seen.putIfAbsent(e.email, () => e);
         }
       }
+      // Contains fallback (substring, not just prefix): typing a middle
+      // fragment like `2210` must match `*2210*` rolls, which no prefix
+      // query can express. Runs only when the prefix tier found nothing:
+      // one bounded org page (cached 5 min, so repeated keystrokes filter
+      // locally with zero reads) swept client-side, merged up to [limit].
+      // A tier-2 failure never fails the search — tier-1 results stand.
+      if (seen.isEmpty) {
+        try {
+          final page = await _orgPage(org, 200);
+          for (final e in page) {
+            if (seen.length >= limit) break;
+            if (seen.containsKey(e.email)) continue;
+            if (eq.isNotEmpty && e.email.contains(eq)) {
+              seen[e.email] = e;
+            } else if (rq.isNotEmpty && e.roll.contains(rq)) {
+              seen[e.email] = e;
+            } else if (nq.isNotEmpty &&
+                e.name.toLowerCase().contains(nq)) {
+              seen[e.email] = e;
+            }
+          }
+        } catch (_) {}
+      }
       final out = seen.values.toList()
         ..sort((a, b) => a.email.compareTo(b.email));
       return out.take(limit).toList();
@@ -976,5 +999,43 @@ class FirestoreCloudSync implements CloudSync {
       }
       rethrow;
     }
+  }
+
+  /// Bounded org page for the contains fallback above: one
+  /// where(org==)+orderBy(email) query (covered by the org+email composite
+  /// in firestore.indexes.json), cached per org for 5 minutes. Directory
+  /// membership barely changes mid-class, so repeated searches filter the
+  /// cached page with zero reads after the first miss.
+  final Map<String, ({DateTime at, List<StudentDirectoryEntry> rows})>
+      _dirPageCache = {};
+
+  Future<List<StudentDirectoryEntry>> _orgPage(String org, int bound) async {
+    final now = DateTime.now().toUtc();
+    final hit = _dirPageCache[org];
+    if (hit != null &&
+        now.difference(hit.at) < const Duration(minutes: 5)) {
+      return hit.rows;
+    }
+    final snap = await _db
+        .collection('studentDirectory')
+        .where('org', isEqualTo: org)
+        .orderBy('email')
+        .limit(bound)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 10));
+    final rows = [
+      for (final d in snap.docs)
+        StudentDirectoryEntry(
+          email: (d.data()['email'] as String? ?? '').toLowerCase(),
+          name: d.data()['name'] as String? ?? '',
+          roll: d.data()['roll'] as String? ?? '',
+          org: d.data()['org'] as String? ?? '',
+          updatedAtMillis:
+              (d.data()['updatedAtMillis'] as num?)?.toInt() ?? 0,
+          pkSHex: (d.data()['pkS'] as String? ?? '').trim().toLowerCase(),
+        ),
+    ];
+    _dirPageCache[org] = (at: now, rows: rows);
+    return rows;
   }
 }

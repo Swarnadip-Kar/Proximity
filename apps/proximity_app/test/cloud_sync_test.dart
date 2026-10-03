@@ -361,6 +361,14 @@ void main() {
     expect(hits.map((e) => e.email), ['student2@example.com']);
     hits = await fake.searchStudents(emailPrefix: 'zzz');
     expect(hits, isEmpty);
+    // Substring (contains), not just prefix: a middle fragment matches.
+    hits = await fake.searchStudents(rollPrefix: '2210');
+    expect(hits.map((e) => e.email), ['student1@example.com']);
+    hits = await fake.searchStudents(rollPrefix: '4221');
+    expect(hits.map((e) => e.email),
+        ['student1@example.com', 'student2@example.com']);
+    hits = await fake.searchStudents(namePrefix: 'ent t');
+    expect(hits.map((e) => e.email), ['student2@example.com']);
     fake.online = false;
     var threw = false;
     try {

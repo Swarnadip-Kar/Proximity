@@ -3,10 +3,12 @@
 // NOTE (kept separate deliberately): the two search implementations differ
 // and are NOT collapsed — FirestoreCloudSync fans out to parallel
 // server-side prefix queries (single-field range queries, no composite
-// index) merged by email client-side, while FakeCloudSync scans its
-// in-memory map. Same outward contract (prefix match on email/roll/
-// lowercased name, merged by email, sorted, capped at [limit]), different
-// mechanism. See firestore_sync.dart / fake_sync.dart.
+// index) merged by email client-side, plus a contains fallback (one bounded
+// org page swept locally) when the prefix tier finds nothing — while
+// FakeCloudSync scans its in-memory map. Same outward contract (prefix
+// first, then substring match on email/roll/ lowercased name, merged by
+// email, sorted, capped at [limit]), different mechanism. See
+// firestore_sync.dart / fake_sync.dart.
 library;
 
 /// One row of the professor-searchable student directory: the minimum a

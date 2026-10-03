@@ -197,14 +197,36 @@ class FakeCloudSync implements CloudSync {
         rollPrefix: rollPrefix,
         namePrefix: namePrefix);
     if (eq.isEmpty && rq.isEmpty && nq.isEmpty) return const [];
+    bool orgOk(StudentDirectoryEntry e) {
+      if (org.isNotEmpty && e.org.isNotEmpty && e.org != org) return false;
+      if (org.isNotEmpty && e.org.isEmpty) return false;
+      return true;
+    }
+
     final seen = <String, StudentDirectoryEntry>{};
     for (final e in dir.values) {
-      if (org.isNotEmpty && e.org.isNotEmpty && e.org != org) continue;
-      if (org.isNotEmpty && e.org.isEmpty) continue;
+      if (!orgOk(e)) continue;
       if (eq.isNotEmpty && e.email.startsWith(eq)) seen[e.email] = e;
       if (rq.isNotEmpty && e.roll.startsWith(rq)) seen[e.email] = e;
       if (nq.isNotEmpty && e.name.toLowerCase().startsWith(nq)) {
         seen[e.email] = e;
+      }
+    }
+    // Contains fallback (substring, not just prefix): typing a middle
+    // fragment like `2210` must match `*2210*` rolls. Runs only when the
+    // prefix tier found nothing, over the same org scope.
+    if (seen.isEmpty) {
+      for (final e in dir.values) {
+        if (seen.length >= limit) break;
+        if (!orgOk(e)) continue;
+        if (seen.containsKey(e.email)) continue;
+        if (eq.isNotEmpty && e.email.contains(eq)) {
+          seen[e.email] = e;
+        } else if (rq.isNotEmpty && e.roll.contains(rq)) {
+          seen[e.email] = e;
+        } else if (nq.isNotEmpty && e.name.toLowerCase().contains(nq)) {
+          seen[e.email] = e;
+        }
       }
     }
     final out = seen.values.toList()
