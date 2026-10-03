@@ -334,6 +334,92 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // camera sheets). Second caller no-ops; Scan stays as fallback after
   // the in-flight scan settles.
   bool _scanBusy = false;
+  // Floating already-marked notice (overlay toast, never inline): the
+  // same-round hold must not push the class list down. Single-flight +
+  // tracked so rapid re-taps replace (never stack) and dispose always
+  // clears it.
+  OverlayEntry? _holdToast;
+  Timer? _holdToastTimer;
+
+  /// Shows the already-marked hold as a floating card pinned just below
+  /// the status bar (over the app bar zone, never in the scroll list):
+  /// auto-dismisses in 3s, tap dismisses sooner. Real join errors keep
+  /// using the inline [joinError] banner.
+  void _showMarkedHold() {
+    _holdToastTimer?.cancel();
+    _holdToast?.remove();
+    _holdToast = null;
+    if (!mounted) return;
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (ctx) {
+        final c = ProximityColors.of(ctx);
+        final top = MediaQuery.of(ctx).padding.top;
+        return Positioned(
+          top: top + 8,
+          left: ProxSpacing.screenMargin,
+          right: ProxSpacing.screenMargin,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              _holdToastTimer?.cancel();
+              entry.remove();
+              if (_holdToast == entry) _holdToast = null;
+            },
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: ProxSpacing.md,
+                  vertical: ProxSpacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  color: c.surfaceRaised,
+                  borderRadius: ProxRadii.cardSpecRadius,
+                  border: Border.all(
+                    color: c.statusMarked.withValues(alpha: 0.45),
+                  ),
+                  boxShadow: [c.elevationSheet],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 20,
+                      color: c.statusMarked,
+                    ),
+                    const SizedBox(width: ProxSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Already marked for this round — '
+                        'stay put for the next one.',
+                        style: ProxType.body(color: c.contentPrimary),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    _holdToast = entry;
+    try {
+      Overlay.of(context).insert(entry);
+    } catch (_) {
+      _holdToast = null;
+      return;
+    }
+    _holdToastTimer = Timer(const Duration(seconds: 3), () {
+      try {
+        entry.remove();
+      } catch (_) {}
+      if (_holdToast == entry) _holdToast = null;
+    });
+  }
   // Tracked hands-free re-push timer (legacy capturers without in-modal
   // [accept] support only): cancelled on every teardown/dispose/reset so
   // no stale re-push fires after Cancel/Back/dispose (the in-modal path
@@ -1197,6 +1283,12 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     _sessionTimer?.cancel();
     _autoFaceTimer?.cancel();
     _autoFaceTimer = null;
+    _holdToastTimer?.cancel();
+    _holdToastTimer = null;
+    try {
+      _holdToast?.remove();
+    } catch (_) {}
+    _holdToast = null;
     for (final t in _hintRetryTimers) {
       t.cancel();
     }
@@ -2830,8 +2922,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         )) {
           BleLog.log(ProxLogTags.face,
               'already marked ${c.last.display} here — tap held (no same-round re-mark)');
-          setState(() => joinError =
-              'Already marked for this round — stay put for the next one.');
+          _showMarkedHold();
           return;
         }
         final target = ClassBeacon(
