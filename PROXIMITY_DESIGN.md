@@ -599,9 +599,11 @@ continuous. Beacons carry presence only — prof name + org + class/host/
 port/display/windowOpen (NEVER the prof Gmail; the announcement type has
 no such field by construction) — and BLE air packets carry IP:port only
 (never email, asserted by tests). Students solicit CHEAPLY and
-REPEATABLY: every beacon/hint (plus the 15 s session refresh) triggers
-one unicast HTTPS GET /window?org= carrying the student's org claim
-FIRST; the professor org-checks it and responds ONLY on match (or legacy
+REPEATABLY: beacons (plus the 15 s session refresh) trigger one unicast
+HTTPS GET /window?org= carrying the student's org claim FIRST — repeat
+BLE hints for an already-acked session do NOT re-probe (the heartbeat
+owns re-probe/fail-count/drop; a redundant per-hint TLS probe measured
+~6 extra handshakes/min/phone); the professor org-checks it and responds ONLY on match (or legacy
 '' either side) with the class identity + prof Gmail (lowercased, key
 omitted when unknown). Foreign org gets silence (403, no class, no
 email): the class never appears on that phone — browse filters beacons
