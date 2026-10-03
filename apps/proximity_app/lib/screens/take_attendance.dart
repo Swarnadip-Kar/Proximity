@@ -315,6 +315,11 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
   /// stay visit-scoped.
   int _priorSessionCount = 0;
 
+  /// Last NIC heal in the idle poll (perf: enumerating interfaces every 2s
+  /// is pure overhead — DHCP changes are rare, so the heal runs at most
+  /// every 30s; an explicit professor pick is never overridden either way).
+  DateTime? _lastIpHeal;
+
   @override
   void initState() {
     super.initState();
@@ -531,19 +536,27 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _maybeAutosave();
       // Heal late WiFi DHCP while idling: hosting opened on mobile data or
       // before DHCP completed airs a stale/unreachable IP on FIRST start.
-      // refreshAnnounceIps never overrides an explicit professor pick.
-      try {
-        final driver = ref.read(hostDriverProvider);
-        await driver.refreshAnnounceIps();
-        final cur = driver.announceIp;
-        if (mounted && cur.isNotEmpty && cur != _ip) {
-          final session = _session;
-          setState(() {
-            _ip = cur;
-            if (session != null) serverLine = session.lineFor(cur);
-          });
-        }
-      } catch (_) {}
+      // Throttled to 30s (interface enumeration every 2s is pure
+      // overhead); refreshAnnounceIps never overrides an explicit
+      // professor pick.
+      final healDue = _lastIpHeal == null ||
+          DateTime.now().difference(_lastIpHeal!) >=
+              const Duration(seconds: 30);
+      if (healDue) {
+        _lastIpHeal = DateTime.now();
+        try {
+          final driver = ref.read(hostDriverProvider);
+          await driver.refreshAnnounceIps();
+          final cur = driver.announceIp;
+          if (mounted && cur.isNotEmpty && cur != _ip) {
+            final session = _session;
+            setState(() {
+              _ip = cur;
+              if (session != null) serverLine = session.lineFor(cur);
+            });
+          }
+        } catch (_) {}
+      }
       // Rebuild only when something actually changed — an
       // unconditional setState here rebuilt the whole list every 2s
       // (scroll jank on big classes). The manual delta refreshes the

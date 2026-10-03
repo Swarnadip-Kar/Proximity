@@ -635,6 +635,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   /// re-probing pending hints until they answer or age out.
   Future<void> _onBleIpHint(String host, int port) async {
     final key = '$host:$port';
+    // Session-acked hosts are owned by the 15s heartbeat (re-probe, fail
+    // counting, drop — see _refreshSessions): a repeat hint carries no new
+    // information, so skip the redundant TLS probe + jitter + rebuild.
+    // Observed live: an idle class re-hinted every few seconds had every
+    // nearby phone re-probing it each 10s throttle window (~6 extra TLS
+    // handshakes/min/phone plus a browse rebuild per cycle). New and
+    // pending hosts fall through to the probe below.
+    if (_sessionAck.containsKey(key)) return;
     final now = DateTime.now().toUtc();
     final last = _bleHintThrottle[key];
     if (last != null && now.difference(last) < const Duration(seconds: 10)) {

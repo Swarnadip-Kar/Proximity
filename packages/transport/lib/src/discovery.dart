@@ -10,7 +10,9 @@
 //     beacon/hint arriving within seconds.
 //   - Students solicit CHEAPLY and REPEATABLY: every beacon/hint (and every
 //     15s session refresh) triggers one unicast HTTPS GET /window?org=
-//     carrying the student's org claim FIRST. The professor org-checks it
+//     carrying the student's org claim FIRST — except repeat hints for an
+//     already-acked session, which the 15s heartbeat owns (no redundant
+//     re-probe per hint). The professor org-checks it
 //     and responds ONLY on match (or legacy '' either side) — with the
 //     class identity + prof email (gated unicast only). Foreign org gets
 //     silence (403, no class, no email): the class never appears on that
