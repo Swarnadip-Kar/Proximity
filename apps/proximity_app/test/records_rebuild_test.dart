@@ -91,10 +91,10 @@ void main() {
       dateIso: '2026-09-05',
       timestampIso: '2026-09-05T10:00:00.000Z',
       windows: [
-        {'a@x.in': true, 'b@x.in': true, 'c@x.in': false},
+        {'a@x.in': true, 'b@x.in': true},
       ],
-      names: const {'a@x.in': 'A', 'b@x.in': 'B', 'c@x.in': 'C'},
-      rolls: const {'a@x.in': '1', 'b@x.in': '2', 'c@x.in': '3'},
+      names: const {'a@x.in': 'A', 'b@x.in': 'B'},
+      rolls: const {'a@x.in': '1', 'b@x.in': '2'},
     );
     await t.pumpWidget(_wrap(
         store: InMemoryDeviceStore(),
@@ -107,37 +107,38 @@ void main() {
     await t.pumpAndSettle();
     // Centered verdict row: Present / Partial / Absent badges with real
     // counts, windows caption below. Entry defaults to the Present list.
+    // Waiting-only joins (false-only, no true anywhere) never join the
+    // roster, so a single-session record has no Absent without a course
+    // union — course-union absent is covered by the next test.
     expect(find.text('Present 2'), findsOneWidget);
     expect(find.text('Partial 0'), findsOneWidget);
-    expect(find.text('Absent 1'), findsOneWidget);
+    expect(find.text('Absent 0'), findsOneWidget);
     expect(find.text('1 round'), findsOneWidget);
     expect(find.text('Present list'), findsOneWidget);
     expect(find.textContaining('a@x.in'), findsOneWidget);
     expect(find.textContaining('b@x.in'), findsOneWidget);
-    expect(find.textContaining('c@x.in'), findsNothing);
     // Tapping the selected badge returns to the full list…
     await t.tap(find.text('Present 2'));
     await t.pumpAndSettle();
     expect(find.text('Present list'), findsNothing);
     expect(find.textContaining('a@x.in'), findsOneWidget);
     expect(find.textContaining('b@x.in'), findsOneWidget);
-    expect(find.textContaining('c@x.in'), findsOneWidget);
-    // …Partial is empty (single round), Absent shows C only…
+    // …Partial is empty (single round), Absent is empty (no union)…
     await t.tap(find.text('Partial 0'));
     await t.pumpAndSettle();
     expect(find.text('Partial list'), findsOneWidget);
     expect(find.textContaining('No partials'), findsOneWidget);
-    await t.tap(find.text('Absent 1'));
+    await t.tap(find.text('Absent 0'));
     await t.pumpAndSettle();
     expect(find.text('Absent list'), findsOneWidget);
-    expect(find.textContaining('c@x.in'), findsOneWidget);
+    expect(find.textContaining('Nobody absent'), findsOneWidget);
     expect(find.textContaining('a@x.in'), findsNothing);
     // …and tapping the selected badge returns to the full list.
-    await t.tap(find.text('Absent 1'));
+    await t.tap(find.text('Absent 0'));
     await t.pumpAndSettle();
     expect(find.text('Absent list'), findsNothing);
     expect(find.textContaining('a@x.in'), findsOneWidget);
-    expect(find.textContaining('c@x.in'), findsOneWidget);
+    expect(find.textContaining('b@x.in'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -247,7 +248,9 @@ void main() {
     // Counts line: rounds + icon counts (✓ ✗) + `N partial` word.
     expect(find.textContaining('1 partial'), findsOneWidget);
     expect(find.text('0%'), findsOneWidget);
-    expect(find.text('Total students: 0'), findsOneWidget);
+    // Total students counts marked (≥1 true) members — a partial who
+    // marked R1 is a student, not 0. Waiting-only joins alone stay 0.
+    expect(find.text('Total students: 1'), findsOneWidget);
     // Tap still opens the session detail.
     await t.tap(find.textContaining('Thu, 03-09-26'));
     await t.pumpAndSettle();
