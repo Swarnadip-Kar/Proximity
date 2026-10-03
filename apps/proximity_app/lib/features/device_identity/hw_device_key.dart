@@ -93,16 +93,6 @@ const String kHwDeviceKeyAlias = 'prox.deviceKey.v1';
 /// is worse than an old DEK.
 const String kHwSealDekVersion = 'v1';
 
-/// RETIRED lecture-block biometric window (was: one strong-biometric per
-/// school block; per-use would prompt every 10s rotation and strand
-/// marking). The fleet default is now [UserAuthPolicy.none] (see the
-/// backend contract above) — this value is no longer consumed by
-/// [AttestedSecureKeysBackend]. Kept (unused by production) so the old
-/// policy value stays greppable in history; do not re-wire it without
-/// re-reading docs/hw-device-key-auth-policy-research.md (the LSKF
-/// UNINITIALIZED class returns with any auth-bound default).
-const Duration kHwDeviceKeyAuthValidity = Duration(hours: 4);
-
 /// Production backend surface (mirrors `AttestedSecureKeys` 1:1 so the
 /// adapter stays mechanical). Protocol types only — no plugin import
 /// here, no drift when the plugin revs.
