@@ -178,12 +178,15 @@ class BrowseTile extends StatelessWidget {
     // narrow phones, so line 1 carries no status at all (same clean
     // title rule as every other `StudentCard`; the Open pill used to
     // sit there). Order: Marked first (you are done for this round),
-    // then the verify tag, then Open.
+    // then the verify tag, then Open — except Marked TAKES Open's slot:
+    // an open round you already marked reads Marked, never Open+Marked
+    // side by side (Open adds no information then, and the pair would
+    // grow the card a line on 360dp phones).
     final tag = browseVerifyTag(verifyLabel);
     final markedTag = alreadyMarked
         ? const VerdictBadge(status: ProxStatus.marked, label: 'Marked')
         : null;
-    final openTag = a.windowOpen
+    final openTag = (a.windowOpen && !alreadyMarked)
         ? const VerdictBadge(
             status: ProxStatus.waiting,
             label: 'Open',

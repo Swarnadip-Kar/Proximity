@@ -537,6 +537,28 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
+    testWidgets('marked tile swaps Open for Marked (same slot)', (t) async {
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'CS201', open: true),
+        profEmail: 'prof@univ.edu',
+        alreadyMarked: true,
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.text('Marked'), findsOneWidget);
+      expect(find.text('Open'), findsNothing);
+      // Unmarked open tiles keep the Open pill and no Marked.
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'CS201', open: true),
+        profEmail: 'prof@univ.edu',
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('Marked'), findsNothing);
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('unknown round hides the ordinal', (t) async {
       await t.pumpWidget(_themed(BrowseTile(
         live: _live(label: 'CS201'),
