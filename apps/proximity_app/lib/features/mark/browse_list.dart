@@ -234,24 +234,33 @@ class BrowseTile extends StatelessWidget {
               : browseVerifyCaption(verifyLabel)),
       subtitle2MaxLines: 2,
       status: null,
-      // All pills share the footer below the email/caption lines (never
-      // beside the title): Marked first, then the verify tag, then Open,
-      // left-aligned. A Wrap, not a Row — Unverified + Open together
-      // exceed the footer width on 360dp phones (measured 91px overflow),
-      // so the trio flows to two lines there instead of striping. One
-      // pill (or a wide phone) still renders the identical single line;
-      // all absent renders exactly as before — no extra line.
+      // All pills live in the footer below the email/caption lines (never
+      // beside the title). Marked gets its OWN top line (you are done for
+      // this round reads first); the verify tag + Open share the line
+      // below in a Wrap (Unverified + Open together exceed 360dp widths,
+      // so they flow instead of striping). Marked takes Open's slot, so
+      // an already-marked open round never shows both. All absent renders
+      // exactly as before — no extra line.
       footer: (markedTag == null && tag == null && openTag == null)
           ? null
           : Align(
               alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: ProxSpacing.xs,
-                runSpacing: ProxSpacing.xs,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   if (markedTag != null) markedTag,
-                  if (tag != null) tag,
-                  if (openTag != null) openTag,
+                  if (markedTag != null && (tag != null || openTag != null))
+                    const SizedBox(height: ProxSpacing.xs),
+                  if (tag != null || openTag != null)
+                    Wrap(
+                      spacing: ProxSpacing.xs,
+                      runSpacing: ProxSpacing.xs,
+                      children: [
+                        if (tag != null) tag,
+                        if (openTag != null) openTag,
+                      ],
+                    ),
                 ],
               ),
             ),

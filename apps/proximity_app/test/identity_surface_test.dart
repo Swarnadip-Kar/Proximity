@@ -559,6 +559,24 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
+    testWidgets('Marked stacks above the verify pill, not beside it',
+        (t) async {
+      await t.pumpWidget(_themed(BrowseTile(
+        live: _live(label: 'CS201', open: true),
+        profEmail: 'prof@univ.edu',
+        verifyLabel: 'verified',
+        alreadyMarked: true,
+        onTap: () {},
+      )));
+      await t.pumpAndSettle();
+      expect(find.text('Marked'), findsOneWidget);
+      expect(find.text('Verified'), findsOneWidget);
+      final markedDy = t.getCenter(find.text('Marked')).dy;
+      final verifiedDy = t.getCenter(find.text('Verified')).dy;
+      expect(markedDy, lessThan(verifiedDy));
+      expect(t.takeException(), isNull);
+    });
+
     testWidgets('unknown round hides the ordinal', (t) async {
       await t.pumpWidget(_themed(BrowseTile(
         live: _live(label: 'CS201'),
