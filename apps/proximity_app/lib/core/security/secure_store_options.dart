@@ -13,20 +13,28 @@
 //   actions (enrollment Save) — never on cold start, never on background
 //   paths.
 // - Signing authority stays hardware-bound: the HW device key
-//   (StrongBox→TEE / Secure Enclave, biometric grant per school block,
-//   CryptoObject pattern) + the live face check per marking + the
-//   server-side single-device claim. The enrollment doc itself is
-//   sealed-only (no raw seeds), so at-rest readability without a prompt
-//   confers no signing ability.
+//   (StrongBox→TEE / Secure Enclave, HW-bound + attested +
+//   challenge-bound, use-time ungated fleet-wide) + the live face check
+//   per marking + the server-side single-device claim. The enrollment doc
+//   itself is sealed-only (no raw seeds), so at-rest readability without
+//   a prompt confers no signing ability.
 //
-// Why not Keystore-auth-bound keys (the old `enforceBiometrics` design)?
+// Why not Keystore-auth-bound keys (retired DKey grant included)?
 // Field crash 2026-10-02: on KeyStore2-strict devices `cipher.init`
 // throws `UserNotAuthenticatedException` BEFORE any BiometricPrompt can
 // show; FSS v11 misclassifies it as corruption and its recovery path
 // wiped all data into a fatal worker-thread crash loop. Auth-bound
 // `cipher.init` semantics vary by OEM/keymaster, so the whole fleet can
-// never rely on them. The DKey (Signature-based CryptoObject) does not
-// share this failure and stays auth-bound.
+// never rely on them. The DKey was Signature-based CryptoObject and did
+// not share that crash — but ANY auth-bound keygen (CryptoObject grant
+// included) fails on the Keystore2 LSKF UNINITIALIZED class
+// (Xiaomi/Samsung Android 12+: lock + biometrics set, yet every
+// auth-bound variant fails while the identical-challenge no-auth probe
+// succeeds; no app-side policy tweak fixes it — see
+// docs/hw-device-key-auth-policy-research.md), so the fleet default is
+// now `UserAuthPolicy.none`: HW-held + attestable + challenge-bound,
+// direct sign, never stranded by OS LSKF state, never invalidated by a
+// biometric change.
 //
 // Guarantees:
 // - Android: RSA-wrapped AES-GCM (plain `AndroidOptions`, no auth-bound

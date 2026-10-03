@@ -12,11 +12,25 @@
 //   brick TEE-only phones; `trustedEnvironment` accepts StrongBox→TEE /
 //   Secure Enclave and anything lower throws `HwKeyUnsupportedError` →
 //   `Software-no-enroll`, never a silent software key), userAuth
-//   `UserAuthPolicy.timeBound(4h)` (= [kHwDeviceKeyAuthValidity]: one
-//   strong-biometric per school block; per-use would prompt every 10s
-//   rotation and strand marking),
+//   `UserAuthPolicy.none` (fleet-wide, uniform — NOT a per-device
+//   fallback: HW-bound + attested + challenge-bound, use-time ungated;
+//   presence is covered by the face check per marking and the explicit
+//   Save-time presence via [UserPresenceGate]),
 //   attestationChallenge = the enrollment challenge
 //   (`SHA256(emailLower || installId || pkS32)` via [enrollmentChallenge]).
+// - Fleet posture (why ungated): auth-binding's marginal value HERE is
+//   small — lent-phone proxy, theft, and clones already die at the
+//   per-marking face check + one-device claim + non-migrating Keystore —
+//   while any auth-bound keygen strands genuine students on the Keystore2
+//   LSKF UNINITIALIZED failure class (Xiaomi/Samsung Android 12+: lock +
+//   biometrics set, yet EVERY auth-bound variant fails and the identical-
+//   challenge no-auth probe succeeds; no app-side policy tweak fixes it —
+//   see docs/hw-device-key-auth-policy-research.md), forces re-enrollment
+//   on every new fingerprint, and prompts per window. Unlike Okta-style
+//   systems we have live face verification, so their must-keep-auth-
+//   binding constraint does not transfer. Requirements: (i) no student
+//   may be stranded by OS LSKF state; (ii) changing biometrics must NEVER
+//   force re-enrollment.
 // - pkD wire form: HW 64B P-256 x||y (JWK x/y 32B each via
 //   `HwDeviceKey.pkDFromXY`) vs Software 32B Ed25519 — callers treat pkD as
 //   opaque variable-length (hexEncode + hash fingerprint only, never a
@@ -79,8 +93,14 @@ const String kHwDeviceKeyAlias = 'prox.deviceKey.v1';
 /// is worse than an old DEK.
 const String kHwSealDekVersion = 'v1';
 
-/// Lecture-block biometric validity (one strong-biometric per school block;
-/// per-use would prompt every 10s rotation and strand marking).
+/// RETIRED lecture-block biometric window (was: one strong-biometric per
+/// school block; per-use would prompt every 10s rotation and strand
+/// marking). The fleet default is now [UserAuthPolicy.none] (see the
+/// backend contract above) — this value is no longer consumed by
+/// [AttestedSecureKeysBackend]. Kept (unused by production) so the old
+/// policy value stays greppable in history; do not re-wire it without
+/// re-reading docs/hw-device-key-auth-policy-research.md (the LSKF
+/// UNINITIALIZED class returns with any auth-bound default).
 const Duration kHwDeviceKeyAuthValidity = Duration(hours: 4);
 
 /// Production backend surface (mirrors `AttestedSecureKeys` 1:1 so the
@@ -222,8 +242,7 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
       key = await keys.generateKey(
         alias: alias,
         minSecurityLevel: KeySecurityLevel.trustedEnvironment,
-        userAuth:
-            const UserAuthPolicy.timeBound(kHwDeviceKeyAuthValidity),
+        userAuth: UserAuthPolicy.none,
         attestationChallenge: attestationChallenge,
       );
     } on HwKeyUnsupportedError catch (e) {
@@ -264,8 +283,11 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
     required String alias,
     required Uint8List payload,
   }) async {
-    // Biometric-gated keys throw UserNotAuthenticatedError here when the
-    // 4h grant lapsed — propagates so the UI re-prompts (never swallowed).
+    // New ungated keys sign directly (no prompt); pre-update auth-bound
+    // keys still throw UserNotAuthenticatedError here when their grant
+    // lapsed — propagates so the UI re-prompts (never swallowed). The
+    // plugin reads gating live per key, so one path serves the mixed
+    // fleet until old keys re-enroll.
     final sig = await keys.sign(alias: alias, payload: payload);
     return Uint8List.fromList(sig.bytes);
   }
@@ -362,8 +384,9 @@ class AttestedSecureKeysBackend implements HwKeyBackend {
 ///
 /// The 32B DEK lives ONLY here (never in Firestore, never in the sealed
 /// blob): Android Keystore-backed AES-GCM storage / iOS Keychain
-/// this-device-only, with NO per-use biometric prompt (use is already gated
-/// by the 4h HW-key grant + the face check; a per-read prompt would strand
+/// this-device-only, with NO per-use biometric prompt (the HW key itself
+/// is use-time ungated fleet-wide — signing authority is HW custody +
+/// the face check per marking; a per-read prompt would strand
 /// every 10s prove rotation). A backup-restore clone loses the DEK
 /// (Keystore/Keychain keys never migrate) so unseal fails closed.
 abstract class HwSealStore {
@@ -856,9 +879,12 @@ class HwDeviceKey implements DeviceKey {
       throw StateError(
           'Software-no-enroll: device key is not hardware-backed.');
     }
-    // Biometric/credential-set invalidation destroys the HW key
-    // (deliberate OS behavior): surface it as restore-detected re-enroll,
-    // never a raw plugin error. Auth cancellations propagate for re-prompt.
+    // Pre-update auth-bound keys die on biometric/credential-set change
+    // (deliberate OS behavior for auth-bound keys): surface it as
+    // restore-detected re-enroll, never a raw plugin error. New ungated
+    // keys are unaffected by biometric changes (requirement: changing
+    // biometrics must NEVER force re-enrollment). Auth cancellations from
+    // old keys propagate for re-prompt.
     late final Uint8List sig;
     try {
       sig = await _backend.sign(alias: alias, payload: data);

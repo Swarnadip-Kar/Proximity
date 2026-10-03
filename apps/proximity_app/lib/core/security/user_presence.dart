@@ -13,10 +13,11 @@
 // roll edits stay silent).
 //
 // What still gates USE (unchanged): the HW device key (StrongBox/TEE,
-// biometric grant per school block, CryptoObject pattern that works on
-// strict devices) + the live face check per marking + the server-side
-// single-device claim. Presence here is explicit consent at identity
-// creation, not the signing authority.
+// HW-bound + attested + challenge-bound, use-time ungated fleet-wide —
+// the retired 4h biometric-grant/CryptoObject pattern is gone; see
+// docs/hw-device-key-auth-policy-research.md) + the live face check per
+// marking + the server-side single-device claim. Presence here is
+// explicit consent at identity creation, not the signing authority.
 library;
 
 import 'package:local_auth/local_auth.dart';
