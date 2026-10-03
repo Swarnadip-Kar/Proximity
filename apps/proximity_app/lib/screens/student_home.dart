@@ -251,12 +251,14 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // drop with their host (see _dropHostEntries); a new mark overwrites.
   final Map<String, String> _markedDisplayByHost = {};
 
-  // Same rounds keyed by cumulative class number (hint-only listings carry
+  // Same rounds keyed by visit + in-visit round (hint-only listings carry
   // no display code on isolating APs, so the display match alone never
-  // fires there — see tileMarkedForRound). Recorded from the gated round
-  // map at mark time; cleared with the host entries. A retaken round (new
-  // display, reused number) re-arms via the display rule.
-  final Map<String, Set<int>> _markedClassNoByHost = {};
+  // fires there — see tileMarkedForRound). Entries are `'$classNo:$roundNo'`,
+  // recorded from the gated maps at mark time; cleared with the host
+  // entries. A retaken round (new display, same numbers) re-arms via the
+  // display rule. Non-empty entries imply a saved record, so the next
+  // visit's grown class number can never collide with them.
+  final Map<String, Set<String>> _markedClassNoByHost = {};
 
   /// Auto-advance gate for [target] showing [display]: false when this is
   /// the round already marked on this host (same display, both known).
@@ -2670,14 +2672,16 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
         _markedDisplayByHost['${target.host}:${target.port}'] =
             receipt.display.trim();
       }
-      // Round-number twin of the display record above (mark-page card
+      // Round-key twin of the display record above (mark-page card
       // rule): listings learned from BLE hints carry no display code, so
-      // the code alone cannot hold the re-tap there. The cumulative class
-      // number is stable within the visit and distinct across visits.
+      // the code alone cannot hold the re-tap there. The `class:round`
+      // pair is stable within the visit and distinct across visits.
       final markedHost = '${target.host}:${target.port}';
-      final markedRound = _windowNoByHost[markedHost] ?? 0;
-      if (markedRound > 0) {
-        (_markedClassNoByHost[markedHost] ??= <int>{}).add(markedRound);
+      final markedClass = _windowNoByHost[markedHost] ?? 0;
+      final markedRound = _roundNoByHost[markedHost] ?? 0;
+      if (markedClass > 0 && markedRound > 0) {
+        (_markedClassNoByHost[markedHost] ??= <String>{})
+            .add('$markedClass:$markedRound');
       }
       // Stay for the next round: once THIS round ends, rejoin the waiting
       // room (fast-paths straight back to face if the next window is
@@ -2932,6 +2936,7 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           markedRounds: _markedClassNoByHost[hp],
           display: c.last.display,
           classNo: _windowNoByHost[hp] ?? 0,
+          roundNo: _roundNoByHost[hp] ?? 0,
         )) {
           BleLog.log(ProxLogTags.face,
               'already marked ${c.last.display} here — tap held (no same-round re-mark)');

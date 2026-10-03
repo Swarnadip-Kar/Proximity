@@ -99,22 +99,25 @@ bool tileAlreadyMarkedFor({String? markedDisplay, required String display}) {
 }
 
 /// Mark-page card rule for one browse tile (pure): display match OR
-/// round-number match. Hint-only listings carry no display code on
-/// isolating APs, so the display match alone never fires there — the
-/// cumulative class number (stable within a visit, distinct across visits)
-/// keys the round as well. When BOTH codes are known the code decides: a
-/// retaken round reuses the number with a fresh code, so differing codes
-/// re-arm marking even when the number matches.
+/// round match. Hint-only listings carry no display code on isolating APs,
+/// so the display match alone never fires there — the round key
+/// (`'$classNo:$roundNo'`: visit number + in-visit round, stable within a
+/// visit and distinct across visits) covers it. When BOTH codes are known
+/// the code decides: a retaken round (fresh code, same numbers after a
+/// discard) re-arms marking even when the round key matches.
 bool tileMarkedForRound({
   String? markedDisplay,
-  Set<int>? markedRounds,
+  Set<String>? markedRounds,
   required String display,
   required int classNo,
+  required int roundNo,
 }) {
   final marked = (markedDisplay ?? '').trim();
   final d = display.trim();
   if (marked.isNotEmpty && d.isNotEmpty) return d == marked;
-  return classNo > 0 && (markedRounds?.contains(classNo) ?? false);
+  return classNo > 0 &&
+      roundNo > 0 &&
+      (markedRounds?.contains('$classNo:$roundNo') ?? false);
 }
 
 class BrowseTile extends StatelessWidget {

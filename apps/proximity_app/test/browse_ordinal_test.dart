@@ -36,45 +36,52 @@ void main() {
   test('same display code reads marked', () {
     expect(
         tileMarkedForRound(
-            markedDisplay: 'KQ7', display: 'KQ7', classNo: 10),
+            markedDisplay: 'KQ7',
+            display: 'KQ7',
+            classNo: 20,
+            roundNo: 2),
         isTrue);
   });
 
-  test('unknown tile display falls back to the recorded round number', () {
+  test('unknown tile display falls back to the recorded round key', () {
     // Hint-only listings carry no code on isolating APs: the round holds.
     expect(
         tileMarkedForRound(
             markedDisplay: 'KQ7',
-            markedRounds: {10},
+            markedRounds: {'20:2'},
             display: '',
-            classNo: 10),
+            classNo: 20,
+            roundNo: 2),
         isTrue);
     expect(
         tileMarkedForRound(
             markedDisplay: 'KQ7',
-            markedRounds: {10},
+            markedRounds: {'20:2'},
             display: '',
-            classNo: 11),
+            classNo: 20,
+            roundNo: 3),
         isFalse);
   });
 
-  test('retaken round re-arms despite the reused number', () {
-    // Same number, fresh code after a discard: codes differ, so the
-    // number match must not hold.
+  test('retaken round re-arms despite matching numbers', () {
+    // Same numbers, fresh code after a discard: codes differ, so the
+    // round key must not hold.
     expect(
         tileMarkedForRound(
             markedDisplay: 'KQ7',
-            markedRounds: {11},
+            markedRounds: {'20:2'},
             display: 'ZP2',
-            classNo: 11),
+            classNo: 20,
+            roundNo: 2),
         isFalse);
   });
 
   test('idle tiles and fresh hosts never read marked', () {
-    expect(tileMarkedForRound(display: '', classNo: 0), isFalse);
+    expect(tileMarkedForRound(display: '', classNo: 0, roundNo: 0),
+        isFalse);
     expect(
         tileMarkedForRound(
-            markedDisplay: 'KQ7', display: '', classNo: 0),
+            markedDisplay: 'KQ7', display: '', classNo: 0, roundNo: 0),
         isFalse);
   });
 

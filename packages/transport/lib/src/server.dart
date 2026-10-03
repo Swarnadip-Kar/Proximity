@@ -280,18 +280,20 @@ class ProxServer {
   int _windowNo = 0;
 
   /// Completed sessions of this course BEFORE this visit (history count,
-  /// pushed by the Take host via [HostDriver.setClassBase]). Added to the
-  /// in-visit round for the cumulative `Class N` header AND the gated
-  /// `classNo` students render under the disc — one number both sides.
+  /// pushed by the Take host via [HostDriver.setClassBase]). The visit IS
+  /// one class — every round upserts the same record — so the cumulative
+  /// `Class N` both sides render is base+1 for the WHOLE visit, never
+  /// base+round (R2 of class 20 is not class 21). Round identity stays
+  /// separate (`windowNo` + display codes + tally windows).
   /// 0 = legacy in-visit numbering (byte-for-byte).
   int sessionClassBase = 0;
 
-  /// Cumulative class number both sides render: in-visit round + prior
-  /// sessions. The visit counts from the class ABOUT to be hosted: an
-  /// idle-fresh host reads base+1 (never base), so both sides agree before
-  /// the first Start instead of jumping (the reported 19 idle → 20th on
-  /// Start). Brand-new courses idle at 1 — their upcoming first class.
-  int get classNo => (_windowNo > 0 ? _windowNo : 1) + sessionClassBase;
+  /// Cumulative class number both sides render: one per visit (prior
+  /// sessions + 1), constant across every round of the visit — including
+  /// idle-fresh hosting, which already reads the class about to be
+  /// conducted (no 19-idle → 20th-on-Start jump). Brand-new courses read
+  /// 1. Round numbers never leak in here (see [windowNo]).
+  int get classNo => sessionClassBase + 1;
   late final WindowTls tls;
   String _bearer = '';
   late final LiveRoom room;

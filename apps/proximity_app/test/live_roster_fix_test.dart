@@ -259,6 +259,18 @@ void main() {
     )));
     await t.pumpAndSettle();
     expect(find.text('Class 1'), findsOneWidget);
+    // Rounds never advance the class: R2 of the same visit still reads
+    // Class 10, not 11.
+    tally.noteWindow(2);
+    tally.mark('a@univ.edu', 'A', 2, roll: '1');
+    await t.pumpWidget(_themed(MarkedRosterSection(
+      tally: tally,
+      liveWindowNo: 2,
+      sessionOffset: 9,
+    )));
+    await t.pumpAndSettle();
+    expect(find.text('Class 10'), findsOneWidget);
+    expect(find.text('Class 11'), findsNothing);
     // Idle-fresh visits already read the upcoming class (no 9→10 jump on
     // Start): empty tally + closed window + 9 priors reads Class 10, and
     // the legacy no-offset visit reads Class 1 instead of hiding.

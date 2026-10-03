@@ -406,6 +406,20 @@ void main() {
       final r1 = await probeClient.probeWindow(org: 'univ.edu');
       expect(r1.classNo, 20);
       expect(r1.windowNo, 1);
+      // Rounds never advance the class: R2 of class 20 is not class 21.
+      server.openWindow(
+        WindowParams(
+          sessionId: randBytes(16),
+          windowId: randBytes(6),
+          secret: randBytes(32),
+          t0: DateTime.now().toUtc(),
+          classLabel: 'CLASSNO-TEST',
+        ),
+        2,
+      );
+      final r2 = await probeClient.probeWindow(org: 'univ.edu');
+      expect(r2.classNo, 20);
+      expect(r2.windowNo, 2);
     } finally {
       probeClient.close();
       await server.stop();

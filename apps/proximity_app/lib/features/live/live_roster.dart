@@ -792,13 +792,11 @@ class _MarkedRosterSectionState extends State<MarkedRosterSection> {
           present: present,
           partial: partial,
           absent: absent,
-          // Cumulative session label: prior completed sessions + the
-          // in-visit round — floored at the upcoming first round so an
-          // idle-fresh visit already reads base+1 (same rule as the
-          // server's gated classNo: no 19→20 jump on Start). Logic below
-          // this line stays visit-scoped — only the header adds the offset.
-          classNo: (windowsTaken > 0 ? windowsTaken : 1) +
-              widget.sessionOffset,
+          // Cumulative session label: ONE per visit (prior completed
+          // sessions + 1) — every round of this visit is the same class,
+          // so R2 of class 20 never reads 21. Logic below this line stays
+          // visit-scoped — only the header adds the offset.
+          classNo: widget.sessionOffset + 1,
           selected: _filter,
           onSelect: (f) => setState(() => _filter = f),
         ),
