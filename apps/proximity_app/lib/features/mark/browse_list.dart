@@ -234,34 +234,33 @@ class BrowseTile extends StatelessWidget {
               : browseVerifyCaption(verifyLabel)),
       subtitle2MaxLines: 2,
       status: null,
-      // All pills live in the footer below the email/caption lines (never
-      // beside the title). Marked gets its OWN top line (you are done for
-      // this round reads first); the verify tag + Open share the line
-      // below in a Wrap (Unverified + Open together exceed 360dp widths,
-      // so they flow instead of striping). Marked takes Open's slot, so
-      // an already-marked open round never shows both. All absent renders
-      // exactly as before — no extra line.
+      // All pills share ONE footer line below the email/caption lines
+      // (never beside the title, never stacked): Marked + verify tag read
+      // side by side. A FittedBox scales the row down instead of wrapping,
+      // so the pair always fits one line even on 360dp phones (same
+      // contract as the Attendance summary badge trio). Marked still takes
+      // Open's slot, so an already-marked open round never shows both.
+      // All absent renders exactly as before — no extra line.
       footer: (markedTag == null && tag == null && openTag == null)
           ? null
           : Align(
               alignment: Alignment.centerLeft,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (markedTag != null) markedTag,
-                  if (markedTag != null && (tag != null || openTag != null))
-                    const SizedBox(height: ProxSpacing.xs),
-                  if (tag != null || openTag != null)
-                    Wrap(
-                      spacing: ProxSpacing.xs,
-                      runSpacing: ProxSpacing.xs,
-                      children: [
-                        if (tag != null) tag,
-                        if (openTag != null) openTag,
-                      ],
-                    ),
-                ],
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (markedTag != null) markedTag,
+                    if (markedTag != null &&
+                        (tag != null || openTag != null))
+                      const SizedBox(width: ProxSpacing.xs),
+                    if (tag != null) tag,
+                    if (tag != null && openTag != null)
+                      const SizedBox(width: ProxSpacing.xs),
+                    if (openTag != null) openTag,
+                  ],
+                ),
               ),
             ),
       onTap: onTap,

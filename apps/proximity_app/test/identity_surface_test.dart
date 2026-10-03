@@ -559,7 +559,7 @@ void main() {
       expect(t.takeException(), isNull);
     });
 
-    testWidgets('Marked stacks above the verify pill, not beside it',
+    testWidgets('Marked sits beside the verify pill on one line',
         (t) async {
       await t.pumpWidget(_themed(BrowseTile(
         live: _live(label: 'CS201', open: true),
@@ -573,7 +573,7 @@ void main() {
       expect(find.text('Verified'), findsOneWidget);
       final markedDy = t.getCenter(find.text('Marked')).dy;
       final verifiedDy = t.getCenter(find.text('Verified')).dy;
-      expect(markedDy, lessThan(verifiedDy));
+      expect((markedDy - verifiedDy).abs(), lessThan(1.0));
       expect(t.takeException(), isNull);
     });
 
