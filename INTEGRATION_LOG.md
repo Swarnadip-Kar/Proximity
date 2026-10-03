@@ -3319,3 +3319,14 @@ Repo-wide audit (`lib/`, `test/`, all root + app docs), verified claim-by-claim 
 - Deliberately kept (audited, not dead): TODO(sec-face) migrations, raw-score prove path, `FakeStillCapturer`/`FaceCheckView` compat, `face/capture` constant, EXIF test helpers, generated markers, revocation mantra, Cupertino/PROX_MODE notes, per-harness duplicate pins (D1/D2/D5–D8/D10 — different paths, shared copy), source-string fidelity pins (12–14 — anti-squish invariants), trivial policy pins (recover/ordinal/secure-store).
 
 Verify: `dart analyze` clean on all touched files (1 pre-existing info in untouched `host_driver.dart`); full `flutter test` green — protocol 225 · transport 73 · ble 39 · storage 20 · app 1334.
+
+## Atomic enrollment save (2026-10-03)
+
+Field bug: the server claim filed (face stamp = now) but the device save was cancelled at the biometric prompt — every retry then hit the 30-day server face cooldown for a rescan that never completed (`face rescan refused (server cooldown until …)` loop). The save was not atomic: the slot was consumed by the claim alone.
+
+- fix(enroll) `upload` — presence confirms BEFORE the claim (a cancel writes nothing anywhere, retry stays free; was: claim first, prompt at the local persist).
+- fix(enroll) — local-persist failure AFTER the claim writes the pre-claim server face stamp back over the same binding (best-effort same-device claim, logged, never throws; first binds file 0 so need no revert).
+- fix(enroll) — orphan healing: a same install+key retry whose server stamp runs ahead of local completes the pending save instead of refusing. Narrow by construction (same installId AND same pkHex, local strictly behind, stale-pipeline exemption unchanged): fresh key ceremonies stay gated, clear-data reinstalls (new installId) stay blocked, completed saves (local ≥ server) stay blocked.
+- Pinned by `test/enroll_atomic_save_test.dart` (4/4): cancel consumes no slot + retry stamps both; store failure reverts the server stamp + retry converges; orphan completes; fresh-key-after-orphan refused. Proven against the old order (cancel test fails pre-fix on the stamp assertion). Existing `clear_data_face_exploit` + `face_rescan_cooldown` + `enrollment_lifecycle` + `setup_claim_denial` suites green (45/45 with the new file).
+
+Note for the stranded tester device: the next Save on the fixed build completes the orphaned rescan (same install+key) — no waiting until the stamped date, no manual Firestore edit needed.

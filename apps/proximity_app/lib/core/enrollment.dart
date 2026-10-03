@@ -1151,6 +1151,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
   /// a different device refuses here (30-day move cooldown with an exact
   /// re-enroll date; manual attendance covers the gap), as does an install
   /// enrolled as another Gmail. Racing devices lose atomically: exactly
+  /// one claim wins the transaction. The save itself is atomic too: the
+  /// face-rescan slot is consumed only by a fully saved enrollment —
+  /// presence confirms BEFORE the claim (a cancel writes nothing), a local
+  /// persist failure after the claim writes the pre-claim server stamp back,
+  /// and a same install+key retry whose server stamp runs ahead of local
+  /// completes the orphaned save instead of eating the cooldown.
   Future<LinkedIdentity?> upload() async {
     // Binding point (claim email + org derive from the account): refuse a
     // draft the session moved under — a stale-account claim must never
@@ -1223,6 +1229,27 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             phase: EnrollPhase.error,
             message: faceRescanCooldownMessage(eligible));
         return null;
+      }
+      // Explicit presence at identity creation (biometric-or-credential),
+      // BEFORE any server mutation (atomic save): the store itself is
+      // prompt-free, so Save confirms here — once per enrollment, never on
+      // cold start or background paths. The old order claimed first and
+      // prompted at the local persist, so a cancelled prompt consumed the
+      // server face-rescan stamp with nothing saved locally — retry then
+      // hit the 30-day server cooldown for a rescan that never completed.
+      // A cancel now writes nothing anywhere, so retry stays free.
+      try {
+        await _presence.confirm(
+            reason: 'Save enrollment on this device');
+      } on StateError catch (e) {
+        final m = '$e';
+        if (m.contains('Save cancelled') ||
+            m.contains('Could not confirm')) {
+          state = state.copyWith(
+              phase: EnrollPhase.faceDone, message: 'Save failed: $m');
+          return null;
+        }
+        rethrow;
       }
       final pk32 = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pk32);
@@ -1307,6 +1334,12 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                   prevEnrollment.email.toLowerCase() == email
               ? prevEnrollment.lastFaceRescanAtMillis
               : 0);
+      // Pre-claim server face stamp + the filed claim doc (atomic-save
+      // revert): when the local persist below fails AFTER the claim filed,
+      // the stamp is written back so the slot is not consumed by a save
+      // that never completed. Null/unadvanced = nothing to free.
+      var preclaimServerStamp = 0;
+      StudentDeviceDoc? filedDoc;
       if (cloud != null && cloud.available) {
         var online = false;
         try {
@@ -1366,6 +1399,11 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         } catch (_) {
           skipPreclaim = true;
         }
+        // Snapshot for the atomic-save revert below: the server stamp this
+        // claim would overwrite. A local-persist failure after a stamp-
+        // advancing claim writes this value back (same-device free), so the
+        // slot survives a save that never completed.
+        preclaimServerStamp = preBinding?.lastFaceRescanAtMillis ?? 0;
         if (!skipPreclaim) {
           var installDenied = false;
           String? preInstall;
@@ -1424,7 +1462,30 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
               // runs even when local says first (clear-data case). A stale
               // local pipeline (forced migration) skips the block but
               // still stamps below — same exemption as the local gate.
+              //
+              // Orphaned-stamp completion (atomic-save healing): when THIS
+              // install filed the server stamp with THIS key but the local
+              // save never landed (cancelled prompt / store failure under
+              // the old order, crash in between), the server stamp runs
+              // ahead of local. That stamp is not a completed rescan —
+              // finishing the pending save must stay allowed, or one
+              // cancelled prompt strands retry behind the full cooldown.
+              // Narrow by construction: same install AND same key (a fresh
+              // ceremony is a new attempt, correctly gated), local strictly
+              // behind (a completed save converges local ≥ server). A
+              // surgical local-only wipe cannot forge it (installId lives
+              // in the same wiped storage; root is refused by the integrity
+              // gate). Clear-data reinstalls (new installId) stay blocked.
+              final orphanCompletion = !stalePipeline &&
+                  preBinding.installId.isNotEmpty &&
+                  preBinding.installId == installId &&
+                  preBinding.pkHex.isNotEmpty &&
+                  preBinding.pkHex.toLowerCase() == pkHex.toLowerCase() &&
+                  localStamp < preBinding.lastFaceRescanAtMillis &&
+                  faceRescanBlocked(
+                      stampMillis: effectiveStamp, now: now);
               if (!stalePipeline &&
+                  !orphanCompletion &&
                   faceRescanBlocked(
                       stampMillis: effectiveStamp, now: now)) {
                 final eligible =
@@ -1435,6 +1496,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
                     phase: EnrollPhase.error,
                     message: faceRescanCooldownMessage(eligible));
                 return null;
+              }
+              if (orphanCompletion) {
+                BleLog.log('FACE',
+                    'face rescan orphan completion (same device+key, server stamp ahead — finishing pending save)');
               }
               // This save replaces the template (fresh faceId above), so
               // stamp the server quota now — including the clear-data case
@@ -1493,43 +1558,47 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           // Reuses the pre-claim fetch above so verdict and transaction
           // always see the same id.
           final hardwareDeviceId = preclaimDeviceId;
+          // Named (not inline) so the atomic-save revert below can write
+          // the pre-claim stamp back over this exact binding when the local
+          // persist fails after the claim filed.
+          final claimDoc = StudentDeviceDoc(
+              email: email,
+              uid: acct.uid,
+              pkHex: pkHex,
+              name: name,
+              roll: roll,
+              modelVer: _verifier.verifierVer,
+              installId: installId,
+              platform: _platformName(),
+              org: org,
+              deviceId: hardwareDeviceId,
+              pkDHex: hexEncode(pkDRaw),
+              attestationLevel:
+                  attestationLevelName(_deviceKey.level),
+              attestedAtMillis: _deviceKey.attestedAt
+                  .toUtc()
+                  .millisecondsSinceEpoch,
+              attestedUntilMillis: _deviceKey.attestedUntil
+                  .toUtc()
+                  .millisecondsSinceEpoch,
+              // Security §7: HW chain (leaf-first DER hex) + liveness
+              // pipeline tag. integrityFlag is the advisory
+              // verdict.flagForMarking ('' clean — the fresh
+              // pre-claim gate above throws on tainted, so a filed
+              // claim always carries clean; the host still treats the
+              // flag as advisory, never auto-absent). The livenessVer
+              // tag names the pipeline that MEASURED the centre still
+              // ([enrollFace] gates on it before the gallery write —
+              // fail-closed, same idiom as marking).
+              attestationChain: chainDERHex,
+              livenessVer: kLivenessVer,
+              integrityFlag: enrollIntegrityFlag,
+              appAttestRawHex: appAttestRawHex,
+              appAttestCredKeyHex: appAttestCredKeyHex,
+              lastFaceRescanAtMillis: claimFaceStamp);
           final outcome = await cloud.claimStudentDevice(
-              doc: StudentDeviceDoc(
-                  email: email,
-                  uid: acct.uid,
-                  pkHex: pkHex,
-                  name: name,
-                  roll: roll,
-                  modelVer: _verifier.verifierVer,
-                  installId: installId,
-                  platform: _platformName(),
-                  org: org,
-                  deviceId: hardwareDeviceId,
-                  pkDHex: hexEncode(pkDRaw),
-                  attestationLevel:
-                      attestationLevelName(_deviceKey.level),
-                  attestedAtMillis: _deviceKey.attestedAt
-                      .toUtc()
-                      .millisecondsSinceEpoch,
-                  attestedUntilMillis: _deviceKey.attestedUntil
-                      .toUtc()
-                      .millisecondsSinceEpoch,
-                  // Security §7: HW chain (leaf-first DER hex) + liveness
-                  // pipeline tag. integrityFlag is the advisory
-                  // verdict.flagForMarking ('' clean — the fresh
-                  // pre-claim gate above throws on tainted, so a filed
-                  // claim always carries clean; the host still treats the
-                  // flag as advisory, never auto-absent). The livenessVer
-                  // tag names the pipeline that MEASURED the centre still
-                  // ([enrollFace] gates on it before the gallery write —
-                  // fail-closed, same idiom as marking).
-                  attestationChain: chainDERHex,
-                  livenessVer: kLivenessVer,
-                  integrityFlag: enrollIntegrityFlag,
-                  appAttestRawHex: appAttestRawHex,
-                  appAttestCredKeyHex: appAttestCredKeyHex,
-                  lastFaceRescanAtMillis: claimFaceStamp),
-              installId: installId);
+              doc: claimDoc, installId: installId);
+          filedDoc = claimDoc;
           BleLog.log('SYNC',
               'device claim ok (${outcome.isFirst ? 'first bind' : outcome.isMove ? (outcome.isReclaim ? 'same-phone reclaim' : 'device move') : 'same device'})');
         } on StateError catch (e) {
@@ -1573,18 +1642,14 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       final rescanStampMillis = claimFaceStamp;
       // Sealed-only (security §2 F1 fix): `sealedKeyHex + pkDHex +
       // chainDERHex` only — no raw-seed field exists.
-      // Local-persist failure (presence cancelled, unsupported device,
-      // or secure-store unavailable): the online claim above already
-      // succeeded and the key/face/account are all still valid, so stay
-      // on faceDone (Save stays enabled, capture visibly kept) with the
-      // honest copy — never drop to error/"capture pending", which would
-      // strand retry behind another face scan.
-      // Explicit presence at identity creation (biometric-or-credential):
-      // the store itself is prompt-free, so Save confirms here — once per
-      // enrollment, never on cold start or background paths.
+      // Local-persist failure (secure-store unavailable): the online claim
+      // above may already have filed and consumed the server face stamp,
+      // so the stamp is written back first (best-effort same-device claim)
+      // and the controller stays on faceDone (Save enabled, capture kept)
+      // with the honest copy — never drops to error/"capture pending",
+      // which would strand retry behind another face scan. Presence itself
+      // cannot fail here (it confirmed before the claim above).
       try {
-        await _presence.confirm(
-            reason: 'Save enrollment on this device');
         await _store.writeEnrollment(StoredEnrollment(
           email: email,
           name: name,
@@ -1605,10 +1670,16 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           lastFaceRescanAtMillis: rescanStampMillis,
         ));
       } on StateError catch (e) {
+        await _revertClaimFaceStamp(
+          cloud: _cloud,
+          filedDoc: filedDoc,
+          installId: installId,
+          filedStamp: claimFaceStamp,
+          preStamp: preclaimServerStamp,
+        );
         final m = '$e';
-        // faceDone stays (Save enabled, capture visibly kept) for local
-        // save refusals — presence cancelled/unsupported or persist
-        // failure — never drop to error/"capture pending", which would
+        // faceDone stays (Save enabled, capture visibly kept) for persist
+        // failures — never drop to error/"capture pending", which would
         // strand retry behind another face scan.
         if (m.contains('Secure storage rejected the save') ||
             m.contains('Save cancelled') ||
@@ -1618,6 +1689,15 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           return null;
         }
         rethrow;
+      } catch (_) {
+        await _revertClaimFaceStamp(
+          cloud: _cloud,
+          filedDoc: filedDoc,
+          installId: installId,
+          filedStamp: claimFaceStamp,
+          preStamp: preclaimServerStamp,
+        );
+        rethrow;
       }
       state = state.copyWith(
           phase: EnrollPhase.uploaded, message: '', attestationDebug: '');
@@ -1626,6 +1706,57 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       state = state.copyWith(
           phase: EnrollPhase.error, message: 'Save failed: $e');
       return null;
+    }
+  }
+
+  /// Best-effort face-stamp rollback for the atomic save (see [upload]):
+  /// when the local persist fails AFTER the claim filed with an advanced
+  /// stamp, the pre-claim stamp is written back over the same binding so
+  /// retry is not charged a 30-day cooldown for a save that never
+  /// completed. No-op when nothing was filed or the stamp did not advance
+  /// (first binds file 0). Same-device by construction (the claim just
+  /// bound this install), so the verdict passes; any failure here is
+  /// logged, never thrown — the orphan-completion allowance in [upload]
+  /// still heals a missed revert on retry.
+  Future<void> _revertClaimFaceStamp({
+    required CloudSync? cloud,
+    required StudentDeviceDoc? filedDoc,
+    required String installId,
+    required int filedStamp,
+    required int preStamp,
+  }) async {
+    if (cloud == null || filedDoc == null || filedStamp == preStamp) return;
+    try {
+      await cloud.claimStudentDevice(
+        doc: StudentDeviceDoc(
+          email: filedDoc.email,
+          uid: filedDoc.uid,
+          pkHex: filedDoc.pkHex,
+          name: filedDoc.name,
+          roll: filedDoc.roll,
+          modelVer: filedDoc.modelVer,
+          installId: filedDoc.installId,
+          platform: filedDoc.platform,
+          org: filedDoc.org,
+          deviceId: filedDoc.deviceId,
+          pkDHex: filedDoc.pkDHex,
+          attestationLevel: filedDoc.attestationLevel,
+          attestedAtMillis: filedDoc.attestedAtMillis,
+          attestedUntilMillis: filedDoc.attestedUntilMillis,
+          attestationChain: List<String>.of(filedDoc.attestationChain),
+          livenessVer: filedDoc.livenessVer,
+          integrityFlag: filedDoc.integrityFlag,
+          appAttestRawHex: filedDoc.appAttestRawHex,
+          appAttestCredKeyHex: filedDoc.appAttestCredKeyHex,
+          lastFaceRescanAtMillis: preStamp,
+        ),
+        installId: installId,
+      );
+      BleLog.log(
+          'SYNC', 'face-stamp revert ok (local save failed — slot freed)');
+    } catch (e) {
+      BleLog.log('SYNC',
+          'face-stamp revert failed ($e) — retry may hit cooldown');
     }
   }
 
