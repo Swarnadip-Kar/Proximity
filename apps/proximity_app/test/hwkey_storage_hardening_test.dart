@@ -11,8 +11,8 @@
 //   enrollment (never derives from stored secrets, never crashes).
 // - Prompt-free DEK store stays unsynced/this-device-only on iOS.
 // - Heartbeat never rolls the window on a dead (invalidated) HW key.
-// - HW sign maps invalidation to restore-detected; auth cancellations
-//   propagate untouched for re-prompt.
+// - HW sign maps invalidation to restore-detected (pre-update auth-bound
+//   keys); auth cancellations propagate untouched for re-prompt.
 // - bindEnrollment challenge binds lowercased email + install + pkS.
 import 'dart:typed_data';
 
@@ -227,8 +227,9 @@ void main() {
     });
 
     test('FlutterSealStore Android options stay prompt-free by design', () {
-      // The DEK must never prompt: every 5s prove rotation unseals, and
-      // use is already gated by the 4h HW-key grant + the face check.
+      // The DEK must never prompt: every prove rotation unseals, and the
+      // HW key itself is use-time ungated fleet-wide (signing authority is
+      // HW custody + the face check per marking).
       // (The enrollment store is prompt-free too — presence is confirmed
       // explicitly at Save, never per-read.)
       const seal = FlutterSealStore();
@@ -293,6 +294,10 @@ void main() {
     });
 
     test('sign propagates auth cancellation untouched (re-prompt)', () async {
+      // Models a pre-update auth-bound key: new ungated keys never throw
+      // UserNotAuthenticatedError, but old keys still in the fleet do on
+      // cancelled/locked prompts (key intact — UI re-prompts, never
+      // restore-detected).
       final backend = _Backend()
         ..signError = Exception('UserNotAuthenticatedError: cancelled');
       final d = HwDeviceKey(backend: backend, sealStore: _Seal());

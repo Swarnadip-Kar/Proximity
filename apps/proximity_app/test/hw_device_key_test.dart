@@ -15,27 +15,39 @@ class _FakeHwBackend implements HwKeyBackend {
   Uint8List? lastChallenge;
   int attestCalls = 0;
 
+  /// Models the fleet mix: true = pre-update auth-bound key, false = new
+  /// ungated key (fleet default UserAuthPolicy.none). The Dart layer must
+  /// never branch on it (the plugin reads OS gating live per key at sign).
+  final bool gated;
+
   /// When true, attest() throws (models a device with no attestation).
   bool throwAttest = false;
 
   /// When true, attest() returns an empty chain (must still fail closed).
   bool emptyChain = false;
 
-  _FakeHwBackend({this.level = AttestationLevel.full, Uint8List? pkD})
+  _FakeHwBackend(
+      {this.level = AttestationLevel.full, Uint8List? pkD, this.gated = true})
       : pkD = pkD ?? Uint8List.fromList(List.generate(64, (i) => (i * 3 + 7) & 0xFF));
 
   @override
   Future<HwKeyHandle> generateKey(
       {required String alias, required Uint8List attestationChallenge}) async {
     lastChallenge = Uint8List.fromList(attestationChallenge);
-    return HwKeyHandle(pkDRaw: Uint8List.fromList(pkD), level: level);
+    return HwKeyHandle(
+        pkDRaw: Uint8List.fromList(pkD),
+        level: level,
+        gatedByUserAuth: gated);
   }
 
   @override
   Future<HwKeyHandle?> getKeyInfo({required String alias}) async {
     if (lastChallenge == null && chain.isEmpty) return null;
     // Bound at least once (or pre-seeded via generateKey in test).
-    return HwKeyHandle(pkDRaw: Uint8List.fromList(pkD), level: level);
+    return HwKeyHandle(
+        pkDRaw: Uint8List.fromList(pkD),
+        level: level,
+        gatedByUserAuth: gated);
   }
 
   @override
@@ -540,6 +552,29 @@ void main() {
       expect(d.chainDER, isEmpty);
       expect(d.appAttestCredKeyHex, prev);
       expect(d.appAttestRawHex.isNotEmpty, isTrue);
+    });
+  });
+
+  group('Mixed fleet (old auth-bound vs new ungated keys)', () {
+    test('bind/sign/seal/unseal/ensure prove identically either way',
+        () async {
+      // The Dart layer never branches on gatedByUserAuth (no consumer
+      // reads the flag — the plugin resolves OS gating live per key at
+      // sign: ungated signs directly, gated via BiometricPrompt).
+      // Both fleet generations must therefore prove correctly here.
+      for (final gated in [true, false]) {
+        final backend = _FakeHwBackend(gated: gated);
+        final d = _device(backend: backend, sealStore: _MemorySealStore());
+        await d.bindEnrollment(
+            email: 's@x.in',
+            installId: 'inst-1',
+            pkS: Uint8List.fromList(List.filled(32, 5)));
+        await d.ensure();
+        expect(d.pkD.length, 64);
+        expect(await d.sign(Uint8List.fromList([1, 2, 3])), hasLength(64));
+        final seed = Uint8List.fromList(List.generate(32, (i) => i));
+        expect(await d.unseal(await d.seal(seed)), seed);
+      }
     });
   });
 
