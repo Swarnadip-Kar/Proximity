@@ -220,11 +220,12 @@ class FakeCloudSync implements CloudSync {
         if (seen.length >= limit) break;
         if (!orgOk(e)) continue;
         if (seen.containsKey(e.email)) continue;
-        if (eq.isNotEmpty && e.email.contains(eq)) {
+        if (eq.isNotEmpty && fieldClose(e.email, eq, fuzzy: false)) {
           seen[e.email] = e;
-        } else if (rq.isNotEmpty && e.roll.contains(rq)) {
+        } else if (rq.isNotEmpty && fieldClose(e.roll, rq, fuzzy: true)) {
           seen[e.email] = e;
-        } else if (nq.isNotEmpty && e.name.toLowerCase().contains(nq)) {
+        } else if (nq.isNotEmpty &&
+            fieldClose(e.name, nq, fuzzy: false)) {
           seen[e.email] = e;
         }
       }

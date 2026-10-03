@@ -966,19 +966,21 @@ class FirestoreCloudSync implements CloudSync {
       // query can express. Runs only when the prefix tier found nothing:
       // one bounded org page (cached 5 min, so repeated keystrokes filter
       // locally with zero reads) swept client-side, merged up to [limit].
-      // A tier-2 failure never fails the search — tier-1 results stand.
+      // Rolls also get a tiny typo budget (see fieldClose); a tier-2
+      // failure never fails the search — tier-1 results stand.
       if (seen.isEmpty) {
         try {
           final page = await _orgPage(org, 200);
           for (final e in page) {
             if (seen.length >= limit) break;
             if (seen.containsKey(e.email)) continue;
-            if (eq.isNotEmpty && e.email.contains(eq)) {
+            if (eq.isNotEmpty && fieldClose(e.email, eq, fuzzy: false)) {
               seen[e.email] = e;
-            } else if (rq.isNotEmpty && e.roll.contains(rq)) {
+            } else if (rq.isNotEmpty &&
+                fieldClose(e.roll, rq, fuzzy: true)) {
               seen[e.email] = e;
             } else if (nq.isNotEmpty &&
-                e.name.toLowerCase().contains(nq)) {
+                fieldClose(e.name, nq, fuzzy: false)) {
               seen[e.email] = e;
             }
           }

@@ -361,14 +361,23 @@ void main() {
     expect(hits.map((e) => e.email), ['student2@example.com']);
     hits = await fake.searchStudents(emailPrefix: 'zzz');
     expect(hits, isEmpty);
-    // Substring (contains), not just prefix: a middle fragment matches.
+    // Substring (contains), not just prefix: a middle fragment matches —
+    // and one digit off still suggests (`2210` is distance 1 from `2211`).
     hits = await fake.searchStudents(rollPrefix: '2210');
-    expect(hits.map((e) => e.email), ['student1@example.com']);
+    expect(hits.map((e) => e.email),
+        ['student1@example.com', 'student2@example.com']);
     hits = await fake.searchStudents(rollPrefix: '4221');
     expect(hits.map((e) => e.email),
         ['student1@example.com', 'student2@example.com']);
     hits = await fake.searchStudents(namePrefix: 'ent t');
     expect(hits.map((e) => e.email), ['student2@example.com']);
+    // Close (typo-tolerant) roll matching: transposed tail still suggests.
+    hits = await fake.searchStudents(rollPrefix: '12342201');
+    expect(hits.map((e) => e.email),
+        ['student1@example.com', 'student2@example.com']);
+    // No close match: unrelated fragment stays empty.
+    hits = await fake.searchStudents(rollPrefix: '999');
+    expect(hits, isEmpty);
     fake.online = false;
     var threw = false;
     try {
@@ -377,6 +386,21 @@ void main() {
       threw = true;
     }
     expect(threw, isTrue);
+  });
+
+  test('searchNorm + fieldClose: spacing, contains, typo budget', () {
+    expect(searchNorm(' 22-10 '), '2210');
+    expect(searchNorm('Stu_Dent'), 'student');
+    // Contains on normalized forms.
+    expect(fieldClose('12342210', '22 10', fuzzy: true), isTrue);
+    expect(fieldClose('Student Two', 'ENT_T', fuzzy: false), isTrue);
+    // Typo budget is rolls-only: transposition (distance 2) matches.
+    expect(fieldClose('12342210', '12342201', fuzzy: true), isTrue);
+    // …but names/emails stay contains-only at distance 1+.
+    expect(fieldClose('student two', 'student tow', fuzzy: false), isFalse);
+    // Short needles never fuzz (else `22` would match everything).
+    expect(fieldClose('12342210', '99', fuzzy: true), isFalse);
+    expect(fieldClose('12342210', '', fuzzy: true), isFalse);
   });
 
   test('FakeCloudSync: push/pull/rename/delete + offline refusal', () async {
