@@ -33,11 +33,15 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:attested_secure_keys/attested_secure_keys.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:flutter/foundation.dart'
     show debugPrint, defaultTargetPlatform;
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:proximity_ble/ble.dart';
 import 'package:proximity_protocol/protocol.dart';
 
@@ -585,10 +589,20 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       state = state.copyWith(phase: EnrollPhase.error, message: '$e');
       return;
     }
+    // Bisect-probe inputs (see the outer catch below): declared OUTSIDE the
+    // try because catch cannot see try-locals. Assigned as each becomes
+    // ready; null means "not reached" and the probe is skipped.
+    Uint8List? probePkS;
+    String? probeInstallId;
+    // Preflight secure-lock reading for the catch below (null = preflight
+    // never ran / channel unreadable — the catch must not claim "no lock"
+    // when it doesn't know).
+    bool? preflightSecure;
     try {
       final kp = ProxCrypto.generateEdKeypair();
       final pkS = Uint8List.fromList(kp.publicKey.bytes.sublist(0, 32));
       final pkHex = hexEncode(pkS);
+      probePkS = pkS;
       // Budgets: every post-probe await below has a deadline so a hung
       // Keystore/TEE op fails visible (tap again) instead of stranding
       // the button with no prompt and no error. FSS touches stay
@@ -605,6 +619,7 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       try {
         installId =
             await getOrCreateInstallId(_store).timeout(installIdBudget);
+        probeInstallId = installId;
       } on TimeoutException {
         state = state.copyWith(
             phase: EnrollPhase.error,
@@ -614,6 +629,77 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       }
       BleLog.log('CRYPTO',
           'SKey install identity ready install=${installId.substring(0, 8)}…');
+      // Preflight (production HW path only — tests inject Fake/Software
+      // keys and never touch platform channels here): log the OS posture
+      // BEFORE the Keystore call so a returned System log names the cause.
+      // Background: the plugin's generateKey flattens all three fallback
+      // attempts (StrongBox+attest → TEE+attest → TEE plain) into one
+      // FlutterError with null details
+      // (AttestedSecureKeysPlugin.kt: "Key generation failed:
+      // ${lastError?.message}"), so Dart can never see the per-attempt
+      // exception class — only logcat
+      // (`AttestedSecureKeys generateKey: attempt #N failed: <Class>`) can.
+      // All three attempts share the 4h biometric-or-credential auth
+      // binding, so an unsatisfiable binding (no screen lock) fails every
+      // rung with the same generic message.
+      if (_deviceKey is HwDeviceKey) {
+        try {
+          final caps = await const AttestedSecureKeys()
+              .capabilities()
+              .timeout(const Duration(seconds: 5));
+          BleLog.log('CRYPTO',
+              'DKey preflight best=${caps.bestAvailableLevel.name} strongBox=${caps.hasStrongBox} tee=${caps.hasTee} attest=${caps.supportsKeyAttestation} bioGate=${caps.supportsBiometricGating} api=${caps.androidApiLevel}');
+        } catch (e) {
+          BleLog.log('CRYPTO', 'DKey preflight capabilities unreadable: $e');
+        }
+        try {
+          final supported = await LocalAuthentication()
+              .isDeviceSupported()
+              .timeout(const Duration(seconds: 5));
+          preflightSecure = supported;
+          BleLog.log('CRYPTO', 'DKey preflight deviceSecure=$supported');
+          if (!supported) {
+            state = state.copyWith(
+                phase: EnrollPhase.error,
+                message:
+                    'Couldn\u2019t create the device key — this phone has no screen lock set. Set a PIN + fingerprint in Settings \u2192 Security, then tap Generate device key again.');
+            BleLog.log('CRYPTO',
+                'DKey preflight refused: no screen lock (keystore cannot bind auth)');
+            return;
+          }
+        } catch (_) {
+          BleLog.log(
+              'CRYPTO', 'DKey preflight deviceSecure unknown (continuing)');
+        }
+        // Enrolled-biometric inventory (passive query, never a prompt):
+        // distinguishes "fingerprint truly enrolled" from "user believes it
+        // is" (Xiaomi face ≠ STRONG; an unenrolled fingerprint with only a
+        // PIN still fails STRONG-in-mask on strict KeyMints). Logged names
+        // only — never biometric data.
+        try {
+          final bios = await LocalAuthentication()
+              .getAvailableBiometrics()
+              .timeout(const Duration(seconds: 5));
+          BleLog.log('CRYPTO',
+              'DKey preflight biometrics=${bios.isEmpty ? 'none-enrolled' : bios.map((b) => b.name).join(',')}');
+        } catch (_) {
+          BleLog.log('CRYPTO', 'DKey preflight biometrics unknown');
+        }
+        // Device fingerprint for known-issue correlation (Redmi/MTK class,
+        // patch level, MIUI build string): shape/facts only, no identifiers
+        // beyond what the claim already carries (model/platform).
+        if (isAndroid) {
+          try {
+            final info = await DeviceInfoPlugin()
+                .androidInfo
+                .timeout(const Duration(seconds: 5));
+            BleLog.log('CRYPTO',
+                'DKey preflight device=${info.manufacturer} ${info.model} sdk=${info.version.sdkInt} patch=${info.version.securityPatch} build=${info.display}');
+          } catch (e) {
+            BleLog.log('CRYPTO', 'DKey preflight device unreadable: $e');
+          }
+        }
+      }
       // iOS assertion path: same-install re-enroll yields an assertion, not
       // an object — carry the previous enrollment credential key forward
       // (same account only; anything else starts clean). iOS-ONLY read:
@@ -681,9 +767,122 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       BleLog.log('CRYPTO',
           'DKey bound pkS=${pkHex.substring(0, 12)}… level=${attestationLevelName(_deviceKey.level)} — key ceremony complete');
     } catch (e) {
+      // Keystore-level failure (NOT StateError — those return above with
+      // their own copy). The common shape here is KeyOperationError
+      // "Failed to generate key pair" with EMPTY details (plugin sends
+      // null) — surface actionable copy instead of the raw jargon; the raw
+      // stays in the log line below.
+      final raw = '$e';
+      final isKeyOp = raw.contains('key_operation_failed') ||
+          raw.contains('Failed to generate key pair');
+      // Native cause lives in the plugin error's `details` (Keystore
+      // exception class + stack), not in `$e` alone — but the plugin sends
+      // null details on this path, so this is usually empty (field proof:
+      // `details=`). The per-attempt class only exists in logcat
+      // (`AttestedSecureKeys generateKey: attempt`), which a release app
+      // cannot read (READ_LOGS is privileged — no in-app logcat button is
+      // possible). Instead, bisect behaviorally below: same challenge, NO
+      // auth binding. Log whatever we got (truncated, PII-free shapes
+      // only — never key material).
+      var native = '';
+      try {
+        final dyn = e as dynamic;
+        final code = dyn.code?.toString() ?? '';
+        final details = dyn.details?.toString() ?? '';
+        if (code.isNotEmpty || details.isNotEmpty) {
+          native =
+              ' [code=$code details=${details.length > 500 ? '${details.substring(0, 500)}…' : details}]';
+        }
+      } catch (_) {}
+      BleLog.log('CRYPTO', 'SKey/DKey generate failed: $e$native');
+      // Bisect probe (production HW path only): replays the SAME keygen
+      // minus the auth binding (same alias family, same attestation
+      // challenge, same trustedEnvironment floor, UserAuthPolicy.none).
+      // Success proves the auth backend is the blocker — field-researched
+      // as Keystore2's LSKF-bound super-key UNINITIALIZED for this user
+      // (SO 78260329: every auth-bound variant fails while no-auth works,
+      // even with lock+biometrics set). Failure proves the keystore/
+      // attestation path itself is broken. Throwaway alias, always
+      // deleted; tightly budgeted so the error path cannot strand the
+      // button.
+      var authBlocker = false;
+      if (isKeyOp &&
+          _deviceKey is HwDeviceKey &&
+          probePkS != null &&
+          probeInstallId != null) {
+        const probeAlias = 'prox.probe.noauth.v1';
+        try {
+          final probeKeys = const AttestedSecureKeys();
+          try {
+            await probeKeys.deleteKey(alias: probeAlias);
+          } catch (_) {}
+          try {
+            await probeKeys
+                .generateKey(
+                  alias: probeAlias,
+                  minSecurityLevel: KeySecurityLevel.trustedEnvironment,
+                  userAuth: UserAuthPolicy.none,
+                  attestationChallenge: HwDeviceKey.enrollmentChallenge(
+                    email: acct.email.toLowerCase(),
+                    installId: probeInstallId,
+                    pkS: probePkS,
+                  ),
+                )
+                .timeout(const Duration(seconds: 20));
+            authBlocker = true;
+            BleLog.log('CRYPTO',
+                'DKey bisect probe (same challenge, no auth) SUCCEEDED — auth backend is the blocker (suspect LSKF uninitialized for this user)');
+          } catch (eProbe) {
+            BleLog.log('CRYPTO',
+                'DKey bisect probe (same challenge, no auth) failed too: $eProbe — keystore/attestation broken, not (only) the auth backend');
+          }
+        } finally {
+          try {
+            await const AttestedSecureKeys().deleteKey(alias: probeAlias);
+          } catch (_) {}
+        }
+      }
+      // Native forensics: dump this process's AttestedSecureKeys logcat
+      // lines (the plugin's per-attempt `<Class>: <msg>`, invisible to Dart
+      // by construction — see registerKeystoreLogChannel in MainActivity).
+      // Own-UID read, no permission, best-effort: empty on iOS/web, on
+      // builds predating the channel, or where exec is restricted.
+      if (isKeyOp && isAndroid && _deviceKey is HwDeviceKey) {
+        try {
+          final forensics = await _dumpKeystoreLogcat()
+              .timeout(const Duration(seconds: 6));
+          if (forensics.isEmpty) {
+            BleLog.log('CRYPTO', 'logcat dump empty/unavailable');
+          } else {
+            for (final line in forensics) {
+              BleLog.log('CRYPTO', 'logcat $line');
+            }
+          }
+        } catch (_) {}
+      }
+      // Screen-copy honesty rule: only blame a missing lock when the
+      // preflight actually observed one missing (or could not observe).
+      // deviceSecure=true + auth-blocked means the lock IS set and this
+      // phone's KeyMint rejects the policy — saying "set a lock" would be
+      // wrong (field case: Redmi Note 9 Pro Max, Android 12, lock+fp set).
+      final lockSet = preflightSecure == true;
       state = state.copyWith(
-          phase: EnrollPhase.error, message: 'Key generation failed: $e');
-      BleLog.log('CRYPTO', 'SKey/DKey generate failed: $e');
+          phase: EnrollPhase.error,
+          message: isKeyOp
+              ? (authBlocker && lockSet
+                  // Field-researched condition (SO 78260329 + AOSP
+                  // keystore2 super_key.rs): the Keystore2 LSKF-bound
+                  // super-key is UNINITIALIZED for this Android user, so
+                  // EVERY auth-bound keygen fails no matter the
+                  // algorithm, timeout, or auth type — while the Settings
+                  // UI still shows PIN+fingerprint. No app-side policy
+                  // tweak can work around it; the credential backend must
+                  // be re-provisioned on the phone itself.
+                  ? 'Your phone shows a screen lock, but its secure storage is not accepting it — your account is fine. On the phone: remove screen lock + fingerprints, restart, set a fresh PIN first, then add fingerprint (main profile, not Second Space). Then tap Generate device key again. Still failing? Send the System log to support and ask your professor for manual attendance.'
+                  : authBlocker
+                      ? 'Couldn\u2019t create the device key — this phone has no screen lock set. Set a PIN + fingerprint in Settings \u2192 Security, then tap Generate device key again.'
+                      : 'Couldn\u2019t create the device key in secure hardware — set a screen lock (PIN + fingerprint) in Settings \u2192 Security, then try again. Still failing with a lock set? Send the System log to support.')
+              : 'Key generation failed: $e');
     }
   }
 
@@ -1528,6 +1727,20 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         ? (_faceId != null ? EnrollPhase.faceDone : EnrollPhase.keyReady)
         : (state.account != null ? EnrollPhase.signedIn : EnrollPhase.signedOut);
     state = state.copyWith(phase: back, message: '', attestationDebug: '');
+  }
+}
+
+/// Best-effort dump of this process's AttestedSecureKeys logcat lines via
+/// the MainActivity `keystore_log` channel. Empty on non-Android, on builds
+/// predating the channel, or where exec is restricted — never throws, so the
+/// enrollment error path can always call it unconditionally-guarded.
+Future<List<String>> _dumpKeystoreLogcat() async {
+  try {
+    const ch = MethodChannel('org.iitbhilai.proximity/keystore_log');
+    final lines = await ch.invokeListMethod<String>('dumpKeystoreLog');
+    return lines ?? const <String>[];
+  } catch (_) {
+    return const <String>[];
   }
 }
 

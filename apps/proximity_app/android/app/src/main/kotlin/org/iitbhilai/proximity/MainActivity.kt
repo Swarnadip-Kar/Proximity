@@ -174,6 +174,7 @@ class MainActivity : FlutterFragmentActivity() {
         }
         registerScreenBrightnessChannel(flutterEngine)
         registerAmbientLightChannel(flutterEngine)
+        registerKeystoreLogChannel(flutterEngine)
     }
 
     // Enroll flash assist (Dart: features/setup/flash_assist.dart).
@@ -260,6 +261,54 @@ class MainActivity : FlutterFragmentActivity() {
                 manager = null
             }
         })
+    }
+
+    // Keystore failure forensics (Dart: core/enrollment.dart generateKey
+    // catch). The attested_secure_keys plugin logs per-attempt native
+    // failures (attempt #N failed: <Class>) ONLY to logcat with no Dart
+    // channel, and a release app cannot grant itself READ_LOGS — but an
+    // app may always read its OWN logcat (UID-filtered, no permission).
+    // This channel dumps the current process's AttestedSecureKeys lines
+    // (bounded) so a field failure names the OS cause with one tap and no
+    // cable. Best-effort: any exec/read failure returns an empty list,
+    // never an error (must not fail the Dart error path over forensics).
+    private fun registerKeystoreLogChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        io.flutter.plugin.common.MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "org.iitbhilai.proximity/keystore_log"
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "dumpKeystoreLog") {
+                Thread {
+                    try {
+                        val pid = android.os.Process.myPid()
+                        val proc = Runtime.getRuntime().exec(arrayOf(
+                            "logcat", "-d",
+                            "--pid", pid.toString(),
+                            "-t", "200",
+                            "-v", "brief",
+                            "AttestedSecureKeys:D", "*:S"
+                        ))
+                        val done = proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                        val out = if (done) {
+                            proc.inputStream.bufferedReader().readText()
+                        } else {
+                            proc.destroy()
+                            ""
+                        }
+                        val lines = out.lines()
+                            .map { it.trim() }
+                            .filter { it.contains("AttestedSecureKeys") }
+                            .takeLast(40)
+                            .map { if (it.length > 300) it.substring(0, 300) + "…" else it }
+                        result.success(lines)
+                    } catch (e: Exception) {
+                        try { result.success(emptyList<String>()) } catch (_ignored: Exception) {}
+                    }
+                }.start()
+            } else {
+                result.notImplemented()
+            }
+        }
     }
 
     private fun ByteArray.toHex(): String {

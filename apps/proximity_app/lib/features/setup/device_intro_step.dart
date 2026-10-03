@@ -24,6 +24,7 @@ library;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:proximity_ble/ble.dart';
 
 import '../../core/auth.dart';
 import '../../core/enrollment.dart';
@@ -32,6 +33,7 @@ import '../../design/tokens.dart';
 import '../../features/face_identity/face_blocked.dart';
 import '../../main.dart';
 import '../../mode.dart';
+import '../../widgets/log_drawer.dart';
 import '../../widgets/prox_buttons.dart';
 import '../../widgets/prox_motion.dart';
 import 'device_identity_screen.dart';
@@ -81,6 +83,16 @@ class DeviceConfirmStep extends ConsumerWidget {
     final bottomPad = 16 + MediaQuery.viewPaddingOf(context).bottom;
     return AdaptiveScaffold(
       title: 'Confirm device',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: () {
+            BleLog.log('NAV', 'setup device → system log');
+            showLogDrawer(context);
+          },
+        ),
+      ],
       body: Center(
         child: SingleChildScrollView(
           key: const ValueKey('setup-device-scroll'),
@@ -129,6 +141,16 @@ class AccountKeyStep extends ConsumerWidget {
     if (!canUseFace()) {
       return AdaptiveScaffold(
         title: 'Account & key',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.terminal_outlined),
+            tooltip: 'System log',
+            onPressed: () {
+              BleLog.log('NAV', 'setup account-key → system log');
+              showLogDrawer(context);
+            },
+          ),
+        ],
         body: Center(
           child: SingleChildScrollView(
             key: const ValueKey('setup-account-key-scroll'),
@@ -171,6 +193,16 @@ class AccountKeyStep extends ConsumerWidget {
     final bottomPad = 16 + MediaQuery.viewPaddingOf(context).bottom;
     return AdaptiveScaffold(
       title: 'Account & key',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.terminal_outlined),
+          tooltip: 'System log',
+          onPressed: () {
+            BleLog.log('NAV', 'setup account-key → system log');
+            showLogDrawer(context);
+          },
+        ),
+      ],
       body: Center(
         child: SingleChildScrollView(
           key: const ValueKey('setup-account-key-scroll'),
