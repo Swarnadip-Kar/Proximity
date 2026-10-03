@@ -116,20 +116,10 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Directory hits FIRST (above the fields): inline cards below
-            // the form land under the keyboard while typing; on top they
-            // stay visible. Same shared StudentCard rows, same tap-to-fill.
-            for (final h in _dir.hits)
-              Padding(
-                padding: const EdgeInsets.only(bottom: ProxSpacing.sm),
-                child: StudentCard(
-                  name: h.name.isEmpty ? h.email : h.name,
-                  subtitle:
-                      [if (h.roll.isNotEmpty) h.roll, h.email].join(' · '),
-                  onTap: () =>
-                      _dir.pickHit(h, widget.isPresent, _fill),
-                ),
-              ),
+            // Search fields FIRST, always in view: results used to render
+            // above the fields, so the first cards pushed the ID field (and
+            // the keyboard focus) out of sight while typing. Cards now live
+            // in the bounded box below the fields.
             // The directory note lives here once (the per-field
             // `Searches the online student directory` helpers are gone —
             // three copies wasted a line each). Breathing room: sm below
@@ -178,6 +168,35 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
               ),
               keyboardType: TextInputType.emailAddress,
             ),
+            if (_dir.hits.isNotEmpty) ...[
+              const SizedBox(height: ProxSpacing.sm),
+              // Bounded results box: cards scroll INSIDE ~3 rows instead of
+              // growing the column (which pushed the fields + Add button
+              // out of view on small phones). Same shared StudentCard rows,
+              // same tap-to-fill.
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 264),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: _dir.hits.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: ProxSpacing.sm),
+                  itemBuilder: (context, i) {
+                    final h = _dir.hits[i];
+                    return StudentCard(
+                      name: h.name.isEmpty ? h.email : h.name,
+                      subtitle: [
+                        if (h.roll.isNotEmpty) h.roll,
+                        h.email
+                      ].join(' · '),
+                      onTap: () =>
+                          _dir.pickHit(h, widget.isPresent, _fill),
+                    );
+                  },
+                ),
+              ),
+            ],
             if (_dir.searching) ...[
               const SizedBox(height: ProxSpacing.sm),
               const ProxLoadingRow(label: 'Searching online…'),
@@ -209,8 +228,9 @@ class _ManualAddFormState extends ConsumerState<ManualAddForm> {
                 style: ProxType.caption(color: c.contentSecondary),
               ),
             ],
-            // Hits render in the floating panel above/below ([_HitsPanel]),
-            // never inline — inline cards land under the keyboard.
+            // Hits render in the bounded box above (scrolls in place),
+            // never inline in the column — inline cards used to push the
+            // fields out of view while typing.
             if (_dir.error.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: ProxSpacing.xs),
