@@ -198,8 +198,10 @@ doesn't get a gradient):
   separate effect layered on top; under reduce-motion it's dropped to a
   static soft halo, never fully removed (removing it would make the ring
   look inert rather than "connected").
-- **`verdict` → `Marked` wash (§6.3)** — upgrade the flat
-  `status.marked` color-wash already specified there to `gradient.marked` +
+- **Open browse tile ring** — a non-idle (window-open) class tile gets the
+  `gradientBrand` outline + `glowLive` halo (static, no sweep timer), the
+  same ring idiom as selection/identity rings. Idle rows stay flat.
+- **`verdict` → `Marked` wash (§6.3)** — upgrade the flat  `status.marked` color-wash already specified there to `gradient.marked` +
   `effect.glow.marked` together, same 400ms non-blocking skippable timing,
   same single-use rule (this exact combination never appears anywhere
   else in the app — that's what keeps it meaningful the one time it fires).
@@ -296,9 +298,9 @@ Bar behavior:
 - Active tab: filled icon + label, `accent.brand`. Inactive: outlined icon,
   label hidden below a width breakpoint (icon-only on narrow devices — see
   §10).
-- Switching tabs cross-fades content (120ms) with a 4dp vertical settle on
-  the incoming tab's icon — no full-screen slide between bottom-bar
-  destinations (slides are reserved for push navigation, see §4).
+- Switching tabs slides the `PageView` (220ms, finger-tracked swipe that
+  snaps on release — WhatsApp pattern) with a 4dp vertical settle on
+  the incoming tab's icon (120ms).
 - Badge dot (no number) on `Records` when a new session posts while the app
   was backgrounded; clears on tab open.
 
@@ -436,14 +438,15 @@ Fixed layout, three lines max:
   This applies even on the viewer's own `StudentCard`-style row in the
   Account tab (§5) — same initials-avatar rule, no exception for "it's my
   own face."
-- Status slot: `VerdictBadge` (pill, see 4.2) right-aligned, vertically
-  centered on line 1.
+- Status slot: browse tiles carry no line-1 status — `Marked`/verify/`Open`
+  pills share one scaled footer line below the card row (line 1 is the
+  clean course title only).
 - Round trail (only shown where the existing data model has rounds —
   professor roster / student marked-late cards) renders as small pill chips,
   not raw text like today — same information, componentized.
 - **No checkbox ever renders on this card.** Selection state is a full-card
-  affordance: long-press → card scales to 0.96 with a 12ms haptic tick and a
-  filled ring appears around the avatar; subsequent taps toggle the ring on
+  affordance: long-press → card scales to 0.96 (120ms) with a
+  light-impact haptic and a filled ring appears around the avatar; subsequent taps toggle the ring on
   any card in that list. A selection toolbar slides up from the bottom
   ("Approve N · Reject N · Select all · Cancel") replacing the bottom bar
   temporarily on screens that have one (inbox, sessions list for
@@ -696,8 +699,10 @@ from added copy or clutter.
 ### 6.2 `waiting` → `faceCheck` (in-tab Mark phases, not routes)
 
 - Waiting: a single centered presence indicator (pulsing ring, with
-  `effect.glow.live` behind it per §2.5) with `Connected` / `Not connected`
-  as the only two states, "waiting for professor to start" beneath.
+  `effect.glow.live` behind it per §2.5) with `Connected — waiting for
+  professor to start marking` / `Not connected — check WiFi / IP`, the
+  `Attendance has not yet started… keep this open…` paragraph, the shared
+  host card (+ pin badge) and the per-round trail below it.
   Manual-fallback button bottom, low emphasis.
 - Transition into face scan is automatic (per existing behavior) and
   animated as the ring **morphing into the camera viewfinder frame**
@@ -756,7 +761,7 @@ from added copy or clutter.
 |---|---|---|
 | Enter IP manually | `browsing`, low-emphasis text button below the list/empty state | Opens 1-field bottom sheet |
 | Manual attendance request | `verdict` (non-Marked states only) | Opens confirmation sheet |
-| Manual student add (professor) | `live/<course>/add`, icon button in app bar, not inline fields on roster | Opens `ManualAddForm` sheet |
+| Manual student add (professor) | `live/<course>` Add sub-tab (IndexedStack section, no app-bar entry) | Renders `ManualAddForm` inline — fields first, bounded results box below |
 | Bluetooth-off prompt | Inline thin banner with a single "Turn on" tap-target, not a modal | Appears contextually |
 
 ---

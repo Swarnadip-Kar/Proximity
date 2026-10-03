@@ -79,7 +79,7 @@ page, never someone else's home).
    migrate, deletable with X/Y warning) → **Take attendance** starts
    hosting: HTTPS server up (window closed) + class announced on the LAN
    every 2s, with the professor's optional display name and all-IP picker.
-   Students join by shown IP (single field, last IP prefilled) or live
+   Students join by shown IP (dotted-quad + port fields, last IP prefilled) or live
    list and land in the **waiting room**: Connected / Not connected +
    “waiting for professor to start marking”. Presence heartbeats give the
    professor a live waiting count.
@@ -91,8 +91,8 @@ page, never someone else's home).
    wire), live `present/waiting` counter, waiting list, manual requests,
    direct manual entry. **Take another round** adds window 2, 3, … —
    present is the intersection of all windows taken. A stopped round can
-   instead be resumed with **Retake round N** (same round number, fresh
-   secrets, marks merge — no new intersection hurdle).
+   instead be resumed with **Resume round N** (same round number, marks
+   merge — no new intersection hurdle) or dropped with **Discard round N**.
  3. While open, the professor advertises a rotating challenge (new token
    every 10s, unbounded); students hear it over BLE, answer with their
    response token, pass the single-shot plugin holder check + passive
@@ -111,7 +111,7 @@ page, never someone else's home).
    face ticket score ≥ 0.70 + 5-min freshness + allowlisted
    matcher version, liveness score ≥ 0.70 + allowlisted liveness version,
    hardware `dSig` + chain-vs-pinned-roots, BLE sighting with RSSI gates) and
-   returns a signed ACK, which the student sees as ✓ Marked.
+   returns a signed ACK, which the student sees as a `Marked` badge.
 4. Front-row phones re-advertise challenges (hop/jitter/dedup/split-horizon
    controlled flood, TTL on air enforced at 2 hops) so back rows hear them — each
    phone keeps relaying for 10s after first hearing the token. iPhones and
@@ -178,16 +178,16 @@ guaranteeing 100% attendance reliability across all 500 seats. Marked students s
 zero taps: the badge parks until the round ends (same window never
 re-faces — the next window carries a fresh code), then the waiting room
 reopens, face re-checks, and the next mark appends to the per-round trail
-(R1, R2, …) shown on the waiting AND marked/late cards; the professor
+(`R<n> · <code> · <local time>` pills with a check icon) shown on the waiting AND marked/late cards; the professor
 list shows the same ticks per student (Present intersection + Partial
-sections, e.g. `R1 ✓ · R2 ✗`). Rounds are noted at Stop (not after the
+sections with per-round `R1/R2…` pills). Rounds are noted at Stop (not after the
 grace), so empty rounds still count and the intersection never sticks at
 1/1 after 2 rounds. Browsing re-arms a scan that went
 silent for 30 s, so a class started after the student opened the app
 still lists.
 
 **Records.** Professors: course pages (sessions newest-first, per-session
-`Partial (n)` one-liners, exports, date-range matrix, multi-delete),
+present/partial/absent count cells, exports, date-range matrix, multi-delete),
 saved-session editor (per-round checkboxes, partial + absent quick lists
 with mark-present, unified manual-add, queue resolution on sync).
 Students: My Attendance (course cards with `x/y days attended` → per-course
@@ -199,8 +199,8 @@ The web build is records-only (see below).
 `flutter build web` produces the same app, same login, records only: no
 BLE, no camera/face, no hosting, no enrollment, no manual edits. Students
 land on My Attendance; professors get courses/sessions/exports (CSV Save
-downloads in-browser); every records screen carries a “records view only —
-marking needs the native app” banner. Native-only affordances (Take
+downloads in-browser); every records screen carries a “Records view only
+on web — marking attendance needs the native app” banner. Native-only affordances (Take
 attendance, retake, rename/delete, session toggles/add/save, offline
 professor, role registration) are hidden on web.
 
@@ -480,15 +480,18 @@ release ignores the flag via `kDebugMode` gates in `lib/main.dart`):
 14. **Manual-add is one form.** Live direct entry and session edit share
     `ManualAddForm`: ID compulsory, online exact-ID resolve, offline queue
     applied on next course sync (live drafts excluded). Course cards show
-    one-line `Partial (n)` markers; the full partial + absent lists live
+    `P present · Pa partial` counts; the full partial + absent lists live
     on the edit page with mark-present actions. Live search: 400 ms
     debounced, online-gated (presence probe cached 15 s), one round trip
     of parallel single-field prefix range queries (roll / nameLower /
    email, `limit(10)` each, merged by email, capped at 10 — each paired
    with an `org == myOrg` equality filter on its composite index; worst
    case ~30 doc reads per pause plus one
-    cached probe read per 15 s; search failures are SHOWN (rules-denied
-    names the redeploy, offline shows the queued note) — a denied query
+    cached probe read per 15 s; a total prefix miss falls back to a
+    close-substring sweep (normalized contains + typo budget on rolls)
+    over one bounded org page cached 5 min — zero extra reads on repeat
+    keystrokes. Search failures are SHOWN (rules-denied names the
+    redeploy, offline shows the queued note) — a denied query
     no longer looks like "no students". Empty results say so explicitly.
     The name field waits for 2 chars (a 1-char name prefix returns the
     first 10 names alphabetically — noise that still bills reads);
@@ -622,8 +625,8 @@ stays disabled until all five register; rescan replaces per-sample
 the isolate path (~1s fast path): a match stamps the `FaceGate` and
 signs the challenge-bound ticket; an unreadable frame is inconclusive
 (rescan in-session, burns nothing); a readable wrong-person frame burns
-one attempt (2 instant retries, then per-session fail; 4 mismatch
-sessions → needs-review queue → professor manual override; never
+one attempt (hands-free auto-retry in the 7s window at ~0.6s gaps, then
+per-session fail; 4 mismatch sessions → needs-review queue → professor manual override; never
 auto-present on face fail). A version mismatch forces re-face (key kept);
 no images ever leave the device; marking proofs carry a compact face vector
 (numbers only, no photo) to the professor's phone over classroom WiFi —
@@ -635,16 +638,16 @@ strong vs weak passes) plus the shuffled active blink/smile walk at enroll
 the hardware device key. A print/replay must beat all of them; FAR/FRR stay
 UNMEASURED on Proximity captures until a field ROC is measured.
 
-## System log (toggleable terminal)
+## System log (drawer)
 
-Every live screen carries a **Show system log** toggle rendering the same
-`BleLog` stream in a terminal window (black, monospace, color-coded tags,
-autoscroll, 50k-entry ring buffer with a 500-row render window, 500ms flush, clear button):
+Every live screen carries a **System log** action rendering the same
+`BleLog` stream in a bottom-sheet drawer (color-coded tags, 50k-entry ring
+buffer, tag filter into the full debug/log screen):
 
 - Student: browsing (browse/list), waiting room, face scan, listening radar,
   marked/late/no-signal verdicts. Face-scan screen too (radio keeps
   listening under the camera UI).
-- Professor: take-attendance screen (above the waiting list).
+- Professor: take-attendance screen (AppBar action).
 
 Tags (`NAV`/`SYNC`/`FACE`/`STATE`/`BLE`/`MESH`/`LAN`/`SEC`/`NET`/`TRANSPORT`/`CRYPTO`/`SESSION`/`CLOCK` — see `ProxLogTags`): `BLE` (scan start, ADV on air/failures, RX challenge/response with
 RSSI, IP-hint heard/probe/listed, air-visibility probes), `MESH` (relay armed, forwarding, relayed,

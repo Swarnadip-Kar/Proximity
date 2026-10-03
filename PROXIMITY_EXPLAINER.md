@@ -116,9 +116,9 @@ Sign in, pick a display name. No face, no single-device limit. Can skip sign-in 
 ### 3.2 In class — professor
 
 1. Open a course → **Take attendance** → hosting starts (HTTPS up, class announced every 2s, IP shown).
-2. Students land in the **waiting room** (live count).
+2. Students land in the **waiting room** (no count — the waiting count lives professor-side).
 3. Tap **Start** → window opens (no timer — stays open until Stop), Bluetooth starts shouting a new secret every 10 seconds.
-4. Watch `present / waiting`, waiting list, manual requests. **Take another round** adds Round 2, 3… (Present = passed *every* round). **Retake** re-runs the same round with fresh secrets.
+4. Watch `present / waiting`, waiting list, manual requests. **Take another round** adds Round 2, 3… (Present = passed *every* round). **Resume** re-opens the stopped round (marks merge); **Discard** drops it; **Retake** (same round, fresh secrets) lives in the More menu.
 5. Tap **Stop** (short grace for proofs already on the wire) → **End attendance** → record saved on-device, hosting shuts down, all ports close. Export (per-session CSV, date-range matrix) happens separately from the course page.
 
 ### 3.3 In class — student (mostly automatic)
