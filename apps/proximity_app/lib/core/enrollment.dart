@@ -639,9 +639,9 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // ${lastError?.message}"), so Dart can never see the per-attempt
       // exception class — only logcat
       // (`AttestedSecureKeys generateKey: attempt #N failed: <Class>`) can.
-      // All three attempts share the 4h biometric-or-credential auth
-      // binding, so an unsatisfiable binding (no screen lock) fails every
-      // rung with the same generic message.
+      // All three attempts share the fleet-wide UserAuthPolicy.none
+      // (use-time ungated), so auth binding can no longer fail any rung —
+      // a generic failure here is keystore/attestation, never the lock.
       if (_deviceKey is HwDeviceKey) {
         try {
           final caps = await const AttestedSecureKeys()
