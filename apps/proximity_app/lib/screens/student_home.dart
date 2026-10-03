@@ -35,6 +35,7 @@ import '../features/face_identity/liveness_gate.dart'
 import '../features/account/account_common.dart';
 import '../features/entry/entry_flow.dart';
 import '../features/mark/browse_classes.dart';
+import '../features/mark/browse_list.dart' show tileAlreadyMarkedFor;
 import '../features/mark/face_check.dart';
 import '../features/mark/manual_status.dart';
 import '../features/mark/mark_flow.dart';
@@ -2734,8 +2735,24 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
       profPhotoByHost: Map.of(_gatedPhotoByHost),
       profVerifyByHost: Map.of(_profVerifyByHost),
       windowNoByHost: Map.of(_windowNoByHost),
+      markedDisplayByHost: Map.of(_markedDisplayByHost),
       onTapLive: (c) {
         BleLog.log(ProxLogTags.nav, 'live tile ${c.last.classLabel} tapped');
+        final hp = '${c.last.host}:${c.last.port}';
+        // Same-round re-tap guard (mark-page card rule): this round is
+        // already marked on this host — hold on browsing with the reason
+        // instead of re-facing the same window. Next rounds (fresh code)
+        // and idle tiles fall through to the normal join below.
+        if (tileAlreadyMarkedFor(
+          markedDisplay: _markedDisplayByHost[hp],
+          display: c.last.display,
+        )) {
+          BleLog.log(ProxLogTags.face,
+              'already marked ${c.last.display} here — tap held (no same-round re-mark)');
+          setState(() => joinError =
+              'Already marked for this round — stay put for the next one.');
+          return;
+        }
         final target = ClassBeacon(
           classLabel: c.last.classLabel,
           host: c.last.host,
@@ -2744,7 +2761,6 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
           displayCode: c.last.display,
           org: c.last.org,
         );
-        final hp = '${c.last.host}:${c.last.port}';
         setState(() {
           _fieldInitial = hp;
           _typedHostPort = hp;

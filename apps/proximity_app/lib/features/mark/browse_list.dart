@@ -84,6 +84,20 @@ String browseVerifyCaption(String label) => switch (label) {
       _ => '',
     };
 
+/// Same-round marked rule for one browse tile (pure): true only when both
+/// the recorded mark and the tile's current display are known and equal
+/// (same window code). Unknown display never counts — an idle tile must not
+/// read Marked for a previous round — and a fresh code (next round) re-arms
+/// marking. The auto-advance hold ([mayAutoFaceFor] in student_home) is
+/// deliberately stricter (unknown display also holds); this is display-only.
+bool tileAlreadyMarkedFor({String? markedDisplay, required String display}) {
+  final marked = (markedDisplay ?? '').trim();
+  if (marked.isEmpty) return false;
+  final d = display.trim();
+  if (d.isEmpty) return false;
+  return d == marked;
+}
+
 class BrowseTile extends StatelessWidget {
   final LiveClass live;
   final String profEmail;
@@ -105,6 +119,12 @@ class BrowseTile extends StatelessWidget {
   /// renders exactly as before, no caption.
   final int classNo;
 
+  /// True when this device already marked the currently-open round on this
+  /// host (same window display code — see the mark-page card rule). Renders
+  /// a `Marked` pill in the footer and is purely presentational: the tap
+  /// guard lives in the owning screen.
+  final bool alreadyMarked;
+
   const BrowseTile({
     super.key,
     required this.live,
@@ -112,6 +132,7 @@ class BrowseTile extends StatelessWidget {
     this.profPhotoUrl = '',
     this.verifyLabel = '',
     this.classNo = 0,
+    this.alreadyMarked = false,
     required this.onTap,
   });
 
@@ -128,8 +149,12 @@ class BrowseTile extends StatelessWidget {
     // beside the course name: even one pill squeezed the title out on
     // narrow phones, so line 1 carries no status at all (same clean
     // title rule as every other `StudentCard`; the Open pill used to
-    // sit there). Order: verify tag first, then Open.
+    // sit there). Order: Marked first (you are done for this round),
+    // then the verify tag, then Open.
     final tag = browseVerifyTag(verifyLabel);
+    final markedTag = alreadyMarked
+        ? const VerdictBadge(status: ProxStatus.marked, label: 'Marked')
+        : null;
     final openTag = a.windowOpen
         ? const VerdictBadge(
             status: ProxStatus.waiting,
@@ -177,14 +202,14 @@ class BrowseTile extends StatelessWidget {
               : browseVerifyCaption(verifyLabel)),
       subtitle2MaxLines: 2,
       status: null,
-      // Both pills share the footer below the email/caption lines (never
-      // beside the title): verify tag first, Open just right of it,
+      // All pills share the footer below the email/caption lines (never
+      // beside the title): Marked first, then the verify tag, then Open,
       // left-aligned. A Wrap, not a Row — Unverified + Open together
       // exceed the footer width on 360dp phones (measured 91px overflow),
-      // so the pair flows to two lines there instead of striping. One
+      // so the trio flows to two lines there instead of striping. One
       // pill (or a wide phone) still renders the identical single line;
-      // both absent renders exactly as before — no extra line.
-      footer: (tag == null && openTag == null)
+      // all absent renders exactly as before — no extra line.
+      footer: (markedTag == null && tag == null && openTag == null)
           ? null
           : Align(
               alignment: Alignment.centerLeft,
@@ -192,6 +217,7 @@ class BrowseTile extends StatelessWidget {
                 spacing: ProxSpacing.xs,
                 runSpacing: ProxSpacing.xs,
                 children: [
+                  if (markedTag != null) markedTag,
                   if (tag != null) tag,
                   if (openTag != null) openTag,
                 ],

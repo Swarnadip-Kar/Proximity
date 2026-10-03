@@ -94,6 +94,12 @@ class BrowseClassesView extends StatefulWidget {
   /// shows). Absent/0 hides the under-disc ordinal (see BrowseTile.classNo).
   final Map<String, int> windowNoByHost;
 
+  /// Marked window display codes by `host:port` (this device's own marks —
+  /// see the mark-page card rule). A tile whose current display equals its
+  /// entry renders the `Marked` pill (same round already done); idle tiles
+  /// (unknown display) and next rounds never match.
+  final Map<String, String> markedDisplayByHost;
+
   const BrowseClassesView({
     super.key,
     this.avatarName = '',
@@ -114,6 +120,7 @@ class BrowseClassesView extends StatefulWidget {
     this.profPhotoByHost = const {},
     this.profVerifyByHost = const {},
     this.windowNoByHost = const {},
+    this.markedDisplayByHost = const {},
   });
 
   @override
@@ -305,6 +312,11 @@ class _BrowseClassesViewState extends State<BrowseClassesView> {
                     classNo: widget.windowNoByHost[
                             widget.live[i].last.key] ??
                         0,
+                    alreadyMarked: tileAlreadyMarkedFor(
+                      markedDisplay: widget.markedDisplayByHost[
+                          widget.live[i].last.key],
+                      display: widget.live[i].last.display,
+                    ),
                     onTap: () => widget.onTapLive(widget.live[i]),
                   ),
                 ),
