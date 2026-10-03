@@ -279,7 +279,7 @@ class MainActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, result ->
             if (call.method == "dumpKeystoreLog") {
                 Thread {
-                    try {
+                    val lines: List<String> = try {
                         val pid = android.os.Process.myPid()
                         val proc = Runtime.getRuntime().exec(arrayOf(
                             "logcat", "-d",
@@ -295,14 +295,19 @@ class MainActivity : FlutterFragmentActivity() {
                             proc.destroy()
                             ""
                         }
-                        val lines = out.lines()
+                        out.lines()
                             .map { it.trim() }
                             .filter { it.contains("AttestedSecureKeys") }
                             .takeLast(40)
                             .map { if (it.length > 300) it.substring(0, 300) + "…" else it }
-                        result.success(lines)
                     } catch (e: Exception) {
-                        try { result.success(emptyList<String>()) } catch (_ignored: Exception) {}
+                        emptyList()
+                    }
+                    // Reply on the platform thread: MethodChannel results are
+                    // not safe to complete from a worker thread, and the
+                    // activity may have detached while logcat ran.
+                    runOnUiThread {
+                        try { result.success(lines) } catch (_ignored: Exception) {}
                     }
                 }.start()
             } else {

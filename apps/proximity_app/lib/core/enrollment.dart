@@ -779,9 +779,10 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
       // exception class + stack), not in `$e` alone — but the plugin sends
       // null details on this path, so this is usually empty (field proof:
       // `details=`). The per-attempt class only exists in logcat
-      // (`AttestedSecureKeys generateKey: attempt`), which a release app
-      // cannot read (READ_LOGS is privileged — no in-app logcat button is
-      // possible). Instead, bisect behaviorally below: same challenge, NO
+      // (`AttestedSecureKeys generateKey: attempt`); a release app cannot
+      // grant itself READ_LOGS, but it can read its OWN UID lines via the
+      // `keystore_log` channel (dumped first below, before the probe adds
+      // its own lines). Bisect behaviorally as well: same challenge, NO
       // auth binding. Log whatever we got (truncated, PII-free shapes
       // only — never key material).
       var native = '';
@@ -795,6 +796,25 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
         }
       } catch (_) {}
       BleLog.log('CRYPTO', 'SKey/DKey generate failed: $e$native');
+      // Native forensics FIRST (before the probe below adds its own
+      // AttestedSecureKeys lines to the ring): dump this process's
+      // per-attempt `<Class>: <msg>` lines, invisible to Dart by
+      // construction — see registerKeystoreLogChannel in MainActivity.
+      // Own-UID read, no permission, best-effort: empty on iOS/web, on
+      // builds predating the channel, or where exec is restricted.
+      if (isKeyOp && isAndroid && _deviceKey is HwDeviceKey) {
+        try {
+          final forensics = await _dumpKeystoreLogcat()
+              .timeout(const Duration(seconds: 6));
+          if (forensics.isEmpty) {
+            BleLog.log('CRYPTO', 'logcat dump empty/unavailable');
+          } else {
+            for (final line in forensics) {
+              BleLog.log('CRYPTO', 'logcat $line');
+            }
+          }
+        } catch (_) {}
+      }
       // Bisect probe (production HW path only): replays the SAME keygen
       // minus the auth binding (same alias family, same attestation
       // challenge, same trustedEnvironment floor, UserAuthPolicy.none).
@@ -841,24 +861,6 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
             await const AttestedSecureKeys().deleteKey(alias: probeAlias);
           } catch (_) {}
         }
-      }
-      // Native forensics: dump this process's AttestedSecureKeys logcat
-      // lines (the plugin's per-attempt `<Class>: <msg>`, invisible to Dart
-      // by construction — see registerKeystoreLogChannel in MainActivity).
-      // Own-UID read, no permission, best-effort: empty on iOS/web, on
-      // builds predating the channel, or where exec is restricted.
-      if (isKeyOp && isAndroid && _deviceKey is HwDeviceKey) {
-        try {
-          final forensics = await _dumpKeystoreLogcat()
-              .timeout(const Duration(seconds: 6));
-          if (forensics.isEmpty) {
-            BleLog.log('CRYPTO', 'logcat dump empty/unavailable');
-          } else {
-            for (final line in forensics) {
-              BleLog.log('CRYPTO', 'logcat $line');
-            }
-          }
-        } catch (_) {}
       }
       // Screen-copy honesty rule: only blame a missing lock when the
       // preflight actually observed one missing (or could not observe).
