@@ -871,14 +871,17 @@ class EnrollmentController extends StateNotifier<EnrollmentState> {
           message: isKeyOp
               ? (authBlocker && lockSet
                   // Field-researched condition (SO 78260329 + AOSP
-                  // keystore2 super_key.rs): the Keystore2 LSKF-bound
-                  // super-key is UNINITIALIZED for this Android user, so
-                  // EVERY auth-bound keygen fails no matter the
-                  // algorithm, timeout, or auth type — while the Settings
-                  // UI still shows PIN+fingerprint. No app-side policy
-                  // tweak can work around it; the credential backend must
-                  // be re-provisioned on the phone itself.
-                  ? 'Your phone shows a screen lock, but its secure storage is not accepting it — your account is fine. On the phone: remove screen lock + fingerprints, restart, set a fresh PIN first, then add fingerprint (main profile, not Second Space). Then tap Generate device key again. Still failing? Send the System log to support and ask your professor for manual attendance.'
+                  // issuetracker 399653576, Google-confirmed): the Keystore2
+                  // LSKF state for this Android user is bad, so EVERY
+                  // auth-bound keygen fails while Settings still shows
+                  // PIN+fingerprint. Android 12 work-profile deletion leaves
+                  // this persistent bad per-user state (fixed for fresh A13+,
+                  // not cleaned by OTA); also seen on Xiaomi/Samsung without
+                  // profiles, sometimes surviving factory reset. No app-side
+                  // policy tweak can work around it (Okta + 3 years of Sentry
+                  // reports found none) — only device-state procedures, none
+                  // guaranteed.
+                  ? 'This is a known Android issue on some Xiaomi/Samsung phones: secure storage rejects the screen lock even though one is set (your account is fine). First remove Second Space/work profile if any and restart, then retry. Still failing? Remove lock + fingerprints, restart, set a fresh PIN, add fingerprint, retry. Last resort: factory reset. Meanwhile ask your professor for manual attendance.'
                   : authBlocker
                       ? 'Couldn\u2019t create the device key — this phone has no screen lock set. Set a PIN + fingerprint in Settings \u2192 Security, then tap Generate device key again.'
                       : 'Couldn\u2019t create the device key in secure hardware — set a screen lock (PIN + fingerprint) in Settings \u2192 Security, then try again. Still failing with a lock set? Send the System log to support.')
