@@ -295,6 +295,59 @@ void main() {
     expect(find.textContaining('Directory search failed'), findsOneWidget);
   });
 
+  testWidgets('ManualAddForm heals a stale cloud prof role and retries',
+      (t) async {
+    final cloud = _DenyOnceCloud();
+    await cloud.claimStudentDevice(
+        doc: const StudentDeviceDoc(
+            email: 'student1@example.com',
+            uid: 'u1',
+            pkHex: 'aa',
+            name: 'Student One',
+            roll: '10000001',
+            modelVer: 'v'),
+        installId: 'i1');
+    final store = InMemoryDeviceStore();
+    // Local cache holds the professor identity, but the cloud users doc
+    // does not (new device / reinstall) — the first search denies.
+    await store.writeRole(const {
+      'roles': 'prof',
+      'email': 'prof@example.com',
+      'uid': 'uid-prof',
+      'displayName': 'Prof',
+      'org': 'example.com',
+      'lastMode': 'prof',
+    });
+    await t.pumpWidget(ProviderScope(
+      overrides: [
+        cloudSyncProvider.overrideWithValue(cloud),
+        deviceStoreProvider.overrideWithValue(store),
+      ],
+      child: MaterialApp(
+        theme: proxLightTheme(),
+        home: Scaffold(
+          body: ManualAddForm(
+            fieldPrefix: 't',
+            course: 'CS201',
+            sessionId: 's1',
+            onAdd: ({required String name,
+                required String roll,
+                required String email}) async {},
+          ),
+        ),
+      ),
+    ));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const ValueKey('t-roll')), '10000001');
+    await t.pump(const Duration(milliseconds: 500));
+    await t.pumpAndSettle();
+    // Healed + retried: the card shows, no failure banner, and the cloud
+    // users doc now carries the prof role.
+    expect(find.text('Student One'), findsOneWidget);
+    expect(find.textContaining('Directory search failed'), findsNothing);
+    expect(cloud.roles['uid-prof']?.roles, contains('prof'));
+  });
+
   testWidgets('ManualAddForm holds the name query until 2 chars', (t) async {
     final cloud = _RecordingCloud();
     await cloud.claimStudentDevice(
@@ -342,6 +395,32 @@ void main() {
     expect(cloud.calls, 2);
     expect(cloud.lastNamePrefix, 'St');
   });
+}
+
+/// FakeCloudSync that denies the FIRST directory search with a
+/// rules-denial (stale cloud prof role) and behaves normally after: the
+/// form must heal the role and retry, showing cards instead of an error.
+class _DenyOnceCloud extends FakeCloudSync {
+  var _denied = false;
+  @override
+  Future<List<StudentDirectoryEntry>> searchStudents(
+      {String emailPrefix = '',
+      String rollPrefix = '',
+      String namePrefix = '',
+      int limit = 10,
+      String org = ''}) async {
+    if (!_denied) {
+      _denied = true;
+      throw StateError(
+          'Cloud directory search refused by security rules (permission-denied) — deploy them.');
+    }
+    return super.searchStudents(
+        emailPrefix: emailPrefix,
+        rollPrefix: rollPrefix,
+        namePrefix: namePrefix,
+        limit: limit,
+        org: org);
+  }
 }
 
 /// FakeCloudSync whose directory search is denied (stale/missing rules

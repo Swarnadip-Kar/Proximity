@@ -138,6 +138,58 @@ class ManualDirectoryController extends ChangeNotifier {
     _debounce = Timer(ProxDurations.searchDebounce, _runSearch);
   }
 
+  /// Runs [query] once; on a rules denial, re-asserts our own professor
+  /// role doc and retries once.
+  ///
+  /// Why: directory list requires callerIsProf() (users/{uid} holds 'prof').
+  /// A professor whose cloud role doc is missing/stale (new device,
+  /// reinstall, account switch, offline registration) gets
+  /// permission-denied on every search even with freshly deployed rules —
+  /// and the bare deploy hint strands them. The local role cache gates the
+  /// heal (never fabricates a role), so non-professors still surface the
+  /// denial verbatim. A denial that stands after the heal also surfaces
+  /// verbatim (existing copy).
+  Future<List<StudentDirectoryEntry>> _searchWithRoleHeal(
+    Future<List<StudentDirectoryEntry>> Function() query,
+  ) async {
+    try {
+      return await query();
+    } on StateError catch (e) {
+      if (!isRulesDenialMessage(e.message)) rethrow;
+      if (!await _healProfRole()) rethrow;
+      return await query();
+    }
+  }
+
+  /// Re-asserts the professor role doc for the CURRENT cached identity
+  /// after a rules denial (see [_searchWithRoleHeal]). Merge semantics
+  /// (arrayUnion — never drops the student role). Best-effort: false on
+  /// any failure, and the caller surfaces the denial.
+  Future<bool> _healProfRole() async {
+    try {
+      final role = await _ref.read(deviceStoreProvider).readRole();
+      if (!roleHas(role, 'prof')) return false;
+      final email = (role?['email'] ?? '').trim().toLowerCase();
+      final uid = (role?['uid'] ?? '').trim();
+      if (email.isEmpty || !email.contains('@')) return false;
+      if (uid.isEmpty) return false;
+      await _ref.read(cloudSyncProvider).setRole(RoleDoc(
+            uid: uid,
+            email: email,
+            name: role?['displayName'] ?? '',
+            roles: const ['prof'],
+            displayName: role?['displayName'] ?? '',
+            lastMode: 'prof',
+            org: roleOrg(role),
+          ));
+      BleLog.log(ProxLogTags.sync,
+          'directory denied — re-asserted prof role for $email, retrying');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _runSearch() async {
     if (_qRoll.trim().isEmpty &&
         _qName.trim().isEmpty &&
@@ -176,12 +228,12 @@ class ManualDirectoryController extends ChangeNotifier {
         final role = await _ref.read(deviceStoreProvider).readRole();
         myOrg = roleOrg(role);
       } catch (_) {}
-      final found = await cloud.searchStudents(
-        rollPrefix: _qRoll,
-        namePrefix: name.length >= 2 ? _qName : '',
-        emailPrefix: _qEmail,
-        org: myOrg,
-      );
+      final found = await _searchWithRoleHeal(() => cloud.searchStudents(
+            rollPrefix: _qRoll,
+            namePrefix: name.length >= 2 ? _qName : '',
+            emailPrefix: _qEmail,
+            org: myOrg,
+          ));
       if (stale()) return;
       hits = found;
       searching = false;
@@ -295,8 +347,8 @@ class ManualDirectoryController extends ChangeNotifier {
       if (online) {
         StudentDirectoryEntry? match;
         try {
-          final found =
-              await cloud.searchStudents(rollPrefix: roll, org: myOrg);
+          final found = await _searchWithRoleHeal(
+              () => cloud.searchStudents(rollPrefix: roll, org: myOrg));
           match = matchRollExact(found, roll);
         } catch (_) {
           match = null;
