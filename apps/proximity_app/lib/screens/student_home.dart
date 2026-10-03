@@ -488,6 +488,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
   // APs while BLE-hinted classes still list (hint+probe rung). True means
   // the list below is hint-only — never a silent empty state.
   bool _broadcastBlocked = false;
+
+  /// Session latch for the banner above: once ANY class has listed, the
+  /// notice stays suppressed for the rest of the session — it explained
+  /// the empty state, and must not nag over a working list.
+  bool _seenAnyLive = false;
   // Live-refresh: recompute the merged list every 2s so classes that
   // stopped advertising disappear on their 6s expiry without any tap.
   Timer? _refreshTimer;
@@ -1238,6 +1243,11 @@ class _StudentHomeScreenState extends ConsumerState<StudentHomeScreen>
     }
     final out = byKey.values.toList()
       ..sort((a, b) => a.firstSeen.compareTo(b.firstSeen));
+    // Session latch for the broadcast-blocked banner: once ANY class has
+    // listed, the notice explained the empty state and stays suppressed
+    // for the rest of the session — it must not nag over a working list.
+    if (out.isNotEmpty) _seenAnyLive = true;
+    _broadcastBlocked = _broadcastBlocked && !_seenAnyLive;
     // Gated email backfill for newly listed matching hosts (cheap,
     // throttled — see _backfillGatedEmail): browse tiles render the Gmail
     // once the unicast lands, without any tap.
