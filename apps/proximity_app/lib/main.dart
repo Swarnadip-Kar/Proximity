@@ -658,20 +658,17 @@ class AdaptiveScaffold extends StatelessWidget {
     }
     // Cupertino (iOS/macOS + all desktops route here via platform check):
     // every push in this app is a MaterialPageRoute (records, sessions,
-    // account, Take), which carries no Cupertino title — the automatic
-    // Cupertino back button then renders its "?" placeholder instead of a
-    // chevron. Never rely on it: explicit Cupertino back whenever the
-    // route can pop (custom `leading` still wins — e.g. Take's
-    // leave-with-save). Chevron-only (no previousTitle) so no route
-    // rename ever leaks into the bar.
+    // account, Take), which carries no Cupertino title — so the
+    // CupertinoNavigationBarBackButton used to render its "?" placeholder
+    // instead of a chevron here. Never rely on it: an explicit chevron
+    // below whenever the route can pop (custom `leading` still wins —
+    // e.g. Take's leave-with-save). Chevron-only (no previousTitle) so no
+    // route rename ever leaks into the bar.
     Widget? effectiveLeading = leading;
     if (effectiveLeading == null) {
       try {
         if (Navigator.maybeOf(context)?.canPop() ?? false) {
-          effectiveLeading = CupertinoNavigationBarBackButton(
-            previousPageTitle: null,
-            onPressed: () => Navigator.maybeOf(context)?.maybePop(),
-          );
+          effectiveLeading = const _BackChevron();
         }
       } catch (_) {}
     }
@@ -693,20 +690,36 @@ class AdaptiveScaffold extends StatelessWidget {
   }
 }
 
-/// Platform back button: Cupertino chevron on iOS/macOS (where pushes are
-/// MaterialPageRoutes with no Cupertino title — the automatic button shows
-/// "?"), Material arrow elsewhere. Custom [onPressed] (e.g. Take's
-/// leave-with-save) is preserved on both; null pops (Cupertino's built-in
-/// default when onPressed is null).
+/// Platform back button: explicit chevron on iOS/macOS (where pushes are
+/// MaterialPageRoutes with no Cupertino title — the Cupertino back button
+/// showed "?" there), Material arrow elsewhere. Custom [onPressed] (e.g.
+/// Take's leave-with-save) is preserved on both; null pops.
 Widget adaptiveBackButton({VoidCallback? onPressed}) {
   // ignore: avoid-global-platform-check — platform selects the nav idiom.
   final cupertino = defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.macOS;
   if (cupertino) {
-    return CupertinoNavigationBarBackButton(
-      previousPageTitle: null,
-      onPressed: onPressed,
-    );
+    return _BackChevron(onPressed: onPressed);
   }
   return BackButton(onPressed: onPressed);
+}
+
+/// Explicit back chevron (back-button "?" fix): renders
+/// Icons.arrow_back_ios_new directly — the same chevron idiom, with zero
+/// dependence on route titles — so it can never degrade to the "?"
+/// placeholder on Apple platforms. Behavior matches the platform buttons
+/// (custom press preserved, null pops).
+class _BackChevron extends StatelessWidget {
+  final VoidCallback? onPressed;
+
+  const _BackChevron({this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.arrow_back_ios_new),
+      tooltip: 'Back',
+      onPressed: onPressed ?? () => Navigator.maybeOf(context)?.maybePop(),
+    );
+  }
 }
