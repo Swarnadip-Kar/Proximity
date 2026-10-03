@@ -465,6 +465,17 @@ class _TakeAttendanceScreenState extends ConsumerState<TakeAttendanceScreen> {
       _ip = session.hostIp;
       serverLine = session.addressLine;
     });
+    // Cumulative-class base for the FIRST fetch (class-number flash fix):
+    // _loadUnion raced startHosting and its setClassBase no-op'd while the
+    // server was still null — so the first /window served the raw round
+    // (R1 reads `1st Class`) until a later snapshot re-pushed. The server
+    // exists now, so push the already-loaded base; if the union has not
+    // landed yet this pushes 0 and _loadUnion's own push (which runs after,
+    // against the live server) corrects it — either order converges before
+    // the first window opens.
+    try {
+      unawaited(ref.read(hostDriverProvider).setClassBase(_priorSessionCount));
+    } catch (_) {}
     // Announce the setup name field as-is (the announcer reads it live,
     // so a Gmail-defaulted field the professor never typed still airs a
     // name — students see it instead of a bare email). Idempotent: the
