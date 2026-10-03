@@ -100,11 +100,13 @@ class _ProxStateBadgeState extends State<ProxStateBadge> {
         color: ProxStateColors.tint(context, widget.state),
         borderRadius: ProxRadii.chipRadius,
         border: Border.all(color: color.withValues(alpha: 0.3)),
-        // Soft glow halo behind the badge.
+        // Soft glow halo behind the badge. Constant mid alpha: the badge
+        // itself already breathes through the AnimatedOpacity below, so a
+        // per-tick shadow snap here would hard-cut inside the fade.
         boxShadow: widget.pulse
             ? [
                 BoxShadow(
-                  color: color.withValues(alpha: _dim ? 0.05 : 0.15),
+                  color: color.withValues(alpha: 0.1),
                   blurRadius: 8,
                   spreadRadius: 0,
                 ),

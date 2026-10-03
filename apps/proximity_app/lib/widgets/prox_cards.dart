@@ -325,6 +325,11 @@ class _ProxDotState extends State<ProxDot> {
 
   @override
   Widget build(BuildContext context) {
+    // Breathe, don't blink: the dot + halo fade together through one
+    // AnimatedOpacity (same 800ms period as before) while the halo itself
+    // holds a constant mid alpha — the old per-tick shadow snap is gone,
+    // so there is no hard cut anywhere in the cycle. Same endpoints,
+    // same timer, same reduced-motion static.
     final dot = Container(
       width: widget.size,
       height: widget.size,
@@ -335,7 +340,7 @@ class _ProxDotState extends State<ProxDot> {
         boxShadow: widget.pulse
             ? [
                 BoxShadow(
-                  color: widget.color.withValues(alpha: _dim ? 0.1 : 0.35),
+                  color: widget.color.withValues(alpha: 0.22),
                   blurRadius: widget.size * 1.5,
                   spreadRadius: widget.size * 0.3,
                 ),
